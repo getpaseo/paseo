@@ -1,5 +1,5 @@
 {
-  "name": "@realtime-voice/mcp-server",
+  "name": "@voice-dev/mcp-server",
   "version": "0.3.0",
   "description": "MCP Server for interfacing with tmux sessions",
   "type": "module",

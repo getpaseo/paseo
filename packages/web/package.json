@@ -1,5 +1,5 @@
 {
-  "name": "@realtime-voice/web",
+  "name": "@voice-dev/web",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -12,11 +12,12 @@
     "openai",
     "realtime",
     "voice",
+    "voice-assistant",
     "nextjs"
   ],
   "author": "moboudra",
   "license": "MIT",
-  "description": "OpenAI Realtime Voice Assistant web interface",
+  "description": "Voice development assistant web interface",
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^24.7.2",

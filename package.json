@@ -1,5 +1,5 @@
 {
-  "name": "realtime-voice-monorepo",
+  "name": "voice-dev",
   "version": "1.0.0",
   "private": true,
   "workspaces": [
@@ -18,14 +18,14 @@
   "devDependencies": {
     "typescript": "^5.9.3"
   },
-  "description": "Monorepo for OpenAI Realtime Voice Assistant with tmux MCP integration",
+  "description": "Voice-controlled development environment with OpenAI Realtime API",
   "keywords": [
     "openai",
     "realtime",
     "voice",
-    "mcp",
-    "tmux",
-    "monorepo"
+    "voice-assistant",
+    "development",
+    "mcp"
   ],
   "author": "moboudra",
   "license": "MIT"

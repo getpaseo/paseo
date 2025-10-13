@@ -1,15 +1,15 @@
-# Realtime Voice Monorepo
+# Voice Dev
 
-OpenAI Realtime API voice assistant with tmux MCP integration.
+Voice-controlled development environment powered by OpenAI Realtime API.
 
 ## Packages
 
-- **`@realtime-voice/mcp-server`** - MCP server for tmux control
+- **`@voice-dev/mcp-server`** - MCP server for terminal control
   - Located in `packages/mcp-server/`
-  - Provides tmux session management via MCP protocol
+  - Provides terminal session management via MCP protocol
   - Can run as HTTP server or stdio mode
 
-- **`@realtime-voice/web`** - Next.js web interface
+- **`@voice-dev/web`** - Next.js web interface
   - Located in `packages/web/`
   - Voice interaction with OpenAI Realtime API
   - Password authentication
@@ -74,13 +74,13 @@ See `packages/web/.env.local.example` for template.
 ## Project Structure
 
 ```
-realtime-voice-monorepo/
+voice-dev/
 ├── packages/
 │   ├── mcp-server/              # MCP Server Package
 │   │   ├── src/
 │   │   │   ├── index.ts         # CLI entry point
 │   │   │   ├── http-server.ts   # HTTP server mode
-│   │   │   └── tmux.ts          # Tmux operations
+│   │   │   └── tmux.ts          # Terminal operations
 │   │   ├── build/               # Compiled output
 │   │   ├── package.json
 │   │   └── tsconfig.json
@@ -113,7 +113,7 @@ realtime-voice-monorepo/
 - Tool call visibility
 
 ### MCP Server
-- Full tmux session control
+- Full terminal session control
 - List sessions, windows, and panes
 - Send keystrokes and text
 - Create and kill sessions/windows/panes
@@ -125,11 +125,11 @@ realtime-voice-monorepo/
 
 ### Web App (Vercel)
 
-The web app is configured for Vercel deployment:
+Deploy from the web package directory:
 
 ```bash
-# Deploy from monorepo
-cd ~/dev/realtime-voice-monorepo
+# Deploy to Vercel
+cd ~/dev/voice-dev/packages/web
 vercel --prod
 
 # Set environment variables
@@ -177,7 +177,7 @@ npm run <script> --workspace=mcp-server
 
 ## Tech Stack
 
-- **Monorepo**: npm workspaces
+- **Architecture**: npm workspaces
 - **Web**: Next.js 15, React 19, TypeScript, Tailwind CSS
 - **MCP Server**: TypeScript, Express, MCP SDK
 - **Voice**: OpenAI Realtime API, WebRTC
