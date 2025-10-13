@@ -1,0 +1,32 @@
+{
+  "name": "realtime-voice-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "dev:mcp": "npm run dev --workspace=mcp-server",
+    "build": "npm run build --workspaces --if-present",
+    "build:mcp": "npm run build --workspace=mcp-server",
+    "build:web": "npm run build --workspace=web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "start": "npm run start --workspace=web",
+    "start:mcp": "npm run start --workspace=mcp-server"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "description": "Monorepo for OpenAI Realtime Voice Assistant with tmux MCP integration",
+  "keywords": [
+    "openai",
+    "realtime",
+    "voice",
+    "mcp",
+    "tmux",
+    "monorepo"
+  ],
+  "author": "moboudra",
+  "license": "MIT"
+}
