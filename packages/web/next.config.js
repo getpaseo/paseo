@@ -1,9 +1,4 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  assetPrefix: '/ui',
-  env: {
-    NEXT_PUBLIC_BASE_PATH: '/ui',
-  },
-}
+const nextConfig = {}
 
 module.exports = nextConfig
