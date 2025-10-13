@@ -24,7 +24,6 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.1",
     "autoprefixer": "^10.4.21",
-    "lightningcss": "^1.29.5",
     "next": "^15.5.4",
     "openai-realtime-api": "^1.0.8",
     "postcss": "^8.5.6",

@@ -28,5 +28,8 @@
     "mcp"
   ],
   "author": "moboudra",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@tailwindcss/oxide": "^4.1.14"
+  }
 }
