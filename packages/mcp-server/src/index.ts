@@ -47,7 +47,7 @@ async function ensureDefaultSession(): Promise<void> {
 // List terminals - Tool
 server.tool(
   "list-terminals",
-  "List all terminals (isolated shell environments). Returns terminal ID, name, current working directory, and currently running command.",
+  "List all terminals (isolated shell environments). Returns terminal name, active status, current working directory, and currently running command.",
   {},
   async () => {
     try {
@@ -74,7 +74,6 @@ server.tool(
             : "unknown";
 
           return {
-            id: window.id,
             name: window.name,
             active: window.active,
             workingDirectory,
@@ -153,7 +152,6 @@ server.tool(
 
       let text = `Terminal created: ${JSON.stringify(
         {
-          id: window.id,
           name: window.name,
           workingDirectory,
         },
@@ -194,7 +192,7 @@ server.tool(
   "capture-terminal",
   "Capture the last N lines of output from a terminal. Use this to see command results, check status, or debug issues.",
   {
-    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    terminalName: z.string().describe("Name of the terminal"),
     lines: z
       .number()
       .optional()
@@ -206,19 +204,36 @@ server.tool(
         "Milliseconds to wait before capturing output. Useful for slow commands."
       ),
   },
-  async ({ terminalId, lines, wait }) => {
+  async ({ terminalName, lines, wait }) => {
     try {
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Resolve terminal name to window
+      const window = await tmux.findWindowByName(session.id, terminalName);
+      if (!window) {
+        const windows = await tmux.listWindows(session.id);
+        const availableNames = windows.map((w) => w.name).join(", ");
+        throw new Error(
+          `Terminal '${terminalName}' not found. Available terminals: ${availableNames}`
+        );
+      }
+
       // Wait if specified
       if (wait) {
         await new Promise((resolve) => setTimeout(resolve, wait));
       }
 
       // Get the pane for this terminal
-      const panes = await tmux.listPanes(terminalId);
+      const panes = await tmux.listPanes(window.id);
       const pane = panes[0];
 
       if (!pane) {
-        throw new Error(`No pane found for terminal ${terminalId}`);
+        throw new Error(`No pane found for terminal ${terminalName}`);
       }
 
       const content = await tmux.capturePaneContent(
@@ -254,7 +269,7 @@ server.tool(
   "send-text",
   "Type text into a terminal. This is the PRIMARY way to execute shell commands with bash operators (&&, ||, |, ;, etc.) - set pressEnter=true to run the command. Also use for interactive applications, REPLs, forms, and text entry. For special keys or control sequences, use send-keys instead.",
   {
-    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    terminalName: z.string().describe("Name of the terminal"),
     text: z
       .string()
       .describe(
@@ -282,14 +297,31 @@ server.tool(
         "Capture terminal output after sending text. Specify 'wait' for slow commands."
       ),
   },
-  async ({ terminalId, text, pressEnter, return_output }) => {
+  async ({ terminalName, text, pressEnter, return_output }) => {
     try {
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Resolve terminal name to window
+      const window = await tmux.findWindowByName(session.id, terminalName);
+      if (!window) {
+        const windows = await tmux.listWindows(session.id);
+        const availableNames = windows.map((w) => w.name).join(", ");
+        throw new Error(
+          `Terminal '${terminalName}' not found. Available terminals: ${availableNames}`
+        );
+      }
+
       // Get the pane for this terminal
-      const panes = await tmux.listPanes(terminalId);
+      const panes = await tmux.listPanes(window.id);
       const pane = panes[0];
 
       if (!pane) {
-        throw new Error(`No pane found for terminal ${terminalId}`);
+        throw new Error(`No pane found for terminal ${terminalName}`);
       }
 
       const output = await tmux.sendText({
@@ -304,7 +336,7 @@ server.tool(
           content: [
             {
               type: "text",
-              text: `Text sent to terminal ${terminalId}${
+              text: `Text sent to terminal ${terminalName}${
                 pressEnter ? " (with Enter)" : ""
               }.\n\n--- Output ---\n${output}`,
             },
@@ -316,7 +348,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Text sent to terminal ${terminalId}${
+            text: `Text sent to terminal ${terminalName}${
               pressEnter ? " (with Enter)" : ""
             }.\n\nUse capture-terminal to verify the result.`,
           },
@@ -341,7 +373,7 @@ server.tool(
   "send-keys",
   "Send special keys or key combinations to a terminal. Use for TUI navigation and control sequences. Examples: 'Up', 'Down', 'Enter', 'Escape', 'C-c' (Ctrl+C), 'M-x' (Alt+X). For typing regular text, use send-text instead. Supports repeating key presses and optionally capturing output after sending keys.",
   {
-    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    terminalName: z.string().describe("Name of the terminal"),
     keys: z
       .string()
       .describe(
@@ -368,14 +400,31 @@ server.tool(
         "Capture terminal output after sending keys. Specify 'wait' for slow commands."
       ),
   },
-  async ({ terminalId, keys, repeat, return_output }) => {
+  async ({ terminalName, keys, repeat, return_output }) => {
     try {
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Resolve terminal name to window
+      const window = await tmux.findWindowByName(session.id, terminalName);
+      if (!window) {
+        const windows = await tmux.listWindows(session.id);
+        const availableNames = windows.map((w) => w.name).join(", ");
+        throw new Error(
+          `Terminal '${terminalName}' not found. Available terminals: ${availableNames}`
+        );
+      }
+
       // Get the pane for this terminal
-      const panes = await tmux.listPanes(terminalId);
+      const panes = await tmux.listPanes(window.id);
       const pane = panes[0];
 
       if (!pane) {
-        throw new Error(`No pane found for terminal ${terminalId}`);
+        throw new Error(`No pane found for terminal ${terminalName}`);
       }
 
       const output = await tmux.sendKeys({
@@ -390,7 +439,7 @@ server.tool(
           content: [
             {
               type: "text",
-              text: `Keys '${keys}' sent to terminal ${terminalId}${
+              text: `Keys '${keys}' sent to terminal ${terminalName}${
                 repeat && repeat > 1 ? ` (repeated ${repeat} times)` : ""
               }.\n\n--- Output ---\n${output}`,
             },
@@ -402,7 +451,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Keys '${keys}' sent to terminal ${terminalId}${
+            text: `Keys '${keys}' sent to terminal ${terminalName}${
               repeat && repeat > 1 ? ` (repeated ${repeat} times)` : ""
             }.\n\nUse capture-terminal to verify the result.`,
           },
@@ -427,17 +476,24 @@ server.tool(
   "rename-terminal",
   "Rename a terminal to a more descriptive name",
   {
-    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
-    name: z.string().describe("New name for the terminal"),
+    terminalName: z.string().describe("Current name of the terminal"),
+    newName: z.string().describe("New name for the terminal"),
   },
-  async ({ terminalId, name }) => {
+  async ({ terminalName, newName }) => {
     try {
-      await tmux.renameWindow(terminalId, name);
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      await tmux.renameWindow(session.id, terminalName, newName);
       return {
         content: [
           {
             type: "text",
-            text: `Terminal ${terminalId} renamed to "${name}"`,
+            text: `Terminal "${terminalName}" renamed to "${newName}"`,
           },
         ],
       };
@@ -460,16 +516,33 @@ server.tool(
   "kill-terminal",
   "Close a terminal and end its shell session",
   {
-    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    terminalName: z.string().describe("Name of the terminal"),
   },
-  async ({ terminalId }) => {
+  async ({ terminalName }) => {
     try {
-      await tmux.killWindow(terminalId);
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Resolve terminal name to window
+      const window = await tmux.findWindowByName(session.id, terminalName);
+      if (!window) {
+        const windows = await tmux.listWindows(session.id);
+        const availableNames = windows.map((w) => w.name).join(", ");
+        throw new Error(
+          `Terminal '${terminalName}' not found. Available terminals: ${availableNames}`
+        );
+      }
+
+      await tmux.killWindow(window.id);
       return {
         content: [
           {
             type: "text",
-            text: `Terminal ${terminalId} has been closed`,
+            text: `Terminal "${terminalName}" has been closed`,
           },
         ],
       };
@@ -511,7 +584,6 @@ server.resource("Terminals", "tmux://terminals", async () => {
           : "unknown";
 
         return {
-          id: window.id,
           name: window.name,
           active: window.active,
           workingDirectory,
@@ -543,7 +615,7 @@ server.resource("Terminals", "tmux://terminals", async () => {
 // Expose terminal content as a resource
 server.resource(
   "Terminal Content",
-  new ResourceTemplate("tmux://terminal/{terminalId}", {
+  new ResourceTemplate("tmux://terminal/{terminalName}", {
     list: async () => {
       try {
         await ensureDefaultSession();
@@ -557,7 +629,7 @@ server.resource(
 
         const terminalResources = windows.map((window) => ({
           name: `Terminal: ${window.name} ${window.active ? "(active)" : ""}`,
-          uri: `tmux://terminal/${window.id}`,
+          uri: `tmux://terminal/${encodeURIComponent(window.name)}`,
           description: `Content from terminal ${window.name}`,
         }));
 
@@ -574,19 +646,35 @@ server.resource(
       }
     },
   }),
-  async (uri, { terminalId }) => {
+  async (uri, { terminalName }) => {
     try {
-      // Ensure terminalId is a string
-      const terminalIdStr = Array.isArray(terminalId)
-        ? terminalId[0]
-        : terminalId;
+      await ensureDefaultSession();
+
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Ensure terminalName is a string
+      const terminalNameStr = Array.isArray(terminalName)
+        ? terminalName[0]
+        : terminalName;
+
+      // Decode URI component in case terminal name has special characters
+      const decodedTerminalName = decodeURIComponent(terminalNameStr);
+
+      // Resolve terminal name to window
+      const window = await tmux.findWindowByName(session.id, decodedTerminalName);
+      if (!window) {
+        throw new Error(`Terminal '${decodedTerminalName}' not found`);
+      }
 
       // Get the pane for this terminal
-      const panes = await tmux.listPanes(terminalIdStr);
+      const panes = await tmux.listPanes(window.id);
       const pane = panes[0];
 
       if (!pane) {
-        throw new Error(`No pane found for terminal ${terminalIdStr}`);
+        throw new Error(`No pane found for terminal ${decodedTerminalName}`);
       }
 
       const content = await tmux.capturePaneContent(pane.id, 200, false);

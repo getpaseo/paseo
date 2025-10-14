@@ -1,6 +1,7 @@
 import { exec as execCallback } from "child_process";
 import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
+import os from "node:os";
 
 const exec = promisify(execCallback);
 
@@ -109,6 +110,32 @@ export async function findSessionByName(
   } catch (error) {
     return null;
   }
+}
+
+/**
+ * Find a window by name in a session
+ */
+export async function findWindowByName(
+  sessionId: string,
+  name: string
+): Promise<TmuxWindow | null> {
+  try {
+    const windows = await listWindows(sessionId);
+    return windows.find((window) => window.name === name) || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Check if a window name is unique in a session
+ */
+export async function isWindowNameUnique(
+  sessionId: string,
+  name: string
+): Promise<boolean> {
+  const window = await findWindowByName(sessionId, name);
+  return window === null;
 }
 
 /**
@@ -238,6 +265,20 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
 }
 
 /**
+ * Expand tilde in path to home directory
+ */
+function expandTilde(path: string): string {
+  if (path.startsWith('~/')) {
+    const homeDir = process.env.HOME || os.homedir();
+    return path.replace('~', homeDir);
+  }
+  if (path === '~') {
+    return process.env.HOME || os.homedir();
+  }
+  return path;
+}
+
+/**
  * Create a new window in a session with optional working directory and initial command
  */
 export async function createWindow(
@@ -248,10 +289,20 @@ export async function createWindow(
     command?: string;
   }
 ): Promise<(TmuxWindow & { paneId: string; output?: string }) | null> {
+  // Validate name uniqueness
+  const isUnique = await isWindowNameUnique(sessionId, name);
+  if (!isUnique) {
+    throw new Error(
+      `Terminal with name '${name}' already exists. Please choose a unique name.`
+    );
+  }
+
   // Build new-window command with optional working directory
   let newWindowCmd = `new-window -t '${sessionId}' -n '${name}'`;
   if (options?.workingDirectory) {
-    newWindowCmd += ` -c '${options.workingDirectory}'`;
+    // Expand tilde to home directory before passing to tmux
+    const expandedPath = expandTilde(options.workingDirectory);
+    newWindowCmd += ` -c '${expandedPath}'`;
   }
 
   await executeTmux(newWindowCmd);
@@ -313,13 +364,35 @@ export async function killPane(paneId: string): Promise<void> {
 }
 
 /**
- * Rename a tmux window by ID
+ * Rename a tmux window by name or ID
  */
 export async function renameWindow(
-  windowId: string,
-  name: string
+  sessionId: string,
+  windowNameOrId: string,
+  newName: string
 ): Promise<void> {
-  await executeTmux(`rename-window -t '${windowId}' '${name}'`);
+  // Validate new name is unique
+  const isUnique = await isWindowNameUnique(sessionId, newName);
+  if (!isUnique) {
+    throw new Error(
+      `Terminal with name '${newName}' already exists. Please choose a unique name.`
+    );
+  }
+
+  // Check if windowNameOrId is a window ID (starts with @) or a name
+  let windowId: string;
+  if (windowNameOrId.startsWith("@")) {
+    windowId = windowNameOrId;
+  } else {
+    // Resolve name to ID
+    const window = await findWindowByName(sessionId, windowNameOrId);
+    if (!window) {
+      throw new Error(`Terminal '${windowNameOrId}' not found.`);
+    }
+    windowId = window.id;
+  }
+
+  await executeTmux(`rename-window -t '${windowId}' '${newName}'`);
   // Disable automatic renaming to preserve the manual name
   await executeTmux(`set-window-option -t '${windowId}' automatic-rename off`);
 }
