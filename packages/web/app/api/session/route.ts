@@ -30,9 +30,18 @@ export async function POST() {
   try {
     console.log("Creating LiveKit token...");
 
-    const participantIdentity = `voice_user_${Math.floor(Math.random() * 10_000)}`;
+    const participantIdentity = `voice_user_${Math.floor(
+      Math.random() * 10_000
+    )}`;
     const participantName = "user";
     const roomName = `voice_room_${Math.floor(Math.random() * 10_000)}`;
+
+    console.log("LIVEKIT_URL", LIVEKIT_URL);
+    console.log("LIVEKIT_API_KEY", LIVEKIT_API_KEY);
+    console.log("LIVEKIT_API_SECRET", LIVEKIT_API_SECRET);
+    console.log("participantIdentity", participantIdentity);
+    console.log("participantName", participantName);
+    console.log("roomName", roomName);
 
     const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: participantIdentity,
