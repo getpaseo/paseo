@@ -153,18 +153,33 @@ npm run typecheck
 
 ## MCP Server Details
 
+### Terminal Model
+
+The MCP server uses a simplified "terminals" model:
+- All terminals run in a default tmux session called `voice-dev`
+- Each terminal is a tmux window (always single pane - no splits)
+- Terminals are created with a specific working directory
+- Terminal IDs are window IDs (format: `@123`)
+
+This design makes voice interaction natural: "create a terminal for the web project" instead of "create a window in session X with pane Y".
+
 ### Available MCP Tools
 
-The MCP server exposes these tools to the voice agent:
+The MCP server exposes these 7 core tools to the voice agent:
 
-- **list** - List tmux sessions/windows/panes (hierarchical)
-- **capture-pane** - Capture terminal output from a pane
-- **create-session/create-window/split-pane** - Create new tmux resources
-- **rename-window** - Rename a window
-- **kill** - Kill sessions/windows/panes
-- **send-keys** - Send special keys (Enter, Escape, Ctrl-C, etc.)
-- **send-text** - Type text into a pane (primary way to run shell commands)
-- **execute-shell-command** - Run a command synchronously with timeout
+1. **list-terminals()** - List all terminals with IDs, names, and working directories
+2. **create-terminal(name, workingDirectory, initialCommand?)** - Create terminal at specific path with optional startup command
+3. **capture-terminal(terminalId, lines?, wait?)** - Get terminal output
+4. **send-text(terminalId, text, pressEnter?, return_output?)** - Type text/run commands (primary way to execute commands)
+5. **send-keys(terminalId, keys, repeat?, return_output?)** - Send special keys (Enter, Escape, Ctrl-C, BTab, etc.)
+6. **rename-terminal(terminalId, name)** - Rename a terminal
+7. **kill-terminal(terminalId)** - Close a terminal
+
+**Key Features:**
+- Working directory is contextual - agent sets it based on what the user is working on
+- Initial command can be specified to start processes on terminal creation
+- All tools use `terminalId` (window ID) instead of complex session/pane hierarchy
+- Default session auto-created on MCP server startup
 
 ### MCP Server Modes
 
@@ -191,10 +206,12 @@ The agent's system prompt is embedded in `packages/agent-python/agent.py`. It in
 - Report tool execution results back to the user
 - Handle voice-to-text errors gracefully
 - Be concise for mobile users
-- Work with Claude Code running in tmux sessions
-- Understand tmux/git/gh CLI workflows
+- Use the simplified "terminals" model for all terminal interactions
+- Set working directory contextually when creating terminals
+- Work with Claude Code running in terminals
+- Understand git/gh CLI workflows
 
-The prompt is comprehensive (~500 lines) and defines the agent's personality and behavior patterns.
+The prompt is comprehensive (~300 lines) and defines the agent's personality and behavior patterns with a focus on the simplified terminal model.
 
 ## Common Development Tasks
 

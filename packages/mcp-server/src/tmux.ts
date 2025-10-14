@@ -170,6 +170,15 @@ export async function capturePaneContent(
 }
 
 /**
+ * Get the current working directory of a pane
+ */
+export async function getCurrentWorkingDirectory(
+  paneId: string
+): Promise<string> {
+  return executeTmux(`display-message -p -t '${paneId}' '#{pane_current_path}'`);
+}
+
+/**
  * Create a new tmux session
  */
 export async function createSession(name: string): Promise<TmuxSession | null> {

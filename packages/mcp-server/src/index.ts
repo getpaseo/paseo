@@ -9,12 +9,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import * as tmux from "./tmux.js";
 import { startHttpServer } from "./http-server.js";
+import os from "node:os";
+
+const DEFAULT_SESSION = "voice-dev";
 
 // Create MCP server
 const server = new McpServer(
   {
     name: "voice-dev-mcp",
-    version: "0.3.0",
+    version: "0.4.0",
   },
   {
     capabilities: {
@@ -30,88 +33,58 @@ const server = new McpServer(
   }
 );
 
-// List hierarchy - Tool
-server.tool(
-  "list",
-  "List sessions, windows, and panes. Use scope='all' for full hierarchy, or drill down with specific scopes. Examples: scope='all' returns nested tree, scope='sessions' returns all sessions, scope='session' with target='$0' returns windows in that session, scope='window' with target='@1' returns panes in that window.",
-  {
-    scope: z
-      .enum(["all", "sessions", "session", "window", "pane"])
-      .describe(
-        "Scope of listing: 'all' (full tree), 'sessions' (all sessions), 'session' (windows in a session), 'window' (panes in a window), 'pane' (details of a pane)"
-      ),
-    target: z
-      .string()
-      .optional()
-      .describe(
-        "Target ID (required for session/window/pane scopes): session ID (e.g., '$0'), window ID (e.g., '@1'), or pane ID (e.g., '%2')"
-      ),
-  },
-  async ({ scope, target }) => {
-    try {
-      const result = await tmux.list({ scope, target });
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error listing: ${error}`,
-          },
-        ],
-        isError: true,
-      };
-    }
+/**
+ * Ensure the default session exists
+ */
+async function ensureDefaultSession(): Promise<void> {
+  const session = await tmux.findSessionByName(DEFAULT_SESSION);
+  if (!session) {
+    console.log(`Creating default session: ${DEFAULT_SESSION}`);
+    await tmux.createSession(DEFAULT_SESSION);
   }
-);
+}
 
-// Capture pane content - Tool
+// List terminals - Tool
 server.tool(
-  "capture-pane",
-  "Capture content from a pane with configurable lines count and optional color preservation. Optionally wait before capturing to allow commands to complete.",
-  {
-    paneId: z.string().describe("ID of the pane"),
-    lines: z.string().optional().describe("Number of lines to capture"),
-    colors: z
-      .boolean()
-      .optional()
-      .describe(
-        "Include color/escape sequences for text and background attributes in output"
-      ),
-    wait: z
-      .number()
-      .optional()
-      .describe(
-        "Milliseconds to wait before capturing output. Useful for long-running commands that need time to complete."
-      ),
-  },
-  async ({ paneId, lines, colors, wait }) => {
+  "list-terminals",
+  "List all terminals (isolated shell environments). Returns terminal ID, name, and current working directory.",
+  {},
+  async () => {
     try {
-      // Wait if specified
-      if (wait) {
-        await new Promise((resolve) => setTimeout(resolve, wait));
+      await ensureDefaultSession();
+
+      // Get all windows in the default session
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
       }
 
-      // Parse lines parameter if provided
-      const linesCount = lines ? parseInt(lines, 10) : undefined;
-      const includeColors = colors || false;
-      const content = await tmux.capturePaneContent(
-        paneId,
-        linesCount,
-        includeColors
+      const windows = await tmux.listWindows(session.id);
+
+      // For each window, get the pane and its working directory
+      const terminals = await Promise.all(
+        windows.map(async (window) => {
+          const panes = await tmux.listPanes(window.id);
+          const pane = panes[0]; // Always use first pane
+          const workingDirectory = pane
+            ? await tmux.getCurrentWorkingDirectory(pane.id)
+            : "unknown";
+
+          return {
+            id: window.id,
+            name: window.name,
+            active: window.active,
+            workingDirectory,
+            paneId: pane?.id || "",
+          };
+        })
       );
+
       return {
         content: [
           {
             type: "text",
-            text: content || "No content captured",
+            text: JSON.stringify(terminals, null, 2),
           },
         ],
       };
@@ -120,7 +93,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error capturing pane content: ${error}`,
+            text: `Error listing terminals: ${error}`,
           },
         ],
         isError: true,
@@ -129,87 +102,88 @@ server.tool(
   }
 );
 
-// Create new session - Tool
+// Create terminal - Tool
 server.tool(
-  "create-session",
-  "Create a new session",
+  "create-terminal",
+  "Create a new terminal at a specific working directory. Always specify workingDirectory based on context - use project paths when working on projects, or the same directory as current terminal when user says 'another terminal here'. Defaults to ~ only if no context.",
   {
-    name: z.string().describe("Name for the new session"),
-  },
-  async ({ name }) => {
-    try {
-      const session = await tmux.createSession(name);
-      return {
-        content: [
-          {
-            type: "text",
-            text: session
-              ? `Session created: ${JSON.stringify(session, null, 2)}`
-              : `Failed to create session: ${name}`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error creating session: ${error}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-);
-
-// Create new window - Tool
-server.tool(
-  "create-window",
-  "Create a new window in a session. Returns the window ID and the default pane ID. Optionally execute a command in the new window immediately after creation - the command can use any bash operators (&&, ||, |, ;, etc.).",
-  {
-    sessionId: z.string().describe("ID of the session"),
-    name: z.string().describe("Name for the new window"),
-    command: z
+    name: z.string().describe("Name for the new terminal"),
+    workingDirectory: z
+      .string()
+      .default(os.homedir())
+      .describe(
+        "Working directory for the terminal. Required parameter - set contextually based on what the user is working on. Use project paths when working on projects. Defaults to home directory (~) only if no context."
+      ),
+    initialCommand: z
       .string()
       .optional()
       .describe(
-        "Optional shell command to execute in the new window. Supports bash operators: && (chain), || (or), | (pipe), ; (sequential), etc. After sending the command, sleeps 1 second and returns the captured output."
+        "Optional command to execute after creating the terminal. The command runs after changing to the working directory."
       ),
   },
-  async ({ sessionId, name, command }) => {
+  async ({ name, workingDirectory, initialCommand }) => {
     try {
-      const window = await tmux.createWindow(sessionId, name, command);
+      await ensureDefaultSession();
 
+      const session = await tmux.findSessionByName(DEFAULT_SESSION);
+      if (!session) {
+        throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+      }
+
+      // Create window in default session
+      const window = await tmux.createWindow(session.id, name);
       if (!window) {
         return {
           content: [
             {
               type: "text",
-              text: `Failed to create window: ${name}`,
+              text: `Failed to create terminal: ${name}`,
             },
           ],
         };
       }
 
-      let text = `Window created: ${JSON.stringify(
+      // Change to working directory
+      await tmux.sendText({
+        paneId: window.paneId,
+        text: `cd "${workingDirectory}"`,
+        pressEnter: true,
+      });
+
+      // Wait a bit for cd to complete
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Execute initial command if provided
+      let commandOutput: string | undefined;
+      if (initialCommand) {
+        await tmux.sendText({
+          paneId: window.paneId,
+          text: initialCommand,
+          pressEnter: true,
+        });
+
+        // Wait for command to execute
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Capture output
+        commandOutput = await tmux.capturePaneContent(window.paneId, 200);
+      }
+
+      let text = `Terminal created: ${JSON.stringify(
         {
           id: window.id,
           name: window.name,
-          active: window.active,
-          sessionId: window.sessionId,
+          workingDirectory,
           paneId: window.paneId,
         },
         null,
         2
       )}`;
 
-      if (command && window.output) {
-        text += `\n\nCommand executed: ${command}\n\n--- Output ---\n${window.output}`;
-      } else if (command) {
-        text += `\n\nCommand sent: ${command}`;
-      } else {
-        text += `\n\nYou can now execute commands directly in pane ${window.paneId}`;
+      if (initialCommand && commandOutput) {
+        text += `\n\nInitial command executed: ${initialCommand}\n\n--- Output ---\n${commandOutput}`;
+      } else if (initialCommand) {
+        text += `\n\nInitial command sent: ${initialCommand}`;
       }
 
       return {
@@ -225,7 +199,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error creating window: ${error}`,
+            text: `Error creating terminal: ${error}`,
           },
         ],
         isError: true,
@@ -234,22 +208,49 @@ server.tool(
   }
 );
 
-// Rename window - Tool
+// Capture terminal - Tool
 server.tool(
-  "rename-window",
-  "Rename a window by its window ID (e.g., @380)",
+  "capture-terminal",
+  "Capture the last N lines of output from a terminal. Use this to see command results, check status, or debug issues.",
   {
-    windowId: z.string().describe("ID of the window (e.g., '@380')"),
-    name: z.string().describe("New name for the window"),
+    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    lines: z
+      .number()
+      .optional()
+      .describe("Number of lines to capture (default: 200)"),
+    wait: z
+      .number()
+      .optional()
+      .describe(
+        "Milliseconds to wait before capturing output. Useful for slow commands."
+      ),
   },
-  async ({ windowId, name }) => {
+  async ({ terminalId, lines, wait }) => {
     try {
-      await tmux.renameWindow(windowId, name);
+      // Wait if specified
+      if (wait) {
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+
+      // Get the pane for this terminal
+      const panes = await tmux.listPanes(terminalId);
+      const pane = panes[0];
+
+      if (!pane) {
+        throw new Error(`No pane found for terminal ${terminalId}`);
+      }
+
+      const content = await tmux.capturePaneContent(
+        pane.id,
+        lines || 200,
+        false
+      );
+
       return {
         content: [
           {
             type: "text",
-            text: `Window ${windowId} renamed to "${name}"`,
+            text: content || "No content captured",
           },
         ],
       };
@@ -258,7 +259,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error renaming window: ${error}`,
+            text: `Error capturing terminal content: ${error}`,
           },
         ],
         isError: true,
@@ -267,131 +268,76 @@ server.tool(
   }
 );
 
-// Kill resources - Tool
+// Send text - Tool
 server.tool(
-  "kill",
-  "Kill a session, window, or pane. Examples: kill(scope='session', target='$0'), kill(scope='window', target='@1'), kill(scope='pane', target='%2'). No 'all' scope for safety.",
+  "send-text",
+  "Type text into a terminal. This is the PRIMARY way to execute shell commands with bash operators (&&, ||, |, ;, etc.) - set pressEnter=true to run the command. Also use for interactive applications, REPLs, forms, and text entry. For special keys or control sequences, use send-keys instead.",
   {
-    scope: z
-      .enum(["session", "window", "pane"])
-      .describe("Type of resource to kill: 'session', 'window', or 'pane'"),
-    target: z
+    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    text: z
       .string()
       .describe(
-        "Target ID to kill: session ID (e.g., '$0'), window ID (e.g., '@1'), or pane ID (e.g., '%2')"
+        "Text to type into the terminal. For shell commands, can use any bash operators: && (chain), || (or), | (pipe), ; (sequential), etc."
       ),
-  },
-  async ({ scope, target }) => {
-    try {
-      await tmux.kill({ scope, target });
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${
-              scope.charAt(0).toUpperCase() + scope.slice(1)
-            } ${target} has been killed`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error killing ${scope}: ${error}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-);
-
-// Split pane - Tool
-server.tool(
-  "split-pane",
-  "Split a pane horizontally or vertically",
-  {
-    paneId: z.string().describe("ID of the pane to split"),
-    direction: z
-      .enum(["horizontal", "vertical"])
+    pressEnter: z
+      .boolean()
       .optional()
       .describe(
-        "Split direction: 'horizontal' (side by side) or 'vertical' (top/bottom). Default is 'vertical'"
+        "Press Enter after typing the text (default: false). Set to true to execute shell commands or submit text input."
       ),
-    size: z
-      .number()
-      .min(1)
-      .max(99)
+    return_output: z
+      .object({
+        lines: z
+          .number()
+          .optional()
+          .describe("Number of lines to capture (default: 200)"),
+        wait: z
+          .number()
+          .optional()
+          .describe("Milliseconds to wait before capturing output"),
+      })
       .optional()
-      .describe("Size of the new pane as percentage (1-99). Default is 50%"),
+      .describe(
+        "Capture terminal output after sending text. Specify 'wait' for slow commands."
+      ),
   },
-  async ({ paneId, direction, size }) => {
+  async ({ terminalId, text, pressEnter, return_output }) => {
     try {
-      const newPane = await tmux.splitPane(
-        paneId,
-        direction || "vertical",
-        size
-      );
-      return {
-        content: [
-          {
-            type: "text",
-            text: newPane
-              ? `Pane split successfully. New pane: ${JSON.stringify(
-                  newPane,
-                  null,
-                  2
-                )}`
-              : `Failed to split pane ${paneId}`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error splitting pane: ${error}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  }
-);
+      // Get the pane for this terminal
+      const panes = await tmux.listPanes(terminalId);
+      const pane = panes[0];
 
-// Execute shell command - Tool
-server.tool(
-  "execute-shell-command",
-  "Execute a shell command in a pane synchronously and return results immediately. Waits for command completion (default 30s timeout). Returns output, exit code, and status. Use for quick commands (ls, grep, npm test, etc.). Avoid heredoc syntax (cat << EOF) and multi-line constructs. IMPORTANT: For long-running commands (npm start, servers, watch processes), use send-text with pressEnter=true instead, then monitor output with capture-pane. For interactive apps or special keys, use send-keys.",
-  {
-    paneId: z.string().describe("ID of the pane"),
-    command: z.string().describe("Shell command to execute"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Timeout in milliseconds (default: 30000)"),
-  },
-  async ({ paneId, command, timeout }) => {
-    try {
-      const result = await tmux.executeShellCommand({
-        paneId,
-        command,
-        timeout,
+      if (!pane) {
+        throw new Error(`No pane found for terminal ${terminalId}`);
+      }
+
+      const output = await tmux.sendText({
+        paneId: pane.id,
+        text,
+        pressEnter,
+        return_output,
       });
 
-      let statusText =
-        result.status === "completed" ? "✅ Completed" : "❌ Error";
+      if (return_output && output) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Text sent to terminal ${terminalId}${
+                pressEnter ? " (with Enter)" : ""
+              }.\n\n--- Output ---\n${output}`,
+            },
+          ],
+        };
+      }
 
       return {
         content: [
           {
             type: "text",
-            text: `${statusText}\nCommand: ${result.command}\nExit code: ${
-              result.exitCode
-            }\n\n--- Output ---\n${result.output || "(no output)"}`,
+            text: `Text sent to terminal ${terminalId}${
+              pressEnter ? " (with Enter)" : ""
+            }.\n\nUse capture-terminal to verify the result.`,
           },
         ],
       };
@@ -400,7 +346,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error executing command: ${error}`,
+            text: `Error sending text: ${error}`,
           },
         ],
         isError: true,
@@ -412,9 +358,9 @@ server.tool(
 // Send keys - Tool
 server.tool(
   "send-keys",
-  "Send special keys or key combinations to a pane. Use for TUI navigation and control sequences. Examples: 'Up', 'Down', 'Enter', 'Escape', 'C-c' (Ctrl+C), 'M-x' (Alt+X). For typing regular text, use send-text instead. Supports repeating key presses and optionally capturing output after sending keys.",
+  "Send special keys or key combinations to a terminal. Use for TUI navigation and control sequences. Examples: 'Up', 'Down', 'Enter', 'Escape', 'C-c' (Ctrl+C), 'M-x' (Alt+X). For typing regular text, use send-text instead. Supports repeating key presses and optionally capturing output after sending keys.",
   {
-    paneId: z.string().describe("ID of the pane"),
+    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
     keys: z
       .string()
       .describe(
@@ -438,13 +384,21 @@ server.tool(
       })
       .optional()
       .describe(
-        "Capture pane output after sending keys. Specify 'wait' for slow commands."
+        "Capture terminal output after sending keys. Specify 'wait' for slow commands."
       ),
   },
-  async ({ paneId, keys, repeat, return_output }) => {
+  async ({ terminalId, keys, repeat, return_output }) => {
     try {
+      // Get the pane for this terminal
+      const panes = await tmux.listPanes(terminalId);
+      const pane = panes[0];
+
+      if (!pane) {
+        throw new Error(`No pane found for terminal ${terminalId}`);
+      }
+
       const output = await tmux.sendKeys({
-        paneId,
+        paneId: pane.id,
         keys,
         repeat,
         return_output,
@@ -455,7 +409,7 @@ server.tool(
           content: [
             {
               type: "text",
-              text: `Keys '${keys}' sent to pane ${paneId}${
+              text: `Keys '${keys}' sent to terminal ${terminalId}${
                 repeat && repeat > 1 ? ` (repeated ${repeat} times)` : ""
               }.\n\n--- Output ---\n${output}`,
             },
@@ -467,9 +421,9 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Keys '${keys}' sent to pane ${paneId}${
+            text: `Keys '${keys}' sent to terminal ${terminalId}${
               repeat && repeat > 1 ? ` (repeated ${repeat} times)` : ""
-            }.\n\nUse capture-pane to verify the result.`,
+            }.\n\nUse capture-terminal to verify the result.`,
           },
         ],
       };
@@ -487,68 +441,22 @@ server.tool(
   }
 );
 
-// Send text - Tool
+// Rename terminal - Tool
 server.tool(
-  "send-text",
-  "Type text into a pane. This is the PRIMARY way to execute shell commands with bash operators (&&, ||, |, ;, etc.) - set pressEnter=true to run the command. Also use for interactive applications, REPLs, forms, and text entry. For special keys or control sequences, use send-keys instead.",
+  "rename-terminal",
+  "Rename a terminal to a more descriptive name",
   {
-    paneId: z.string().describe("ID of the pane"),
-    text: z
-      .string()
-      .describe(
-        "Text to type into the pane. For shell commands, can use any bash operators: && (chain), || (or), | (pipe), ; (sequential), etc."
-      ),
-    pressEnter: z
-      .boolean()
-      .optional()
-      .describe(
-        "Press Enter after typing the text (default: false). Set to true to execute shell commands or submit text input."
-      ),
-    return_output: z
-      .object({
-        lines: z
-          .number()
-          .optional()
-          .describe("Number of lines to capture (default: 200)"),
-        wait: z
-          .number()
-          .optional()
-          .describe("Milliseconds to wait before capturing output"),
-      })
-      .optional()
-      .describe(
-        "Capture pane output after sending text. Specify 'wait' for slow commands."
-      ),
+    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+    name: z.string().describe("New name for the terminal"),
   },
-  async ({ paneId, text, pressEnter, return_output }) => {
+  async ({ terminalId, name }) => {
     try {
-      const output = await tmux.sendText({
-        paneId,
-        text,
-        pressEnter,
-        return_output,
-      });
-
-      if (return_output && output) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Text sent to pane ${paneId}${
-                pressEnter ? " (with Enter)" : ""
-              }.\n\n--- Output ---\n${output}`,
-            },
-          ],
-        };
-      }
-
+      await tmux.renameWindow(terminalId, name);
       return {
         content: [
           {
             type: "text",
-            text: `Text sent to pane ${paneId}${
-              pressEnter ? " (with Enter)" : ""
-            }.\n\nUse capture-pane to verify the result.`,
+            text: `Terminal ${terminalId} renamed to "${name}"`,
           },
         ],
       };
@@ -557,7 +465,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error sending text: ${error}`,
+            text: `Error renaming terminal: ${error}`,
           },
         ],
         isError: true,
@@ -566,24 +474,72 @@ server.tool(
   }
 );
 
-// Expose session list as a resource
-server.resource("Sessions", "tmux://sessions", async () => {
+// Kill terminal - Tool
+server.tool(
+  "kill-terminal",
+  "Close a terminal and end its shell session",
+  {
+    terminalId: z.string().describe("ID of the terminal (e.g., '@123')"),
+  },
+  async ({ terminalId }) => {
+    try {
+      await tmux.killWindow(terminalId);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Terminal ${terminalId} has been closed`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error killing terminal: ${error}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Expose terminals as a resource
+server.resource("Terminals", "tmux://terminals", async () => {
   try {
-    const sessions = await tmux.listSessions();
+    await ensureDefaultSession();
+
+    const session = await tmux.findSessionByName(DEFAULT_SESSION);
+    if (!session) {
+      throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
+    }
+
+    const windows = await tmux.listWindows(session.id);
+
+    const terminals = await Promise.all(
+      windows.map(async (window) => {
+        const panes = await tmux.listPanes(window.id);
+        const pane = panes[0];
+        const workingDirectory = pane
+          ? await tmux.getCurrentWorkingDirectory(pane.id)
+          : "unknown";
+
+        return {
+          id: window.id,
+          name: window.name,
+          active: window.active,
+          workingDirectory,
+        };
+      })
+    );
+
     return {
       contents: [
         {
-          uri: "tmux://sessions",
-          text: JSON.stringify(
-            sessions.map((session) => ({
-              id: session.id,
-              name: session.name,
-              attached: session.attached,
-              windows: session.windows,
-            })),
-            null,
-            2
-          ),
+          uri: "tmux://terminals",
+          text: JSON.stringify(terminals, null, 2),
         },
       ],
     };
@@ -591,64 +547,65 @@ server.resource("Sessions", "tmux://sessions", async () => {
     return {
       contents: [
         {
-          uri: "tmux://sessions",
-          text: `Error listing sessions: ${error}`,
+          uri: "tmux://terminals",
+          text: `Error listing terminals: ${error}`,
         },
       ],
     };
   }
 });
 
-// Expose pane content as a resource
+// Expose terminal content as a resource
 server.resource(
-  "Pane Content",
-  new ResourceTemplate("tmux://pane/{paneId}", {
+  "Terminal Content",
+  new ResourceTemplate("tmux://terminal/{terminalId}", {
     list: async () => {
       try {
-        // Get all sessions
-        const sessions = await tmux.listSessions();
-        const paneResources = [];
+        await ensureDefaultSession();
 
-        // For each session, get all windows
-        for (const session of sessions) {
-          const windows = await tmux.listWindows(session.id);
-
-          // For each window, get all panes
-          for (const window of windows) {
-            const panes = await tmux.listPanes(window.id);
-
-            // For each pane, create a resource with descriptive name
-            for (const pane of panes) {
-              paneResources.push({
-                name: `Pane: ${session.name} - ${pane.id} - ${pane.title} ${
-                  pane.active ? "(active)" : ""
-                }`,
-                uri: `tmux://pane/${pane.id}`,
-                description: `Content from pane ${pane.id} - ${pane.title} in session ${session.name}`,
-              });
-            }
-          }
+        const session = await tmux.findSessionByName(DEFAULT_SESSION);
+        if (!session) {
+          return { resources: [] };
         }
 
+        const windows = await tmux.listWindows(session.id);
+
+        const terminalResources = windows.map((window) => ({
+          name: `Terminal: ${window.name} ${window.active ? "(active)" : ""}`,
+          uri: `tmux://terminal/${window.id}`,
+          description: `Content from terminal ${window.name}`,
+        }));
+
         return {
-          resources: paneResources,
+          resources: terminalResources,
         };
       } catch (error) {
         server.server.sendLoggingMessage({
           level: "error",
-          data: `Error listing panes: ${error}`,
+          data: `Error listing terminals: ${error}`,
         });
 
         return { resources: [] };
       }
     },
   }),
-  async (uri, { paneId }) => {
+  async (uri, { terminalId }) => {
     try {
-      // Ensure paneId is a string
-      const paneIdStr = Array.isArray(paneId) ? paneId[0] : paneId;
-      // Default to no colors for resources to maintain clean programmatic access
-      const content = await tmux.capturePaneContent(paneIdStr, 200, false);
+      // Ensure terminalId is a string
+      const terminalIdStr = Array.isArray(terminalId)
+        ? terminalId[0]
+        : terminalId;
+
+      // Get the pane for this terminal
+      const panes = await tmux.listPanes(terminalIdStr);
+      const pane = panes[0];
+
+      if (!pane) {
+        throw new Error(`No pane found for terminal ${terminalIdStr}`);
+      }
+
+      const content = await tmux.capturePaneContent(pane.id, 200, false);
+
       return {
         contents: [
           {
@@ -662,7 +619,7 @@ server.resource(
         contents: [
           {
             uri: uri.href,
-            text: `Error capturing pane content: ${error}`,
+            text: `Error capturing terminal content: ${error}`,
           },
         ],
       };
@@ -686,6 +643,9 @@ async function main() {
     tmux.setShellConfig({
       type: values["shell-type"] as string,
     });
+
+    // Ensure default session exists
+    await ensureDefaultSession();
 
     console.log(values, process.argv);
 
