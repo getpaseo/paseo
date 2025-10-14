@@ -175,30 +175,93 @@ export async function capturePaneContent(
 export async function getCurrentWorkingDirectory(
   paneId: string
 ): Promise<string> {
-  return executeTmux(`display-message -p -t '${paneId}' '#{pane_current_path}'`);
+  try {
+    const tmuxPath = await executeTmux(`display-message -p -t '${paneId}' '#{pane_current_path}'`);
+
+    // If tmux returns a valid path, use it
+    if (tmuxPath && tmuxPath.trim()) {
+      return tmuxPath;
+    }
+
+    // Fallback: get the PID and use lsof to find the actual CWD
+    const shellPid = await executeTmux(`display-message -p -t '${paneId}' '#{pane_pid}'`);
+    const { stdout } = await exec(`lsof -a -p ${shellPid.trim()} -d cwd -Fn | grep '^n' | cut -c2-`);
+    return stdout.trim() || tmuxPath;
+  } catch (error) {
+    // If all else fails, return empty string
+    return "";
+  }
 }
 
 /**
- * Create a new tmux session
+ * Get the current command running in a pane (full command line with arguments)
+ * Gets the immediate child process of the shell, not the shell itself
+ */
+export async function getCurrentCommand(paneId: string): Promise<string> {
+  try {
+    // Get the shell PID (the pane's main process)
+    const shellPid = await executeTmux(`display-message -p -t '${paneId}' '#{pane_pid}'`);
+
+    // First, check if there's a child process using comm= (works for all programs including top)
+    // Use 'ax' flags to see all processes
+    const { stdout: childPid } = await exec(`ps ax -o pid=,ppid=,comm= | awk '$2 == ${shellPid.trim()} { print $1; exit }'`);
+
+    if (childPid.trim()) {
+      // Found a child process, get its full command with args
+      const { stdout: fullCmd } = await exec(`ps -p ${childPid.trim()} -o args= | sed 's/\\\\012.*//'`);
+      const command = fullCmd.trim();
+      if (command) {
+        return command;
+      }
+    }
+
+    // No child process, just return the shell name
+    const { stdout: shellCmd } = await exec(`ps -p ${shellPid} -o comm=`);
+    return shellCmd.trim();
+  } catch (error) {
+    // Fallback to just the command name if ps fails
+    return executeTmux(`display-message -p -t '${paneId}' '#{pane_current_command}'`);
+  }
+}
+
+/**
+ * Create a new tmux session with a default window named "default" in home directory
  */
 export async function createSession(name: string): Promise<TmuxSession | null> {
-  await executeTmux(`new-session -d -s "${name}"`);
+  const homeDir = process.env.HOME || "~";
+  await executeTmux(`new-session -d -s "${name}" -n "default" -c "${homeDir}"`);
+
+  // Disable automatic window renaming for all windows in the session
+  await executeTmux(`set-window-option -t "${name}" automatic-rename off`);
+
   return findSessionByName(name);
 }
 
 /**
- * Create a new window in a session
+ * Create a new window in a session with optional working directory and initial command
  */
 export async function createWindow(
   sessionId: string,
   name: string,
-  command?: string
+  options?: {
+    workingDirectory?: string;
+    command?: string;
+  }
 ): Promise<(TmuxWindow & { paneId: string; output?: string }) | null> {
-  const output = await executeTmux(`new-window -t '${sessionId}' -n '${name}'`);
+  // Build new-window command with optional working directory
+  let newWindowCmd = `new-window -t '${sessionId}' -n '${name}'`;
+  if (options?.workingDirectory) {
+    newWindowCmd += ` -c '${options.workingDirectory}'`;
+  }
+
+  await executeTmux(newWindowCmd);
   const windows = await listWindows(sessionId);
   const window = windows.find((window) => window.name === name);
 
   if (!window) return null;
+
+  // Disable automatic window renaming
+  await executeTmux(`set-window-option -t '${window.id}' automatic-rename off`);
 
   // Get the default pane created with the window
   const panes = await listPanes(window.id);
@@ -207,10 +270,10 @@ export async function createWindow(
   let commandOutput: string | undefined;
 
   // If command is provided, execute it in the new pane
-  if (command && defaultPane) {
+  if (options?.command && defaultPane) {
     await sendText({
       paneId: defaultPane.id,
-      text: command,
+      text: options.command,
       pressEnter: true,
     });
 
@@ -257,6 +320,8 @@ export async function renameWindow(
   name: string
 ): Promise<void> {
   await executeTmux(`rename-window -t '${windowId}' '${name}'`);
+  // Disable automatic renaming to preserve the manual name
+  await executeTmux(`set-window-option -t '${windowId}' automatic-rename off`);
 }
 
 /**

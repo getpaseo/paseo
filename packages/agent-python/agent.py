@@ -18,6 +18,7 @@ from livekit.agents import (
     cli,
     llm,
     voice,
+    inference,
 )
 from livekit.agents.llm.mcp import MCPServerHTTP
 
@@ -67,7 +68,11 @@ async def entrypoint(ctx: JobContext):
     session = voice.AgentSession(
         stt="assemblyai/universal-streaming:en",
         llm="openai/gpt-4.1-mini",
-        tts="cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
+        tts= inference.TTS(
+            model="elevenlabs/eleven_turbo_v2_5", 
+            voice="Xb7hH8MSUJpSbSDYk0k2", 
+            language="en"
+        ),
     )
 
     # Start the session

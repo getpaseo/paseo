@@ -11,7 +11,7 @@ import * as tmux from "./tmux.js";
 import { startHttpServer } from "./http-server.js";
 import os from "node:os";
 
-const DEFAULT_SESSION = "voice-dev";
+const DEFAULT_SESSION = "__voice-dev";
 
 // Create MCP server
 const server = new McpServer(
@@ -47,7 +47,7 @@ async function ensureDefaultSession(): Promise<void> {
 // List terminals - Tool
 server.tool(
   "list-terminals",
-  "List all terminals (isolated shell environments). Returns terminal ID, name, and current working directory.",
+  "List all terminals (isolated shell environments). Returns terminal ID, name, current working directory, and currently running command.",
   {},
   async () => {
     try {
@@ -61,7 +61,7 @@ server.tool(
 
       const windows = await tmux.listWindows(session.id);
 
-      // For each window, get the pane and its working directory
+      // For each window, get the pane and its info
       const terminals = await Promise.all(
         windows.map(async (window) => {
           const panes = await tmux.listPanes(window.id);
@@ -69,13 +69,16 @@ server.tool(
           const workingDirectory = pane
             ? await tmux.getCurrentWorkingDirectory(pane.id)
             : "unknown";
+          const currentCommand = pane
+            ? await tmux.getCurrentCommand(pane.id)
+            : "unknown";
 
           return {
             id: window.id,
             name: window.name,
             active: window.active,
             workingDirectory,
-            paneId: pane?.id || "",
+            currentCommand,
           };
         })
       );
@@ -130,8 +133,11 @@ server.tool(
         throw new Error(`Default session not found: ${DEFAULT_SESSION}`);
       }
 
-      // Create window in default session
-      const window = await tmux.createWindow(session.id, name);
+      // Create window in default session with working directory and optional command
+      const window = await tmux.createWindow(session.id, name, {
+        workingDirectory,
+        command: initialCommand,
+      });
       if (!window) {
         return {
           content: [
@@ -143,38 +149,13 @@ server.tool(
         };
       }
 
-      // Change to working directory
-      await tmux.sendText({
-        paneId: window.paneId,
-        text: `cd "${workingDirectory}"`,
-        pressEnter: true,
-      });
-
-      // Wait a bit for cd to complete
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      // Execute initial command if provided
-      let commandOutput: string | undefined;
-      if (initialCommand) {
-        await tmux.sendText({
-          paneId: window.paneId,
-          text: initialCommand,
-          pressEnter: true,
-        });
-
-        // Wait for command to execute
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Capture output
-        commandOutput = await tmux.capturePaneContent(window.paneId, 200);
-      }
+      const commandOutput = window.output;
 
       let text = `Terminal created: ${JSON.stringify(
         {
           id: window.id,
           name: window.name,
           workingDirectory,
-          paneId: window.paneId,
         },
         null,
         2
@@ -525,12 +506,16 @@ server.resource("Terminals", "tmux://terminals", async () => {
         const workingDirectory = pane
           ? await tmux.getCurrentWorkingDirectory(pane.id)
           : "unknown";
+        const currentCommand = pane
+          ? await tmux.getCurrentCommand(pane.id)
+          : "unknown";
 
         return {
           id: window.id,
           name: window.name,
           active: window.active,
           workingDirectory,
+          currentCommand,
         };
       })
     );
