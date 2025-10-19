@@ -16,6 +16,7 @@ export function createAudioPlayer(): AudioPlayer {
   let playing = false;
   let queue: QueuedAudio[] = [];
   let isProcessingQueue = false;
+  let currentReject: ((error: Error) => void) | null = null;
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -51,6 +52,9 @@ export function createAudioPlayer(): AudioPlayer {
 
   async function playAudio(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
+      // Store reject handler so stop() can properly cancel current playback
+      currentReject = reject;
+
       try {
         // Create blob URL
         const audioUrl = URL.createObjectURL(audioData);
@@ -71,6 +75,7 @@ export function createAudioPlayer(): AudioPlayer {
           );
           playing = false;
           currentAudio = null;
+          currentReject = null;
 
           // Clean up blob URL
           URL.revokeObjectURL(audioUrl);
@@ -82,6 +87,7 @@ export function createAudioPlayer(): AudioPlayer {
           console.error("[AudioPlayer] Playback error:", error);
           playing = false;
           currentAudio = null;
+          currentReject = null;
 
           // Clean up blob URL
           URL.revokeObjectURL(audioUrl);
@@ -94,6 +100,7 @@ export function createAudioPlayer(): AudioPlayer {
           console.error("[AudioPlayer] Failed to start playback:", error);
           playing = false;
           currentAudio = null;
+          currentReject = null;
           URL.revokeObjectURL(audioUrl);
           reject(error);
         });
@@ -101,18 +108,28 @@ export function createAudioPlayer(): AudioPlayer {
         console.error("[AudioPlayer] Error creating audio element:", error);
         playing = false;
         currentAudio = null;
+        currentReject = null;
         reject(error);
       }
     });
   }
 
   function stop(): void {
+    // Stop and reject currently playing audio
     if (currentAudio) {
       currentAudio.pause();
       currentAudio.currentTime = 0;
+      // Remove src to fully stop the audio
+      currentAudio.src = "";
       currentAudio = null;
     }
     playing = false;
+
+    // Reject the current playing promise if it exists
+    if (currentReject) {
+      currentReject(new Error("Playback stopped"));
+      currentReject = null;
+    }
 
     // Reject all pending promises in the queue
     while (queue.length > 0) {
