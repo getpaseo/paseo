@@ -5,7 +5,6 @@ import type { VoiceAssistantWebSocketServer } from "../websocket-server.js";
 interface PendingPlayback {
   resolve: () => void;
   reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
 }
 
 /**
@@ -13,11 +12,6 @@ interface PendingPlayback {
  * Maps audio ID -> promise resolve/reject handlers
  */
 const pendingPlaybacks = new Map<string, PendingPlayback>();
-
-/**
- * Timeout for waiting on client playback confirmation (30 seconds)
- */
-const PLAYBACK_TIMEOUT_MS = 30000;
 
 /**
  * Generate TTS audio, broadcast to clients, and wait for playback confirmation
@@ -35,14 +29,8 @@ export async function generateTTSAndWaitForPlayback(
 
   // Create promise that will be resolved when client confirms playback
   const playbackPromise = new Promise<void>((resolve, reject) => {
-    // Set timeout to prevent hanging forever
-    const timeout = setTimeout(() => {
-      pendingPlaybacks.delete(audioId);
-      reject(new Error(`Audio playback timeout for ${audioId}`));
-    }, PLAYBACK_TIMEOUT_MS);
-
-    // Store handlers
-    pendingPlaybacks.set(audioId, { resolve, reject, timeout });
+    // Store handlers (no timeout - will resolve when client confirms or connection closes)
+    pendingPlaybacks.set(audioId, { resolve, reject });
   });
 
   // Broadcast audio to clients
@@ -81,8 +69,7 @@ export function confirmAudioPlayed(audioId: string): void {
     return;
   }
 
-  // Clear timeout and resolve promise
-  clearTimeout(pending.timeout);
+  // Resolve promise and cleanup
   pending.resolve();
   pendingPlaybacks.delete(audioId);
 }

@@ -72,11 +72,10 @@ export async function processUserMessage(params: {
   // No need to broadcast again here to avoid duplication
 
   let assistantResponse = "";
+  // Track pending TTS playback promise outside of streamLLM scope
+  let pendingTTS: Promise<void> | null = null;
 
   try {
-    // Track pending TTS playback promise
-    let pendingTTS: Promise<void> | null = null;
-
     // Stream LLM response with tool execution
     assistantResponse = await streamLLM({
       systemPrompt: getSystemPrompt(),
@@ -161,20 +160,35 @@ export async function processUserMessage(params: {
         }
       },
       onFinish: async () => {
-        // Wait for any final pending TTS to complete
-        if (pendingTTS) {
-          await pendingTTS;
-          pendingTTS = null;
-        }
+        // Don't wait for TTS here - we'll handle it after adding to history
       },
     });
 
-    // Add assistant response to context
+    // Add assistant response to context IMMEDIATELY after stream completes
+    // This ensures partial responses are saved even if TTS fails or is interrupted
     conversation.messages.push({
       role: "assistant",
       content: assistantResponse,
     });
+
+    // Now wait for any pending TTS, but don't fail the entire operation if it times out
+    if (pendingTTS) {
+      try {
+        await pendingTTS;
+      } catch (ttsError) {
+        // TTS failed but message is already in history - just log the error
+        console.error("TTS playback failed (message already saved):", ttsError);
+      }
+    }
   } catch (error) {
+    // If stream itself failed or was aborted, still save any partial response to history
+    if (assistantResponse) {
+      conversation.messages.push({
+        role: "assistant",
+        content: assistantResponse,
+      });
+    }
+
     // Broadcast error to WebSocket
     if (params.wsServer) {
       params.wsServer.broadcastActivityLog({

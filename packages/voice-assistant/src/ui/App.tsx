@@ -248,6 +248,10 @@ function App() {
   const handleSendMessage = () => {
     if (!userInput.trim() || !ws.isConnected) return;
 
+    // Stop any currently playing audio and clear the queue
+    audioPlayerRef.current.stop();
+    setIsPlayingAudio(false);
+
     // Send message to server
     ws.sendUserMessage(userInput);
 
@@ -292,6 +296,11 @@ function App() {
         console.log(`[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`);
       } else {
         console.log('[App] Starting recording...');
+
+        // Stop any currently playing audio when starting to record
+        audioPlayerRef.current.stop();
+        setIsPlayingAudio(false);
+
         await recorder.start();
         setIsRecording(true);
       }
