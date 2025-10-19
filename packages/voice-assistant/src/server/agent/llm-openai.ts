@@ -6,6 +6,7 @@ import {
   createTerminal,
   captureTerminal,
   sendText,
+  sendKeys,
   renameTerminal,
   killTerminal,
 } from "../daemon/terminal-manager.js";
@@ -17,7 +18,8 @@ import invariant from "tiny-invariant";
  */
 export const terminalTools = {
   list_terminals: tool({
-    description: "List all available terminals in the voice-dev session",
+    description:
+      "List all terminals (isolated shell environments). Returns terminal name, active status, current working directory, currently running command, and the last 5 lines of output for each terminal.",
     inputSchema: z.object({}),
     execute: async () => {
       const terminals = await listTerminals();
@@ -27,14 +29,24 @@ export const terminalTools = {
 
   create_terminal: tool({
     description:
-      "Create a new terminal with specified name and working directory",
+      "Create a new terminal (isolated shell environment) at a specific working directory. Optionally execute an initial command after creation. Terminal names must be unique. Always specify workingDirectory based on context - use project paths when working on projects, or the same directory as current terminal when user says 'another terminal here'. Defaults to ~ only if no context.",
     inputSchema: z.object({
-      name: z.string().describe("Unique name for the terminal"),
-      workingDirectory: z.string().describe("Working directory path"),
+      name: z
+        .string()
+        .describe(
+          "Unique name for the terminal. Should be descriptive of what the terminal is used for (e.g., 'web-dev', 'api-server', 'tests')."
+        ),
+      workingDirectory: z
+        .string()
+        .describe(
+          "Absolute path to the working directory for this terminal. Can use ~ for home directory. Required parameter - set contextually based on what the user is working on. Use project paths when working on projects. Defaults to home directory (~) only if no context."
+        ),
       initialCommand: z
         .string()
         .optional()
-        .describe("Optional command to run on creation"),
+        .describe(
+          "Optional command to execute after creating the terminal (e.g., 'npm run dev', 'python -m venv venv'). The command runs after changing to the working directory."
+        ),
     }),
     execute: async ({ name, workingDirectory, initialCommand }) => {
       const terminal = await createTerminal({
@@ -47,9 +59,10 @@ export const terminalTools = {
   }),
 
   capture_terminal: tool({
-    description: "Capture and return the output from a terminal",
+    description:
+      "Capture and return the output from a terminal. Returns the last N lines of terminal content. Useful for checking command results, monitoring running processes, or debugging issues.",
     inputSchema: z.object({
-      terminalId: z.string().describe("Terminal ID (e.g., @123)"),
+      terminalName: z.string().describe("Name of the terminal"),
       lines: z
         .number()
         .optional()
@@ -57,34 +70,51 @@ export const terminalTools = {
       wait: z
         .number()
         .optional()
-        .describe("Milliseconds to wait before capture"),
+        .describe(
+          "Milliseconds to wait before capturing output. Useful for slow commands."
+        ),
     }),
-    execute: async ({ terminalId, lines, wait }) => {
-      const output = await captureTerminal(terminalId, lines, wait);
+    execute: async ({ terminalName, lines, wait }) => {
+      const output = await captureTerminal(terminalName, lines, wait);
       return { output };
     },
   }),
 
   send_text: tool({
-    description: "Send text or commands to a terminal",
+    description:
+      "Type text into a terminal. This is the PRIMARY way to execute shell commands with bash operators (&&, ||, |, ;, etc.) - set pressEnter=true to run the command. Also use for interactive applications, REPLs, forms, and text entry. For special keys or control sequences, use send_keys instead.",
     inputSchema: z.object({
-      terminalId: z.string().describe("Terminal ID (e.g., @123)"),
-      text: z.string().describe("Text to send to the terminal"),
+      terminalName: z.string().describe("Name of the terminal"),
+      text: z
+        .string()
+        .describe(
+          "Text to type into the terminal. For shell commands, can use any bash operators: && (chain), || (or), | (pipe), ; (sequential), etc."
+        ),
       pressEnter: z
         .boolean()
         .optional()
-        .describe("Whether to press Enter after text"),
+        .describe(
+          "Press Enter after typing the text (default: false). Set to true to execute shell commands or submit text input."
+        ),
       return_output: z
         .object({
-          lines: z.number().optional(),
-          wait: z.number().optional(),
+          lines: z
+            .number()
+            .optional()
+            .describe("Number of lines to capture (default: 200)"),
+          wait: z
+            .number()
+            .optional()
+            .describe("Milliseconds to wait before capturing output"),
         })
         .optional()
-        .describe("Capture output after sending"),
+        .describe(
+          "Capture terminal output after sending text. Specify 'wait' for slow commands."
+        ),
     }),
-    execute: async ({ terminalId, text, pressEnter, return_output }) => {
+    execute: async ({ terminalName, text, pressEnter, return_output }) => {
       const output = await sendText(
-        terminalId,
+        terminalName,
         text,
         pressEnter,
         return_output
@@ -93,25 +123,72 @@ export const terminalTools = {
     },
   }),
 
-  rename_terminal: tool({
-    description: "Rename an existing terminal",
+  send_keys: tool({
+    description:
+      "Send special keys or key combinations to a terminal. Use for TUI navigation and control sequences. Examples: 'Up', 'Down', 'Enter', 'Escape', 'C-c' (Ctrl+C), 'M-x' (Alt+X). For typing regular text, use send_text instead. Supports repeating key presses and optionally capturing output after sending keys.",
     inputSchema: z.object({
-      terminalId: z.string().describe("Terminal ID to rename"),
-      newName: z.string().describe("New unique name for the terminal"),
+      terminalName: z.string().describe("Name of the terminal"),
+      keys: z
+        .string()
+        .describe(
+          "Special key name or key combination: 'Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'Space', 'C-c', 'M-x', etc."
+        ),
+      repeat: z
+        .number()
+        .min(1)
+        .optional()
+        .describe("Number of times to repeat the key press (default: 1)"),
+      return_output: z
+        .object({
+          lines: z
+            .number()
+            .optional()
+            .describe("Number of lines to capture (default: 200)"),
+          wait: z
+            .number()
+            .optional()
+            .describe("Milliseconds to wait before capturing output"),
+        })
+        .optional()
+        .describe(
+          "Capture terminal output after sending keys. Specify 'wait' for slow commands."
+        ),
     }),
-    execute: async ({ terminalId, newName }) => {
-      await renameTerminal(terminalId, newName);
+    execute: async ({ terminalName, keys, repeat, return_output }) => {
+      const output = await sendKeys(terminalName, keys, repeat, return_output);
+      return { output };
+    },
+  }),
+
+  rename_terminal: tool({
+    description:
+      "Rename a terminal to a more descriptive name. The new name must be unique among all terminals.",
+    inputSchema: z.object({
+      terminalName: z.string().describe("Current name of the terminal"),
+      newName: z
+        .string()
+        .describe(
+          "New unique name for the terminal. Should be descriptive of the terminal's purpose."
+        ),
+    }),
+    execute: async ({ terminalName, newName }) => {
+      await renameTerminal(terminalName, newName);
       return { success: true };
     },
   }),
 
   kill_terminal: tool({
-    description: "Close and destroy a terminal",
+    description:
+      "Close and destroy a terminal. This will terminate any running processes in the terminal. Use with caution.",
     inputSchema: z.object({
-      terminalId: z.string().describe("Terminal ID to kill"),
+      terminalName: z
+        .string()
+        .describe(
+          "Name of the terminal to kill. Get this from list_terminals."
+        ),
     }),
-    execute: async ({ terminalId }) => {
-      await killTerminal(terminalId);
+    execute: async ({ terminalName }) => {
+      await killTerminal(terminalName);
       return { success: true };
     },
   }),
@@ -129,12 +206,14 @@ export interface Message {
  * Streaming LLM parameters
  */
 export interface StreamLLMParams {
+  systemPrompt: string;
   messages: Message[];
-  onChunk?: (chunk: string) => void;
+  abortSignal?: AbortSignal;
+  onChunk?: (chunk: string) => void | Promise<void>;
   onTextSegment?: (segment: string) => void;
-  onToolCall?: (toolName: string, args: any) => void;
-  onToolResult?: (toolName: string, result: any) => void;
-  onFinish?: (fullText: string) => void;
+  onToolCall?: (toolCallId: string, toolName: string, args: any) => Promise<void>;
+  onToolResult?: (toolCallId: string, toolName: string, result: any) => void;
+  onFinish?: (fullText: string) => void | Promise<void>;
 }
 
 /**
@@ -149,12 +228,32 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
 
   const result = await streamText({
     model: openrouter("anthropic/claude-haiku-4.5"),
+    system: params.systemPrompt,
     messages: params.messages,
     tools: terminalTools,
-    onChunk: (chuk) => {
-      // if (params.onChunk) {
-      //   params.onChunk(chunk);
-      // }
+    abortSignal: params.abortSignal,
+    onChunk: async ({ chunk }) => {
+      // console.log("onChunk", chunk);
+      if (chunk.type === "text-delta") {
+        // Accumulate text in buffer
+        textBuffer += chunk.text;
+        fullText += chunk.text;
+
+        params.onChunk?.(chunk.text);
+      } else if (chunk.type === "tool-call") {
+        // Flush accumulated text as a segment before tool call
+        flushTextBuffer();
+
+        // Emit tool call event
+        if (params.onToolCall) {
+          await params.onToolCall(chunk.toolCallId, chunk.toolName, chunk.input);
+        }
+      } else if (chunk.type === "tool-result") {
+        // Emit tool result event
+        if (params.onToolResult) {
+          params.onToolResult(chunk.toolCallId, chunk.toolName, chunk.output);
+        }
+      }
     },
     stopWhen: stepCountIs(10),
   });
@@ -169,38 +268,15 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
     textBuffer = "";
   }
 
-  // Stream all events from fullStream
-  for await (const part of result.fullStream) {
-    if (part.type === "text-delta") {
-      // Accumulate text in buffer
-      textBuffer += part.text;
-      fullText += part.text;
-
-      // Stream individual deltas to caller
-      if (params.onChunk) {
-        params.onChunk(part.text);
-      }
-    } else if (part.type === "tool-call") {
-      // Flush accumulated text as a segment before tool call
-      flushTextBuffer();
-
-      // Emit tool call event
-      if (params.onToolCall) {
-        params.onToolCall(part.toolName, part.input);
-      }
-    } else if (part.type === "tool-result") {
-      // Emit tool result event
-      if (params.onToolResult) {
-        params.onToolResult(part.toolName, part.output);
-      }
-    }
+  for await (const _part of result.fullStream) {
+    // console.log("part", _part);
   }
 
   // Flush any remaining text at the end
   flushTextBuffer();
 
   if (params.onFinish) {
-    params.onFinish(fullText);
+    await params.onFinish(fullText);
   }
 
   return fullText;

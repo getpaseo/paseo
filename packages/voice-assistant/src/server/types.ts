@@ -15,7 +15,7 @@ export interface ActivityLogEntry {
 
 export interface WebSocketMessage {
   type: 'activity_log' | 'status' | 'ping' | 'pong' | 'user_message' | 'assistant_chunk'
-       | 'audio_chunk' | 'audio_output' | 'recording_state' | 'transcription_result';
+       | 'audio_chunk' | 'audio_output' | 'recording_state' | 'transcription_result' | 'audio_played';
   payload: unknown;
 }
 
@@ -39,4 +39,8 @@ export interface AudioOutputPayload {
   audio: string; // base64 encoded audio data (complete)
   format: string; // 'mp3'
   id: string; // unique ID for queue management
+}
+
+export interface AudioPlayedPayload {
+  id: string; // unique ID of the audio that finished playing
 }

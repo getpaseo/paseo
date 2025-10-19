@@ -4,13 +4,18 @@ import type {
   WebSocketMessage,
   ActivityLogEntry,
   AudioChunkPayload,
+  AudioPlayedPayload,
 } from "./types.js";
+import { confirmAudioPlayed } from "./agent/tts-manager.js";
+import { createConversation, deleteConversation } from "./agent/orchestrator.js";
 
 export class VoiceAssistantWebSocketServer {
   private wss: WebSocketServer;
   private clients: Map<WebSocket, string> = new Map(); // Map ws to client ID
-  private messageHandler?: (message: string) => Promise<void>;
-  private audioHandler?: (audio: Buffer, format: string) => Promise<string>;
+  private conversationIds: Map<WebSocket, string> = new Map(); // Map ws to conversation ID
+  private abortControllers: Map<WebSocket, AbortController> = new Map(); // Map ws to AbortController
+  private messageHandler?: (conversationId: string, message: string, abortSignal: AbortSignal) => Promise<void>;
+  private audioHandler?: (conversationId: string, audio: Buffer, format: string, abortSignal: AbortSignal) => Promise<string>;
   private audioBuffers: Map<string, { chunks: Buffer[]; format: string }> =
     new Map();
   private clientIdCounter: number = 0;
@@ -29,8 +34,17 @@ export class VoiceAssistantWebSocketServer {
     // Generate unique client ID
     const clientId = `client-${++this.clientIdCounter}`;
     this.clients.set(ws, clientId);
+
+    // Create new conversation for this client
+    const conversationId = createConversation();
+    this.conversationIds.set(ws, conversationId);
+
+    // Create AbortController for this client
+    const abortController = new AbortController();
+    this.abortControllers.set(ws, abortController);
+
     console.log(
-      `[WS] Client connected: ${clientId} (total: ${this.clients.size})`
+      `[WS] Client connected: ${clientId} with conversation ${conversationId} (total: ${this.clients.size})`
     );
 
     // Send welcome message
@@ -48,19 +62,49 @@ export class VoiceAssistantWebSocketServer {
 
     ws.on("close", () => {
       const clientId = this.clients.get(ws);
+      const conversationId = this.conversationIds.get(ws);
+      const abortController = this.abortControllers.get(ws);
+
+      // Abort any ongoing operations
+      if (abortController) {
+        abortController.abort();
+        this.abortControllers.delete(ws);
+        console.log(`[WS] Aborted operations for ${clientId}`);
+      }
+
       if (clientId) {
         this.clients.delete(ws);
         console.log(
           `[WS] Client disconnected: ${clientId} (total: ${this.clients.size})`
         );
       }
+
+      if (conversationId) {
+        deleteConversation(conversationId);
+        this.conversationIds.delete(ws);
+        console.log(`[WS] Conversation ${conversationId} deleted`);
+      }
     });
 
     ws.on("error", (error) => {
       console.error("[WS] Client error:", error);
       const clientId = this.clients.get(ws);
+      const conversationId = this.conversationIds.get(ws);
+      const abortController = this.abortControllers.get(ws);
+
+      // Abort any ongoing operations
+      if (abortController) {
+        abortController.abort();
+        this.abortControllers.delete(ws);
+      }
+
       if (clientId) {
         this.clients.delete(ws);
+      }
+
+      if (conversationId) {
+        deleteConversation(conversationId);
+        this.conversationIds.delete(ws);
       }
     });
   }
@@ -82,8 +126,18 @@ export class VoiceAssistantWebSocketServer {
         case "user_message":
           // Handle user message through orchestrator
           const payload = message.payload as { message: string };
+          const conversationId = this.conversationIds.get(ws);
+          const abortController = this.abortControllers.get(ws);
+          if (!conversationId) {
+            console.error("[WS] No conversation found for client");
+            break;
+          }
+          if (!abortController) {
+            console.error("[WS] No abort controller found for client");
+            break;
+          }
           if (this.messageHandler) {
-            await this.messageHandler(payload.message);
+            await this.messageHandler(conversationId, payload.message, abortController.signal);
           } else {
             console.warn("[WS] No message handler registered");
           }
@@ -92,6 +146,12 @@ export class VoiceAssistantWebSocketServer {
         case "audio_chunk":
           // Handle audio chunk for STT
           await this.handleAudioChunk(ws, message.payload as AudioChunkPayload);
+          break;
+
+        case "audio_played":
+          // Handle audio playback confirmation
+          const audioPlayedPayload = message.payload as AudioPlayedPayload;
+          confirmAudioPlayed(audioPlayedPayload.id);
           break;
 
         default:
@@ -136,12 +196,12 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  public setMessageHandler(handler: (message: string) => Promise<void>): void {
+  public setMessageHandler(handler: (conversationId: string, message: string, abortSignal: AbortSignal) => Promise<void>): void {
     this.messageHandler = handler;
   }
 
   public setAudioHandler(
-    handler: (audio: Buffer, format: string) => Promise<string>
+    handler: (conversationId: string, audio: Buffer, format: string, abortSignal: AbortSignal) => Promise<string>
   ): void {
     this.audioHandler = handler;
   }
@@ -151,8 +211,19 @@ export class VoiceAssistantWebSocketServer {
     payload: AudioChunkPayload
   ): Promise<void> {
     try {
-      // Use a client-specific key for buffering (in case multiple clients)
-      const clientId = "default"; // Could be enhanced with per-client tracking
+      // Use client-specific key for buffering
+      const clientId = this.clients.get(ws);
+      if (!clientId) {
+        console.error("[WS] No client ID found for WebSocket");
+        return;
+      }
+
+      // Get conversation ID for this client
+      const conversationId = this.conversationIds.get(ws);
+      if (!conversationId) {
+        console.error("[WS] No conversation found for client");
+        return;
+      }
 
       // Decode base64 audio data
       const audioBuffer = Buffer.from(payload.audio, "base64");
@@ -188,6 +259,12 @@ export class VoiceAssistantWebSocketServer {
         this.audioBuffers.delete(clientId);
 
         // Process audio through handler (STT)
+        const abortController = this.abortControllers.get(ws);
+        if (!abortController) {
+          console.error("[WS] No abort controller found for client");
+          return;
+        }
+
         if (this.audioHandler) {
           this.broadcastActivityLog({
             id: Date.now().toString(),
@@ -196,7 +273,7 @@ export class VoiceAssistantWebSocketServer {
             content: "Transcribing audio...",
           });
 
-          const transcript = await this.audioHandler(completeAudio, format);
+          const transcript = await this.audioHandler(conversationId, completeAudio, format, abortController.signal);
 
           // Send transcription result back to client
           this.sendToClient(ws, {

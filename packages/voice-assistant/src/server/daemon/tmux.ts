@@ -191,9 +191,18 @@ export async function capturePaneContent(
   includeColors: boolean = false
 ): Promise<string> {
   const colorFlag = includeColors ? "-e" : "";
-  return executeTmux(
-    `capture-pane -p ${colorFlag} -t '${paneId}' -S -${lines} -E -`
+  // Capture a large range to ensure we have enough content
+  const captureLines = Math.max(lines, 1000);
+  const output = await executeTmux(
+    `capture-pane -p ${colorFlag} -t '${paneId}' -S -${captureLines} -E -`
   );
+
+  // Trim trailing whitespace, split by lines, take last N lines, rejoin
+  const trimmed = output.trimEnd();
+  const allLines = trimmed.split('\n');
+  const lastLines = allLines.slice(-lines);
+
+  return lastLines.join('\n');
 }
 
 /**
@@ -800,7 +809,7 @@ export async function sendKeys({
   paneId: string;
   keys: string;
   repeat?: number;
-  return_output?: { lines?: number; wait?: number };
+  return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number };
 }): Promise<string | void> {
   // Repeat the key press the specified number of times
   for (let i = 0; i < repeat; i++) {
@@ -810,11 +819,49 @@ export async function sendKeys({
 
   // If return_output is requested, wait and capture pane content
   if (return_output) {
-    await new Promise((resolve) =>
-      setTimeout(resolve, return_output.wait ?? 500)
-    );
     const lines = return_output.lines || 200;
-    return capturePaneContent(paneId, lines, false);
+    const waitForSettled = return_output.waitForSettled ?? true;
+    const maxWait = return_output.maxWait ?? 120000; // 2 minutes default
+
+    if (waitForSettled) {
+      return waitForPaneActivityToSettle(paneId, maxWait, lines);
+    } else {
+      return capturePaneContent(paneId, lines, false);
+    }
+  }
+}
+
+async function waitForPaneActivityToSettle(
+  paneId: string,
+  maxWait: number,
+  lines: number
+): Promise<string> {
+  const settleTime = 500;      // Hardcoded debounce
+  const pollInterval = 100;     // Poll every 100ms
+
+  let lastContent = '';
+  let lastChangeTime = Date.now();
+  const startTime = Date.now();
+
+  while (true) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= maxWait) {
+      // Timeout - return what we have
+      return lastContent;
+    }
+
+    const content = await capturePaneContent(paneId, lines, false);
+
+    if (content !== lastContent) {
+      // Activity detected - reset settle timer
+      lastContent = content;
+      lastChangeTime = Date.now();
+    } else if (Date.now() - lastChangeTime >= settleTime) {
+      // No changes for settleTime ms - settled!
+      return content;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
   }
 }
 
@@ -827,7 +874,7 @@ export async function sendText({
   paneId: string;
   text: string;
   pressEnter?: boolean;
-  return_output?: { lines?: number; wait?: number };
+  return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number };
 }): Promise<string | void> {
   // Send each character with -l flag for literal interpretation
   for (const char of text) {
@@ -843,10 +890,14 @@ export async function sendText({
 
   // If return_output is requested, wait and capture pane content
   if (return_output) {
-    if (return_output.wait) {
-      await new Promise((resolve) => setTimeout(resolve, return_output.wait));
-    }
     const lines = return_output.lines || 200;
-    return capturePaneContent(paneId, lines, false);
+    const waitForSettled = return_output.waitForSettled ?? true;
+    const maxWait = return_output.maxWait ?? 120000; // 2 minutes default
+
+    if (waitForSettled) {
+      return waitForPaneActivityToSettle(paneId, maxWait, lines);
+    } else {
+      return capturePaneContent(paneId, lines, false);
+    }
   }
 }

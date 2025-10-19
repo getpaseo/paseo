@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getSystemPrompt } from "./system-prompt.js";
 import { streamLLM, type Message } from "./llm-openai.js";
+import { generateTTSAndWaitForPlayback } from "./tts-manager.js";
 import type { VoiceAssistantWebSocketServer } from "../websocket-server.js";
 
 interface ConversationContext {
@@ -17,13 +18,13 @@ interface ConversationContext {
 const conversations = new Map<string, ConversationContext>();
 
 /**
- * Create a new conversation with system prompt
+ * Create a new conversation
  */
 export function createConversation(): string {
   const id = uuidv4();
   conversations.set(id, {
     id,
-    messages: [{ role: "system", content: getSystemPrompt() }],
+    messages: [],
     createdAt: new Date(),
     lastActivity: new Date(),
   });
@@ -38,6 +39,13 @@ export function getConversation(id: string): ConversationContext | null {
 }
 
 /**
+ * Delete a conversation by ID
+ */
+export function deleteConversation(id: string): void {
+  conversations.delete(id);
+}
+
+/**
  * Process user message through the LLM orchestrator
  * Handles streaming, tool calls, and WebSocket broadcasting
  */
@@ -46,6 +54,7 @@ export async function processUserMessage(params: {
   message: string;
   wsServer?: VoiceAssistantWebSocketServer;
   enableTTS?: boolean;
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   const conversation = conversations.get(params.conversationId);
   if (!conversation) {
@@ -65,63 +74,70 @@ export async function processUserMessage(params: {
   let assistantResponse = "";
 
   try {
+    // Track pending TTS playback promise
+    let pendingTTS: Promise<void> | null = null;
+
     // Stream LLM response with tool execution
     assistantResponse = await streamLLM({
+      systemPrompt: getSystemPrompt(),
       messages: conversation.messages,
-      onChunk: (chunk) => {
-        // Broadcast streaming chunks to WebSocket
-        if (params.wsServer) {
-          params.wsServer.broadcast({
-            type: "assistant_chunk",
-            payload: { chunk },
-          });
-        }
-      },
+      abortSignal: params.abortSignal,
       onTextSegment: (segment) => {
-        // Broadcast complete text segments (for future TTS integration)
-        if (params.wsServer) {
-          params.wsServer.broadcastActivityLog({
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "system",
-            content: `Text segment: ${segment}`,
-            metadata: { segment, readyForTTS: true },
-          });
+        // Create TTS promise (don't await it yet)
+        if (params.wsServer && params.enableTTS) {
+          pendingTTS = generateTTSAndWaitForPlayback(segment, params.wsServer);
         }
-      },
-      onToolCall: (toolName, args) => {
-        // Broadcast tool call to WebSocket
-        if (params.wsServer) {
-          params.wsServer.broadcastActivityLog({
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "tool_call",
-            content: `Calling ${toolName}`,
-            metadata: { toolName, arguments: args },
-          });
-        }
-      },
-      onToolResult: (toolName, result) => {
-        // Broadcast tool result to WebSocket
-        if (params.wsServer) {
-          params.wsServer.broadcastActivityLog({
-            id: uuidv4(),
-            timestamp: new Date(),
-            type: "tool_result",
-            content: `Tool ${toolName} completed`,
-            metadata: { toolName, result },
-          });
-        }
-      },
-      onFinish: (fullText) => {
-        // Broadcast complete assistant response
+
+        // Broadcast complete text segments
         if (params.wsServer) {
           params.wsServer.broadcastActivityLog({
             id: uuidv4(),
             timestamp: new Date(),
             type: "assistant",
-            content: fullText,
+            content: segment,
           });
+        }
+      },
+      onChunk: async (chunk) => {
+        params.wsServer?.broadcast({
+          type: "assistant_chunk",
+          payload: { chunk },
+        });
+      },
+      onToolCall: async (toolCallId, toolName, args) => {
+        if (pendingTTS) {
+          console.log("Waiting for pending TTS to finish to execute", toolName);
+          await pendingTTS;
+          pendingTTS = null;
+        }
+        // Broadcast tool call to WebSocket
+        if (params.wsServer) {
+          params.wsServer.broadcastActivityLog({
+            id: toolCallId,
+            timestamp: new Date(),
+            type: "tool_call",
+            content: `Calling ${toolName}`,
+            metadata: { toolCallId, toolName, arguments: args },
+          });
+        }
+      },
+      onToolResult: (toolCallId, toolName, result) => {
+        // Broadcast tool result to WebSocket
+        if (params.wsServer) {
+          params.wsServer.broadcastActivityLog({
+            id: toolCallId,
+            timestamp: new Date(),
+            type: "tool_result",
+            content: `Tool ${toolName} completed`,
+            metadata: { toolCallId, toolName, result },
+          });
+        }
+      },
+      onFinish: async () => {
+        // Wait for any final pending TTS to complete
+        if (pendingTTS) {
+          await pendingTTS;
+          pendingTTS = null;
         }
       },
     });
@@ -138,7 +154,9 @@ export async function processUserMessage(params: {
         id: uuidv4(),
         timestamp: new Date(),
         type: "error",
-        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        content: `Error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       });
     }
     throw error;

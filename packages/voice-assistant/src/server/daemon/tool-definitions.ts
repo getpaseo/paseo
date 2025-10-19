@@ -102,16 +102,21 @@ export const terminalTools = [
           return_output: {
             type: "object",
             description:
-              "Optional. If provided, will wait and return the terminal output after sending the text.",
+              "Optional. If provided, will wait for terminal activity to settle and return the output.",
             properties: {
               lines: {
                 type: "number",
                 description: "Number of lines to capture. Defaults to 200.",
               },
-              wait: {
+              waitForSettled: {
+                type: "boolean",
+                description:
+                  "Whether to wait for terminal activity to settle before returning output. Polls terminal output and waits 500ms after last change. Defaults to true.",
+              },
+              maxWait: {
                 type: "number",
                 description:
-                  "Milliseconds to wait before capturing output. Defaults to 500ms.",
+                  "Maximum milliseconds to wait for activity to settle. Defaults to 120000 (2 minutes).",
               },
             },
           },

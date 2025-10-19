@@ -2,11 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import {
-  createServer as createHTTPServer,
-  Server as HttpServer,
-  RequestListener,
-} from "http";
+import { createServer as createHTTPServer, Server as HttpServer } from "http";
 import { readFile } from "fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
@@ -22,9 +18,8 @@ import {
   killTerminal,
 } from "./daemon/terminal-manager.js";
 import { initializeSTT, transcribeAudio } from "./agent/stt-openai.js";
-import { initializeTTS, synthesizeSpeech } from "./agent/tts-openai.js";
+import { initializeTTS } from "./agent/tts-openai.js";
 import {
-  createConversation,
   processUserMessage,
   cleanupConversations,
 } from "./agent/orchestrator.js";
@@ -70,20 +65,19 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
         initialCommand: undefined,
       });
       testResults.push(
-        `   ✓ Created terminal: ${terminal.id} (${terminal.name})`
+        `   ✓ Created terminal: ${terminal.name}`
       );
 
       // 4. Send a command to the terminal
       testResults.push('4. Sending command "echo hello world"...');
-      await sendText(terminal.id, 'echo "hello world"', true, {
+      await sendText(terminal.name, 'echo "hello world"', true, {
         lines: 20,
-        wait: 500,
       });
       testResults.push("   ✓ Command sent");
 
       // 5. Capture output
       testResults.push("5. Capturing terminal output...");
-      const output = await captureTerminal(terminal.id, 20);
+      const output = await captureTerminal(terminal.name, 20);
       testResults.push(`   ✓ Captured ${output.split("\n").length} lines`);
       testResults.push(`   Output preview: ${output.substring(0, 100)}...`);
 
@@ -95,12 +89,12 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
         (t) => t.name === "test-terminal"
       );
       if (testTerminal) {
-        testResults.push(`   ✓ Found test-terminal: ${testTerminal.id}`);
+        testResults.push(`   ✓ Found test-terminal`);
       }
 
       // 7. Kill the test terminal
       testResults.push("7. Killing test terminal...");
-      await killTerminal(terminal.id);
+      await killTerminal(terminal.name);
       testResults.push("   ✓ Terminal killed");
 
       // 8. Verify it's gone
@@ -231,59 +225,8 @@ async function main() {
     );
   }
 
-  // Create default conversation
-  const defaultConversationId = createConversation();
-  console.log(`✓ Default conversation created: ${defaultConversationId}`);
-
-  // Helper function to process message and optionally generate TTS
-  async function processMessageWithOptionalTTS(
-    message: string,
-    enableTTS: boolean = false
-  ): Promise<string> {
-    const response = await processUserMessage({
-      conversationId: defaultConversationId,
-      message,
-      wsServer,
-    });
-
-    // Generate TTS for the response if enabled
-    if (enableTTS && apiKey) {
-      try {
-        console.log("[TTS] Generating speech for assistant response...");
-        const speechResult = await synthesizeSpeech(response);
-
-        // Convert audio buffer to base64
-        const base64Audio = speechResult.audio.toString("base64");
-
-        // Send audio to client via WebSocket
-        wsServer.broadcast({
-          type: "audio_output",
-          payload: {
-            id: uuidv4(),
-            audio: base64Audio,
-            format: speechResult.format,
-          },
-        });
-
-        console.log(
-          `[TTS] Sent audio to client via WebSocket (${speechResult.audio.length} bytes)`
-        );
-      } catch (error: any) {
-        console.error("[TTS] Error generating speech:", error);
-        wsServer.broadcastActivityLog({
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `TTS error: ${error.message}`,
-        });
-      }
-    }
-
-    return response;
-  }
-
   // Wire orchestrator to WebSocket for text messages
-  wsServer.setMessageHandler(async (message: string) => {
+  wsServer.setMessageHandler(async (conversationId: string, message: string, abortSignal: AbortSignal) => {
     try {
       // Broadcast user's text message as activity log
       wsServer.broadcastActivityLog({
@@ -294,9 +237,11 @@ async function main() {
       });
 
       await processUserMessage({
-        conversationId: defaultConversationId,
+        conversationId,
         message,
         wsServer,
+        enableTTS: true,
+        abortSignal,
       });
     } catch (error: any) {
       console.error("[Orchestrator] Error processing message:", error);
@@ -311,7 +256,7 @@ async function main() {
 
   // Wire audio handler to WebSocket for voice input (STT)
   wsServer.setAudioHandler(
-    async (audio: Buffer, format: string): Promise<string> => {
+    async (conversationId: string, audio: Buffer, format: string, abortSignal: AbortSignal): Promise<string> => {
       try {
         // Transcribe audio using OpenAI Whisper
         const result = await transcribeAudio(audio, format);
@@ -330,7 +275,13 @@ async function main() {
 
         // Process the transcribed text through the orchestrator WITH TTS enabled
         // Since this came from voice input, respond with voice output
-        await processMessageWithOptionalTTS(result.text, true);
+        await processUserMessage({
+          conversationId,
+          message: result.text,
+          wsServer,
+          enableTTS: true,
+          abortSignal,
+        });
 
         return result.text;
       } catch (error: any) {

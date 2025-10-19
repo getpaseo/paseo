@@ -1,24 +1,32 @@
 export interface AudioPlayer {
-  play(audioData: Blob): Promise<void>;
+  play(audioData: Blob): Promise<number>;
   stop(): void;
   isPlaying(): boolean;
   clearQueue(): void;
 }
 
+interface QueuedAudio {
+  audioData: Blob;
+  resolve: (duration: number) => void;
+  reject: (error: Error) => void;
+}
+
 export function createAudioPlayer(): AudioPlayer {
   let currentAudio: HTMLAudioElement | null = null;
   let playing = false;
-  let queue: Blob[] = [];
+  let queue: QueuedAudio[] = [];
   let isProcessingQueue = false;
 
-  async function play(audioData: Blob): Promise<void> {
-    // Add to queue
-    queue.push(audioData);
+  async function play(audioData: Blob): Promise<number> {
+    return new Promise((resolve, reject) => {
+      // Add to queue with its promise handlers
+      queue.push({ audioData, resolve, reject });
 
-    // Start processing queue if not already processing
-    if (!isProcessingQueue) {
-      processQueue();
-    }
+      // Start processing queue if not already processing
+      if (!isProcessingQueue) {
+        processQueue();
+      }
+    });
   }
 
   async function processQueue(): Promise<void> {
@@ -29,14 +37,19 @@ export function createAudioPlayer(): AudioPlayer {
     isProcessingQueue = true;
 
     while (queue.length > 0) {
-      const audioData = queue.shift()!;
-      await playAudio(audioData);
+      const item = queue.shift()!;
+      try {
+        const duration = await playAudio(item.audioData);
+        item.resolve(duration);
+      } catch (error) {
+        item.reject(error as Error);
+      }
     }
 
     isProcessingQueue = false;
   }
 
-  async function playAudio(audioData: Blob): Promise<void> {
+  async function playAudio(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
       try {
         // Create blob URL
@@ -47,40 +60,45 @@ export function createAudioPlayer(): AudioPlayer {
         currentAudio = audio;
         playing = true;
 
-        console.log(`[AudioPlayer] Playing audio (${audioData.size} bytes, type: ${audioData.type})`);
+        console.log(
+          `[AudioPlayer] Playing audio (${audioData.size} bytes, type: ${audioData.type})`
+        );
 
         audio.onended = () => {
-          console.log('[AudioPlayer] Playback finished');
+          const duration = audio.duration;
+          console.log(
+            `[AudioPlayer] Playback finished (duration: ${duration}s)`
+          );
           playing = false;
           currentAudio = null;
 
           // Clean up blob URL
           URL.revokeObjectURL(audioUrl);
 
-          resolve();
+          resolve(duration);
         };
 
         audio.onerror = (error) => {
-          console.error('[AudioPlayer] Playback error:', error);
+          console.error("[AudioPlayer] Playback error:", error);
           playing = false;
           currentAudio = null;
 
           // Clean up blob URL
           URL.revokeObjectURL(audioUrl);
 
-          reject(new Error('Audio playback failed'));
+          reject(new Error("Audio playback failed"));
         };
 
         // Start playback
         audio.play().catch((error) => {
-          console.error('[AudioPlayer] Failed to start playback:', error);
+          console.error("[AudioPlayer] Failed to start playback:", error);
           playing = false;
           currentAudio = null;
           URL.revokeObjectURL(audioUrl);
           reject(error);
         });
       } catch (error) {
-        console.error('[AudioPlayer] Error creating audio element:', error);
+        console.error("[AudioPlayer] Error creating audio element:", error);
         playing = false;
         currentAudio = null;
         reject(error);
@@ -95,7 +113,13 @@ export function createAudioPlayer(): AudioPlayer {
       currentAudio = null;
     }
     playing = false;
-    queue = [];
+
+    // Reject all pending promises in the queue
+    while (queue.length > 0) {
+      const item = queue.shift()!;
+      item.reject(new Error("Playback stopped"));
+    }
+
     isProcessingQueue = false;
   }
 
@@ -104,7 +128,11 @@ export function createAudioPlayer(): AudioPlayer {
   }
 
   function clearQueue(): void {
-    queue = [];
+    // Reject all pending promises in the queue
+    while (queue.length > 0) {
+      const item = queue.shift()!;
+      item.reject(new Error("Queue cleared"));
+    }
   }
 
   return {

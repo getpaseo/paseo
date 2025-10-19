@@ -54,6 +54,7 @@ export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
       model: config.model!,
       voice: config.voice!,
       input: text,
+      // speed: 1.2,
       response_format: config.responseFormat as "mp3" | "opus" | "aac" | "flac",
     });
 

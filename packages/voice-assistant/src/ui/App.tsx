@@ -1,16 +1,28 @@
 import { useState, useEffect, useRef } from "react";
+import { Mic, Send } from "lucide-react";
 import { useWebSocket } from "./hooks/useWebSocket";
-import { VoiceControls } from "./components/VoiceControls";
 import { createAudioPlayer } from "./lib/audio-playback";
+import { createAudioRecorder, type AudioRecorder } from "./lib/audio-capture";
+import { ToolCallCard } from "./components/ToolCallCard";
 import "./App.css";
 
-interface LogEntry {
-  id: string;
-  timestamp: number;
-  type: "system" | "info" | "success" | "error" | "user" | "assistant" | "tool";
-  message: string;
-  metadata?: Record<string, unknown>;
-}
+type LogEntry =
+  | {
+      type: "system" | "info" | "success" | "error" | "user" | "assistant";
+      id: string;
+      timestamp: number;
+      message: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "tool_call";
+      id: string;
+      timestamp: number;
+      toolName: string;
+      args: any;
+      result?: any;
+      status: "executing" | "completed";
+    };
 
 function App() {
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -25,8 +37,11 @@ function App() {
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const audioPlayerRef = useRef(createAudioPlayer());
+  const recorderRef = useRef<AudioRecorder | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // WebSocket URL - use ws://localhost:3000/ws in dev, or construct from current host in prod
   const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${
@@ -35,8 +50,20 @@ function App() {
 
   const ws = useWebSocket(wsUrl);
 
+  useEffect(() => {
+    recorderRef.current = createAudioRecorder();
+  }, []);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      const newHeight = Math.max(textareaRef.current.scrollHeight, 44);
+      textareaRef.current.style.height = `${newHeight}px`;
+    }
+  }, [userInput]);
+
   const addLog = (
-    type: LogEntry["type"],
+    type: "system" | "info" | "success" | "error" | "user" | "assistant",
     message: string,
     metadata?: Record<string, unknown>
   ) => {
@@ -67,22 +94,59 @@ function App() {
     // Listen for activity log messages
     const unsubActivity = ws.on("activity_log", (payload: unknown) => {
       const data = payload as {
+        id: string;
         type: string;
         content: string;
         metadata?: Record<string, unknown>;
       };
 
+      // Handle tool calls
+      if (data.type === "tool_call") {
+        const { toolCallId, toolName, arguments: args } = data.metadata as {
+          toolCallId: string;
+          toolName: string;
+          arguments: any;
+        };
+
+        setLogs((prev) => [
+          ...prev,
+          {
+            type: "tool_call",
+            id: toolCallId,
+            timestamp: Date.now(),
+            toolName,
+            args,
+            status: "executing",
+          },
+        ]);
+        return;
+      }
+
+      if (data.type === "tool_result") {
+        const { toolCallId, result } = data.metadata as {
+          toolCallId: string;
+          result: any;
+        };
+
+        setLogs((prev) =>
+          prev.map((log) =>
+            log.type === "tool_call" && log.id === toolCallId
+              ? { ...log, result, status: "completed" as const }
+              : log
+          )
+        );
+        return;
+      }
+
       // Map activity log types to UI log types
-      let logType: LogEntry["type"] = "info";
+      let logType: "system" | "info" | "success" | "error" | "user" | "assistant" = "info";
       if (data.type === "transcript") logType = "user";
       else if (data.type === "assistant") logType = "assistant";
-      else if (data.type === "tool_call" || data.type === "tool_result")
-        logType = "tool";
       else if (data.type === "error") logType = "error";
 
       addLog(logType, data.content, data.metadata);
 
-      // Clear streaming state when complete assistant message arrives
+      // Clear streaming state when assistant segment is received
       if (data.type === "assistant") {
         setCurrentAssistantMessage("");
       }
@@ -97,7 +161,7 @@ function App() {
     // Listen for transcription results
     const unsubTranscription = ws.on(
       "transcription_result",
-      (payload: unknown) => {
+      (_payload: unknown) => {
         // Note: Transcription is already broadcast as activity_log with type "transcript"
         // No need to log it again here to avoid duplication
         setIsProcessingAudio(false);
@@ -109,7 +173,6 @@ function App() {
       const data = payload as { audio: string; format: string; id: string };
 
       try {
-        addLog("info", "Playing assistant audio response...");
         setIsPlayingAudio(true);
 
         // Decode base64 audio
@@ -127,8 +190,13 @@ function App() {
         // Play audio
         await audioPlayerRef.current.play(audioBlob);
 
+        // Send confirmation back to server
+        ws.send({
+          type: "audio_played",
+          payload: { id: data.id },
+        });
+
         setIsPlayingAudio(false);
-        addLog("success", "Audio playback complete");
       } catch (error: any) {
         console.error("[App] Audio playback error:", error);
         addLog("error", `Audio playback failed: ${error.message}`);
@@ -159,13 +227,7 @@ function App() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs, currentAssistantMessage]);
 
-  const handlePing = () => {
-    ws.sendPing();
-    addLog("info", "Sent ping to server");
-  };
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = () => {
     if (!userInput.trim() || !ws.isConnected) return;
 
     // Send message to server
@@ -176,42 +238,74 @@ function App() {
     setCurrentAssistantMessage("");
   };
 
-  const handleAudioRecorded = async (audioBlob: Blob, format: string) => {
-    if (!ws.isConnected) {
-      addLog("error", "Cannot send audio - not connected to server");
-      return;
-    }
+  const handleToggleRecording = async () => {
+    const recorder = recorderRef.current;
+    if (!recorder || !ws.isConnected) return;
 
     try {
-      setIsProcessingAudio(true);
-      addLog("info", "Sending audio to server...");
+      if (isRecording) {
+        console.log('[App] Stopping recording...');
+        const audioBlob = await recorder.stop();
+        setIsRecording(false);
 
-      // Convert blob to base64
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64Audio = btoa(
-        new Uint8Array(arrayBuffer).reduce(
-          (data, byte) => data + String.fromCharCode(byte),
-          ""
-        )
-      );
+        const format = audioBlob.type || 'audio/webm';
+        console.log(`[App] Recording complete: ${audioBlob.size} bytes, format: ${format}`);
 
-      // Send audio chunk via WebSocket
-      ws.send({
-        type: "audio_chunk",
-        payload: {
-          audio: base64Audio,
-          format: format,
-          isLast: true,
-        },
-      });
+        setIsProcessingAudio(true);
+        addLog("info", "Sending audio to server...");
 
-      console.log(
-        `[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`
-      );
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const base64Audio = btoa(
+          new Uint8Array(arrayBuffer).reduce(
+            (data, byte) => data + String.fromCharCode(byte),
+            ""
+          )
+        );
+
+        ws.send({
+          type: "audio_chunk",
+          payload: {
+            audio: base64Audio,
+            format: format,
+            isLast: true,
+          },
+        });
+
+        console.log(`[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`);
+      } else {
+        console.log('[App] Starting recording...');
+        await recorder.start();
+        setIsRecording(true);
+      }
     } catch (error: any) {
-      console.error("[App] Error sending audio:", error);
-      addLog("error", `Failed to send audio: ${error.message}`);
-      setIsProcessingAudio(false);
+      console.error('[App] Recording error:', error);
+      addLog("error", `Failed to record audio: ${error.message}`);
+      setIsRecording(false);
+    }
+  };
+
+  const handleButtonClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+
+    if (userInput.trim()) {
+      handleSendMessage();
+    } else {
+      await handleToggleRecording();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Detect if device is desktop (not mobile/tablet)
+    const isDesktop = window.matchMedia('(pointer: fine)').matches;
+
+    if (e.key === 'Enter') {
+      if (isDesktop && !e.shiftKey && userInput.trim()) {
+        // Desktop: plain Enter sends message
+        e.preventDefault();
+        handleSendMessage();
+      }
+      // Desktop: Shift+Enter creates new line (default behavior)
+      // Mobile: Enter creates new line (default behavior)
     }
   };
 
@@ -219,12 +313,15 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>Voice Assistant</h1>
-        <div
-          className={`status-indicator ${
-            ws.isConnected ? "connected" : "disconnected"
-          }`}
-        >
-          {ws.isConnected ? "connected" : "disconnected"}
+        <div className="header-status">
+          {isPlayingAudio && <div className="audio-playing-indicator" title="Playing audio" />}
+          <div
+            className={`status-indicator ${
+              ws.isConnected ? "connected" : "disconnected"
+            }`}
+          >
+            {ws.isConnected ? "connected" : "disconnected"}
+          </div>
         </div>
       </header>
 
@@ -232,25 +329,29 @@ function App() {
         <div className="chat-interface">
           <div className="activity-log">
             <div className="log-entries">
-              {logs.map((log) => (
-                <div key={log.id} className={`log-entry ${log.type}`}>
-                  <span className="log-time">
-                    {new Date(log.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span className="log-message">{log.message}</span>
-                  {log.metadata && (
-                    <details className="log-metadata">
-                      <summary>Details</summary>
-                      <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
-                    </details>
-                  )}
-                </div>
-              ))}
+              {logs.map((log) =>
+                log.type === "tool_call" ? (
+                  <ToolCallCard
+                    key={log.id}
+                    toolName={log.toolName}
+                    args={log.args}
+                    result={log.result}
+                    status={log.status}
+                  />
+                ) : (
+                  <div key={log.id} className={`log-entry ${log.type}`}>
+                    <span className="log-message">{log.message}</span>
+                    {log.metadata && (
+                      <details className="log-metadata">
+                        <summary>Details</summary>
+                        <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
+                      </details>
+                    )}
+                  </div>
+                )
+              )}
               {currentAssistantMessage && (
                 <div className="log-entry assistant streaming">
-                  <span className="log-time">
-                    {new Date().toLocaleTimeString()}
-                  </span>
                   <span className="log-message">{currentAssistantMessage}</span>
                   <span className="streaming-indicator">...</span>
                 </div>
@@ -259,29 +360,34 @@ function App() {
             </div>
           </div>
 
-          <form onSubmit={handleSendMessage} className="message-form">
-            <input
-              type="text"
+          <div className="message-form">
+            <textarea
+              ref={textareaRef}
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
-              placeholder="Type a message to the assistant..."
-              disabled={!ws.isConnected}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message or tap mic to talk..."
+              disabled={!ws.isConnected || isRecording}
               className="message-input"
+              rows={1}
             />
             <button
-              type="submit"
-              disabled={!ws.isConnected || !userInput.trim()}
-              className="send-button"
+              type="button"
+              onClick={handleButtonClick}
+              disabled={!ws.isConnected || isProcessingAudio}
+              className={`send-button ${isRecording ? 'recording' : ''} ${isProcessingAudio ? 'processing' : ''} ${userInput.trim() ? 'has-text' : ''}`}
             >
-              Send
+              {isRecording ? (
+                <span className="recording-indicator" />
+              ) : isProcessingAudio ? (
+                <span className="processing-indicator" />
+              ) : userInput.trim() ? (
+                <Send size={20} />
+              ) : (
+                <Mic size={20} />
+              )}
             </button>
-          </form>
-
-          <VoiceControls
-            onAudioRecorded={handleAudioRecorded}
-            isProcessing={isProcessingAudio}
-            isPlaying={isPlayingAudio}
-          />
+          </div>
         </div>
       </main>
     </div>

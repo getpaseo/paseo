@@ -4,10 +4,9 @@ import { createAudioRecorder, type AudioRecorder } from '../lib/audio-capture';
 interface VoiceControlsProps {
   onAudioRecorded: (audio: Blob, format: string) => void;
   isProcessing: boolean;
-  isPlaying?: boolean;
 }
 
-export function VoiceControls({ onAudioRecorded, isProcessing, isPlaying }: VoiceControlsProps) {
+export function VoiceControls({ onAudioRecorded, isProcessing }: VoiceControlsProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied'>('prompt');
@@ -70,8 +69,7 @@ export function VoiceControls({ onAudioRecorded, isProcessing, isPlaying }: Voic
     }
   }
 
-  const canRecord = !isProcessing && !isPlaying;
-  const buttonDisabled = !canRecord || permissionState === 'denied';
+  const buttonDisabled = isProcessing || permissionState === 'denied';
 
   return (
     <div className="voice-controls">
@@ -106,8 +104,6 @@ export function VoiceControls({ onAudioRecorded, isProcessing, isPlaying }: Voic
           Microphone access denied. Please enable it in your browser settings.
         </div>
       )}
-
-      {isPlaying && <div className="playing-indicator">🔊 Playing response...</div>}
     </div>
   );
 }
