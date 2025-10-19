@@ -77,6 +77,18 @@ export async function processUserMessage(params: {
           });
         }
       },
+      onTextSegment: (segment) => {
+        // Broadcast complete text segments (for future TTS integration)
+        if (params.wsServer) {
+          params.wsServer.broadcastActivityLog({
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "system",
+            content: `Text segment: ${segment}`,
+            metadata: { segment, readyForTTS: true },
+          });
+        }
+      },
       onToolCall: (toolName, args) => {
         // Broadcast tool call to WebSocket
         if (params.wsServer) {
@@ -126,7 +138,7 @@ export async function processUserMessage(params: {
         id: uuidv4(),
         timestamp: new Date(),
         type: "error",
-        content: `Error: ${error.message}`,
+        content: `Error: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
     throw error;

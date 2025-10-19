@@ -131,6 +131,7 @@ export interface Message {
 export interface StreamLLMParams {
   messages: Message[];
   onChunk?: (chunk: string) => void;
+  onTextSegment?: (segment: string) => void;
   onToolCall?: (toolName: string, args: any) => void;
   onToolResult?: (toolName: string, result: any) => void;
   onFinish?: (fullText: string) => void;
@@ -150,38 +151,53 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
     model: openrouter("anthropic/claude-haiku-4.5"),
     messages: params.messages,
     tools: terminalTools,
-    stopWhen: stepCountIs(10),
-    onStepFinish: async (event) => {
-      // Called after each step (tool call or text generation)
-      if (event.toolCalls && event.toolCalls.length > 0) {
-        for (const toolCall of event.toolCalls) {
-          if (params.onToolCall) {
-            params.onToolCall(toolCall.toolName, toolCall.input);
-          }
-        }
-      }
-
-      if (event.toolResults && event.toolResults.length > 0) {
-        for (const toolResult of event.toolResults) {
-          if (params.onToolResult) {
-            params.onToolResult(toolResult.toolName, toolResult.output);
-          }
-        }
-      }
+    onChunk: (chuk) => {
+      // if (params.onChunk) {
+      //   params.onChunk(chunk);
+      // }
     },
+    stopWhen: stepCountIs(10),
   });
 
   let fullText = "";
+  let textBuffer = "";
 
-  result.fullStream;
+  function flushTextBuffer() {
+    if (textBuffer.length > 0 && params.onTextSegment) {
+      params.onTextSegment(textBuffer);
+    }
+    textBuffer = "";
+  }
 
-  // Stream text chunks to the caller
-  for await (const chunk of result.textStream) {
-    fullText += chunk;
-    if (params.onChunk) {
-      params.onChunk(chunk);
+  // Stream all events from fullStream
+  for await (const part of result.fullStream) {
+    if (part.type === "text-delta") {
+      // Accumulate text in buffer
+      textBuffer += part.text;
+      fullText += part.text;
+
+      // Stream individual deltas to caller
+      if (params.onChunk) {
+        params.onChunk(part.text);
+      }
+    } else if (part.type === "tool-call") {
+      // Flush accumulated text as a segment before tool call
+      flushTextBuffer();
+
+      // Emit tool call event
+      if (params.onToolCall) {
+        params.onToolCall(part.toolName, part.input);
+      }
+    } else if (part.type === "tool-result") {
+      // Emit tool result event
+      if (params.onToolResult) {
+        params.onToolResult(part.toolName, part.output);
+      }
     }
   }
+
+  // Flush any remaining text at the end
+  flushTextBuffer();
 
   if (params.onFinish) {
     params.onFinish(fullText);
