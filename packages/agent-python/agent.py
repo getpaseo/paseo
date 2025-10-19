@@ -152,23 +152,29 @@ async def entrypoint(ctx: JobContext) -> None:
         stt=openai.STT(
             model="gpt-4o-transcribe",
         ),
-        vad=silero.VAD.load(),
-        # turn_detection=EnglishModel(),  # Custom turn detector for better turn-taking
+        vad=silero.VAD.load(
+            min_silence_duration=1.2,  # Wait 1.2s after speech ends before considering turn complete (default: 0.55s)
+        ),
+        turn_detection=EnglishModel(),  # Context-aware turn detector prevents premature turn-taking
         llm=openai.LLM(
             model="anthropic/claude-sonnet-4.5",
+            # model="z-ai/glm-4.6",
             base_url="https://openrouter.ai/api/v1",
             api_key=openrouter_api_key,
         ),
         tts=inference.TTS(
-            model="elevenlabs/eleven_turbo_v2_5",
-            voice="Xb7hH8MSUJpSbSDYk0k2",
+            model="inworld/inworld-tts-1",
+            voice="Olivia",
             language="en"
         ),
         # Tool execution limits
         max_tool_steps=10,  # Max consecutive tool calls per turn (default: 3)
-        # Interruption configuration
+        # Turn detection configuration - less aggressive (give user more time)
+        min_endpointing_delay=1.0,  # Minimum 1s before responding (default: 0.5s)
+        # Interruption configuration - more aggressive (allow faster interruption)
         allow_interruptions=True,  # Allow user to interrupt agent mid-speech
-        min_interruption_words=1,  # Require at least 1 word to avoid false interruptions
+        min_interruption_duration=0.2,  # Detect interruption after 0.2s of speech (default: 0.5s)
+        min_interruption_words=0,  # Don't require full word to interrupt (default: 0)
         # Generation configuration
         preemptive_generation=True,  # Disable preemptive generation for more accurate responses
     )

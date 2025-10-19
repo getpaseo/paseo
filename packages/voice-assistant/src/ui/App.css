@@ -1,0 +1,391 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background-color: #1a1a1a;
+  border-bottom: 1px solid #333;
+}
+
+.header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.status-indicator {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.status-indicator.disconnected {
+  background-color: #444;
+  color: #999;
+}
+
+.status-indicator.connecting {
+  background-color: #ffa500;
+  color: #000;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-indicator.connected {
+  background-color: #22c55e;
+  color: #000;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  padding: 2rem;
+  gap: 2rem;
+}
+
+.chat-interface {
+  flex: 1;
+  background-color: #1a1a1a;
+  border-radius: 8px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: calc(100vh - 120px);
+}
+
+.chat-interface h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #333;
+}
+
+.ping-button {
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  background-color: #22c55e;
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.ping-button:hover:not(:disabled) {
+  background-color: #16a34a;
+}
+
+.ping-button:disabled {
+  background-color: #444;
+  color: #999;
+  cursor: not-allowed;
+}
+
+.connection-info {
+  color: #999;
+  font-size: 0.875rem;
+  text-align: center;
+  max-width: 400px;
+}
+
+.activity-log {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-entries {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.log-entry {
+  padding: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.log-time {
+  font-family: monospace;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.log-message {
+  flex: 1;
+}
+
+.log-entry.system {
+  background-color: #2a2a2a;
+  color: #999;
+  font-style: italic;
+}
+
+.log-entry.info {
+  background-color: #1e3a8a;
+  color: #93c5fd;
+}
+
+.log-entry.success {
+  background-color: #14532d;
+  color: #86efac;
+}
+
+.log-entry.error {
+  background-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.log-entry.user {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+
+.log-entry.assistant {
+  background-color: #0f766e;
+  color: #ccfbf1;
+}
+
+.log-entry.tool {
+  background-color: #581c87;
+  color: #e9d5ff;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.log-entry.streaming {
+  opacity: 0.8;
+}
+
+.streaming-indicator {
+  animation: dots 1.5s steps(3, end) infinite;
+  color: #666;
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+.log-metadata {
+  margin-top: 0.5rem;
+}
+
+.log-metadata summary {
+  cursor: pointer;
+  color: #999;
+  font-size: 0.75rem;
+}
+
+.log-metadata pre {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background-color: #000;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.75rem;
+}
+
+.message-form {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
+
+.message-input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.message-input:focus {
+  border-color: #22c55e;
+}
+
+.message-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-button {
+  padding: 0.75rem 1.5rem;
+  background-color: #22c55e;
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.send-button:hover:not(:disabled) {
+  background-color: #16a34a;
+}
+
+.send-button:disabled {
+  background-color: #444;
+  color: #999;
+  cursor: not-allowed;
+}
+
+.test-controls {
+  padding-top: 0.5rem;
+  border-top: 1px solid #333;
+  display: flex;
+  justify-content: center;
+}
+
+/* Voice Controls */
+.voice-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background-color: #2a2a2a;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.voice-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 2rem;
+  background-color: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.voice-button:hover:not(:disabled) {
+  background-color: #2563eb;
+  transform: scale(1.02);
+}
+
+.voice-button:disabled {
+  background-color: #444;
+  color: #999;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.voice-button.recording {
+  background-color: #ef4444;
+  animation: pulse-red 1.5s ease-in-out infinite;
+}
+
+.voice-button.recording:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
+.voice-button.processing {
+  background-color: #f59e0b;
+}
+
+@keyframes pulse-red {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.recording-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background-color: #fff;
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.processing-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.microphone-icon {
+  font-size: 1.25rem;
+}
+
+.voice-error {
+  padding: 0.75rem;
+  background-color: #7f1d1d;
+  color: #fca5a5;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.permission-denied {
+  padding: 0.75rem;
+  background-color: #7c2d12;
+  color: #fed7aa;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.playing-indicator {
+  padding: 0.5rem;
+  background-color: #0f766e;
+  color: #ccfbf1;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+@media (max-width: 1024px) {
+  .main {
+    flex-direction: column;
+  }
+}
