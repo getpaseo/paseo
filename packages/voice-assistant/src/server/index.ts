@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -20,7 +21,6 @@ import {
   captureTerminal,
   killTerminal,
 } from "./daemon/terminal-manager.js";
-import { initializeOpenAI } from "./agent/llm-openai.js";
 import { initializeSTT, transcribeAudio } from "./agent/stt-openai.js";
 import { initializeTTS, synthesizeSpeech } from "./agent/tts-openai.js";
 import {
@@ -137,8 +137,12 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
       server: {
         middlewareMode: true,
         allowedHosts: ["localhost", "mohameds-macbook-pro.tail8fe838.ts.net"],
-        port: 3000,
-        hmr: false,
+        hmr: {
+          server: httpServer,
+          port: config.port,
+          protocol: "wss",
+          path: "/hmr",
+        },
       },
       appType: "custom",
     });
@@ -201,7 +205,6 @@ async function main() {
   // Initialize OpenAI client
   const apiKey = process.env.OPENAI_API_KEY;
   if (apiKey) {
-    initializeOpenAI(apiKey);
     console.log("✓ OpenAI client initialized");
 
     // Initialize STT (Whisper)
@@ -282,6 +285,14 @@ async function main() {
   // Wire orchestrator to WebSocket for text messages
   wsServer.setMessageHandler(async (message: string) => {
     try {
+      // Broadcast user's text message as activity log
+      wsServer.broadcastActivityLog({
+        id: uuidv4(),
+        timestamp: new Date(),
+        type: "transcript",
+        content: message,
+      });
+
       await processUserMessage({
         conversationId: defaultConversationId,
         message,

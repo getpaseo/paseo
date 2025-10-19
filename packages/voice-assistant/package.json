@@ -16,6 +16,7 @@
     "@deepgram/sdk": "^3.4.0",
     "@openrouter/ai-sdk-provider": "^1.2.0",
     "ai": "^5.0.76",
+    "dotenv": "^17.2.3",
     "express": "^4.18.2",
     "openai": "^4.20.0",
     "tiny-invariant": "^1.3.3",
@@ -36,6 +37,6 @@
     "react-dom": "^18.2.0",
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
-    "vite": "^5.0.0"
+    "vite": "^7.1.10"
   }
 }

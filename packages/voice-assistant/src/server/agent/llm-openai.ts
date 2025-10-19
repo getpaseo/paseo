@@ -173,6 +173,8 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
 
   let fullText = "";
 
+  result.fullStream;
+
   // Stream text chunks to the caller
   for await (const chunk of result.textStream) {
     fullText += chunk;
