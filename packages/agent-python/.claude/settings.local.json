@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebSearch"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}

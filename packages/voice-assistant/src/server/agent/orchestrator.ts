@@ -59,15 +59,8 @@ export async function processUserMessage(params: {
   });
   conversation.lastActivity = new Date();
 
-  // Broadcast user message to WebSocket clients
-  if (params.wsServer) {
-    params.wsServer.broadcastActivityLog({
-      id: uuidv4(),
-      timestamp: new Date(),
-      type: 'transcript',
-      content: params.message,
-    });
-  }
+  // Note: User message is already broadcast by the caller (e.g., after STT in index.ts)
+  // No need to broadcast again here to avoid duplication
 
   let assistantResponse = '';
 
