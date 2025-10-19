@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:vite.dev)",
+      "Read(//Users/moboudra/dev/voice-dev/packages/web/app/hooks/**)",
+      "Read(//Users/moboudra/dev/voice-dev/packages/web/app/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

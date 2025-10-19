@@ -1,0 +1,39 @@
+{
+  "name": "@voice-dev/voice-assistant",
+  "version": "0.1.0",
+  "description": "Voice-controlled terminal assistant - single service implementation",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
+    "build:ui": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "npm run build:ui && npm run build:server",
+    "start": "NODE_ENV=production node dist/server/index.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^1.0.10",
+    "@deepgram/sdk": "^3.4.0",
+    "ai": "^3.4.33",
+    "express": "^4.18.2",
+    "openai": "^4.20.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.14.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.20",
+    "@types/node": "^20.9.0",
+    "@types/react": "^18.2.37",
+    "@types/react-dom": "^18.2.15",
+    "@types/uuid": "^9.0.7",
+    "@types/ws": "^8.5.8",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0"
+  }
+}
