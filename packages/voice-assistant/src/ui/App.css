@@ -520,6 +520,10 @@
   border-color: #22c55e;
 }
 
+.tool-call-card[data-status="failed"] {
+  border-color: #ef4444;
+}
+
 .tool-call-header {
   width: 100%;
   display: flex;
@@ -573,6 +577,11 @@
 .tool-call-card[data-status="completed"] .tool-call-status {
   background-color: rgba(34, 197, 94, 0.2);
   color: #86efac;
+}
+
+.tool-call-card[data-status="failed"] .tool-call-status {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
 }
 
 .status-icon {

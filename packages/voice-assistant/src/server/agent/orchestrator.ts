@@ -133,6 +133,33 @@ export async function processUserMessage(params: {
           });
         }
       },
+      onToolError: async (toolCallId, toolName, error) => {
+        // Broadcast tool error to WebSocket
+        if (params.wsServer) {
+          params.wsServer.broadcastActivityLog({
+            id: toolCallId,
+            timestamp: new Date(),
+            type: "error",
+            content: `Tool ${toolName} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            metadata: { toolCallId, toolName, error },
+          });
+        }
+      },
+      onError: async (error) => {
+        // Broadcast general stream error to WebSocket
+        if (params.wsServer) {
+          params.wsServer.broadcastActivityLog({
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "error",
+            content: `Stream error: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      },
       onFinish: async () => {
         // Wait for any final pending TTS to complete
         if (pendingTTS) {

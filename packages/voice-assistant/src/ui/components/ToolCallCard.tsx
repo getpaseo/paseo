@@ -1,17 +1,19 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, CheckCircle, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, CheckCircle, Loader2, XCircle } from "lucide-react";
 
 export interface ToolCallCardProps {
   toolName: string;
   args: any;
   result?: any;
-  status: "executing" | "completed";
+  error?: any;
+  status: "executing" | "completed" | "failed";
 }
 
 export function ToolCallCard({
   toolName,
   args,
   result,
+  error,
   status,
 }: ToolCallCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -34,6 +36,8 @@ export function ToolCallCard({
         <div className="tool-call-status">
           {status === "executing" ? (
             <Loader2 size={14} className="status-icon spinning" />
+          ) : status === "failed" ? (
+            <XCircle size={14} className="status-icon" />
           ) : (
             <CheckCircle size={14} className="status-icon" />
           )}
@@ -52,6 +56,13 @@ export function ToolCallCard({
             <div className="tool-call-section">
               <div className="section-header">Result</div>
               <pre className="section-content">{JSON.stringify(result, null, 2)}</pre>
+            </div>
+          )}
+
+          {error !== undefined && (
+            <div className="tool-call-section">
+              <div className="section-header">Error</div>
+              <pre className="section-content">{JSON.stringify(error, null, 2)}</pre>
             </div>
           )}
         </div>
