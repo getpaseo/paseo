@@ -40,7 +40,6 @@ function App() {
     message: string,
     metadata?: Record<string, unknown>
   ) => {
-    console.trace("addLog", type, message, metadata);
     setLogs((prev) => [
       ...prev,
       {
@@ -231,14 +230,6 @@ function App() {
 
       <main className="main">
         <div className="chat-interface">
-          <h2>Chat with Assistant</h2>
-
-          <VoiceControls
-            onAudioRecorded={handleAudioRecorded}
-            isProcessing={isProcessingAudio}
-            isPlaying={isPlayingAudio}
-          />
-
           <div className="activity-log">
             <div className="log-entries">
               {logs.map((log) => (
@@ -286,15 +277,11 @@ function App() {
             </button>
           </form>
 
-          <div className="test-controls">
-            <button
-              onClick={handlePing}
-              disabled={!ws.isConnected}
-              className="ping-button"
-            >
-              Send Ping (Test)
-            </button>
-          </div>
+          <VoiceControls
+            onAudioRecorded={handleAudioRecorded}
+            isProcessing={isProcessingAudio}
+            isPlaying={isPlayingAudio}
+          />
         </div>
       </main>
     </div>

@@ -1,7 +1,7 @@
-import { v4 as uuidv4 } from 'uuid';
-import { getSystemPrompt } from './system-prompt.js';
-import { streamLLM, type Message } from './llm-openai.js';
-import type { VoiceAssistantWebSocketServer } from '../websocket-server.js';
+import { v4 as uuidv4 } from "uuid";
+import { getSystemPrompt } from "./system-prompt.js";
+import { streamLLM, type Message } from "./llm-openai.js";
+import type { VoiceAssistantWebSocketServer } from "../websocket-server.js";
 
 interface ConversationContext {
   id: string;
@@ -23,7 +23,7 @@ export function createConversation(): string {
   const id = uuidv4();
   conversations.set(id, {
     id,
-    messages: [{ role: 'system', content: getSystemPrompt() }],
+    messages: [{ role: "system", content: getSystemPrompt() }],
     createdAt: new Date(),
     lastActivity: new Date(),
   });
@@ -49,12 +49,12 @@ export async function processUserMessage(params: {
 }): Promise<string> {
   const conversation = conversations.get(params.conversationId);
   if (!conversation) {
-    throw new Error('Conversation not found');
+    throw new Error("Conversation not found");
   }
 
   // Add user message to context
   conversation.messages.push({
-    role: 'user',
+    role: "user",
     content: params.message,
   });
   conversation.lastActivity = new Date();
@@ -62,7 +62,7 @@ export async function processUserMessage(params: {
   // Note: User message is already broadcast by the caller (e.g., after STT in index.ts)
   // No need to broadcast again here to avoid duplication
 
-  let assistantResponse = '';
+  let assistantResponse = "";
 
   try {
     // Stream LLM response with tool execution
@@ -72,7 +72,7 @@ export async function processUserMessage(params: {
         // Broadcast streaming chunks to WebSocket
         if (params.wsServer) {
           params.wsServer.broadcast({
-            type: 'assistant_chunk',
+            type: "assistant_chunk",
             payload: { chunk },
           });
         }
@@ -83,7 +83,7 @@ export async function processUserMessage(params: {
           params.wsServer.broadcastActivityLog({
             id: uuidv4(),
             timestamp: new Date(),
-            type: 'tool_call',
+            type: "tool_call",
             content: `Calling ${toolName}`,
             metadata: { toolName, arguments: args },
           });
@@ -95,7 +95,7 @@ export async function processUserMessage(params: {
           params.wsServer.broadcastActivityLog({
             id: uuidv4(),
             timestamp: new Date(),
-            type: 'tool_result',
+            type: "tool_result",
             content: `Tool ${toolName} completed`,
             metadata: { toolName, result },
           });
@@ -107,7 +107,7 @@ export async function processUserMessage(params: {
           params.wsServer.broadcastActivityLog({
             id: uuidv4(),
             timestamp: new Date(),
-            type: 'assistant',
+            type: "assistant",
             content: fullText,
           });
         }
@@ -116,16 +116,16 @@ export async function processUserMessage(params: {
 
     // Add assistant response to context
     conversation.messages.push({
-      role: 'assistant',
+      role: "assistant",
       content: assistantResponse,
     });
-  } catch (error: any) {
+  } catch (error) {
     // Broadcast error to WebSocket
     if (params.wsServer) {
       params.wsServer.broadcastActivityLog({
         id: uuidv4(),
         timestamp: new Date(),
-        type: 'error',
+        type: "error",
         content: `Error: ${error.message}`,
       });
     }
@@ -141,7 +141,8 @@ export async function processUserMessage(params: {
 export function cleanupConversations(maxAgeMinutes: number = 60): void {
   const now = new Date();
   for (const [id, conv] of conversations.entries()) {
-    const ageMinutes = (now.getTime() - conv.lastActivity.getTime()) / (1000 * 60);
+    const ageMinutes =
+      (now.getTime() - conv.lastActivity.getTime()) / (1000 * 60);
     if (ageMinutes > maxAgeMinutes) {
       conversations.delete(id);
     }
@@ -153,7 +154,11 @@ export function cleanupConversations(maxAgeMinutes: number = 60): void {
  */
 export function getConversationStats(): {
   total: number;
-  conversations: Array<{ id: string; messageCount: number; lastActivity: Date }>;
+  conversations: Array<{
+    id: string;
+    messageCount: number;
+    lastActivity: Date;
+  }>;
 } {
   return {
     total: conversations.size,
