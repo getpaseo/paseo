@@ -13,6 +13,7 @@ import {
   isWindowNameUnique,
   getCurrentWorkingDirectory,
   getCurrentCommand,
+  waitForPaneActivityToSettle,
 } from "./tmux.js";
 
 const DEFAULT_SESSION = "voice-dev";
@@ -22,7 +23,6 @@ const DEFAULT_SESSION = "voice-dev";
 
 export interface TerminalInfo {
   name: string;
-  active: boolean;
   workingDirectory: string;
   currentCommand: string;
   lastLines?: string;
@@ -34,8 +34,8 @@ export interface CreateTerminalParams {
   initialCommand?: string;
 }
 
-export interface Terminal extends TerminalInfo {
-  sessionId: string;
+export interface CreateTerminalResult extends TerminalInfo {
+  commandOutput?: string;
 }
 
 /**
@@ -58,7 +58,9 @@ export async function listTerminals(): Promise<TerminalInfo[]> {
   const session = await findSessionByName(DEFAULT_SESSION);
 
   if (!session) {
-    throw new Error(`Session '${DEFAULT_SESSION}' not found. Call initializeDefaultSession() first.`);
+    throw new Error(
+      `Session '${DEFAULT_SESSION}' not found. Call initializeDefaultSession() first.`
+    );
   }
 
   const windows = await listWindows(session.id);
@@ -69,28 +71,16 @@ export async function listTerminals(): Promise<TerminalInfo[]> {
     // Get the first (and only) pane in this window
     const paneId = `${window.id}.0`;
 
-    try {
-      const workingDirectory = await getCurrentWorkingDirectory(paneId);
-      const currentCommand = await getCurrentCommand(paneId);
-      const lastLines = await capturePaneContent(paneId, 5, false);
+    const workingDirectory = await getCurrentWorkingDirectory(paneId);
+    const currentCommand = await getCurrentCommand(paneId);
+    const lastLines = await capturePaneContent(paneId, 5, false);
 
-      terminals.push({
-        name: window.name,
-        active: window.active,
-        workingDirectory,
-        currentCommand,
-        lastLines,
-      });
-    } catch (error) {
-      // If we can't get pane info, still include the terminal with empty values
-      terminals.push({
-        name: window.name,
-        active: window.active,
-        workingDirectory: "",
-        currentCommand: "",
-        lastLines: "",
-      });
-    }
+    terminals.push({
+      name: window.name,
+      workingDirectory,
+      currentCommand,
+      lastLines,
+    });
   }
 
   return terminals;
@@ -100,11 +90,15 @@ export async function listTerminals(): Promise<TerminalInfo[]> {
  * Create a new terminal (tmux window) with specified name and working directory
  * Optionally execute an initial command
  */
-export async function createTerminal(params: CreateTerminalParams): Promise<Terminal> {
+export async function createTerminal(
+  params: CreateTerminalParams
+): Promise<CreateTerminalResult> {
   const session = await findSessionByName(DEFAULT_SESSION);
 
   if (!session) {
-    throw new Error(`Session '${DEFAULT_SESSION}' not found. Call initializeDefaultSession() first.`);
+    throw new Error(
+      `Session '${DEFAULT_SESSION}' not found. Call initializeDefaultSession() first.`
+    );
   }
 
   // Validate name uniqueness
@@ -133,21 +127,21 @@ export async function createTerminal(params: CreateTerminalParams): Promise<Term
 
   return {
     name: windowResult.name,
-    active: windowResult.active,
     workingDirectory,
     currentCommand,
-    sessionId: session.id,
+    commandOutput: windowResult.output,
   };
 }
 
 /**
  * Capture output from a terminal by name
  * Returns the last N lines of terminal content
+ * If maxWait is provided, waits for terminal activity to settle before capturing
  */
 export async function captureTerminal(
   terminalName: string,
   lines: number = 200,
-  wait?: number
+  maxWait?: number
 ): Promise<string> {
   const session = await findSessionByName(DEFAULT_SESSION);
   if (!session) {
@@ -171,9 +165,9 @@ export async function captureTerminal(
     throw new Error(`No pane found for terminal ${terminalName}`);
   }
 
-  // Optional wait before capture
-  if (wait) {
-    await new Promise((resolve) => setTimeout(resolve, wait));
+  // Wait for activity to settle if maxWait is provided
+  if (maxWait) {
+    return waitForPaneActivityToSettle(pane.id, maxWait, lines);
   }
 
   return capturePaneContent(pane.id, lines, false);

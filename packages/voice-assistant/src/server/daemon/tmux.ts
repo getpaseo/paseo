@@ -199,10 +199,10 @@ export async function capturePaneContent(
 
   // Trim trailing whitespace, split by lines, take last N lines, rejoin
   const trimmed = output.trimEnd();
-  const allLines = trimmed.split('\n');
+  const allLines = trimmed.split("\n");
   const lastLines = allLines.slice(-lines);
 
-  return lastLines.join('\n');
+  return lastLines.join("\n");
 }
 
 /**
@@ -212,7 +212,9 @@ export async function getCurrentWorkingDirectory(
   paneId: string
 ): Promise<string> {
   try {
-    const tmuxPath = await executeTmux(`display-message -p -t '${paneId}' '#{pane_current_path}'`);
+    const tmuxPath = await executeTmux(
+      `display-message -p -t '${paneId}' '#{pane_current_path}'`
+    );
 
     // If tmux returns a valid path, use it
     if (tmuxPath && tmuxPath.trim()) {
@@ -220,8 +222,12 @@ export async function getCurrentWorkingDirectory(
     }
 
     // Fallback: get the PID and use lsof to find the actual CWD
-    const shellPid = await executeTmux(`display-message -p -t '${paneId}' '#{pane_pid}'`);
-    const { stdout } = await exec(`lsof -a -p ${shellPid.trim()} -d cwd -Fn | grep '^n' | cut -c2-`);
+    const shellPid = await executeTmux(
+      `display-message -p -t '${paneId}' '#{pane_pid}'`
+    );
+    const { stdout } = await exec(
+      `lsof -a -p ${shellPid.trim()} -d cwd -Fn | grep '^n' | cut -c2-`
+    );
     return stdout.trim() || tmuxPath;
   } catch (error) {
     // If all else fails, return empty string
@@ -236,15 +242,21 @@ export async function getCurrentWorkingDirectory(
 export async function getCurrentCommand(paneId: string): Promise<string> {
   try {
     // Get the shell PID (the pane's main process)
-    const shellPid = await executeTmux(`display-message -p -t '${paneId}' '#{pane_pid}'`);
+    const shellPid = await executeTmux(
+      `display-message -p -t '${paneId}' '#{pane_pid}'`
+    );
 
     // First, check if there's a child process using comm= (works for all programs including top)
     // Use 'ax' flags to see all processes
-    const { stdout: childPid } = await exec(`ps ax -o pid=,ppid=,comm= | awk '$2 == ${shellPid.trim()} { print $1; exit }'`);
+    const { stdout: childPid } = await exec(
+      `ps ax -o pid=,ppid=,comm= | awk '$2 == ${shellPid.trim()} { print $1; exit }'`
+    );
 
     if (childPid.trim()) {
       // Found a child process, get its full command with args
-      const { stdout: fullCmd } = await exec(`ps -p ${childPid.trim()} -o args= | sed 's/\\\\012.*//'`);
+      const { stdout: fullCmd } = await exec(
+        `ps -p ${childPid.trim()} -o args= | sed 's/\\\\012.*//'`
+      );
       const command = fullCmd.trim();
       if (command) {
         return command;
@@ -256,7 +268,9 @@ export async function getCurrentCommand(paneId: string): Promise<string> {
     return shellCmd.trim();
   } catch (error) {
     // Fallback to just the command name if ps fails
-    return executeTmux(`display-message -p -t '${paneId}' '#{pane_current_command}'`);
+    return executeTmux(
+      `display-message -p -t '${paneId}' '#{pane_current_command}'`
+    );
   }
 }
 
@@ -277,11 +291,11 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
  * Expand tilde in path to home directory
  */
 function expandTilde(path: string): string {
-  if (path.startsWith('~/')) {
+  if (path.startsWith("~/")) {
     const homeDir = process.env.HOME || os.homedir();
-    return path.replace('~', homeDir);
+    return path.replace("~", homeDir);
   }
-  if (path === '~') {
+  if (path === "~") {
     return process.env.HOME || os.homedir();
   }
   return path;
@@ -331,17 +345,15 @@ export async function createWindow(
 
   // If command is provided, execute it in the new pane
   if (options?.command && defaultPane) {
-    await sendText({
+    commandOutput = (await sendText({
       paneId: defaultPane.id,
       text: options.command,
       pressEnter: true,
-    });
-
-    // Sleep for 1 second to allow command to execute
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Capture the pane content
-    commandOutput = await capturePaneContent(defaultPane.id, 200, false);
+      return_output: {
+        waitForSettled: true,
+        maxWait: 120000,
+      },
+    })) as string;
   }
 
   return {
@@ -809,7 +821,11 @@ export async function sendKeys({
   paneId: string;
   keys: string;
   repeat?: number;
-  return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number };
+  return_output?: {
+    lines?: number;
+    waitForSettled?: boolean;
+    maxWait?: number;
+  };
 }): Promise<string | void> {
   // Repeat the key press the specified number of times
   for (let i = 0; i < repeat; i++) {
@@ -831,15 +847,15 @@ export async function sendKeys({
   }
 }
 
-async function waitForPaneActivityToSettle(
+export async function waitForPaneActivityToSettle(
   paneId: string,
   maxWait: number,
   lines: number
 ): Promise<string> {
-  const settleTime = 500;      // Hardcoded debounce
-  const pollInterval = 100;     // Poll every 100ms
+  const settleTime = 1000; // Hardcoded debounce
+  const pollInterval = 100; // Poll every 100ms
 
-  let lastContent = '';
+  let lastContent = "";
   let lastChangeTime = Date.now();
   const startTime = Date.now();
 
@@ -861,7 +877,7 @@ async function waitForPaneActivityToSettle(
       return content;
     }
 
-    await new Promise(resolve => setTimeout(resolve, pollInterval));
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
 }
 
@@ -874,7 +890,11 @@ export async function sendText({
   paneId: string;
   text: string;
   pressEnter?: boolean;
-  return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number };
+  return_output?: {
+    lines?: number;
+    waitForSettled?: boolean;
+    maxWait?: number;
+  };
 }): Promise<string | void> {
   // Send each character with -l flag for literal interpretation
   for (const char of text) {

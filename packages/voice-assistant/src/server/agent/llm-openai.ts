@@ -67,15 +67,15 @@ export const terminalTools = {
         .number()
         .optional()
         .describe("Number of lines to capture (default: 200)"),
-      wait: z
+      maxWait: z
         .number()
         .optional()
         .describe(
-          "Milliseconds to wait before capturing output. Useful for slow commands."
+          "Maximum milliseconds to wait for terminal activity to settle before capturing. Polls every 100ms and waits for 1s of no changes. Useful for commands with delayed output."
         ),
     }),
-    execute: async ({ terminalName, lines, wait }) => {
-      const output = await captureTerminal(terminalName, lines, wait);
+    execute: async ({ terminalName, lines, maxWait }) => {
+      const output = await captureTerminal(terminalName, lines, maxWait);
       return { output };
     },
   }),
@@ -102,14 +102,22 @@ export const terminalTools = {
             .number()
             .optional()
             .describe("Number of lines to capture (default: 200)"),
-          wait: z
+          waitForSettled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Wait for terminal activity to settle before returning output. Polls terminal and waits 500ms after last change (default: true)"
+            ),
+          maxWait: z
             .number()
             .optional()
-            .describe("Milliseconds to wait before capturing output"),
+            .describe(
+              "Maximum milliseconds to wait for activity to settle (default: 120000 = 2 minutes)"
+            ),
         })
         .optional()
         .describe(
-          "Capture terminal output after sending text. Specify 'wait' for slow commands."
+          "Capture terminal output after sending text. By default waits for activity to settle."
         ),
     }),
     execute: async ({ terminalName, text, pressEnter, return_output }) => {
@@ -144,14 +152,22 @@ export const terminalTools = {
             .number()
             .optional()
             .describe("Number of lines to capture (default: 200)"),
-          wait: z
+          waitForSettled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Wait for terminal activity to settle before returning output. Polls terminal and waits 500ms after last change (default: true)"
+            ),
+          maxWait: z
             .number()
             .optional()
-            .describe("Milliseconds to wait before capturing output"),
+            .describe(
+              "Maximum milliseconds to wait for activity to settle (default: 120000 = 2 minutes)"
+            ),
         })
         .optional()
         .describe(
-          "Capture terminal output after sending keys. Specify 'wait' for slow commands."
+          "Capture terminal output after sending keys. By default waits for activity to settle."
         ),
     }),
     execute: async ({ terminalName, keys, repeat, return_output }) => {
@@ -211,8 +227,18 @@ export interface StreamLLMParams {
   abortSignal?: AbortSignal;
   onChunk?: (chunk: string) => void | Promise<void>;
   onTextSegment?: (segment: string) => void;
-  onToolCall?: (toolCallId: string, toolName: string, args: any) => Promise<void>;
+  onToolCall?: (
+    toolCallId: string,
+    toolName: string,
+    args: any
+  ) => Promise<void>;
   onToolResult?: (toolCallId: string, toolName: string, result: any) => void;
+  onToolError?: (
+    toolCallId: string,
+    toolName: string,
+    error: unknown
+  ) => void | Promise<void>;
+  onError?: (error: unknown) => void | Promise<void>;
   onFinish?: (fullText: string) => void | Promise<void>;
 }
 
@@ -246,13 +272,23 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
 
         // Emit tool call event
         if (params.onToolCall) {
-          await params.onToolCall(chunk.toolCallId, chunk.toolName, chunk.input);
+          await params.onToolCall(
+            chunk.toolCallId,
+            chunk.toolName,
+            chunk.input
+          );
         }
       } else if (chunk.type === "tool-result") {
         // Emit tool result event
         if (params.onToolResult) {
           params.onToolResult(chunk.toolCallId, chunk.toolName, chunk.output);
         }
+      }
+    },
+    onError: async (error) => {
+      // Emit general stream error
+      if (params.onError) {
+        await params.onError(error);
       }
     },
     stopWhen: stepCountIs(10),
@@ -268,8 +304,15 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
     textBuffer = "";
   }
 
-  for await (const _part of result.fullStream) {
-    // console.log("part", _part);
+  for await (const part of result.fullStream) {
+    // console.log("part", part);
+
+    // Handle tool-error chunks (not available in onChunk callback)
+    if (part.type === "tool-error") {
+      if (params.onToolError) {
+        await params.onToolError(part.toolCallId, part.toolName, part.error);
+      }
+    }
   }
 
   // Flush any remaining text at the end
