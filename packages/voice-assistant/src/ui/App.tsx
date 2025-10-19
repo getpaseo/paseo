@@ -21,7 +21,8 @@ type LogEntry =
       toolName: string;
       args: any;
       result?: any;
-      status: "executing" | "completed";
+      error?: any;
+      status: "executing" | "completed" | "failed";
     };
 
 function App() {
@@ -136,6 +137,23 @@ function App() {
           )
         );
         return;
+      }
+
+      // Handle tool errors - update tool call status to failed
+      if (data.type === "error" && data.metadata?.toolCallId) {
+        const { toolCallId, error } = data.metadata as {
+          toolCallId: string;
+          error: any;
+        };
+
+        setLogs((prev) =>
+          prev.map((log) =>
+            log.type === "tool_call" && log.id === toolCallId
+              ? { ...log, error, status: "failed" as const }
+              : log
+          )
+        );
+        // Don't return - still add the error message to the log
       }
 
       // Map activity log types to UI log types
@@ -336,6 +354,7 @@ function App() {
                     toolName={log.toolName}
                     args={log.args}
                     result={log.result}
+                    error={log.error}
                     status={log.status}
                   />
                 ) : (
