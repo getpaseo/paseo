@@ -15,7 +15,7 @@ export async function getPlaywrightMCPClient() {
 
   const transport = new StdioClientTransport({
     command: "npx",
-    args: ["@playwright/mcp", "--browser", "firefox"],
+    args: ["@playwright/mcp", "--image-responses", "omit"],
   });
 
   playwrightMCPClient = await experimental_createMCPClient({
