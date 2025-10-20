@@ -9,14 +9,6 @@ import { createServer as createViteServer } from "vite";
 import type { ViteDevServer } from "vite";
 import type { ServerConfig } from "./types.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import {
-  initializeDefaultSession,
-  listTerminals,
-  createTerminal,
-  sendText,
-  captureTerminal,
-  killTerminal,
-} from "./daemon/terminal-manager.js";
 import { initializeSTT, transcribeAudio } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
 import {
@@ -36,91 +28,6 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // Test endpoint for LLM integration (removed - using orchestrator now)
-
-  // Test endpoint for terminal operations
-  app.get("/api/test-terminal", async (_req, res) => {
-    try {
-      const testResults: string[] = [];
-
-      // 1. Initialize default session
-      testResults.push("1. Initializing default session...");
-      await initializeDefaultSession();
-      testResults.push("   ✓ Session initialized");
-
-      // 2. List existing terminals
-      testResults.push("2. Listing existing terminals...");
-      const beforeTerminals = await listTerminals();
-      testResults.push(
-        `   ✓ Found ${beforeTerminals.length} existing terminals`
-      );
-
-      // 3. Create a test terminal
-      testResults.push("3. Creating test terminal...");
-      const terminal = await createTerminal({
-        name: "test-terminal",
-        workingDirectory: "~",
-        initialCommand: undefined,
-      });
-      testResults.push(
-        `   ✓ Created terminal: ${terminal.name}`
-      );
-
-      // 4. Send a command to the terminal
-      testResults.push('4. Sending command "echo hello world"...');
-      await sendText(terminal.name, 'echo "hello world"', true, {
-        lines: 20,
-      });
-      testResults.push("   ✓ Command sent");
-
-      // 5. Capture output
-      testResults.push("5. Capturing terminal output...");
-      const output = await captureTerminal(terminal.name, 20);
-      testResults.push(`   ✓ Captured ${output.split("\n").length} lines`);
-      testResults.push(`   Output preview: ${output.substring(0, 100)}...`);
-
-      // 6. List terminals again
-      testResults.push("6. Listing terminals again...");
-      const afterTerminals = await listTerminals();
-      testResults.push(`   ✓ Found ${afterTerminals.length} terminals`);
-      const testTerminal = afterTerminals.find(
-        (t) => t.name === "test-terminal"
-      );
-      if (testTerminal) {
-        testResults.push(`   ✓ Found test-terminal`);
-      }
-
-      // 7. Kill the test terminal
-      testResults.push("7. Killing test terminal...");
-      await killTerminal(terminal.name);
-      testResults.push("   ✓ Terminal killed");
-
-      // 8. Verify it's gone
-      testResults.push("8. Verifying terminal was removed...");
-      const finalTerminals = await listTerminals();
-      const stillExists = finalTerminals.find(
-        (t) => t.name === "test-terminal"
-      );
-      if (!stillExists) {
-        testResults.push("   ✓ Terminal successfully removed");
-      } else {
-        testResults.push("   ✗ Terminal still exists!");
-      }
-
-      res.json({
-        success: true,
-        message: "All terminal operations completed successfully",
-        results: testResults,
-      });
-    } catch (error: any) {
-      res.status(500).json({
-        success: false,
-        error: error.message,
-        stack: error.stack,
-      });
-    }
   });
 
   let vite: ViteDevServer | undefined;
@@ -319,14 +226,6 @@ async function main() {
   setInterval(() => {
     cleanupConversations(60); // Clean up conversations older than 60 minutes
   }, 10 * 60 * 1000);
-
-  // Initialize default tmux session for terminal control
-  try {
-    await initializeDefaultSession();
-    console.log("✓ Default tmux session initialized");
-  } catch (error) {
-    console.error("Failed to initialize tmux session:", error);
-  }
 
   httpServer.listen(port, () => {
     console.log(
