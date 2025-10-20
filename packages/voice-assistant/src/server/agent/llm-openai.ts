@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, tool } from "ai";
+import { stepCountIs, streamText, tool, zodSchema } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../daemon/terminal-manager.js";
 import invariant from "tiny-invariant";
 import { getPlaywrightTools } from "./playwright-mcp.js";
+import { lazySchema } from "@ai-sdk/provider-utils";
 
 /**
  * Terminal tools using Vercel AI SDK tool() function
@@ -21,7 +22,7 @@ export const terminalTools = {
   list_terminals: tool({
     description:
       "List all terminals (isolated shell environments). Returns terminal name, active status, current working directory, currently running command, and the last 5 lines of output for each terminal.",
-    inputSchema: z.object({}),
+    inputSchema: zodSchema(z.object({})),
     execute: async () => {
       const terminals = await listTerminals();
       return { terminals };
@@ -244,6 +245,18 @@ export const terminalTools = {
         success: true,
         message: "Artifact presented to user.",
       };
+    },
+  }),
+};
+
+export const tls = {
+  list_terminals: tool({
+    description:
+      "List all terminals (isolated shell environments). Returns terminal name, active status, current working directory, currently running command, and the last 5 lines of output for each terminal.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const terminals = await listTerminals();
+      return { terminals };
     },
   }),
 };
