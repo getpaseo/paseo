@@ -261,6 +261,14 @@ async function main() {
         // Transcribe audio using OpenAI Whisper
         const result = await transcribeAudio(audio, format);
 
+        // Check if transcription is empty or only whitespace
+        const transcriptText = result.text.trim();
+        if (!transcriptText) {
+          console.log("[STT] Transcription is empty or silence, skipping LLM processing");
+          // Return empty string without broadcasting or processing
+          return "";
+        }
+
         // Broadcast transcription result as activity log
         wsServer.broadcastActivityLog({
           id: uuidv4(),

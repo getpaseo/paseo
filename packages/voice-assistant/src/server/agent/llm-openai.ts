@@ -11,6 +11,7 @@ import {
   killTerminal,
 } from "../daemon/terminal-manager.js";
 import invariant from "tiny-invariant";
+import { getPlaywrightTools } from "./playwright-mcp.js";
 
 /**
  * Terminal tools using Vercel AI SDK tool() function
@@ -208,7 +209,67 @@ export const terminalTools = {
       return { success: true };
     },
   }),
+
+  present_artifact: tool({
+    description:
+      "Present an artifact (plan, diff, screenshot, etc.) to the user for review. Use this when you need to show information that's hard to convey via TTS, such as markdown plans, code diffs, or visual content",
+    inputSchema: z.object({
+      type: z
+        .enum(["markdown", "diff", "image", "code"])
+        .describe("Type of artifact to present."),
+      source: z.union([
+        z.object({
+          type: z.literal("file"),
+          path: z.string(),
+        }),
+        z.object({
+          type: z.literal("command_output"),
+          command: z.string(),
+        }),
+        z.object({
+          type: z.literal("text"),
+          text: z.string(),
+        }),
+      ]),
+      title: z
+        .string()
+        .describe(
+          "Title for the artifact (e.g., 'Implementation Plan', 'Refactoring Strategy', '/path/to/project/package.json')."
+        ),
+    }),
+    execute: async () => {
+      // Artifact will be broadcast by orchestrator via onToolCall callback
+      // We just return a simple acknowledgment here
+      return {
+        success: true,
+        message: "Artifact presented to user.",
+      };
+    },
+  }),
 };
+
+/**
+ * Cache Playwright MCP tools (lazy loaded on first use)
+ */
+let playwrightToolsCache: Record<string, any> | null = null;
+let playwrightToolsPromise: Promise<Record<string, any>> | null = null;
+
+async function getCachedPlaywrightTools(): Promise<Record<string, any>> {
+  if (playwrightToolsCache) {
+    return playwrightToolsCache;
+  }
+
+  if (playwrightToolsPromise) {
+    return playwrightToolsPromise;
+  }
+
+  playwrightToolsPromise = getPlaywrightTools().then((tools) => {
+    playwrightToolsCache = tools;
+    return tools;
+  });
+
+  return playwrightToolsPromise;
+}
 
 /**
  * Message interface for conversation
@@ -252,11 +313,18 @@ export async function streamLLM(params: StreamLLMParams): Promise<string> {
     apiKey: process.env.OPENROUTER_API_KEY,
   });
 
+  // Merge terminal tools with Playwright MCP tools
+  const pwTools = await getCachedPlaywrightTools();
+  const allTools = {
+    ...terminalTools,
+    ...pwTools,
+  };
+
   const result = await streamText({
     model: openrouter("anthropic/claude-haiku-4.5"),
     system: params.systemPrompt,
     messages: params.messages,
-    tools: terminalTools,
+    tools: allTools,
     abortSignal: params.abortSignal,
     onChunk: async ({ chunk }) => {
       // console.log("onChunk", chunk);

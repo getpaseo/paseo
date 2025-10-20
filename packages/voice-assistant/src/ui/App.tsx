@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { Mic, Send } from "lucide-react";
+import { Mic, Send, Radio } from "lucide-react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { createAudioPlayer } from "./lib/audio-playback";
 import { createAudioRecorder, type AudioRecorder } from "./lib/audio-capture";
+import { createRealtimeVAD, float32ArrayToBlob, type RealtimeVAD } from "./lib/audio-realtime";
 import { ToolCallCard } from "./components/ToolCallCard";
+import { ArtifactDrawer, type Artifact } from "./components/ArtifactDrawer";
 import "./App.css";
 
 type LogEntry =
@@ -23,6 +25,14 @@ type LogEntry =
       result?: any;
       error?: any;
       status: "executing" | "completed" | "failed";
+    }
+  | {
+      type: "artifact";
+      id: string;
+      timestamp: number;
+      artifactId: string;
+      artifactType: string;
+      title: string;
     };
 
 function App() {
@@ -39,9 +49,15 @@ function App() {
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isRealtimeMode, setIsRealtimeMode] = useState(false);
+  const [isSpeechDetected, setIsSpeechDetected] = useState(false);
+  const [isVADLoading, setIsVADLoading] = useState(false);
+  const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
+  const [artifacts, setArtifacts] = useState<Map<string, Artifact>>(new Map());
   const logEndRef = useRef<HTMLDivElement>(null);
   const audioPlayerRef = useRef(createAudioPlayer());
   const recorderRef = useRef<AudioRecorder | null>(null);
+  const vadRef = useRef<RealtimeVAD | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // WebSocket URL - use ws://localhost:3000/ws in dev, or construct from current host in prod
@@ -53,6 +69,13 @@ function App() {
 
   useEffect(() => {
     recorderRef.current = createAudioRecorder();
+
+    // Cleanup VAD on unmount
+    return () => {
+      if (vadRef.current) {
+        vadRef.current.destroy();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -186,6 +209,34 @@ function App() {
       }
     );
 
+    // Listen for artifacts
+    const unsubArtifact = ws.on("artifact", (payload: unknown) => {
+      const artifact = payload as Artifact;
+
+      // Add to artifacts map
+      setArtifacts((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(artifact.id, artifact);
+        return newMap;
+      });
+
+      // Add as clickable log entry
+      setLogs((prev) => [
+        ...prev,
+        {
+          type: "artifact" as const,
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          artifactId: artifact.id,
+          artifactType: artifact.type,
+          title: artifact.title,
+        },
+      ]);
+
+      // Show drawer by default
+      setCurrentArtifact(artifact);
+    });
+
     // Listen for audio output (TTS)
     const unsubAudioOutput = ws.on("audio_output", async (payload: unknown) => {
       const data = payload as { audio: string; format: string; id: string };
@@ -228,6 +279,7 @@ function App() {
       unsubActivity();
       unsubChunk();
       unsubTranscription();
+      unsubArtifact();
       unsubAudioOutput();
     };
   }, [ws]);
@@ -336,6 +388,116 @@ function App() {
     }
   };
 
+  const handleCloseArtifact = () => {
+    setCurrentArtifact(null);
+  };
+
+  const handleOpenArtifact = (artifactId: string) => {
+    const artifact = artifacts.get(artifactId);
+    if (artifact) {
+      setCurrentArtifact(artifact);
+    }
+  };
+
+  const handleToggleRealtimeMode = async () => {
+    if (!ws.isConnected) return;
+
+    try {
+      if (isRealtimeMode) {
+        // Stop realtime mode
+        if (vadRef.current) {
+          vadRef.current.pause();
+        }
+        setIsRealtimeMode(false);
+        setIsSpeechDetected(false);
+        addLog("info", "Realtime mode stopped");
+      } else {
+        // Start realtime mode
+        setIsVADLoading(true);
+        addLog("info", "Starting realtime mode...");
+
+        // Create VAD instance if it doesn't exist
+        if (!vadRef.current) {
+          vadRef.current = createRealtimeVAD({
+            onModelLoading: () => {
+              console.log("[App] VAD model loading...");
+              setIsVADLoading(true);
+            },
+            onModelLoaded: () => {
+              console.log("[App] VAD model loaded");
+              setIsVADLoading(false);
+            },
+            onSpeechStart: () => {
+              console.log("[App] Speech detected!");
+              setIsSpeechDetected(true);
+
+              // Interrupt playback when speech is detected
+              audioPlayerRef.current.stop();
+              setIsPlayingAudio(false);
+              setCurrentAssistantMessage("");
+            },
+            onSpeechEnd: async (audioData: Float32Array) => {
+              console.log("[App] Speech ended, processing...");
+              setIsSpeechDetected(false);
+              setIsProcessingAudio(true);
+
+              try {
+                // Convert Float32Array to audio blob
+                const audioBlob = float32ArrayToBlob(audioData, 16000);
+                console.log(`[App] Converted to blob: ${audioBlob.size} bytes`);
+
+                // Send to server
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const base64Audio = btoa(
+                  new Uint8Array(arrayBuffer).reduce(
+                    (data, byte) => data + String.fromCharCode(byte),
+                    ""
+                  )
+                );
+
+                ws.send({
+                  type: "audio_chunk",
+                  payload: {
+                    audio: base64Audio,
+                    format: audioBlob.type,
+                    isLast: true,
+                  },
+                });
+
+                console.log(`[App] Sent realtime audio to server`);
+              } catch (error: any) {
+                console.error("[App] Failed to process VAD audio:", error);
+                addLog("error", `Failed to process audio: ${error.message}`);
+                setIsProcessingAudio(false);
+              }
+            },
+            onVADMisfire: () => {
+              console.log("[App] VAD misfire");
+              setIsSpeechDetected(false);
+            },
+            onError: (error: Error) => {
+              console.error("[App] VAD error:", error);
+              addLog("error", `VAD error: ${error.message}`);
+              setIsVADLoading(false);
+              setIsRealtimeMode(false);
+            },
+          });
+        }
+
+        // Start VAD
+        await vadRef.current.start();
+        setIsRealtimeMode(true);
+        setIsVADLoading(false);
+        addLog("success", "Realtime mode started - speak anytime!");
+      }
+    } catch (error: any) {
+      console.error("[App] Realtime mode error:", error);
+      addLog("error", `Failed to toggle realtime mode: ${error.message}`);
+      setIsRealtimeMode(false);
+      setIsVADLoading(false);
+    }
+  };
+
   return (
     <div className="app">
       <header className="header">
@@ -356,17 +518,42 @@ function App() {
         <div className="chat-interface">
           <div className="activity-log">
             <div className="log-entries">
-              {logs.map((log) =>
-                log.type === "tool_call" ? (
-                  <ToolCallCard
-                    key={log.id}
-                    toolName={log.toolName}
-                    args={log.args}
-                    result={log.result}
-                    error={log.error}
-                    status={log.status}
-                  />
-                ) : (
+              {logs.map((log) => {
+                if (log.type === "tool_call") {
+                  return (
+                    <ToolCallCard
+                      key={log.id}
+                      toolName={log.toolName}
+                      args={log.args}
+                      result={log.result}
+                      error={log.error}
+                      status={log.status}
+                    />
+                  );
+                }
+
+                if (log.type === "artifact") {
+                  return (
+                    <div
+                      key={log.id}
+                      className="log-entry artifact clickable"
+                      onClick={() => handleOpenArtifact(log.artifactId)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          handleOpenArtifact(log.artifactId);
+                        }
+                      }}
+                    >
+                      <span className="log-message">
+                        📋 {log.artifactType}: {log.title}
+                      </span>
+                    </div>
+                  );
+                }
+
+                return (
                   <div key={log.id} className={`log-entry ${log.type}`}>
                     <span className="log-message">{log.message}</span>
                     {log.metadata && (
@@ -376,8 +563,8 @@ function App() {
                       </details>
                     )}
                   </div>
-                )
-              )}
+                );
+              })}
               {currentAssistantMessage && (
                 <div className="log-entry assistant streaming">
                   <span className="log-message">{currentAssistantMessage}</span>
@@ -395,14 +582,27 @@ function App() {
               onChange={(e) => setUserInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type a message or tap mic to talk..."
-              disabled={!ws.isConnected || isRecording}
+              disabled={!ws.isConnected || isRecording || isRealtimeMode}
               className="message-input"
               rows={1}
             />
             <button
               type="button"
+              onClick={handleToggleRealtimeMode}
+              disabled={!ws.isConnected || isRecording || isVADLoading}
+              className={`send-button realtime-button ${isRealtimeMode ? 'active' : ''} ${isSpeechDetected ? 'speech-detected' : ''} ${isVADLoading ? 'loading' : ''}`}
+              title={isRealtimeMode ? "Stop realtime mode" : "Start realtime mode"}
+            >
+              {isVADLoading ? (
+                <span className="loading-indicator" />
+              ) : (
+                <Radio size={20} />
+              )}
+            </button>
+            <button
+              type="button"
               onClick={handleButtonClick}
-              disabled={!ws.isConnected || isProcessingAudio}
+              disabled={!ws.isConnected || isProcessingAudio || isRealtimeMode}
               className={`send-button ${isRecording ? 'recording' : ''} ${isProcessingAudio ? 'processing' : ''} ${userInput.trim() ? 'has-text' : ''}`}
             >
               {isRecording ? (
@@ -418,6 +618,11 @@ function App() {
           </div>
         </div>
       </main>
+
+      <ArtifactDrawer
+        artifact={currentArtifact}
+        onClose={handleCloseArtifact}
+      />
     </div>
   );
 }

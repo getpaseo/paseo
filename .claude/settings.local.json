@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:ai-sdk.dev)"
     ],
     "deny": [],
     "ask": []
