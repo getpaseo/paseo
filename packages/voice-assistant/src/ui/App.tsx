@@ -623,7 +623,7 @@ function App() {
               onChange={(e) => setUserInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type a message"
-              disabled={!ws.isConnected || isRecording || isRealtimeMode}
+              disabled={!ws.isConnected || isRecording}
               className="message-input"
               rows={1}
             />
@@ -649,7 +649,7 @@ function App() {
             <button
               type="button"
               onClick={handleButtonClick}
-              disabled={!ws.isConnected || isProcessingAudio || isRealtimeMode}
+              disabled={!ws.isConnected || isProcessingAudio}
               className={`send-button ${isRecording ? "recording" : ""} ${
                 isProcessingAudio ? "processing" : ""
               } ${userInput.trim() ? "has-text" : ""}`}
