@@ -3,7 +3,11 @@ import { Mic, Send, Radio } from "lucide-react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { createAudioPlayer } from "./lib/audio-playback";
 import { createAudioRecorder, type AudioRecorder } from "./lib/audio-capture";
-import { createRealtimeVAD, float32ArrayToBlob, type RealtimeVAD } from "./lib/audio-realtime";
+import {
+  createRealtimeVAD,
+  float32ArrayToBlob,
+  type RealtimeVAD,
+} from "./lib/audio-realtime";
 import { ToolCallCard } from "./components/ToolCallCard";
 import { ArtifactDrawer, type Artifact } from "./components/ArtifactDrawer";
 import "./App.css";
@@ -80,7 +84,7 @@ function App() {
 
   useEffect(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = "auto";
       const newHeight = Math.max(textareaRef.current.scrollHeight, 44);
       textareaRef.current.style.height = `${newHeight}px`;
     }
@@ -106,19 +110,26 @@ function App() {
   useEffect(() => {
     // Listen for status messages
     const unsubStatus = ws.on("status", (message) => {
-      if (message.type !== 'status') return;
-      const msg = 'message' in message.payload ? String(message.payload.message) : undefined;
+      if (message.type !== "status") return;
+      const msg =
+        "message" in message.payload
+          ? String(message.payload.message)
+          : undefined;
       addLog("info", msg || `Status: ${message.payload.status}`);
     });
 
     // Listen for activity log messages
     const unsubActivity = ws.on("activity_log", (message) => {
-      if (message.type !== 'activity_log') return;
+      if (message.type !== "activity_log") return;
       const data = message.payload;
 
       // Handle tool calls
       if (data.type === "tool_call" && data.metadata) {
-        const { toolCallId, toolName, arguments: args } = data.metadata as {
+        const {
+          toolCallId,
+          toolName,
+          arguments: args,
+        } = data.metadata as {
           toolCallId: string;
           toolName: string;
           arguments: unknown;
@@ -155,7 +166,11 @@ function App() {
       }
 
       // Handle tool errors - update tool call status to failed
-      if (data.type === "error" && data.metadata && 'toolCallId' in data.metadata) {
+      if (
+        data.type === "error" &&
+        data.metadata &&
+        "toolCallId" in data.metadata
+      ) {
         const { toolCallId, error } = data.metadata as {
           toolCallId: string;
           error: unknown;
@@ -172,7 +187,13 @@ function App() {
       }
 
       // Map activity log types to UI log types
-      let logType: "system" | "info" | "success" | "error" | "user" | "assistant" = "info";
+      let logType:
+        | "system"
+        | "info"
+        | "success"
+        | "error"
+        | "user"
+        | "assistant" = "info";
       if (data.type === "transcript") logType = "user";
       else if (data.type === "assistant") logType = "assistant";
       else if (data.type === "error") logType = "error";
@@ -187,20 +208,37 @@ function App() {
 
     // Listen for streaming assistant chunks
     const unsubChunk = ws.on("assistant_chunk", (message) => {
-      if (message.type !== 'assistant_chunk') return;
+      if (message.type !== "assistant_chunk") return;
       setCurrentAssistantMessage((prev) => prev + message.payload.chunk);
     });
 
     // Listen for transcription results
-    const unsubTranscription = ws.on("transcription_result", () => {
-      // Note: Transcription is already broadcast as activity_log with type "transcript"
-      // No need to log it again here to avoid duplication
+    const unsubTranscription = ws.on("transcription_result", (message) => {
+      if (message.type !== "transcription_result") return;
+
       setIsProcessingAudio(false);
+
+      const transcriptText = message.payload.text.trim();
+
+      if (!transcriptText) {
+        // Empty transcription - false positive, resume playback
+        console.log(
+          "[App] Empty transcription (false positive) - resuming playback"
+        );
+        audioPlayerRef.current.resume();
+      } else {
+        // Has content - real speech detected
+        // Server will handle abort, just stop playback on client
+        console.log("[App] Transcription received - stopping playback");
+        audioPlayerRef.current.stop();
+        setIsPlayingAudio(false);
+        setCurrentAssistantMessage("");
+      }
     });
 
     // Listen for artifacts
     const unsubArtifact = ws.on("artifact", (message) => {
-      if (message.type !== 'artifact') return;
+      if (message.type !== "artifact") return;
       const artifact = message.payload;
 
       // Add to artifacts map
@@ -229,7 +267,7 @@ function App() {
 
     // Listen for audio output (TTS)
     const unsubAudioOutput = ws.on("audio_output", async (message) => {
-      if (message.type !== 'audio_output') return;
+      if (message.type !== "audio_output") return;
       const data = message.payload;
 
       try {
@@ -311,12 +349,14 @@ function App() {
 
     try {
       if (isRecording) {
-        console.log('[App] Stopping recording...');
+        console.log("[App] Stopping recording...");
         const audioBlob = await recorder.stop();
         setIsRecording(false);
 
-        const format = audioBlob.type || 'audio/webm';
-        console.log(`[App] Recording complete: ${audioBlob.size} bytes, format: ${format}`);
+        const format = audioBlob.type || "audio/webm";
+        console.log(
+          `[App] Recording complete: ${audioBlob.size} bytes, format: ${format}`
+        );
 
         setIsProcessingAudio(true);
         addLog("info", "Sending audio to server...");
@@ -339,9 +379,11 @@ function App() {
           },
         });
 
-        console.log(`[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`);
+        console.log(
+          `[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`
+        );
       } else {
-        console.log('[App] Starting recording...');
+        console.log("[App] Starting recording...");
 
         // Stop any currently playing audio when starting to record
         audioPlayerRef.current.stop();
@@ -351,7 +393,7 @@ function App() {
         setIsRecording(true);
       }
     } catch (error: any) {
-      console.error('[App] Recording error:', error);
+      console.error("[App] Recording error:", error);
       addLog("error", `Failed to record audio: ${error.message}`);
       setIsRecording(false);
     }
@@ -369,9 +411,9 @@ function App() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Detect if device is desktop (not mobile/tablet)
-    const isDesktop = window.matchMedia('(pointer: fine)').matches;
+    const isDesktop = window.matchMedia("(pointer: fine)").matches;
 
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       if (isDesktop && !e.shiftKey && userInput.trim()) {
         // Desktop: plain Enter sends message
         e.preventDefault();
@@ -425,18 +467,9 @@ function App() {
               console.log("[App] Speech detected!");
               setIsSpeechDetected(true);
 
-              // Interrupt playback when speech is detected
-              audioPlayerRef.current.stop();
-              setIsPlayingAudio(false);
-              setCurrentAssistantMessage("");
-
-              // Send abort request to server immediately
-              ws.send({
-                type: "session",
-                message: {
-                  type: "abort_request",
-                },
-              });
+              // Pause playback when speech is detected
+              // Will resume if false positive, or stop completely if real speech
+              audioPlayerRef.current.pause();
             },
             onSpeechEnd: async (audioData: Float32Array) => {
               console.log("[App] Speech ended, processing...");
@@ -475,8 +508,11 @@ function App() {
               }
             },
             onVADMisfire: () => {
-              console.log("[App] VAD misfire");
+              console.log("[App] VAD misfire - resuming playback");
               setIsSpeechDetected(false);
+
+              // Resume playback since it was a false positive
+              audioPlayerRef.current.resume();
             },
             onError: (error: Error) => {
               console.error("[App] VAD error:", error);
@@ -506,7 +542,9 @@ function App() {
       <header className="header">
         <h1>Voice Assistant</h1>
         <div className="header-status">
-          {isPlayingAudio && <div className="audio-playing-indicator" title="Playing audio" />}
+          {isPlayingAudio && (
+            <div className="audio-playing-indicator" title="Playing audio" />
+          )}
           <div
             className={`status-indicator ${
               ws.isConnected ? "connected" : "disconnected"
@@ -584,7 +622,7 @@ function App() {
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type a message or tap mic to talk..."
+              placeholder="Type a message"
               disabled={!ws.isConnected || isRecording || isRealtimeMode}
               className="message-input"
               rows={1}
@@ -593,8 +631,14 @@ function App() {
               type="button"
               onClick={handleToggleRealtimeMode}
               disabled={!ws.isConnected || isRecording || isVADLoading}
-              className={`send-button realtime-button ${isRealtimeMode ? 'active' : ''} ${isSpeechDetected ? 'speech-detected' : ''} ${isVADLoading ? 'loading' : ''}`}
-              title={isRealtimeMode ? "Stop realtime mode" : "Start realtime mode"}
+              className={`send-button realtime-button ${
+                isRealtimeMode ? "active" : ""
+              } ${isSpeechDetected ? "speech-detected" : ""} ${
+                isVADLoading ? "loading" : ""
+              }`}
+              title={
+                isRealtimeMode ? "Stop realtime mode" : "Start realtime mode"
+              }
             >
               {isVADLoading ? (
                 <span className="loading-indicator" />
@@ -606,7 +650,9 @@ function App() {
               type="button"
               onClick={handleButtonClick}
               disabled={!ws.isConnected || isProcessingAudio || isRealtimeMode}
-              className={`send-button ${isRecording ? 'recording' : ''} ${isProcessingAudio ? 'processing' : ''} ${userInput.trim() ? 'has-text' : ''}`}
+              className={`send-button ${isRecording ? "recording" : ""} ${
+                isProcessingAudio ? "processing" : ""
+              } ${userInput.trim() ? "has-text" : ""}`}
             >
               {isRecording ? (
                 <span className="recording-indicator" />
