@@ -16,7 +16,7 @@ export interface ActivityLogEntry {
 export interface WebSocketMessage {
   type: 'activity_log' | 'status' | 'ping' | 'pong' | 'user_message' | 'assistant_chunk'
        | 'audio_chunk' | 'audio_output' | 'recording_state' | 'transcription_result' | 'audio_played'
-       | 'artifact';
+       | 'artifact' | 'abort_request';
   payload: unknown;
 }
 

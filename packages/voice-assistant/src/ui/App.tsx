@@ -435,6 +435,12 @@ function App() {
               audioPlayerRef.current.stop();
               setIsPlayingAudio(false);
               setCurrentAssistantMessage("");
+
+              // Send abort request to server immediately
+              ws.send({
+                type: "abort_request",
+                payload: {},
+              });
             },
             onSpeechEnd: async (audioData: Float32Array) => {
               console.log("[App] Speech ended, processing...");

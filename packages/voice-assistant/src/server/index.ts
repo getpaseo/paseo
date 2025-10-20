@@ -265,7 +265,8 @@ async function main() {
         const transcriptText = result.text.trim();
         if (!transcriptText) {
           console.log("[STT] Transcription is empty or silence, skipping LLM processing");
-          // Return empty string without broadcasting or processing
+          // Reset to idle since we're not processing
+          wsServer.setPhaseForConversation(conversationId, 'idle');
           return "";
         }
 
@@ -281,6 +282,9 @@ async function main() {
           },
         });
 
+        // Set phase to LLM before processing
+        wsServer.setPhaseForConversation(conversationId, 'llm');
+
         // Process the transcribed text through the orchestrator WITH TTS enabled
         // Since this came from voice input, respond with voice output
         await processUserMessage({
@@ -291,8 +295,14 @@ async function main() {
           abortSignal,
         });
 
+        // Reset to idle after LLM processing completes
+        wsServer.setPhaseForConversation(conversationId, 'idle');
+
         return result.text;
       } catch (error: any) {
+        // Reset to idle on error
+        wsServer.setPhaseForConversation(conversationId, 'idle');
+
         console.error("[STT] Error transcribing audio:", error);
         wsServer.broadcastActivityLog({
           id: uuidv4(),
