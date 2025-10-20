@@ -1,4 +1,7 @@
-import { exec as execCallback, execFile as execFileCallback } from "child_process";
+import {
+  exec as execCallback,
+  execFile as execFileCallback,
+} from "child_process";
 import { promisify } from "util";
 import { v4 as uuidv4 } from "uuid";
 import os from "node:os";
@@ -171,7 +174,13 @@ export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
  */
 export async function listPanes(windowId: string): Promise<TmuxPane[]> {
   const format = "#{pane_id}:#{pane_title}:#{?pane_active,1,0}";
-  const output = await executeTmux(["list-panes", "-t", windowId, "-F", format]);
+  const output = await executeTmux([
+    "list-panes",
+    "-t",
+    windowId,
+    "-F",
+    format,
+  ]);
 
   if (!output) return [];
 
@@ -313,7 +322,13 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
   ]);
 
   // Disable automatic window renaming for all windows in the session
-  await executeTmux(["set-window-option", "-t", name, "automatic-rename", "off"]);
+  await executeTmux([
+    "set-window-option",
+    "-t",
+    name,
+    "automatic-rename",
+    "off",
+  ]);
 
   return findSessionByName(name);
 }
@@ -342,7 +357,7 @@ export async function createWindow(
     workingDirectory?: string;
     command?: string;
   }
-): Promise<(TmuxWindow & { paneId: string; output?: string }) | null> {
+): Promise<(TmuxWindow & { paneId: string; output?: string | null }) | null> {
   // Validate name uniqueness
   const isUnique = await isWindowNameUnique(sessionId, name);
   if (!isUnique) {
@@ -378,7 +393,7 @@ export async function createWindow(
   const panes = await listPanes(window.id);
   const defaultPane = panes[0];
 
-  let commandOutput: string | undefined;
+  let commandOutput: string | null = null;
 
   // If command is provided, execute it in the new pane
   if (options?.command && defaultPane) {
