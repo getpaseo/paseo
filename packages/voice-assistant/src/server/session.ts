@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { readFile, mkdir, writeFile } from "fs/promises";
 import { exec } from "child_process";
-import { promisify } from "util";
+import { promisify, inspect } from "util";
 import { join } from "path";
 import invariant from "tiny-invariant";
 import { streamText, stepCountIs } from "ai";
@@ -729,7 +729,7 @@ export class Session {
         messages: this.messages,
       };
 
-      await writeFile(filepath, JSON.stringify(dump, null, 2), "utf-8");
+      await writeFile(filepath, inspect(dump, { depth: null }), "utf-8");
       console.log(
         `[Session ${this.clientId}] Dumped conversation to ${filepath}`
       );

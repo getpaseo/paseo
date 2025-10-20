@@ -119,6 +119,11 @@ const manualTools = {
       type: z
         .enum(["markdown", "diff", "image", "code"])
         .describe("Type of artifact to present."),
+      title: z
+        .string()
+        .describe(
+          "Title for the artifact (e.g., 'Implementation Plan', 'Refactoring Strategy', '/path/to/project/package.json')."
+        ),
       source: z.union([
         z.object({
           type: z.literal("file"),
@@ -133,11 +138,6 @@ const manualTools = {
           text: z.string(),
         }),
       ]),
-      title: z
-        .string()
-        .describe(
-          "Title for the artifact (e.g., 'Implementation Plan', 'Refactoring Strategy', '/path/to/project/package.json')."
-        ),
     }),
     execute: async () => {
       // Artifact will be broadcast by orchestrator via onToolCall callback

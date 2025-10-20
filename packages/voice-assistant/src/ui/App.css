@@ -380,6 +380,14 @@
   background-color: #f59e0b;
 }
 
+.send-button.cancelling {
+  background-color: #ef4444;
+}
+
+.send-button.cancelling:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
 .send-button:disabled {
   background-color: #444;
   color: #999;

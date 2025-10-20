@@ -23,6 +23,7 @@
     "ai": "^5.0.76",
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
+    "express-basic-auth": "^1.2.1",
     "lucide-react": "^0.546.0",
     "openai": "^4.20.0",
     "playwright": "^1.56.1",

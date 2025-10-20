@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Mic, Send, Radio } from "lucide-react";
+import { Mic, Send, Radio, X } from "lucide-react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { createAudioPlayer } from "./lib/audio-playback";
 import { createAudioRecorder, type AudioRecorder } from "./lib/audio-capture";
@@ -399,12 +399,47 @@ function App() {
     }
   };
 
+  const handleCancel = async () => {
+    console.log("[App] Cancelling operations...");
+
+    // Stop audio playback
+    audioPlayerRef.current.stop();
+    setIsPlayingAudio(false);
+
+    // Clear streaming state
+    setCurrentAssistantMessage("");
+
+    // Reset processing state
+    setIsProcessingAudio(false);
+
+    // Send abort request to server
+    ws.send({
+      type: "session",
+      message: {
+        type: "abort_request",
+      },
+    });
+
+    addLog("info", "Operations cancelled");
+  };
+
+  // Compute if we're processing an already sent request (not including recording)
+  const isInProgress =
+    isProcessingAudio || isPlayingAudio || currentAssistantMessage.length > 0;
+
   const handleButtonClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
 
-    if (userInput.trim()) {
+    if (isRecording) {
+      // Stop recording and send the audio
+      await handleToggleRecording();
+    } else if (isInProgress) {
+      // Cancel processing/playback of already sent request
+      await handleCancel();
+    } else if (userInput.trim()) {
       handleSendMessage();
     } else {
+      // Start recording
       await handleToggleRecording();
     }
   };
@@ -649,15 +684,15 @@ function App() {
             <button
               type="button"
               onClick={handleButtonClick}
-              disabled={!ws.isConnected || isProcessingAudio}
-              className={`send-button ${isRecording ? "recording" : ""} ${
-                isProcessingAudio ? "processing" : ""
+              disabled={!ws.isConnected}
+              className={`send-button ${isInProgress ? "cancelling" : ""} ${
+                isRecording ? "recording" : ""
               } ${userInput.trim() ? "has-text" : ""}`}
             >
-              {isRecording ? (
+              {isInProgress ? (
+                <X size={20} />
+              ) : isRecording ? (
                 <span className="recording-indicator" />
-              ) : isProcessingAudio ? (
-                <span className="processing-indicator" />
               ) : userInput.trim() ? (
                 <Send size={20} />
               ) : (

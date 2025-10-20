@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import basicAuth from "express-basic-auth";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createHTTPServer, Server as HttpServer } from "http";
@@ -16,6 +17,15 @@ const __dirname = path.dirname(__filename);
 
 async function createServer(httpServer: HttpServer, config: ServerConfig) {
   const app = express();
+
+  // Basic authentication
+  app.use(
+    basicAuth({
+      users: { mo: "bo" },
+      challenge: true,
+      realm: "Voice Assistant",
+    })
+  );
 
   // Middleware
   app.use(express.json());
