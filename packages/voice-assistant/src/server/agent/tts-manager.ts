@@ -50,14 +50,18 @@ export class TTSManager {
     });
 
     console.log(
-      `[TTS-Manager ${this.sessionId}] ${new Date().toISOString()} Sent audio ${audioId}, waiting for playback...`
+      `[TTS-Manager ${
+        this.sessionId
+      }] ${new Date().toISOString()} Sent audio ${audioId}, waiting for playback...`
     );
 
     // Wait for playback confirmation
     await playbackPromise;
 
     console.log(
-      `[TTS-Manager ${this.sessionId}] ${new Date().toISOString()} Audio ${audioId} playback confirmed`
+      `[TTS-Manager ${
+        this.sessionId
+      }] ${new Date().toISOString()} Audio ${audioId} playback confirmed`
     );
   }
 
