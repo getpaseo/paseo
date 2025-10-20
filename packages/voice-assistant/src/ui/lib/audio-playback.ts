@@ -1,7 +1,10 @@
 export interface AudioPlayer {
   play(audioData: Blob): Promise<number>;
   stop(): void;
+  pause(): void;
+  resume(): void;
   isPlaying(): boolean;
+  isPaused(): boolean;
   clearQueue(): void;
 }
 
@@ -14,6 +17,7 @@ interface QueuedAudio {
 export function createAudioPlayer(): AudioPlayer {
   let currentAudio: HTMLAudioElement | null = null;
   let playing = false;
+  let paused = false;
   let queue: QueuedAudio[] = [];
   let isProcessingQueue = false;
   let currentReject: ((error: Error) => void) | null = null;
@@ -124,6 +128,7 @@ export function createAudioPlayer(): AudioPlayer {
       currentAudio = null;
     }
     playing = false;
+    paused = false;
 
     // Reject the current playing promise if it exists
     if (currentReject) {
@@ -140,8 +145,34 @@ export function createAudioPlayer(): AudioPlayer {
     isProcessingQueue = false;
   }
 
+  function pausePlayback(): void {
+    if (currentAudio && playing && !paused) {
+      currentAudio.pause();
+      paused = true;
+      console.log("[AudioPlayer] Playback paused");
+    }
+  }
+
+  function resumePlayback(): void {
+    if (currentAudio && paused) {
+      currentAudio.play().catch((error) => {
+        console.error("[AudioPlayer] Failed to resume playback:", error);
+        if (currentReject) {
+          currentReject(error);
+          currentReject = null;
+        }
+      });
+      paused = false;
+      console.log("[AudioPlayer] Playback resumed");
+    }
+  }
+
   function isPlayingFunc(): boolean {
     return playing;
+  }
+
+  function isPausedFunc(): boolean {
+    return paused;
   }
 
   function clearQueue(): void {
@@ -155,7 +186,10 @@ export function createAudioPlayer(): AudioPlayer {
   return {
     play,
     stop,
+    pause: pausePlayback,
+    resume: resumePlayback,
     isPlaying: isPlayingFunc,
+    isPaused: isPausedFunc,
     clearQueue,
   };
 }

@@ -24,7 +24,7 @@ async function getTerminalMcpClient() {
   }
 
   // Create Terminal MCP server
-  const server = await createTerminalMcpServer({ sessionName: "voice-dev" });
+  const server = await createTerminalMcpServer({ sessionName: "__voice-dev" });
 
   // Create linked transport pair
   const [clientTransport, serverTransport] =

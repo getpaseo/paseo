@@ -47,7 +47,7 @@ export async function createTerminalMcpServer(
       const terminals = await terminalManager.listTerminals();
       const output = { terminals };
       return {
-        content: [{ type: "text", text: JSON.stringify(output) }],
+        content: [],
         structuredContent: output,
       };
     }
@@ -95,7 +95,7 @@ export async function createTerminalMcpServer(
       });
       const output = { terminal };
       return {
-        content: [{ type: "text", text: JSON.stringify(output) }],
+        content: [],
         structuredContent: output,
       };
     }
@@ -133,7 +133,7 @@ export async function createTerminalMcpServer(
       );
       const result = { output };
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [],
         structuredContent: result,
       };
     }
@@ -196,7 +196,7 @@ export async function createTerminalMcpServer(
       );
       const result = { output: output || undefined };
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [],
         structuredContent: result,
       };
     }
@@ -258,7 +258,7 @@ export async function createTerminalMcpServer(
       );
       const result = { output: output || undefined };
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [],
         structuredContent: result,
       };
     }
@@ -287,7 +287,7 @@ export async function createTerminalMcpServer(
       await terminalManager.renameTerminal(terminalName, newName);
       const output = { success: true };
       return {
-        content: [{ type: "text", text: JSON.stringify(output) }],
+        content: [],
         structuredContent: output,
       };
     }
@@ -315,7 +315,7 @@ export async function createTerminalMcpServer(
       await terminalManager.killTerminal(terminalName);
       const output = { success: true };
       return {
-        content: [{ type: "text", text: JSON.stringify(output) }],
+        content: [],
         structuredContent: output,
       };
     }

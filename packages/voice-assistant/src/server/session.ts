@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
-import { readFile } from "fs/promises";
+import { readFile, mkdir, writeFile } from "fs/promises";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { join } from "path";
 import invariant from "tiny-invariant";
 import { streamText, stepCountIs } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -53,6 +54,7 @@ export class Session {
 
   // Conversation history
   private messages: ModelMessage[] = [];
+  private turnIndex = 0;
 
   // Per-session managers
   private readonly ttsManager: TTSManager;
@@ -236,17 +238,6 @@ export class Session {
    * Process audio through STT and then LLM
    */
   private async processAudio(audio: Buffer, format: string): Promise<void> {
-    // Abort any in-progress stream immediately
-    this.createAbortController();
-
-    // Wait for aborted stream to finish cleanup (save partial response)
-    if (this.currentStreamPromise) {
-      console.log(
-        `[Session ${this.clientId}] Waiting for aborted stream to finish cleanup`
-      );
-      await this.currentStreamPromise;
-    }
-
     this.setPhase("transcribing");
 
     this.emit({
@@ -265,10 +256,21 @@ export class Session {
       const transcriptText = result.text.trim();
       if (!transcriptText) {
         console.log(
-          `[Session ${this.clientId}] Empty transcription, skipping LLM`
+          `[Session ${this.clientId}] Empty transcription (false positive), not aborting`
         );
         this.setPhase("idle");
         return;
+      }
+
+      // Has content - abort any in-progress stream now
+      this.createAbortController();
+
+      // Wait for aborted stream to finish cleanup (save partial response)
+      if (this.currentStreamPromise) {
+        console.log(
+          `[Session ${this.clientId}] Waiting for aborted stream to finish cleanup`
+        );
+        await this.currentStreamPromise;
       }
 
       // Emit transcription result
@@ -353,6 +355,9 @@ export class Session {
     };
 
     try {
+      // Debug: dump conversation before LLM call
+      await this.dumpConversation();
+
       invariant(
         process.env.OPENROUTER_API_KEY,
         "OPENROUTER_API_KEY is required"
@@ -371,20 +376,13 @@ export class Session {
         tools: allTools,
         abortSignal: this.abortController.signal,
         onFinish: async (event) => {
-          for (const step of event.steps) {
-            this.messages.push(...step.response.messages);
+          const newMessages = event.response.messages;
+          if (newMessages.length > 0) {
+            this.messages.push(...newMessages);
+            console.log(
+              `[Session ${this.clientId}] onFinish - saved message with ${newMessages.length} steps`
+            );
           }
-          console.log(
-            `[Session ${this.clientId}] onFinish - saved message with ${event.steps.length} steps`
-          );
-        },
-        onAbort: async (event) => {
-          for (const step of event.steps) {
-            this.messages.push(...step.response.messages);
-          }
-          console.log(
-            `[Session ${this.clientId}] onAbort - saved message with ${event.steps.length} steps`
-          );
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
@@ -451,6 +449,8 @@ export class Session {
           }
         },
         onError: async (error) => {
+          console.error(error);
+
           this.emit({
             type: "activity_log",
             payload: {
@@ -539,6 +539,9 @@ export class Session {
       // Re-throw unexpected errors
       throw error;
     } finally {
+      // Increment turn index for next LLM call
+      this.turnIndex++;
+
       // Clear the stream promise tracker
       this.currentStreamPromise = null;
     }
@@ -706,6 +709,36 @@ export class Session {
    */
   private emit(msg: SessionOutboundMessage): void {
     this.onMessage(msg);
+  }
+
+  /**
+   * Debug helper: dump conversation to disk
+   */
+  private async dumpConversation(): Promise<void> {
+    try {
+      const dumpDir = join(process.cwd(), ".conversations");
+      await mkdir(dumpDir, { recursive: true });
+
+      const filename = `${this.conversationId}-${this.turnIndex}.json`;
+      const filepath = join(dumpDir, filename);
+
+      const dump = {
+        conversationId: this.conversationId,
+        turnIndex: this.turnIndex,
+        timestamp: new Date().toISOString(),
+        messages: this.messages,
+      };
+
+      await writeFile(filepath, JSON.stringify(dump, null, 2), "utf-8");
+      console.log(
+        `[Session ${this.clientId}] Dumped conversation to ${filepath}`
+      );
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to dump conversation:`,
+        error
+      );
+    }
   }
 
   /**

@@ -82,7 +82,7 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
 }
 
 async function main() {
-  const port = parseInt(process.env.PORT || "3000", 10);
+  const port = parseInt(process.env.PORT || "6767", 10);
   const isDev = process.env.NODE_ENV !== "production";
 
   const config: ServerConfig = { port, isDev };
