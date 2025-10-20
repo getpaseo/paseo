@@ -1,8 +1,14 @@
 import { v4 as uuidv4 } from "uuid";
+import { readFile } from "fs/promises";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { getSystemPrompt } from "./system-prompt.js";
 import { streamLLM, type Message } from "./llm-openai.js";
 import { generateTTSAndWaitForPlayback } from "./tts-manager.js";
 import type { VoiceAssistantWebSocketServer } from "../websocket-server.js";
+import type { ArtifactPayload } from "../types.js";
+
+const execAsync = promisify(exec);
 
 interface ConversationContext {
   id: string;
@@ -109,6 +115,60 @@ export async function processUserMessage(params: {
           await pendingTTS;
           pendingTTS = null;
         }
+
+        // Handle present_artifact tool specially
+        if (toolName === "present_artifact" && params.wsServer) {
+          const artifactId = uuidv4();
+
+          // Resolve source to content
+          let content: string;
+          let isBase64 = false;
+          try {
+            if (args.source.type === "file") {
+              const fileBuffer = await readFile(args.source.path);
+              content = fileBuffer.toString("base64");
+              isBase64 = true;
+            } else if (args.source.type === "command_output") {
+              const { stdout } = await execAsync(args.source.command, { encoding: 'buffer' });
+              content = stdout.toString("base64");
+              isBase64 = true;
+            } else if (args.source.type === "text") {
+              content = args.source.text;
+              isBase64 = false;
+            } else {
+              content = "[Unknown source type]";
+              isBase64 = false;
+            }
+          } catch (error) {
+            console.error("Failed to resolve artifact source:", error);
+            content = `[Error resolving source: ${error instanceof Error ? error.message : String(error)}]`;
+            isBase64 = false;
+          }
+
+          const artifact: ArtifactPayload = {
+            type: args.type,
+            id: artifactId,
+            title: args.title,
+            content,
+            isBase64,
+          };
+
+          // Broadcast artifact to client
+          params.wsServer.broadcast({
+            type: "artifact",
+            payload: artifact,
+          });
+
+          // Broadcast as activity log entry so it appears in the feed
+          params.wsServer.broadcastActivityLog({
+            id: artifactId,
+            timestamp: new Date(),
+            type: "system",
+            content: `${args.type} artifact: ${args.title}`,
+            metadata: { artifactId, artifactType: args.type },
+          });
+        }
+
         // Broadcast tool call to WebSocket
         if (params.wsServer) {
           params.wsServer.broadcastActivityLog({
@@ -240,3 +300,4 @@ export function getConversationStats(): {
     })),
   };
 }
+

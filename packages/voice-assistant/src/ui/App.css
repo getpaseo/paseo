@@ -236,6 +236,27 @@
   font-size: 0.75rem;
 }
 
+.log-entry.artifact {
+  background-color: #1e3a5f;
+  color: #93c5fd;
+  border: 1px solid #3b82f6;
+}
+
+.log-entry.artifact.clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.log-entry.artifact.clickable:hover {
+  background-color: #2563eb;
+  color: #fff;
+  transform: translateX(4px);
+}
+
+.log-entry.artifact.clickable:active {
+  transform: translateX(2px);
+}
+
 .log-entry.streaming {
   opacity: 0.8;
 }
@@ -382,6 +403,65 @@
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+/* Realtime mode button styles */
+.send-button.realtime-button {
+  background-color: #8b5cf6;
+}
+
+.send-button.realtime-button:hover:not(:disabled) {
+  background-color: #7c3aed;
+}
+
+.send-button.realtime-button.active {
+  background-color: #10b981;
+  animation: pulse-realtime 2s ease-in-out infinite;
+}
+
+.send-button.realtime-button.active:hover:not(:disabled) {
+  background-color: #059669;
+}
+
+.send-button.realtime-button.speech-detected {
+  background-color: #ef4444;
+  animation: pulse-speech 0.8s ease-in-out infinite;
+}
+
+.send-button.realtime-button.loading {
+  background-color: #f59e0b;
+}
+
+.send-button .loading-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes pulse-realtime {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes pulse-speech {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  50% {
+    opacity: 0.9;
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
 }
 
 .test-controls {

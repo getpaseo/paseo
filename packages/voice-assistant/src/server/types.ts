@@ -15,7 +15,8 @@ export interface ActivityLogEntry {
 
 export interface WebSocketMessage {
   type: 'activity_log' | 'status' | 'ping' | 'pong' | 'user_message' | 'assistant_chunk'
-       | 'audio_chunk' | 'audio_output' | 'recording_state' | 'transcription_result' | 'audio_played';
+       | 'audio_chunk' | 'audio_output' | 'recording_state' | 'transcription_result' | 'audio_played'
+       | 'artifact';
   payload: unknown;
 }
 
@@ -43,4 +44,12 @@ export interface AudioOutputPayload {
 
 export interface AudioPlayedPayload {
   id: string; // unique ID of the audio that finished playing
+}
+
+export interface ArtifactPayload {
+  type: 'markdown' | 'diff' | 'image' | 'code';
+  id: string;
+  title: string;
+  content: string; // resolved content (base64 for file/command sources, plain text for text source)
+  isBase64: boolean; // true if content is base64 encoded (from file or command_output)
 }
