@@ -1,8 +1,5 @@
-import { stepCountIs, streamText, tool } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { tool, experimental_createMCPClient } from "ai";
 import { z } from "zod";
-import invariant from "tiny-invariant";
-import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createTerminalMcpServer } from "../terminal-mcp/index.js";
@@ -154,125 +151,14 @@ const manualTools = {
 };
 
 /**
- * Message interface for conversation
+ * Get all tools (MCP + manual) for LLM
  */
-export interface Message {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-/**
- * Streaming LLM parameters
- */
-export interface StreamLLMParams {
-  systemPrompt: string;
-  messages: Message[];
-  abortSignal?: AbortSignal;
-  onChunk?: (chunk: string) => void | Promise<void>;
-  onTextSegment?: (segment: string) => void;
-  onToolCall?: (
-    toolCallId: string,
-    toolName: string,
-    args: any
-  ) => Promise<void>;
-  onToolResult?: (toolCallId: string, toolName: string, result: any) => void;
-  onToolError?: (
-    toolCallId: string,
-    toolName: string,
-    error: unknown
-  ) => void | Promise<void>;
-  onError?: (error: unknown) => void | Promise<void>;
-  onFinish?: (fullText: string) => void | Promise<void>;
-}
-
-/**
- * Stream LLM response with automatic tool execution
- */
-export async function streamLLM(params: StreamLLMParams): Promise<string> {
-  invariant(process.env.OPENROUTER_API_KEY, "OPENROUTER_API_KEY is required");
-
-  const openrouter = createOpenRouter({
-    apiKey: process.env.OPENROUTER_API_KEY,
-  });
-
-  // Get all MCP tools and merge with manual tools
+export async function getAllTools(): Promise<Record<string, any>> {
   const mcpTools = await getMcpTools();
-  const allTools = {
+  return {
     ...mcpTools,
     ...manualTools,
   };
-
-  const result = await streamText({
-    model: openrouter("anthropic/claude-haiku-4.5"),
-    system: params.systemPrompt,
-    messages: params.messages,
-    tools: allTools,
-    abortSignal: params.abortSignal,
-    onChunk: async ({ chunk }) => {
-      // console.log("onChunk", chunk);
-      if (chunk.type === "text-delta") {
-        // Accumulate text in buffer
-        textBuffer += chunk.text;
-        fullText += chunk.text;
-
-        params.onChunk?.(chunk.text);
-      } else if (chunk.type === "tool-call") {
-        // Flush accumulated text as a segment before tool call
-        flushTextBuffer();
-
-        // Emit tool call event
-        if (params.onToolCall) {
-          await params.onToolCall(
-            chunk.toolCallId,
-            chunk.toolName,
-            chunk.input
-          );
-        }
-      } else if (chunk.type === "tool-result") {
-        // Emit tool result event
-        if (params.onToolResult) {
-          params.onToolResult(chunk.toolCallId, chunk.toolName, chunk.output);
-        }
-      }
-    },
-    onError: async (error) => {
-      // Emit general stream error
-      if (params.onError) {
-        await params.onError(error);
-      }
-    },
-    stopWhen: stepCountIs(10),
-  });
-
-  let fullText = "";
-  let textBuffer = "";
-
-  function flushTextBuffer() {
-    if (textBuffer.length > 0 && params.onTextSegment) {
-      params.onTextSegment(textBuffer);
-    }
-    textBuffer = "";
-  }
-
-  for await (const part of result.fullStream) {
-    // console.log("part", part);
-
-    // Handle tool-error chunks (not available in onChunk callback)
-    if (part.type === "tool-error") {
-      if (params.onToolError) {
-        await params.onToolError(part.toolCallId, part.toolName, part.error);
-      }
-    }
-  }
-
-  // Flush any remaining text at the end
-  flushTextBuffer();
-
-  if (params.onFinish) {
-    await params.onFinish(fullText);
-  }
-
-  return fullText;
 }
 
 /**
