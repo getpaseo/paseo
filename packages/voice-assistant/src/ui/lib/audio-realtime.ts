@@ -65,9 +65,19 @@ export function createRealtimeVAD(config: RealtimeVADConfig): RealtimeVAD {
         },
         positiveSpeechThreshold: config.positiveSpeechThreshold ?? 0.5,
         negativeSpeechThreshold: config.negativeSpeechThreshold ?? 0.35,
-        redemptionMs: config.redemptionFrames ? config.redemptionFrames * 16 : 128,
-        preSpeechPadMs: config.preSpeechPadFrames ? config.preSpeechPadFrames * 16 : 16,
-        minSpeechMs: config.minSpeechFrames ? config.minSpeechFrames * 16 : 48,
+        // Increased redemptionMs to wait longer before deciding speech has ended (allows for natural pauses)
+        redemptionMs: config.redemptionFrames
+          ? config.redemptionFrames * 16
+          : 2000,
+        // Padding before speech starts
+        preSpeechPadMs: config.preSpeechPadFrames
+          ? config.preSpeechPadFrames * 16
+          : 300,
+        // Minimum speech duration to avoid capturing very short sounds
+        minSpeechMs: config.minSpeechFrames ? config.minSpeechFrames * 16 : 500,
+        ortConfig: (ort) => {
+          ort.env.wasm.wasmPaths = "/";
+        },
       });
 
       isActive = true;
@@ -75,8 +85,7 @@ export function createRealtimeVAD(config: RealtimeVADConfig): RealtimeVAD {
       console.log("[RealtimeVAD] VAD created and started successfully");
     } catch (error) {
       console.error("[RealtimeVAD] Failed to start VAD:", error);
-      const err =
-        error instanceof Error ? error : new Error(String(error));
+      const err = error instanceof Error ? error : new Error(String(error));
       config.onError?.(err);
       throw err;
     }

@@ -127,17 +127,23 @@ export class VoiceAssistantWebSocketServer {
           // Handle user message through orchestrator
           const payload = message.payload as { message: string };
           const conversationId = this.conversationIds.get(ws);
-          const abortController = this.abortControllers.get(ws);
           if (!conversationId) {
             console.error("[WS] No conversation found for client");
             break;
           }
-          if (!abortController) {
-            console.error("[WS] No abort controller found for client");
-            break;
+
+          // Abort any ongoing request
+          const oldController = this.abortControllers.get(ws);
+          if (oldController) {
+            oldController.abort();
           }
+
+          // Create new abort controller for this request
+          const newController = new AbortController();
+          this.abortControllers.set(ws, newController);
+
           if (this.messageHandler) {
-            await this.messageHandler(conversationId, payload.message, abortController.signal);
+            await this.messageHandler(conversationId, payload.message, newController.signal);
           } else {
             console.warn("[WS] No message handler registered");
           }
@@ -258,12 +264,15 @@ export class VoiceAssistantWebSocketServer {
         // Clear buffer
         this.audioBuffers.delete(clientId);
 
-        // Process audio through handler (STT)
-        const abortController = this.abortControllers.get(ws);
-        if (!abortController) {
-          console.error("[WS] No abort controller found for client");
-          return;
+        // Abort any ongoing request
+        const oldAbortController = this.abortControllers.get(ws);
+        if (oldAbortController) {
+          oldAbortController.abort();
         }
+
+        // Create new abort controller for this request
+        const newAbortController = new AbortController();
+        this.abortControllers.set(ws, newAbortController);
 
         if (this.audioHandler) {
           this.broadcastActivityLog({
@@ -273,7 +282,7 @@ export class VoiceAssistantWebSocketServer {
             content: "Transcribing audio...",
           });
 
-          const transcript = await this.audioHandler(conversationId, completeAudio, format, abortController.signal);
+          const transcript = await this.audioHandler(conversationId, completeAudio, format, newAbortController.signal);
 
           // Send transcription result back to client
           this.sendToClient(ws, {

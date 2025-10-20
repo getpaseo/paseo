@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch(domain:ai-sdk.dev)"
+      "WebFetch(domain:ai-sdk.dev)",
+      "WebFetch(domain:docs.vad.ricky0123.com)"
     ],
     "deny": [],
     "ask": []
