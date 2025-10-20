@@ -11,22 +11,67 @@ import { createConversation, deleteConversation } from "./agent/orchestrator.js"
 
 type ProcessingPhase = 'idle' | 'transcribing' | 'llm';
 
+/**
+ * Encapsulates all state for a single WebSocket client session
+ */
+class ClientSession {
+  public readonly clientId: string;
+  public readonly conversationId: string;
+  public abortController: AbortController;
+  public processingPhase: ProcessingPhase = 'idle';
+  public pendingAudioSegments: Array<{audio: Buffer, format: string}> = [];
+  public bufferTimeout: NodeJS.Timeout | null = null;
+  public audioBuffer: { chunks: Buffer[]; format: string } | null = null;
+
+  constructor(clientId: string, conversationId: string) {
+    this.clientId = clientId;
+    this.conversationId = conversationId;
+    this.abortController = new AbortController();
+  }
+
+  /**
+   * Create a new AbortController, aborting the previous one
+   */
+  public createAbortController(): AbortController {
+    this.abortController.abort();
+    this.abortController = new AbortController();
+    return this.abortController;
+  }
+
+  /**
+   * Set the processing phase for this session
+   */
+  public setPhase(phase: ProcessingPhase): void {
+    this.processingPhase = phase;
+    console.log(`[Session ${this.clientId}] Phase set to '${phase}'`);
+  }
+
+  /**
+   * Clean up all session resources
+   */
+  public cleanup(): void {
+    // Abort any ongoing operations
+    this.abortController.abort();
+
+    // Clear buffer timeout
+    if (this.bufferTimeout) {
+      clearTimeout(this.bufferTimeout);
+      this.bufferTimeout = null;
+    }
+
+    // Clear buffers
+    this.pendingAudioSegments = [];
+    this.audioBuffer = null;
+  }
+}
+
 export class VoiceAssistantWebSocketServer {
   private wss: WebSocketServer;
-  private clients: Map<WebSocket, string> = new Map(); // Map ws to client ID
-  private conversationIds: Map<WebSocket, string> = new Map(); // Map ws to conversation ID
-  private conversationIdToWs: Map<string, WebSocket> = new Map(); // Reverse map: conversation ID to ws
-  private abortControllers: Map<WebSocket, AbortController> = new Map(); // Map ws to AbortController
+  private sessions: Map<WebSocket, ClientSession> = new Map();
+  private conversationIdToWs: Map<string, WebSocket> = new Map(); // Reverse map for phase management
   private messageHandler?: (conversationId: string, message: string, abortSignal: AbortSignal) => Promise<void>;
   private audioHandler?: (conversationId: string, audio: Buffer, format: string, abortSignal: AbortSignal) => Promise<string>;
-  private audioBuffers: Map<string, { chunks: Buffer[]; format: string }> =
-    new Map();
   private clientIdCounter: number = 0;
-
-  // Audio buffering for interruption handling
-  private processingPhases: Map<WebSocket, ProcessingPhase> = new Map();
-  private pendingAudioSegments: Map<WebSocket, Array<{audio: Buffer, format: string}>> = new Map();
-  private bufferTimeouts: Map<WebSocket, NodeJS.Timeout> = new Map();
 
   constructor(server: HTTPServer) {
     this.wss = new WebSocketServer({ server, path: "/ws" });
@@ -39,25 +84,17 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private handleConnection(ws: WebSocket): void {
-    // Generate unique client ID
+    // Generate unique client ID and conversation
     const clientId = `client-${++this.clientIdCounter}`;
-    this.clients.set(ws, clientId);
-
-    // Create new conversation for this client
     const conversationId = createConversation();
-    this.conversationIds.set(ws, conversationId);
-    this.conversationIdToWs.set(conversationId, ws); // Add reverse mapping
 
-    // Create AbortController for this client
-    const abortController = new AbortController();
-    this.abortControllers.set(ws, abortController);
-
-    // Initialize processing state
-    this.processingPhases.set(ws, 'idle');
-    this.pendingAudioSegments.set(ws, []);
+    // Create session for this client
+    const session = new ClientSession(clientId, conversationId);
+    this.sessions.set(ws, session);
+    this.conversationIdToWs.set(conversationId, ws);
 
     console.log(
-      `[WS] Client connected: ${clientId} with conversation ${conversationId} (total: ${this.clients.size})`
+      `[WS] Client connected: ${clientId} with conversation ${conversationId} (total: ${this.sessions.size})`
     );
 
     // Send welcome message
@@ -74,75 +111,34 @@ export class VoiceAssistantWebSocketServer {
     });
 
     ws.on("close", () => {
-      const clientId = this.clients.get(ws);
-      const conversationId = this.conversationIds.get(ws);
-      const abortController = this.abortControllers.get(ws);
+      const session = this.sessions.get(ws);
+      if (!session) return;
 
-      // Abort any ongoing operations
-      if (abortController) {
-        abortController.abort();
-        this.abortControllers.delete(ws);
-        console.log(`[WS] Aborted operations for ${clientId}`);
-      }
+      console.log(`[WS] Client disconnected: ${session.clientId} (total: ${this.sessions.size - 1})`);
 
-      // Clear buffer timeout
-      const timeout = this.bufferTimeouts.get(ws);
-      if (timeout) {
-        clearTimeout(timeout);
-        this.bufferTimeouts.delete(ws);
-      }
+      // Clean up session
+      session.cleanup();
+      deleteConversation(session.conversationId);
 
-      // Clean up state tracking
-      this.processingPhases.delete(ws);
-      this.pendingAudioSegments.delete(ws);
+      // Remove from maps
+      this.sessions.delete(ws);
+      this.conversationIdToWs.delete(session.conversationId);
 
-      if (clientId) {
-        this.clients.delete(ws);
-        console.log(
-          `[WS] Client disconnected: ${clientId} (total: ${this.clients.size})`
-        );
-      }
-
-      if (conversationId) {
-        deleteConversation(conversationId);
-        this.conversationIds.delete(ws);
-        this.conversationIdToWs.delete(conversationId); // Clean up reverse mapping
-        console.log(`[WS] Conversation ${conversationId} deleted`);
-      }
+      console.log(`[WS] Conversation ${session.conversationId} deleted`);
     });
 
     ws.on("error", (error) => {
       console.error("[WS] Client error:", error);
-      const clientId = this.clients.get(ws);
-      const conversationId = this.conversationIds.get(ws);
-      const abortController = this.abortControllers.get(ws);
+      const session = this.sessions.get(ws);
+      if (!session) return;
 
-      // Abort any ongoing operations
-      if (abortController) {
-        abortController.abort();
-        this.abortControllers.delete(ws);
-      }
+      // Clean up session
+      session.cleanup();
+      deleteConversation(session.conversationId);
 
-      // Clear buffer timeout
-      const timeout = this.bufferTimeouts.get(ws);
-      if (timeout) {
-        clearTimeout(timeout);
-        this.bufferTimeouts.delete(ws);
-      }
-
-      // Clean up state tracking
-      this.processingPhases.delete(ws);
-      this.pendingAudioSegments.delete(ws);
-
-      if (clientId) {
-        this.clients.delete(ws);
-      }
-
-      if (conversationId) {
-        deleteConversation(conversationId);
-        this.conversationIds.delete(ws);
-        this.conversationIdToWs.delete(conversationId); // Clean up reverse mapping
-      }
+      // Remove from maps
+      this.sessions.delete(ws);
+      this.conversationIdToWs.delete(session.conversationId);
     });
   }
 
@@ -163,24 +159,17 @@ export class VoiceAssistantWebSocketServer {
         case "user_message":
           // Handle user message through orchestrator
           const payload = message.payload as { message: string };
-          const conversationId = this.conversationIds.get(ws);
-          if (!conversationId) {
-            console.error("[WS] No conversation found for client");
+          const session = this.sessions.get(ws);
+          if (!session) {
+            console.error("[WS] No session found for client");
             break;
           }
 
-          // Abort any ongoing request
-          const oldController = this.abortControllers.get(ws);
-          if (oldController) {
-            oldController.abort();
-          }
-
-          // Create new abort controller for this request
-          const newController = new AbortController();
-          this.abortControllers.set(ws, newController);
+          // Create new abort controller for this request (aborts previous one)
+          const newController = session.createAbortController();
 
           if (this.messageHandler) {
-            await this.messageHandler(conversationId, payload.message, newController.signal);
+            await this.messageHandler(session.conversationId, payload.message, newController.signal);
           } else {
             console.warn("[WS] No message handler registered");
           }
@@ -211,31 +200,26 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private async handleAbortRequest(ws: WebSocket): Promise<void> {
-    const phase = this.processingPhases.get(ws);
-    const abortController = this.abortControllers.get(ws);
+    const session = this.sessions.get(ws);
+    if (!session) return;
 
-    console.log(`[WS] Abort request received, current phase: ${phase}`);
+    console.log(`[WS] Abort request received, current phase: ${session.processingPhase}`);
 
-    if (phase === 'llm') {
+    if (session.processingPhase === 'llm') {
       // Already in LLM phase - abort immediately
-      if (abortController) {
-        abortController.abort();
-        console.log(`[WS] Aborted LLM processing`);
-      }
+      session.abortController.abort();
+      console.log(`[WS] Aborted LLM processing`);
 
       // Reset phase to idle
-      this.processingPhases.set(ws, 'idle');
+      session.setPhase('idle');
 
-      // Clear any pending segments from previous interruptions
-      this.pendingAudioSegments.set(ws, []);
-
-      // Clear any pending timeout
-      const timeout = this.bufferTimeouts.get(ws);
-      if (timeout) {
-        clearTimeout(timeout);
-        this.bufferTimeouts.delete(ws);
+      // Clear any pending segments and timeouts
+      session.pendingAudioSegments = [];
+      if (session.bufferTimeout) {
+        clearTimeout(session.bufferTimeout);
+        session.bufferTimeout = null;
       }
-    } else if (phase === 'transcribing') {
+    } else if (session.processingPhase === 'transcribing') {
       // Still in STT phase - we'll buffer the next audio
       // Don't abort yet, just set a flag by keeping the current abort controller
       console.log(`[WS] Will buffer next audio segment (currently transcribing)`);
@@ -253,7 +237,7 @@ export class VoiceAssistantWebSocketServer {
 
   public broadcast(message: WebSocketMessage): void {
     const payload = JSON.stringify(message);
-    this.clients.forEach((_clientId, client) => {
+    this.sessions.forEach((_session, client) => {
       if (client.readyState === 1) {
         // WebSocket.OPEN = 1
         client.send(payload);
@@ -291,8 +275,10 @@ export class VoiceAssistantWebSocketServer {
   public setPhaseForConversation(conversationId: string, phase: ProcessingPhase): void {
     const ws = this.conversationIdToWs.get(conversationId);
     if (ws) {
-      this.processingPhases.set(ws, phase);
-      console.log(`[WS] Phase set to '${phase}' for conversation ${conversationId}`);
+      const session = this.sessions.get(ws);
+      if (session) {
+        session.setPhase(phase);
+      }
     } else {
       console.warn(`[WS] Cannot set phase for unknown conversation ${conversationId}`);
     }
@@ -303,17 +289,9 @@ export class VoiceAssistantWebSocketServer {
     payload: AudioChunkPayload
   ): Promise<void> {
     try {
-      // Use client-specific key for buffering
-      const clientId = this.clients.get(ws);
-      if (!clientId) {
-        console.error("[WS] No client ID found for WebSocket");
-        return;
-      }
-
-      // Get conversation ID for this client
-      const conversationId = this.conversationIds.get(ws);
-      if (!conversationId) {
-        console.error("[WS] No conversation found for client");
+      const session = this.sessions.get(ws);
+      if (!session) {
+        console.error("[WS] No session found for WebSocket");
         return;
       }
 
@@ -322,24 +300,22 @@ export class VoiceAssistantWebSocketServer {
 
       if (!payload.isLast) {
         // Buffer the chunk
-        if (!this.audioBuffers.has(clientId)) {
-          this.audioBuffers.set(clientId, {
+        if (!session.audioBuffer) {
+          session.audioBuffer = {
             chunks: [],
             format: payload.format,
-          });
+          };
         }
-        const buffer = this.audioBuffers.get(clientId)!;
-        buffer.chunks.push(audioBuffer);
+        session.audioBuffer.chunks.push(audioBuffer);
         console.log(
-          `[WS] Buffered audio chunk (${audioBuffer.length} bytes, total chunks: ${buffer.chunks.length})`
+          `[WS] Buffered audio chunk (${audioBuffer.length} bytes, total chunks: ${session.audioBuffer.chunks.length})`
         );
       } else {
         // Last chunk - complete audio segment received
-        const buffer = this.audioBuffers.get(clientId);
-        const allChunks = buffer
-          ? [...buffer.chunks, audioBuffer]
+        const allChunks = session.audioBuffer
+          ? [...session.audioBuffer.chunks, audioBuffer]
           : [audioBuffer];
-        const format = buffer?.format || payload.format;
+        const format = session.audioBuffer?.format || payload.format;
 
         // Concatenate all chunks for this segment
         const currentSegmentAudio = Buffer.concat(allChunks);
@@ -348,34 +324,29 @@ export class VoiceAssistantWebSocketServer {
         );
 
         // Clear chunk buffer
-        this.audioBuffers.delete(clientId);
-
-        // Get current phase and pending segments
-        const currentPhase = this.processingPhases.get(ws) || 'idle';
-        const pendingSegments = this.pendingAudioSegments.get(ws) || [];
+        session.audioBuffer = null;
 
         // Decision: buffer or process?
-        const shouldBuffer = currentPhase === 'transcribing' && pendingSegments.length === 0;
+        const shouldBuffer = session.processingPhase === 'transcribing' && session.pendingAudioSegments.length === 0;
 
         if (shouldBuffer) {
           // Currently transcribing first segment - buffer this one
-          console.log(`[WS] Buffering audio segment (phase: ${currentPhase})`);
-          pendingSegments.push({ audio: currentSegmentAudio, format });
-          this.pendingAudioSegments.set(ws, pendingSegments);
+          console.log(`[WS] Buffering audio segment (phase: ${session.processingPhase})`);
+          session.pendingAudioSegments.push({ audio: currentSegmentAudio, format });
 
           // Set timeout to process buffer if no more audio arrives
-          this.setBufferTimeout(ws, conversationId);
-        } else if (pendingSegments.length > 0) {
+          this.setBufferTimeout(ws, session.conversationId);
+        } else if (session.pendingAudioSegments.length > 0) {
           // We have buffered segments - add this one and process all together
-          pendingSegments.push({ audio: currentSegmentAudio, format });
-          console.log(`[WS] Processing ${pendingSegments.length} buffered audio segments together`);
+          session.pendingAudioSegments.push({ audio: currentSegmentAudio, format });
+          console.log(`[WS] Processing ${session.pendingAudioSegments.length} buffered audio segments together`);
 
           // Clear pending segments and timeout
-          this.pendingAudioSegments.set(ws, []);
-          const timeout = this.bufferTimeouts.get(ws);
-          if (timeout) {
-            clearTimeout(timeout);
-            this.bufferTimeouts.delete(ws);
+          const pendingSegments = [...session.pendingAudioSegments];
+          session.pendingAudioSegments = [];
+          if (session.bufferTimeout) {
+            clearTimeout(session.bufferTimeout);
+            session.bufferTimeout = null;
           }
 
           // Concatenate all segments
@@ -383,10 +354,10 @@ export class VoiceAssistantWebSocketServer {
           const combinedAudio = Buffer.concat(allSegmentAudios);
 
           // Process combined audio
-          await this.processAudio(ws, conversationId, combinedAudio, format);
+          await this.processAudio(ws, session.conversationId, combinedAudio, format);
         } else {
           // Normal flow - no buffering needed
-          await this.processAudio(ws, conversationId, currentSegmentAudio, format);
+          await this.processAudio(ws, session.conversationId, currentSegmentAudio, format);
         }
       }
     } catch (error: any) {
@@ -406,18 +377,14 @@ export class VoiceAssistantWebSocketServer {
     audio: Buffer,
     format: string
   ): Promise<void> {
-    // Abort any ongoing request
-    const oldAbortController = this.abortControllers.get(ws);
-    if (oldAbortController) {
-      oldAbortController.abort();
-    }
+    const session = this.sessions.get(ws);
+    if (!session) return;
 
-    // Create new abort controller for this request
-    const newAbortController = new AbortController();
-    this.abortControllers.set(ws, newAbortController);
+    // Create new abort controller for this request (aborts previous one)
+    const newAbortController = session.createAbortController();
 
     // Set phase to transcribing
-    this.processingPhases.set(ws, 'transcribing');
+    session.setPhase('transcribing');
 
     if (this.audioHandler) {
       this.broadcastActivityLog({
@@ -440,47 +407,47 @@ export class VoiceAssistantWebSocketServer {
         // It will set phase to 'llm' before LLM processing and 'idle' after completion
       } catch (error: any) {
         // If error occurs, reset to idle as safety net
-        this.processingPhases.set(ws, 'idle');
+        session.setPhase('idle');
         throw error;
       }
     } else {
       console.warn("[WS] No audio handler registered");
-      this.processingPhases.set(ws, 'idle');
+      session.setPhase('idle');
     }
   }
 
   private setBufferTimeout(ws: WebSocket, conversationId: string): void {
+    const session = this.sessions.get(ws);
+    if (!session) return;
+
     // Clear any existing timeout
-    const existingTimeout = this.bufferTimeouts.get(ws);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
+    if (session.bufferTimeout) {
+      clearTimeout(session.bufferTimeout);
     }
 
     // Set new timeout (10 seconds)
-    const timeout = setTimeout(async () => {
+    session.bufferTimeout = setTimeout(async () => {
       console.log(`[WS] Buffer timeout reached, processing pending segments`);
 
-      const pendingSegments = this.pendingAudioSegments.get(ws) || [];
-      if (pendingSegments.length > 0) {
+      if (session.pendingAudioSegments.length > 0) {
         // Concatenate all pending segments
+        const pendingSegments = [...session.pendingAudioSegments];
         const allSegmentAudios = pendingSegments.map(s => s.audio);
         const combinedAudio = Buffer.concat(allSegmentAudios);
         const format = pendingSegments[0].format;
 
         // Clear pending segments
-        this.pendingAudioSegments.set(ws, []);
-        this.bufferTimeouts.delete(ws);
+        session.pendingAudioSegments = [];
+        session.bufferTimeout = null;
 
         // Process combined audio
         await this.processAudio(ws, conversationId, combinedAudio, format);
       }
     }, 10000); // 10 second timeout
-
-    this.bufferTimeouts.set(ws, timeout);
   }
 
   public close(): void {
-    this.clients.forEach((_clientId, ws) => {
+    this.sessions.forEach((_session, ws) => {
       ws.close();
     });
     this.wss.close();
