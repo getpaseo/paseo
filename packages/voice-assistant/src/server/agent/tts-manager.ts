@@ -25,19 +25,48 @@ export class TTSManager {
    */
   public async generateAndWaitForPlayback(
     text: string,
-    emitMessage: (msg: SessionOutboundMessage) => void
+    emitMessage: (msg: SessionOutboundMessage) => void,
+    abortSignal?: AbortSignal
   ): Promise<void> {
+    // Check if already aborted
+    if (abortSignal?.aborted) {
+      throw new Error("TTS playback aborted");
+    }
+
     // Generate TTS audio
     const { audio, format } = await synthesizeSpeech(text);
 
     // Create unique ID for this audio segment
     const audioId = uuidv4();
 
+    // Store abort handler reference outside Promise constructor
+    let onAbort: (() => void) | undefined;
+
     // Create promise that will be resolved when client confirms playback
     const playbackPromise = new Promise<void>((resolve, reject) => {
       // Store handlers (no timeout - will resolve when client confirms or connection closes)
       this.pendingPlaybacks.set(audioId, { resolve, reject });
+
+      // Handle abort signal
+      if (abortSignal) {
+        onAbort = () => {
+          // Clean up pending playback
+          this.pendingPlaybacks.delete(audioId);
+          // Reject with abort error
+          reject(new Error("TTS playback aborted"));
+        };
+
+        // Listen for abort (once: true for auto-cleanup if abort fires)
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+      }
     });
+
+    // Clean up abort listener when promise settles (in case abort never fires)
+    if (onAbort) {
+      playbackPromise.finally(() => {
+        abortSignal!.removeEventListener("abort", onAbort!);
+      });
+    }
 
     // Emit audio output message
     emitMessage({

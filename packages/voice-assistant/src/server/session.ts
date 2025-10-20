@@ -332,7 +332,8 @@ export class Session {
         if (enableTTS) {
           pendingTTS = this.ttsManager.generateAndWaitForPlayback(
             textBuffer,
-            (msg) => this.emit(msg)
+            (msg) => this.emit(msg),
+            this.abortController.signal
           );
         }
 
