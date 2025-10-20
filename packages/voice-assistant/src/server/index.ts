@@ -4,17 +4,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createHTTPServer, Server as HttpServer } from "http";
 import { readFile } from "fs/promises";
-import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
 import type { ViteDevServer } from "vite";
 import type { ServerConfig } from "./types.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import { initializeSTT, transcribeAudio } from "./agent/stt-openai.js";
+import { initializeSTT } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
-import {
-  processUserMessage,
-  cleanupConversations,
-} from "./agent/orchestrator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -131,101 +126,6 @@ async function main() {
       "⚠ OPENAI_API_KEY not set - LLM, STT, and TTS features will not work"
     );
   }
-
-  // Wire orchestrator to WebSocket for text messages
-  wsServer.setMessageHandler(async (conversationId: string, message: string, abortSignal: AbortSignal) => {
-    try {
-      // Broadcast user's text message as activity log
-      wsServer.broadcastActivityLog({
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: "transcript",
-        content: message,
-      });
-
-      await processUserMessage({
-        conversationId,
-        message,
-        wsServer,
-        enableTTS: true,
-        abortSignal,
-      });
-    } catch (error: any) {
-      console.error("[Orchestrator] Error processing message:", error);
-      wsServer.broadcastActivityLog({
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: "error",
-        content: `Error: ${error.message}`,
-      });
-    }
-  });
-
-  // Wire audio handler to WebSocket for voice input (STT)
-  wsServer.setAudioHandler(
-    async (conversationId: string, audio: Buffer, format: string, abortSignal: AbortSignal): Promise<string> => {
-      try {
-        // Transcribe audio using OpenAI Whisper
-        const result = await transcribeAudio(audio, format);
-
-        // Check if transcription is empty or only whitespace
-        const transcriptText = result.text.trim();
-        if (!transcriptText) {
-          console.log("[STT] Transcription is empty or silence, skipping LLM processing");
-          // Reset to idle since we're not processing
-          wsServer.setPhaseForConversation(conversationId, 'idle');
-          return "";
-        }
-
-        // Broadcast transcription result as activity log
-        wsServer.broadcastActivityLog({
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "transcript",
-          content: result.text,
-          metadata: {
-            language: result.language,
-            duration: result.duration,
-          },
-        });
-
-        // Set phase to LLM before processing
-        wsServer.setPhaseForConversation(conversationId, 'llm');
-
-        // Process the transcribed text through the orchestrator WITH TTS enabled
-        // Since this came from voice input, respond with voice output
-        await processUserMessage({
-          conversationId,
-          message: result.text,
-          wsServer,
-          enableTTS: true,
-          abortSignal,
-        });
-
-        // Reset to idle after LLM processing completes
-        wsServer.setPhaseForConversation(conversationId, 'idle');
-
-        return result.text;
-      } catch (error: any) {
-        // Reset to idle on error
-        wsServer.setPhaseForConversation(conversationId, 'idle');
-
-        console.error("[STT] Error transcribing audio:", error);
-        wsServer.broadcastActivityLog({
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Transcription error: ${error.message}`,
-        });
-        throw error;
-      }
-    }
-  );
-
-  // Start conversation cleanup interval (every 10 minutes)
-  setInterval(() => {
-    cleanupConversations(60); // Clean up conversations older than 60 minutes
-  }, 10 * 60 * 1000);
 
   httpServer.listen(port, () => {
     console.log(

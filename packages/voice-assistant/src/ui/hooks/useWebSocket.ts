@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-
-interface WebSocketMessage {
-  type: string;
-  payload: unknown;
-}
-
-type MessageHandler = (payload: unknown) => void;
+import type {
+  WSInboundMessage,
+  WSOutboundMessage,
+  SessionOutboundMessage
+} from '../../server/messages.js';
 
 export interface UseWebSocketReturn {
   isConnected: boolean;
-  send: (message: WebSocketMessage) => void;
-  on: (type: string, handler: MessageHandler) => () => void;
+  send: (message: WSInboundMessage) => void;
+  on: (type: SessionOutboundMessage['type'], handler: (message: SessionOutboundMessage) => void) => () => void;
   sendPing: () => void;
   sendUserMessage: (message: string) => void;
 }
@@ -18,7 +16,7 @@ export interface UseWebSocketReturn {
 export function useWebSocket(url: string): UseWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const handlersRef = useRef<Map<string, Set<MessageHandler>>>(new Map());
+  const handlersRef = useRef<Map<SessionOutboundMessage['type'], Set<(message: SessionOutboundMessage) => void>>>(new Map());
   const reconnectTimeoutRef = useRef<number>();
 
   const connect = useCallback(() => {
@@ -51,19 +49,27 @@ export function useWebSocket(url: string): UseWebSocketReturn {
 
       ws.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data) as WebSocketMessage;
-          console.log(`[WS] Received message type: ${message.type}`, message.payload);
+          const wsMessage: WSOutboundMessage = JSON.parse(event.data);
 
-          // Call all registered handlers for this message type
-          const handlers = handlersRef.current.get(message.type);
-          if (handlers) {
-            handlers.forEach((handler) => {
-              try {
-                handler(message.payload);
-              } catch (err) {
-                console.error(`[WS] Error in handler for ${message.type}:`, err);
-              }
-            });
+          // Only session messages trigger handlers
+          if (wsMessage.type === 'session') {
+            const sessionMessage = wsMessage.message;
+            console.log(`[WS] Received session message type: ${sessionMessage.type}`);
+
+            // Call all registered handlers for this message type
+            const handlers = handlersRef.current.get(sessionMessage.type);
+            if (handlers) {
+              handlers.forEach((handler) => {
+                try {
+                  handler(sessionMessage);
+                } catch (err) {
+                  console.error(`[WS] Error in handler for ${sessionMessage.type}:`, err);
+                }
+              });
+            }
+          } else {
+            // pong - just log
+            console.log(`[WS] Received ${wsMessage.type}`);
           }
         } catch (err) {
           console.error('[WS] Failed to parse message:', err);
@@ -89,7 +95,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     };
   }, [connect]);
 
-  const send = useCallback((message: WebSocketMessage) => {
+  const send = useCallback((message: WSInboundMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
@@ -97,7 +103,10 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     }
   }, []);
 
-  const on = useCallback((type: string, handler: MessageHandler) => {
+  const on = useCallback((
+    type: SessionOutboundMessage['type'],
+    handler: (message: SessionOutboundMessage) => void
+  ) => {
     if (!handlersRef.current.has(type)) {
       handlersRef.current.set(type, new Set());
     }
@@ -116,12 +125,18 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   }, []);
 
   const sendPing = useCallback(() => {
-    send({ type: 'ping', payload: {} });
+    send({ type: 'ping' });
   }, [send]);
 
   const sendUserMessage = useCallback(
     (message: string) => {
-      send({ type: 'user_message', payload: { message } });
+      send({
+        type: 'session',
+        message: {
+          type: 'user_text',
+          text: message,
+        },
+      });
     },
     [send]
   );

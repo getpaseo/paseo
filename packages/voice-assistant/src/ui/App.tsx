@@ -105,31 +105,23 @@ function App() {
 
   useEffect(() => {
     // Listen for status messages
-    const unsubStatus = ws.on("status", (payload: unknown) => {
-      const data = payload as { status: string; message?: string };
-      addLog("info", data.message || `Status: ${data.status}`);
-    });
-
-    // Listen for pong messages
-    const unsubPong = ws.on("pong", () => {
-      addLog("success", "Received pong from server");
+    const unsubStatus = ws.on("status", (message) => {
+      if (message.type !== 'status') return;
+      const msg = 'message' in message.payload ? String(message.payload.message) : undefined;
+      addLog("info", msg || `Status: ${message.payload.status}`);
     });
 
     // Listen for activity log messages
-    const unsubActivity = ws.on("activity_log", (payload: unknown) => {
-      const data = payload as {
-        id: string;
-        type: string;
-        content: string;
-        metadata?: Record<string, unknown>;
-      };
+    const unsubActivity = ws.on("activity_log", (message) => {
+      if (message.type !== 'activity_log') return;
+      const data = message.payload;
 
       // Handle tool calls
-      if (data.type === "tool_call") {
+      if (data.type === "tool_call" && data.metadata) {
         const { toolCallId, toolName, arguments: args } = data.metadata as {
           toolCallId: string;
           toolName: string;
-          arguments: any;
+          arguments: unknown;
         };
 
         setLogs((prev) => [
@@ -146,10 +138,10 @@ function App() {
         return;
       }
 
-      if (data.type === "tool_result") {
+      if (data.type === "tool_result" && data.metadata) {
         const { toolCallId, result } = data.metadata as {
           toolCallId: string;
-          result: any;
+          result: unknown;
         };
 
         setLogs((prev) =>
@@ -163,10 +155,10 @@ function App() {
       }
 
       // Handle tool errors - update tool call status to failed
-      if (data.type === "error" && data.metadata?.toolCallId) {
+      if (data.type === "error" && data.metadata && 'toolCallId' in data.metadata) {
         const { toolCallId, error } = data.metadata as {
           toolCallId: string;
-          error: any;
+          error: unknown;
         };
 
         setLogs((prev) =>
@@ -194,24 +186,22 @@ function App() {
     });
 
     // Listen for streaming assistant chunks
-    const unsubChunk = ws.on("assistant_chunk", (payload: unknown) => {
-      const data = payload as { chunk: string };
-      setCurrentAssistantMessage((prev) => prev + data.chunk);
+    const unsubChunk = ws.on("assistant_chunk", (message) => {
+      if (message.type !== 'assistant_chunk') return;
+      setCurrentAssistantMessage((prev) => prev + message.payload.chunk);
     });
 
     // Listen for transcription results
-    const unsubTranscription = ws.on(
-      "transcription_result",
-      (_payload: unknown) => {
-        // Note: Transcription is already broadcast as activity_log with type "transcript"
-        // No need to log it again here to avoid duplication
-        setIsProcessingAudio(false);
-      }
-    );
+    const unsubTranscription = ws.on("transcription_result", () => {
+      // Note: Transcription is already broadcast as activity_log with type "transcript"
+      // No need to log it again here to avoid duplication
+      setIsProcessingAudio(false);
+    });
 
     // Listen for artifacts
-    const unsubArtifact = ws.on("artifact", (payload: unknown) => {
-      const artifact = payload as Artifact;
+    const unsubArtifact = ws.on("artifact", (message) => {
+      if (message.type !== 'artifact') return;
+      const artifact = message.payload;
 
       // Add to artifacts map
       setArtifacts((prev) => {
@@ -238,8 +228,9 @@ function App() {
     });
 
     // Listen for audio output (TTS)
-    const unsubAudioOutput = ws.on("audio_output", async (payload: unknown) => {
-      const data = payload as { audio: string; format: string; id: string };
+    const unsubAudioOutput = ws.on("audio_output", async (message) => {
+      if (message.type !== 'audio_output') return;
+      const data = message.payload;
 
       try {
         setIsPlayingAudio(true);
@@ -261,8 +252,11 @@ function App() {
 
         // Send confirmation back to server
         ws.send({
-          type: "audio_played",
-          payload: { id: data.id },
+          type: "session",
+          message: {
+            type: "audio_played",
+            id: data.id,
+          },
         });
 
         setIsPlayingAudio(false);
@@ -275,7 +269,6 @@ function App() {
 
     return () => {
       unsubStatus();
-      unsubPong();
       unsubActivity();
       unsubChunk();
       unsubTranscription();
@@ -337,8 +330,9 @@ function App() {
         );
 
         ws.send({
-          type: "audio_chunk",
-          payload: {
+          type: "session",
+          message: {
+            type: "audio_chunk",
             audio: base64Audio,
             format: format,
             isLast: true,
@@ -438,8 +432,10 @@ function App() {
 
               // Send abort request to server immediately
               ws.send({
-                type: "abort_request",
-                payload: {},
+                type: "session",
+                message: {
+                  type: "abort_request",
+                },
               });
             },
             onSpeechEnd: async (audioData: Float32Array) => {
@@ -462,8 +458,9 @@ function App() {
                 );
 
                 ws.send({
-                  type: "audio_chunk",
-                  payload: {
+                  type: "session",
+                  message: {
+                    type: "audio_chunk",
                     audio: base64Audio,
                     format: audioBlob.type,
                     isLast: true,
