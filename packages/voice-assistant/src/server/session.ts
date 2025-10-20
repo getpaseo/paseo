@@ -135,6 +135,7 @@ export class Session {
         `[Session ${this.clientId}] Waiting for aborted stream to finish cleanup`
       );
       await this.currentStreamPromise;
+      console.log(`[Session ${this.clientId}] Aborted stream finished cleanup`);
     }
 
     // Emit user message activity log

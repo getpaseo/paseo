@@ -45,17 +45,22 @@ export class VoiceAssistantWebSocketServer {
     this.conversationIdToWs.set(session.getConversationId(), ws);
 
     console.log(
-      `[WS] Client connected: ${clientId} with conversation ${session.getConversationId()} (total: ${this.sessions.size})`
+      `[WS] Client connected: ${clientId} with conversation ${session.getConversationId()} (total: ${
+        this.sessions.size
+      })`
     );
 
     // Send welcome message
-    this.sendToClient(ws, wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "connected",
-        message: "WebSocket connection established",
-      },
-    }));
+    this.sendToClient(
+      ws,
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "connected",
+          message: "WebSocket connection established",
+        },
+      })
+    );
 
     // Set up message handler
     ws.on("message", (data) => {
@@ -68,7 +73,9 @@ export class VoiceAssistantWebSocketServer {
       if (!session) return;
 
       console.log(
-        `[WS] Client disconnected: ${clientId} (total: ${this.sessions.size - 1})`
+        `[WS] Client disconnected: ${clientId} (total: ${
+          this.sessions.size - 1
+        })`
       );
 
       // Clean up session
@@ -110,7 +117,7 @@ export class VoiceAssistantWebSocketServer {
       // Validate with Zod
       const message = WSInboundMessageSchema.parse(parsed);
 
-      console.log(`[WS] Received message type: ${message.type}`);
+      console.log(`[WS] Received message type: ${message.type}`, message);
 
       // Handle WebSocket-level messages
       switch (message.type) {
@@ -138,13 +145,16 @@ export class VoiceAssistantWebSocketServer {
     } catch (error: any) {
       console.error("[WS] Failed to parse/handle message:", error);
       // Send error to client
-      this.sendToClient(ws, wrapSessionMessage({
-        type: "status",
-        payload: {
-          status: "error",
-          message: `Invalid message: ${error.message}`,
-        },
-      }));
+      this.sendToClient(
+        ws,
+        wrapSessionMessage({
+          type: "status",
+          payload: {
+            status: "error",
+            message: `Invalid message: ${error.message}`,
+          },
+        })
+      );
     }
   }
 
