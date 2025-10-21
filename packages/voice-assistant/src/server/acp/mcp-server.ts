@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { resolve } from "path";
 import { AgentManager } from "./agent-manager.js";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { curateAgentActivity } from "./activity-curator.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -308,50 +309,75 @@ export async function createAgentMcpServer(
     {
       title: "Get Agent Activity",
       description:
-        "Get the complete activity log for an agent, including all messages, tool calls, and results. This shows you everything the agent has done - what it said, what tools it called, and what output it produced. Essential for understanding what a completed or failed agent actually accomplished.",
+        "Get the agent's activity in a human-readable, token-efficient format. Consolidates message chunks, formats tool calls, and structures plans. By default returns curated text, but you can request raw updates with format='raw'.",
       inputSchema: {
         agentId: z.string().describe("Agent ID to query"),
+        format: z
+          .enum(["curated", "raw"])
+          .optional()
+          .default("curated")
+          .describe(
+            "Output format: 'curated' (default) for clean human-readable text, 'raw' for detailed JSON updates"
+          ),
         limit: z
           .number()
           .optional()
           .describe(
-            "Maximum number of updates to return (most recent first). Omit to get all updates."
+            "Maximum number of updates to include (most recent first). Only applies to 'raw' format. Omit to get all updates."
           ),
       },
       outputSchema: {
         agentId: z.string(),
-        updateCount: z.number().describe("Total number of updates"),
+        format: z.enum(["curated", "raw"]),
+        updateCount: z.number().describe("Total number of updates available"),
+        content: z.string().describe("Formatted activity content (if curated) or empty string (if raw)"),
         updates: z.array(
           z.object({
             timestamp: z.string(),
             type: z.string(),
             data: z.any(),
           })
-        ),
+        ).nullable().describe("Raw updates array (if raw format) or null (if curated)"),
       },
     },
-    async ({ agentId, limit }) => {
+    async ({ agentId, format = "curated", limit }) => {
       const updates = agentManager.getAgentUpdates(agentId);
 
-      // Get the most recent updates if limit is specified
-      const selectedUpdates = limit
-        ? updates.slice(-limit).reverse()
-        : updates;
+      if (format === "curated") {
+        // Return curated, human-readable format
+        const curatedText = curateAgentActivity(updates);
 
-      const result = {
-        agentId,
-        updateCount: updates.length,
-        updates: selectedUpdates.map((update) => ({
-          timestamp: update.timestamp.toISOString(),
-          type: getUpdateType(update.notification),
-          data: update.notification,
-        })),
-      };
+        return {
+          content: [],
+          structuredContent: {
+            agentId,
+            format: "curated" as const,
+            updateCount: updates.length,
+            content: curatedText,
+            updates: null,
+          },
+        };
+      } else {
+        // Return raw format (old behavior)
+        const selectedUpdates = limit
+          ? updates.slice(-limit).reverse()
+          : updates;
 
-      return {
-        content: [],
-        structuredContent: result,
-      };
+        return {
+          content: [],
+          structuredContent: {
+            agentId,
+            format: "raw" as const,
+            updateCount: updates.length,
+            content: "",
+            updates: selectedUpdates.map((update) => ({
+              timestamp: update.timestamp.toISOString(),
+              type: getUpdateType(update.notification),
+              data: update.notification,
+            })),
+          },
+        };
+      }
     }
   );
 
