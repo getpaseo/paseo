@@ -16,6 +16,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@siteed/expo-audio-studio": "^2.18.1",
     "expo": "~54.0.15",
     "expo-audio": "~1.0.13",
     "expo-av": "^16.0.7",
@@ -34,15 +35,19 @@
     "expo-system-ui": "~6.0.7",
     "expo-updates": "~29.0.12",
     "expo-web-browser": "~15.0.8",
+    "lucide-react-native": "^0.546.0",
     "nativewind": "^5.0.0-preview.2",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.4",
     "react-native-css": "^3.0.1",
     "react-native-gesture-handler": "~2.28.0",
+    "react-native-markdown-display": "^7.0.2",
+    "react-native-permissions": "^5.4.2",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-vad": "^1.0.44",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1"
   },
@@ -57,7 +62,13 @@
     "typescript": "~5.9.2"
   },
   "overrides": {
-    "lightningcss": "1.30.1"
+    "lightningcss": "1.30.1",
+    "react-native-vad": {
+      "react": "19.1.0"
+    },
+    "@siteed/expo-audio-studio": {
+      "expo-modules-core": "3.0.22"
+    }
   },
   "private": true
 }

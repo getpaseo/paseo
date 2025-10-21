@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { View, ScrollView, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, Keyboard } from 'react-native';
+import { View, Pressable, Text, TextInput, Platform, KeyboardAvoidingView, ScrollView, Animated } from 'react-native';
 import { router } from 'expo-router';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ function generateMessageId(): string {
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useAudioRecorder } from '@/hooks/use-audio-recorder';
 import { useAudioPlayer } from '@/hooks/use-audio-player';
+import { useRealtimeAudio } from '@/hooks/use-realtime-audio';
 import { useSettings } from '@/hooks/use-settings';
 import { ConnectionStatus } from '@/components/connection-status';
 import { UserMessage, AssistantMessage, ActivityLog, ToolCall } from '@/components/message';
@@ -19,7 +20,7 @@ import { ArtifactDrawer, type Artifact } from '@/components/artifact-drawer';
 import { ActiveProcesses } from '@/components/active-processes';
 import { AgentStreamView } from '@/components/agent-stream-view';
 import { ConversationSelector } from '@/components/conversation-selector';
-import { MaterialIcons } from '@expo/vector-icons';
+import { Settings, Mic, ArrowUp, Square, AudioLines } from 'lucide-react-native';
 import type {
   ActivityLogPayload,
   SessionInboundMessage,
@@ -91,9 +92,65 @@ export default function VoiceAssistantScreen() {
   const { settings, isLoading: settingsLoading } = useSettings();
   const [conversationId, setConversationId] = useState<string | null>(null);
   const ws = useWebSocket(settings.serverUrl, conversationId);
+
+  // Realtime mode state (defined early so we can use it in audioRecorder)
+  const [isRealtimeMode, setIsRealtimeMode] = useState(false);
+  const [isVADActive, setIsVADActive] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
   const audioRecorder = useAudioRecorder();
   const audioPlayer = useAudioPlayer({ useSpeaker: settings.useSpeaker });
   const insets = useSafeAreaInsets();
+
+  // Realtime audio with VAD
+  const realtimeAudio = useRealtimeAudio({
+    onSpeechStart: () => {
+      console.log('[App] Realtime speech started');
+      setIsVADActive(true);
+      // Pause audio playback if playing
+      if (isPlayingAudio) {
+        audioPlayer.pause();
+      }
+    },
+    onSpeechEnd: () => {
+      console.log('[App] Realtime speech ended');
+      setIsVADActive(false);
+    },
+    onAudioSegment: async (audioData: string, format: string) => {
+      console.log('[App] Received audio segment, length:', audioData.length);
+
+      // Send audio segment to server
+      try {
+        ws.send({
+          type: 'session',
+          message: {
+            type: 'audio_chunk',
+            audio: audioData,
+            format: format,
+            isLast: true,
+          },
+        });
+        console.log('[App] Sent audio segment to server');
+      } catch (error) {
+        console.error('[App] Failed to send audio segment:', error);
+      }
+    },
+    onError: (error) => {
+      console.error('[App] Realtime audio error:', error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: 'activity',
+          id: generateMessageId(),
+          timestamp: Date.now(),
+          activityType: 'error',
+          message: `Realtime audio error: ${error.message}`,
+        },
+      ]);
+    },
+    speechThreshold: 0.5,
+    silenceDuration: 1000,
+  });
 
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState('');
@@ -117,8 +174,33 @@ export default function VoiceAssistantScreen() {
 
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Keep screen awake if setting is enabled
+  // Pulse animation for VAD indicator
   useEffect(() => {
+    if (isVADActive) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.3,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+    }
+  }, [isVADActive, pulseAnim]);
+
+  // Keep screen awake if setting is enabled (mobile only)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
     if (settings.keepScreenOn) {
       activateKeepAwakeAsync('voice-assistant');
     } else {
@@ -653,7 +735,6 @@ export default function VoiceAssistantScreen() {
     // Clear input and reset streaming state
     setUserInput('');
     setCurrentAssistantMessage('');
-    Keyboard.dismiss();
   }
 
   function handleCancel() {
@@ -707,6 +788,64 @@ export default function VoiceAssistantScreen() {
     } else {
       // Start recording
       handleVoicePress();
+    }
+  }
+
+  // Realtime mode toggle handler
+  async function handleRealtimeToggle() {
+    const newRealtimeMode = !isRealtimeMode;
+
+    if (newRealtimeMode) {
+      // Start realtime mode
+      try {
+        await realtimeAudio.start();
+        setIsRealtimeMode(true);
+        console.log('[App] Realtime mode enabled');
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'activity',
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            activityType: 'success',
+            message: 'Realtime mode started - speak anytime!',
+          },
+        ]);
+      } catch (error: any) {
+        console.error('[App] Failed to start realtime mode:', error);
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'activity',
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            activityType: 'error',
+            message: `Failed to start realtime mode: ${error.message}`,
+          },
+        ]);
+      }
+    } else {
+      // Stop realtime mode
+      try {
+        await realtimeAudio.stop();
+        setIsRealtimeMode(false);
+        setIsVADActive(false);
+        console.log('[App] Realtime mode disabled');
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: 'activity',
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            activityType: 'info',
+            message: 'Realtime mode stopped',
+          },
+        ]);
+      } catch (error: any) {
+        console.error('[App] Failed to stop realtime mode:', error);
+      }
     }
   }
 
@@ -767,46 +906,48 @@ export default function VoiceAssistantScreen() {
     <KeyboardAvoidingView
       behavior="padding"
       className="flex-1 bg-black"
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
     >
-      <View className="flex-1">
-        {/* Connection status header with buttons */}
-        <View style={{ paddingTop: insets.top + 16 }}>
-          <View className="flex-row items-center justify-between px-6 pb-4">
-            <View className="flex-1">
-              <ConnectionStatus isConnected={ws.isConnected} />
-            </View>
-            <View className="flex-row items-center gap-2">
-              <ConversationSelector
-                currentConversationId={conversationId}
-                onSelectConversation={handleSelectConversation}
-                websocket={ws}
-              />
-              <Pressable
-                onPress={() => router.push('/settings')}
-                className="bg-zinc-800 p-3 rounded-lg"
-              >
-                <MaterialIcons name="settings" size={20} color="white" />
-              </Pressable>
-            </View>
+      {/* Connection status header with buttons */}
+      <View style={{ paddingTop: insets.top + 16 }}>
+        <View className="flex-row items-center justify-between px-6 pb-4">
+          <View className="flex-1">
+            <ConnectionStatus isConnected={ws.isConnected} />
+          </View>
+          <View className="flex-row items-center gap-2">
+            <ConversationSelector
+              currentConversationId={conversationId}
+              onSelectConversation={handleSelectConversation}
+              websocket={ws}
+            />
+            <Pressable
+              onPress={() => router.push('/settings')}
+              className="bg-zinc-800 p-3 rounded-lg"
+            >
+              <Settings size={20} color="white" />
+            </Pressable>
           </View>
         </View>
+      </View>
 
-        {/* Active processes bar */}
-        <ActiveProcesses
-          agents={Array.from(agents.values())}
-          commands={Array.from(commands.values())}
-          activeProcessId={activeAgentId}
-          activeProcessType={activeAgentId ? 'agent' : null}
-          onSelectAgent={handleSelectAgent}
-          onBackToOrchestrator={handleBackToOrchestrator}
-        />
+      {/* Active processes bar */}
+      <ActiveProcesses
+        agents={Array.from(agents.values())}
+        commands={Array.from(commands.values())}
+        activeProcessId={activeAgentId}
+        activeProcessType={activeAgentId ? 'agent' : null}
+        onSelectAgent={handleSelectAgent}
+        onBackToOrchestrator={handleBackToOrchestrator}
+      />
 
-        {/* Messages */}
-        <ScrollView
-          ref={scrollViewRef}
-          className="flex-1"
-          contentContainerClassName="pb-4"
-        >
+      {/* Messages */}
+      <ScrollView
+        ref={scrollViewRef}
+        className="flex-1"
+        contentContainerClassName="pb-4"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
           {messages.map((msg) => {
             if (msg.type === 'user') {
               return (
@@ -865,10 +1006,15 @@ export default function VoiceAssistantScreen() {
               isStreaming={true}
             />
           )}
-        </ScrollView>
+      </ScrollView>
 
-        {/* Input area */}
-        <View className="pt-4 px-6 border-t border-zinc-800" style={{ paddingBottom: Math.max(insets.bottom, 32) }}>
+      {/* Input area */}
+      <View
+        className="pt-4 px-6 border-t border-zinc-800 bg-black"
+        style={{
+          paddingBottom: Math.max(insets.bottom, 32)
+        }}
+      >
           {/* Text input */}
           <TextInput
             value={userInput}
@@ -881,23 +1027,25 @@ export default function VoiceAssistantScreen() {
           />
 
           {/* Buttons */}
-          <View className="flex-row items-center justify-center gap-4">
-            {/* Realtime mode button (placeholder) */}
+          <View className="flex-row items-center justify-end gap-3">
+            {/* Realtime mode button */}
             <Pressable
-              disabled={true}
-              className="w-16 h-16 rounded-full bg-zinc-800 items-center justify-center opacity-50"
+              onPress={handleRealtimeToggle}
+              disabled={!ws.isConnected}
+              className={`w-12 h-12 rounded-full items-center justify-center ${
+                !ws.isConnected ? 'opacity-50' : 'opacity-100'
+              } ${isRealtimeMode ? 'bg-blue-600' : 'bg-zinc-800'}`}
             >
-              <View className="w-8 h-8 items-center justify-center">
-                <View className="w-6 h-6 rounded-full border-2 border-white" />
-                <View className="absolute w-3 h-3 rounded-full border-2 border-white" />
-              </View>
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <AudioLines size={20} color="white" />
+              </Animated.View>
             </Pressable>
 
             {/* Main action button */}
             <Pressable
               onPress={handleButtonClick}
               disabled={!ws.isConnected}
-              className={`w-20 h-20 rounded-full items-center justify-center ${
+              className={`w-12 h-12 rounded-full items-center justify-center ${
                 !ws.isConnected ? 'opacity-50' : 'opacity-100'
               } ${
                 isRecording
@@ -910,30 +1058,23 @@ export default function VoiceAssistantScreen() {
               }`}
             >
               {isInProgress ? (
-                <View className="relative w-6 h-6">
-                  <View className="absolute w-6 h-0.5 bg-white rotate-45" style={{top: 11}} />
-                  <View className="absolute w-6 h-0.5 bg-white -rotate-45" style={{top: 11}} />
-                </View>
+                <Square size={18} color="white" fill="white" />
               ) : isRecording ? (
-                <View className="w-4 h-4 bg-white rounded-full" />
+                <Square size={14} color="white" fill="white" />
               ) : userInput.trim() ? (
-                <Text className="text-white text-xl">▶</Text>
+                <ArrowUp size={20} color="white" />
               ) : (
-                <View className="w-6 h-8 relative">
-                  <View className="absolute bottom-0 left-1/2 -ml-2 w-4 h-6 bg-white rounded-t-full" />
-                  <View className="absolute bottom-0 left-1/2 -ml-3 w-6 h-1.5 bg-white rounded-full" />
-                </View>
+                <Mic size={20} color="white" />
               )}
             </Pressable>
           </View>
-        </View>
-
-        {/* Artifact drawer */}
-        <ArtifactDrawer
-          artifact={currentArtifact}
-          onClose={handleCloseArtifact}
-        />
       </View>
+
+      {/* Artifact drawer */}
+      <ArtifactDrawer
+        artifact={currentArtifact}
+        onClose={handleCloseArtifact}
+      />
     </KeyboardAvoidingView>
   );
 }

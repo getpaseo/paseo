@@ -1,5 +1,7 @@
 import { View, Text, Pressable, Animated } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
+import Markdown from 'react-native-markdown-display';
+import { Circle, Info, CheckCircle, XCircle, FileText, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react-native';
 
 interface UserMessageProps {
   message: string;
@@ -7,13 +9,10 @@ interface UserMessageProps {
 }
 
 export function UserMessage({ message, timestamp }: UserMessageProps) {
-  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
   return (
     <View className="flex-row justify-end mb-3 px-4">
       <View className="bg-blue-600 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%]">
-        <Text className="text-white text-base leading-5">{message}</Text>
-        <Text className="text-blue-200 text-xs mt-1">{time}</Text>
+        <Text className="text-white text-base leading-6">{message}</Text>
       </View>
     </View>
   );
@@ -26,7 +25,6 @@ interface AssistantMessageProps {
 }
 
 export function AssistantMessage({ message, timestamp, isStreaming = false }: AssistantMessageProps) {
-  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const fadeAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -51,19 +49,69 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
     }
   }, [isStreaming, fadeAnim]);
 
+  const markdownStyles = {
+    body: {
+      color: '#f0fdfa',
+      fontSize: 16,
+      lineHeight: 24,
+    },
+    paragraph: {
+      marginTop: 0,
+      marginBottom: 8,
+    },
+    strong: {
+      fontWeight: '700',
+    },
+    em: {
+      fontStyle: 'italic',
+    },
+    code_inline: {
+      backgroundColor: '#134e4a',
+      color: '#ccfbf1',
+      paddingHorizontal: 4,
+      paddingVertical: 2,
+      borderRadius: 3,
+      fontFamily: 'monospace',
+    },
+    code_block: {
+      backgroundColor: '#134e4a',
+      color: '#ccfbf1',
+      padding: 12,
+      borderRadius: 6,
+      fontFamily: 'monospace',
+      fontSize: 14,
+    },
+    fence: {
+      backgroundColor: '#134e4a',
+      color: '#ccfbf1',
+      padding: 12,
+      borderRadius: 6,
+      fontFamily: 'monospace',
+      fontSize: 14,
+    },
+    link: {
+      color: '#5eead4',
+      textDecorationLine: 'underline',
+    },
+    bullet_list: {
+      marginBottom: 8,
+    },
+    ordered_list: {
+      marginBottom: 8,
+    },
+    list_item: {
+      marginBottom: 4,
+    },
+  };
+
   return (
-    <View className="flex-row justify-start mb-3 px-4">
-      <View className="bg-teal-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[80%]">
-        <Text className="text-teal-50 text-base leading-5">{message}</Text>
-        <View className="flex-row items-center justify-between mt-1">
-          <Text className="text-teal-200 text-xs">{time}</Text>
-          {isStreaming && (
-            <Animated.View style={{ opacity: fadeAnim }}>
-              <Text className="text-teal-200 text-xs ml-2 font-bold">...</Text>
-            </Animated.View>
-          )}
-        </View>
-      </View>
+    <View className="mb-3 px-4 py-3">
+      <Markdown style={markdownStyles}>{message}</Markdown>
+      {isStreaming && (
+        <Animated.View style={{ opacity: fadeAnim }} className="mt-1">
+          <Text className="text-teal-200 text-xs font-bold">...</Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -92,14 +140,15 @@ export function ActivityLog({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const typeConfig = {
-    system: { bg: 'bg-zinc-800/50', text: 'text-zinc-400', icon: '●' },
-    info: { bg: 'bg-blue-900/30', text: 'text-blue-400', icon: 'i' },
-    success: { bg: 'bg-green-900/30', text: 'text-green-400', icon: '✓' },
-    error: { bg: 'bg-red-900/30', text: 'text-red-400', icon: '✗' },
-    artifact: { bg: 'bg-blue-900/40', text: 'text-blue-300', icon: '📋' },
+    system: { bg: 'bg-zinc-800/50', color: '#a1a1aa', Icon: Circle },
+    info: { bg: 'bg-blue-900/30', color: '#60a5fa', Icon: Info },
+    success: { bg: 'bg-green-900/30', color: '#4ade80', Icon: CheckCircle },
+    error: { bg: 'bg-red-900/30', color: '#f87171', Icon: XCircle },
+    artifact: { bg: 'bg-blue-900/40', color: '#93c5fd', Icon: FileText },
   };
 
   const config = typeConfig[type];
+  const IconComponent = config.Icon;
 
   const handlePress = () => {
     if (type === 'artifact' && artifactId && onArtifactClick) {
@@ -123,19 +172,19 @@ export function ActivityLog({
     >
       <View className="px-3 py-2.5">
         <View className="flex-row items-start gap-2">
-          <Text className={`${config.text} text-sm leading-5`}>
-            {config.icon}
-          </Text>
+          <IconComponent size={16} color={config.color} />
           <View className="flex-1">
-            <Text className={`${config.text} text-sm leading-5`}>
+            <Text style={{ color: config.color }} className="text-sm leading-5">
               {displayMessage}
             </Text>
             {metadata && (
               <View className="flex-row items-center mt-1">
-                <Text className="text-zinc-500 text-xs">Details</Text>
-                <Text className="text-zinc-500 text-xs ml-1">
-                  {isExpanded ? '▼' : '▶'}
-                </Text>
+                <Text className="text-zinc-500 text-xs mr-1">Details</Text>
+                {isExpanded ? (
+                  <ChevronDown size={12} color="#71717a" />
+                ) : (
+                  <ChevronRight size={12} color="#71717a" />
+                )}
               </View>
             )}
           </View>
@@ -188,22 +237,19 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
     executing: {
       border: 'border-amber-500',
       bg: 'bg-amber-500/20',
-      text: 'text-amber-300',
-      icon: '⟳',
+      color: '#fcd34d',
       label: 'executing',
     },
     completed: {
       border: 'border-green-500',
       bg: 'bg-green-500/20',
-      text: 'text-green-300',
-      icon: '✓',
+      color: '#86efac',
       label: 'completed',
     },
     failed: {
       border: 'border-red-500',
       bg: 'bg-red-500/20',
-      text: 'text-red-300',
-      icon: '✗',
+      color: '#fca5a5',
       label: 'failed',
     },
   };
@@ -217,26 +263,25 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
     >
       <View className="p-3">
         <View className="flex-row items-center">
-          <Text className="text-zinc-400 text-sm mr-2">
-            {isExpanded ? '▼' : '▶'}
-          </Text>
+          {isExpanded ? (
+            <ChevronDown size={16} color="#9ca3af" className="mr-2" />
+          ) : (
+            <ChevronRight size={16} color="#9ca3af" className="mr-2" />
+          )}
           <Text className="text-slate-200 font-mono font-medium text-sm flex-1">
             {toolName}
           </Text>
           <View className={`flex-row items-center gap-1.5 px-2 py-1 rounded ${config.bg}`}>
             {status === 'executing' ? (
-              <Animated.Text
-                style={{ transform: [{ rotate: spin }] }}
-                className={`${config.text} text-xs`}
-              >
-                {config.icon}
-              </Animated.Text>
+              <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                <RefreshCw size={14} color={config.color} />
+              </Animated.View>
+            ) : status === 'completed' ? (
+              <CheckCircle size={14} color={config.color} />
             ) : (
-              <Text className={`${config.text} text-xs`}>
-                {config.icon}
-              </Text>
+              <XCircle size={14} color={config.color} />
             )}
-            <Text className={`${config.text} text-xs font-medium uppercase`}>
+            <Text style={{ color: config.color }} className="text-xs font-medium uppercase">
               {config.label}
             </Text>
           </View>

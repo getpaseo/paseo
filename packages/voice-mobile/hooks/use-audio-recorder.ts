@@ -1,11 +1,14 @@
 import { useAudioRecorder as useExpoAudioRecorder, RecordingOptions, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { Paths, File, Directory, FileInfo } from 'expo-file-system';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export interface AudioCaptureConfig {
   sampleRate?: number;
   numberOfChannels?: number;
   bitRate?: number;
+  onAudioLevel?: (level: number) => void;
+  onSpeechSegment?: (audioBlob: Blob) => void;
+  enableContinuousRecording?: boolean;
 }
 
 /**
@@ -133,6 +136,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     numberOfChannels: config?.numberOfChannels || 1,
     bitRate: config?.bitRate || 128000,
     extension: '.m4a',
+    isMeteringEnabled: !!config?.onAudioLevel, // Enable metering if callback provided
     android: {
       extension: '.m4a',
       outputFormat: 'mpeg4',
@@ -155,6 +159,24 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   };
 
   const audioRecorder = useExpoAudioRecorder(recordingOptions);
+
+  // Monitor audio levels if metering is enabled
+  useEffect(() => {
+    if (!config?.onAudioLevel || !isRecording) return;
+
+    const interval = setInterval(() => {
+      const metering = audioRecorder.state?.metering;
+      if (metering !== undefined && metering !== null) {
+        // Normalize metering value (typically ranges from -160 to 0 dB)
+        // Convert to 0-1 range where 0 is silence and 1 is loud
+        // We'll use -40 dB as the threshold for "loud"
+        const normalized = Math.max(0, Math.min(1, (metering + 40) / 40));
+        config.onAudioLevel(normalized);
+      }
+    }, 100); // Check every 100ms
+
+    return () => clearInterval(interval);
+  }, [isRecording, config, audioRecorder.state?.metering]);
 
   async function start(): Promise<void> {
     if (isRecording) {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Modal, View, Text, Pressable, ScrollView, Alert } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { Modal, View, Text, Pressable, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { MessageSquare, X, Plus, Trash2 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { UseWebSocketReturn } from '../hooks/use-websocket';
 
@@ -30,7 +31,7 @@ export function ConversationSelector({
   // Listen for conversation list responses
   useEffect(() => {
     const unsubscribe = websocket.on('list_conversations_response', (message) => {
-      console.log('[ConversationSelector] Received conversations:', message.payload.conversations.length);
+      if (message.type !== 'list_conversations_response') return;
       setConversations(message.payload.conversations);
       setIsLoading(false);
     });
@@ -41,6 +42,7 @@ export function ConversationSelector({
   // Listen for delete conversation responses
   useEffect(() => {
     const unsubscribe = websocket.on('delete_conversation_response', (message) => {
+      if (message.type !== 'delete_conversation_response') return;
       console.log('[ConversationSelector] Delete response:', message.payload);
       if (message.payload.success) {
         // Refresh conversations list
@@ -177,7 +179,7 @@ export function ConversationSelector({
         onPress={() => setIsOpen(true)}
         className="bg-zinc-800 px-4 py-2 rounded-lg"
       >
-        <MaterialIcons name="chat-bubble-outline" size={20} color="white" />
+        <MessageSquare size={20} color="white" />
       </Pressable>
 
       <Modal
@@ -186,17 +188,20 @@ export function ConversationSelector({
         transparent={true}
         onRequestClose={() => setIsOpen(false)}
       >
-        <View className="flex-1 bg-black/50">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <Pressable
-            className="flex-1"
+            style={{ flex: 1 }}
             onPress={() => setIsOpen(false)}
           />
-          <View className="bg-zinc-900 rounded-t-3xl max-h-[80%]">
-            {/* Header */}
-            <View className="flex-row items-center justify-between p-6 border-b border-zinc-800">
-              <Text className="text-white text-lg font-semibold">Conversations</Text>
+          <View style={{ backgroundColor: '#18181b', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '80%' }}>
+            <View style={{ flex: 1 }}>
+              {/* Header */}
+              <View className="flex-row items-center justify-between p-6 border-b border-zinc-800">
+              <Text className="text-white text-lg font-semibold">
+                Conversations {conversations.length > 0 && `(${conversations.length})`}
+              </Text>
               <Pressable onPress={() => setIsOpen(false)}>
-                <MaterialIcons name="close" size={24} color="white" />
+                <X size={24} color="white" />
               </Pressable>
             </View>
 
@@ -206,62 +211,77 @@ export function ConversationSelector({
                 onPress={handleNewConversation}
                 className="flex-row items-center justify-center gap-2 bg-zinc-800 py-3 rounded-lg"
               >
-                <MaterialIcons name="add" size={20} color="white" />
+                <Plus size={20} color="white" />
                 <Text className="text-white font-semibold">New Conversation</Text>
               </Pressable>
             </View>
 
             {/* Conversations List */}
-            <ScrollView className="flex-1">
-              {isLoading ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 20 }}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            >
+              {isLoading && (
                 <View className="p-8 items-center">
                   <Text className="text-zinc-400">Loading...</Text>
                 </View>
-              ) : conversations.length > 0 ? (
-                <>
-                  {conversations.map((conversation) => (
-                    <Pressable
-                      key={conversation.id}
-                      onPress={() => handleSelectConversation(conversation.id)}
-                      className={`flex-row items-center justify-between p-4 border-b border-zinc-800 ${
-                        conversation.id === currentConversationId ? 'bg-zinc-800' : ''
-                      }`}
-                    >
-                      <View className="flex-1">
-                        <Text className="text-white font-semibold">
-                          {conversation.messageCount} messages
-                        </Text>
-                        <Text className="text-zinc-400 text-sm mt-1">
-                          {formatDate(conversation.lastUpdated)}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={() => handleDeleteConversation(conversation.id)}
-                        className="p-2"
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      >
-                        <MaterialIcons name="delete-outline" size={20} color="#ef4444" />
-                      </Pressable>
-                    </Pressable>
-                  ))}
+              )}
 
-                  {/* Clear All Button */}
-                  <View className="p-4">
-                    <Pressable
-                      onPress={handleClearAll}
-                      className="flex-row items-center justify-center gap-2 bg-red-900/20 py-3 rounded-lg border border-red-900"
-                    >
-                      <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
-                      <Text className="text-red-500 font-semibold">Clear All</Text>
-                    </Pressable>
-                  </View>
-                </>
-              ) : (
+              {!isLoading && conversations.length === 0 && (
                 <View className="p-8 items-center">
                   <Text className="text-zinc-400">No saved conversations</Text>
                 </View>
               )}
+
+              {!isLoading && conversations.map((conversation) => (
+                <View
+                  key={conversation.id}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: 16,
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#27272a',
+                    backgroundColor: conversation.id === currentConversationId ? '#27272a' : 'transparent'
+                  }}
+                >
+                  <Pressable
+                    style={{ flex: 1 }}
+                    onPress={() => handleSelectConversation(conversation.id)}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600', fontSize: 16 }}>
+                      {conversation.messageCount} messages
+                    </Text>
+                    <Text style={{ color: '#a1a1aa', fontSize: 14, marginTop: 4 }}>
+                      {formatDate(conversation.lastUpdated)}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleDeleteConversation(conversation.id)}
+                    style={{ padding: 8 }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Trash2 size={20} color="#ef4444" />
+                  </Pressable>
+                </View>
+              ))}
+
+              {!isLoading && conversations.length > 0 && (
+                <View className="p-4">
+                  <Pressable
+                    onPress={handleClearAll}
+                    className="flex-row items-center justify-center gap-2 bg-red-900/20 py-3 rounded-lg border border-red-900"
+                  >
+                    <Trash2 size={18} color="#ef4444" />
+                    <Text className="text-red-500 font-semibold">Clear All</Text>
+                  </Pressable>
+                </View>
+              )}
             </ScrollView>
+            </View>
           </View>
         </View>
       </Modal>

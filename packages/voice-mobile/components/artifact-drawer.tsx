@@ -1,4 +1,5 @@
 import { View, Text, ScrollView, Pressable, Modal } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 
 export interface Artifact {
@@ -42,9 +43,9 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View className="flex-1 bg-black">
+      <SafeAreaView edges={['top', 'bottom']} className="flex-1 bg-black">
         {/* Header */}
-        <View className="pt-16 pb-4 px-4 border-b border-zinc-800">
+        <View className="pb-4 px-4 border-b border-zinc-800">
           <View className="flex-row items-center justify-between">
             <View className="flex-1 mr-4">
               <Text className="text-white text-xl font-bold" numberOfLines={2}>
@@ -120,7 +121,7 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
             </View>
           </View>
         </ScrollView>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
