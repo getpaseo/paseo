@@ -70,6 +70,7 @@ export class Session {
   // Per-session MCP client and tools
   private terminalMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private terminalTools: Record<string, any> | null = null;
+  private terminalManager: any | null = null;
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private agentTools: Record<string, any> | null = null;
   private agentManager: AgentManager | null = null;
@@ -156,6 +157,11 @@ export class Session {
    */
   private async initializeTerminalMcp(): Promise<void> {
     try {
+      // Create Terminal Manager directly
+      const { TerminalManager } = await import("./terminal-mcp/terminal-manager.js");
+      this.terminalManager = new TerminalManager(this.conversationId);
+      await this.terminalManager.initialize();
+
       // Create Terminal MCP server with conversation-specific session
       const server = await createTerminalMcpServer({
         sessionName: this.conversationId
@@ -281,6 +287,50 @@ export class Session {
         messageCount: this.messages.length,
       },
     });
+
+    // Send current session state (live agents and commands)
+    await this.sendSessionState();
+  }
+
+  /**
+   * Send current session state (live agents and commands) to client
+   */
+  private async sendSessionState(): Promise<void> {
+    try {
+      // Get live agents with session modes
+      const agents = this.agentManager?.listAgents() || [];
+
+      // Get live commands from terminal manager
+      let commands: any[] = [];
+      if (this.terminalManager) {
+        try {
+          commands = await this.terminalManager.listCommands();
+        } catch (error) {
+          console.error(
+            `[Session ${this.clientId}] Failed to list commands:`,
+            error
+          );
+        }
+      }
+
+      // Emit session state
+      this.emit({
+        type: "session_state",
+        payload: {
+          agents,
+          commands,
+        },
+      });
+
+      console.log(
+        `[Session ${this.clientId}] Sent session state: ${agents.length} agents, ${commands.length} commands`
+      );
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to send session state:`,
+        error
+      );
+    }
   }
 
   /**
@@ -637,6 +687,8 @@ export class Session {
               if (result.structuredContent?.agentId) {
                 const agentId = result.structuredContent.agentId;
                 const status = result.structuredContent.status;
+                const currentModeId = result.structuredContent.currentModeId;
+                const availableModes = result.structuredContent.availableModes;
 
                 // Subscribe to agent updates
                 this.subscribeToAgent(agentId);
@@ -648,6 +700,8 @@ export class Session {
                     agentId,
                     status,
                     type: "claude",
+                    currentModeId,
+                    availableModes,
                   },
                 });
               }

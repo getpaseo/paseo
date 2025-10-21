@@ -175,7 +175,6 @@ describe("AgentManager", () => {
         // Create agent without initial prompt first, so we can subscribe
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "auto_approve",
         });
 
         expect(agentId).toBeDefined();
@@ -229,7 +228,6 @@ describe("AgentManager", () => {
 
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "auto_approve",
         });
 
         expect(agentId).toBeDefined();
@@ -275,7 +273,6 @@ describe("AgentManager", () => {
 
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "reject_all",
         });
 
         expect(agentId).toBeDefined();
@@ -338,7 +335,6 @@ describe("AgentManager", () => {
 
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "auto_approve",
         });
 
         expect(agentId).toBeDefined();
@@ -393,7 +389,6 @@ describe("AgentManager", () => {
 
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "auto_approve",
         });
 
         expect(agentId).toBeDefined();
@@ -439,7 +434,6 @@ describe("AgentManager", () => {
 
         const agentId = await manager.createAgent({
           cwd: tmpDir,
-          permissionsMode: "auto_approve",
         });
 
         expect(agentId).toBeDefined();

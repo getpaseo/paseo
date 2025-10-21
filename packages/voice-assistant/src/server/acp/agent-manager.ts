@@ -1,6 +1,18 @@
 import { spawn, ChildProcess } from "child_process";
 import { Writable, Readable } from "stream";
-import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import {
+  ClientSideConnection,
+  ndJsonStream,
+  PROTOCOL_VERSION,
+  type Client,
+  type SessionNotification,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type ReadTextFileRequest,
+  type ReadTextFileResponse,
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
+} from "@agentclientprotocol/sdk";
 import { v4 as uuidv4 } from "uuid";
 import type {
   AgentStatus,
@@ -8,7 +20,7 @@ import type {
   AgentUpdate,
   CreateAgentOptions,
   AgentUpdateCallback,
-  PermissionMode,
+  SessionMode,
 } from "./types.js";
 
 interface ManagedAgent {
@@ -19,7 +31,8 @@ interface ManagedAgent {
   connection: ClientSideConnection;
   sessionId?: string;
   error?: string;
-  permissionsMode: PermissionMode;
+  currentModeId?: string;
+  availableModes?: SessionMode[];
   subscribers: Set<AgentUpdateCallback>;
   updates: AgentUpdate[];
 }
@@ -27,53 +40,30 @@ interface ManagedAgent {
 /**
  * Client implementation for ACP callbacks
  */
-class ACPClient {
+class ACPClient implements Client {
   constructor(
     private agentId: string,
-    private onUpdate: (agentId: string, update: any) => void,
-    private getPermissionMode: () => PermissionMode
+    private onUpdate: (agentId: string, update: SessionNotification) => void
   ) {}
 
-  async requestPermission(params: any) {
-    const mode = this.getPermissionMode();
-    console.log(`[Agent ${this.agentId}] Permission requested (mode: ${mode}):`, params);
+  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    // TODO: Forward permission requests to the UI for user approval
+    // For now, auto-approve all permissions
+    console.log(`[Agent ${this.agentId}] Permission requested (auto-approving):`, params);
 
-    if (mode === "auto_approve") {
-      // Auto-approve all permissions
-      return {
-        outcome: {
-          outcome: "selected" as const,
-          optionId: params.options[0]?.optionId || "",
-        },
-      };
-    } else if (mode === "reject_all") {
-      // Reject all permissions
-      const rejectOption = params.options.find((opt: any) =>
-        opt.kind === "reject_once" || opt.kind === "reject_all"
-      );
-      return {
-        outcome: {
-          outcome: "selected" as const,
-          optionId: rejectOption?.optionId || params.options[params.options.length - 1]?.optionId || "",
-        },
-      };
-    } else {
-      // ask_user mode - for now, auto-approve (TODO: implement user prompts)
-      console.log(`[Agent ${this.agentId}] User permission prompt not yet implemented, auto-approving`);
-      return {
-        outcome: {
-          outcome: "selected" as const,
-          optionId: params.options[0]?.optionId || "",
-        },
-      };
-    }
+    return {
+      outcome: {
+        outcome: "selected" as const,
+        optionId: params.options[0]?.optionId || "",
+      },
+    };
   }
 
-  async sessionUpdate(params: any) {
-    this.onUpdate(this.agentId, params.update);
+  async sessionUpdate(params: SessionNotification): Promise<void> {
+    this.onUpdate(this.agentId, params);
   }
 
-  async readTextFile(params: any) {
+  async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
     console.log(`[Agent ${this.agentId}] Read text file:`, params.path);
     const fs = await import("fs/promises");
     try {
@@ -85,7 +75,7 @@ class ACPClient {
     }
   }
 
-  async writeTextFile(params: any) {
+  async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
     console.log(`[Agent ${this.agentId}] Write text file:`, params.path);
     const fs = await import("fs/promises");
     try {
@@ -111,7 +101,6 @@ export class AgentManager {
   async createAgent(options: CreateAgentOptions): Promise<string> {
     const agentId = uuidv4();
     const cwd = options.cwd;
-    const permissionsMode = options.permissionsMode || "auto_approve";
 
     // Spawn the ACP process
     const agentProcess = spawn("npx", ["@zed-industries/claude-code-acp"], {
@@ -129,10 +118,6 @@ export class AgentManager {
       agentId,
       (id, update) => {
         this.handleSessionNotification(id, update);
-      },
-      () => {
-        const agent = this.agents.get(agentId);
-        return agent?.permissionsMode || "auto_approve";
       }
     );
     const connection = new ClientSideConnection(() => client, stream);
@@ -144,7 +129,6 @@ export class AgentManager {
       createdAt: new Date(),
       process: agentProcess,
       connection,
-      permissionsMode,
       subscribers: new Set(),
       updates: [],
     };
@@ -189,11 +173,24 @@ export class AgentManager {
       const sessionResponse = await agent.connection.newSession({
         cwd,
         mcpServers: [],
+        ...(options.initialMode ? { initialMode: options.initialMode } : {}),
       });
 
       agent.sessionId = sessionResponse.sessionId;
+
+      // Store session modes from response
+      if (sessionResponse.modes) {
+        agent.currentModeId = sessionResponse.modes.currentModeId;
+        agent.availableModes = sessionResponse.modes.availableModes;
+        console.log(
+          `[Agent ${agentId}] Session created with mode: ${agent.currentModeId}`,
+          `Available modes:`, agent.availableModes?.map(m => m.id).join(', ')
+        );
+      } else {
+        console.log(`[Agent ${agentId}] Session created:`, sessionResponse.sessionId);
+      }
+
       agent.status = "ready";
-      console.log(`[Agent ${agentId}] Session created:`, sessionResponse.sessionId);
 
       // If an initial prompt was provided, send it
       if (options.initialPrompt) {
@@ -320,6 +317,8 @@ export class AgentManager {
       type: "claude" as const,
       sessionId: agent.sessionId,
       error: agent.error,
+      currentModeId: agent.currentModeId,
+      availableModes: agent.availableModes,
     }));
   }
 
@@ -355,32 +354,69 @@ export class AgentManager {
   }
 
   /**
-   * Set the permission mode for an agent
+   * Get the current session mode for an agent
    */
-  setPermissionMode(agentId: string, mode: PermissionMode): void {
+  getCurrentMode(agentId: string): string | undefined {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    agent.permissionsMode = mode;
-    console.log(`[Agent ${agentId}] Permission mode set to: ${mode}`);
+    return agent.currentModeId;
   }
 
   /**
-   * Get the permission mode for an agent
+   * Get available session modes for an agent
    */
-  getPermissionMode(agentId: string): PermissionMode {
+  getAvailableModes(agentId: string): SessionMode[] {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.permissionsMode;
+    return agent.availableModes || [];
+  }
+
+  /**
+   * Set the session mode for an agent
+   * Validates that the mode is available before setting
+   */
+  async setSessionMode(agentId: string, modeId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    if (!agent.sessionId) {
+      throw new Error(`Agent ${agentId} has no active session`);
+    }
+
+    // Validate mode is available
+    const availableModes = agent.availableModes || [];
+    const mode = availableModes.find((m) => m.id === modeId);
+    if (!mode && availableModes.length > 0) {
+      const availableIds = availableModes.map((m) => m.id).join(", ");
+      throw new Error(
+        `Mode '${modeId}' not available for agent ${agentId}. Available modes: ${availableIds}`
+      );
+    }
+
+    try {
+      await agent.connection.setSessionMode({
+        sessionId: agent.sessionId,
+        modeId,
+      });
+
+      agent.currentModeId = modeId;
+      console.log(`[Agent ${agentId}] Session mode changed to: ${modeId}`);
+    } catch (error) {
+      console.error(`[Agent ${agentId}] Failed to set mode:`, error);
+      throw error;
+    }
   }
 
   /**
    * Handle session notifications from the ACP connection
    */
-  private handleSessionNotification(agentId: string, update: any): void {
+  private handleSessionNotification(agentId: string, update: SessionNotification): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
@@ -393,10 +429,16 @@ export class AgentManager {
     // Store the update in history
     agent.updates.push(agentUpdate);
 
+    // Handle mode change notifications
+    if ((update as any).type === "currentModeUpdate" && (update as any).currentModeId) {
+      agent.currentModeId = (update as any).currentModeId;
+      console.log(`[Agent ${agentId}] Mode changed to: ${agent.currentModeId}`);
+    }
+
     // Track completion based on final message state
     // ACP protocol indicates completion when the last agent_message_chunk arrives
     // We detect this by tracking a completion timer that fires if no more updates arrive
-    const updateType = update.sessionUpdate?.sessionUpdate;
+    const updateType = update.update.sessionUpdate;
 
     // Clear and reset completion timer on any update during processing
     if (agent.status === "processing") {
@@ -418,7 +460,7 @@ export class AgentManager {
     // Log update for debugging
     console.log(
       `[Agent ${agentId}] Session update:`,
-      updateType || update.sessionUpdate || update
+      updateType
     );
 
     // Notify all subscribers

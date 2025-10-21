@@ -123,6 +123,12 @@ export const AgentCreatedMessageSchema = z.object({
     agentId: z.string(),
     status: z.string(),
     type: z.literal("claude"),
+    currentModeId: z.string().optional(),
+    availableModes: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      description: z.string().nullable().optional(),
+    })).optional(),
   }),
 });
 
@@ -151,6 +157,38 @@ export const AgentStatusMessageSchema = z.object({
   }),
 });
 
+export const SessionStateMessageSchema = z.object({
+  type: z.literal("session_state"),
+  payload: z.object({
+    agents: z.array(
+      z.object({
+        id: z.string(),
+        status: z.string(),
+        createdAt: z.date(),
+        type: z.literal("claude"),
+        sessionId: z.string().optional(),
+        error: z.string().optional(),
+        currentModeId: z.string().optional(),
+        availableModes: z.array(z.object({
+          id: z.string(),
+          name: z.string(),
+          description: z.string().nullable().optional(),
+        })).optional(),
+      })
+    ),
+    commands: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        workingDirectory: z.string(),
+        currentCommand: z.string(),
+        isDead: z.boolean(),
+        exitCode: z.number().nullable(),
+      })
+    ),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -162,6 +200,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentCreatedMessageSchema,
   AgentUpdateMessageSchema,
   AgentStatusMessageSchema,
+  SessionStateMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -179,6 +218,7 @@ export type ConversationLoadedMessage = z.infer<typeof ConversationLoadedMessage
 export type AgentCreatedMessage = z.infer<typeof AgentCreatedMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
+export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

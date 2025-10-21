@@ -84,7 +84,6 @@ async function testDirectoryAndInitialPrompt(ctx: TestContext) {
   // Create agent without initial prompt first, so we can subscribe
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "auto_approve",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
@@ -151,7 +150,6 @@ async function testPermissionAutoApprove(ctx: TestContext) {
 
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "auto_approve",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
@@ -208,7 +206,6 @@ async function testPermissionRejectAll(ctx: TestContext) {
 
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "reject_all",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
@@ -282,7 +279,6 @@ async function testMultiplePrompts(ctx: TestContext) {
 
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "auto_approve",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
@@ -341,7 +337,6 @@ async function testUpdateStreaming(ctx: TestContext) {
 
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "auto_approve",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
@@ -408,7 +403,6 @@ async function testStateManagement(ctx: TestContext) {
 
   const agentId = await ctx.manager.createAgent({
     cwd: ctx.tmpDir,
-    permissionsMode: "auto_approve",
   });
 
   console.log(`✓ Agent created: ${agentId}`);
