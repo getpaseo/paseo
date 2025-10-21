@@ -166,14 +166,14 @@ export const SessionStateMessageSchema = z.object({
         status: z.string(),
         createdAt: z.date(),
         type: z.literal("claude"),
-        sessionId: z.string().optional(),
-        error: z.string().optional(),
-        currentModeId: z.string().optional(),
+        sessionId: z.string().nullable(),
+        error: z.string().nullable(),
+        currentModeId: z.string().nullable(),
         availableModes: z.array(z.object({
           id: z.string(),
           name: z.string(),
           description: z.string().nullable().optional(),
-        })).optional(),
+        })).nullable(),
       })
     ),
     commands: z.array(
