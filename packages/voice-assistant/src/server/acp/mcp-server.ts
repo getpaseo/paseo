@@ -118,13 +118,19 @@ export async function createAgentMcpServer(
     {
       title: "Send Agent Prompt",
       description:
-        "Sends a task or prompt to an existing agent. By default, returns immediately without waiting (non-blocking). The agent will process the prompt in the background. Use get_agent_status or get_agent_activity to check progress. Optionally, you can specify maxWait to wait up to that many milliseconds for completion before returning.",
+        "Sends a task or prompt to an existing agent. By default, returns immediately without waiting (non-blocking). The agent will process the prompt in the background. Use get_agent_status or get_agent_activity to check progress. Optionally specify maxWait to wait for completion, or sessionMode to switch modes before sending.",
       inputSchema: {
         agentId: z.string().describe("Agent ID returned from create_coding_agent"),
         prompt: z
           .string()
           .describe(
             "The task, instruction, or feedback to send to the agent. Be specific about what you want the agent to accomplish."
+          ),
+        sessionMode: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: Session mode to set before sending the prompt (e.g., 'plan', 'code', 'default'). If specified, the agent's mode will be changed before processing the prompt."
           ),
         maxWait: z
           .number()
@@ -139,8 +145,11 @@ export async function createAgentMcpServer(
         stopReason: z.string().nullable().describe("Reason agent stopped if it completed: 'end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'"),
       },
     },
-    async ({ agentId, prompt, maxWait }) => {
-      const response = await agentManager.sendPrompt(agentId, prompt, maxWait);
+    async ({ agentId, prompt, sessionMode, maxWait }) => {
+      const response = await agentManager.sendPrompt(agentId, prompt, {
+        maxWait,
+        sessionMode,
+      });
 
       const result = {
         success: true,
@@ -330,6 +339,7 @@ export async function createAgentMcpServer(
         agentId: z.string(),
         format: z.enum(["curated", "raw"]),
         updateCount: z.number().describe("Total number of updates available"),
+        currentModeId: z.string().nullable().describe("Current session mode of the agent"),
         content: z.string().describe("Formatted activity content (if curated) or empty string (if raw)"),
         updates: z.array(
           z.object({
@@ -342,6 +352,7 @@ export async function createAgentMcpServer(
     },
     async ({ agentId, format = "curated", limit }) => {
       const updates = agentManager.getAgentUpdates(agentId);
+      const currentModeId = agentManager.getCurrentMode(agentId);
 
       if (format === "curated") {
         // Return curated, human-readable format
@@ -353,6 +364,7 @@ export async function createAgentMcpServer(
             agentId,
             format: "curated" as const,
             updateCount: updates.length,
+            currentModeId,
             content: curatedText,
             updates: null,
           },
@@ -369,6 +381,7 @@ export async function createAgentMcpServer(
             agentId,
             format: "raw" as const,
             updateCount: updates.length,
+            currentModeId,
             content: "",
             updates: selectedUpdates.map((update) => ({
               timestamp: update.timestamp.toISOString(),
