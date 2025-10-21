@@ -59,11 +59,11 @@ export async function createAgentMcpServer(
           .describe(
             "Optional initial task or prompt for the agent to start working on immediately after creation. If provided, agent will begin processing this task right away."
           ),
-        permissionsMode: z
-          .enum(["auto_approve", "ask_user", "reject_all"])
+        initialMode: z
+          .string()
           .optional()
           .describe(
-            "Permission mode for file operations. 'auto_approve' (default): automatically allow all operations. 'ask_user': prompt user for each permission (not yet implemented, falls back to auto_approve). 'reject_all': reject all permission requests."
+            "Initial session mode for the agent (e.g., 'ask', 'code', 'architect'). If not specified, the agent will use its default mode. The available modes depend on the specific agent implementation."
           ),
       },
       outputSchema: {
@@ -74,26 +74,34 @@ export async function createAgentMcpServer(
             "Current agent status: 'initializing', 'ready', 'processing', etc."
           ),
         cwd: z.string().describe("The resolved absolute working directory the agent is running in"),
-        permissionsMode: z.string().describe("The permission mode the agent is using"),
+        currentModeId: z.string().optional().describe("The agent's current session mode"),
+        availableModes: z.array(z.object({
+          id: z.string(),
+          name: z.string(),
+          description: z.string().optional(),
+        })).optional().describe("Available session modes for this agent"),
       },
     },
-    async ({ cwd, initialPrompt, permissionsMode }) => {
+    async ({ cwd, initialPrompt, initialMode }) => {
       // Expand and resolve the working directory
       const resolvedCwd = expandPath(cwd);
 
       const agentId = await agentManager.createAgent({
         cwd: resolvedCwd,
         initialPrompt,
-        permissionsMode: permissionsMode || "auto_approve",
+        initialMode,
       });
 
       const status = agentManager.getAgentStatus(agentId);
+      const currentModeId = agentManager.getCurrentMode(agentId);
+      const availableModes = agentManager.getAvailableModes(agentId);
 
       const result = {
         agentId,
         status,
         cwd: resolvedCwd,
-        permissionsMode: permissionsMode || "auto_approve",
+        currentModeId,
+        availableModes,
       };
 
       return {
@@ -156,6 +164,12 @@ export async function createAgentMcpServer(
             type: z.literal("claude"),
             sessionId: z.string().optional(),
             error: z.string().optional(),
+            currentModeId: z.string().optional(),
+            availableModes: z.array(z.object({
+              id: z.string(),
+              name: z.string(),
+              description: z.string().optional(),
+            })).optional(),
           })
           .describe("Detailed agent information"),
       },
@@ -198,6 +212,12 @@ export async function createAgentMcpServer(
             type: z.literal("claude"),
             sessionId: z.string().optional(),
             error: z.string().optional(),
+            currentModeId: z.string().optional(),
+            availableModes: z.array(z.object({
+              id: z.string(),
+              name: z.string(),
+              description: z.string().optional(),
+            })).optional(),
           })
         ),
       },
@@ -325,35 +345,35 @@ export async function createAgentMcpServer(
     }
   );
 
-  // Tool: set_agent_permission_mode
+  // Tool: set_agent_mode
   server.registerTool(
-    "set_agent_permission_mode",
+    "set_agent_mode",
     {
-      title: "Set Agent Permission Mode",
+      title: "Set Agent Session Mode",
       description:
-        "Change how the agent handles file operation permission requests. This is a client-side setting that controls how we respond to the agent's permission requests. 'auto_approve' automatically allows all operations (use with caution). 'reject_all' blocks all file operations. 'ask_user' prompts the user for each permission (not yet implemented, currently falls back to auto_approve).",
+        "Change the agent's session mode (e.g., from 'ask' to 'code', or 'architect' to 'code'). Each mode affects the agent's behavior - 'ask' mode requests permission before changes, 'code' mode writes code directly, 'architect' mode plans without implementation. The available modes depend on the specific agent. Use get_agent_status or list_agents to see available modes for each agent.",
       inputSchema: {
         agentId: z.string().describe("Agent ID to configure"),
-        mode: z
-          .enum(["auto_approve", "ask_user", "reject_all"])
+        modeId: z
+          .string()
           .describe(
-            "Permission mode: 'auto_approve' (allow all), 'ask_user' (prompt user), 'reject_all' (deny all)"
+            "The session mode to set (e.g., 'ask', 'code', 'architect'). Must be one of the agent's available modes."
           ),
       },
       outputSchema: {
-        agentId: z.string(),
-        previousMode: z.string().describe("The previous permission mode"),
-        newMode: z.string().describe("The new permission mode"),
+        success: z.boolean().describe("Whether the mode change succeeded"),
+        previousMode: z.string().optional().describe("The previous session mode"),
+        newMode: z.string().describe("The new session mode"),
       },
     },
-    async ({ agentId, mode }) => {
-      const previousMode = agentManager.getPermissionMode(agentId);
-      agentManager.setPermissionMode(agentId, mode);
+    async ({ agentId, modeId }) => {
+      const previousMode = agentManager.getCurrentMode(agentId);
+      await agentManager.setSessionMode(agentId, modeId);
 
       const result = {
-        agentId,
+        success: true,
         previousMode,
-        newMode: mode,
+        newMode: modeId,
       };
 
       return {

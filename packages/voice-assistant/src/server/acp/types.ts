@@ -21,6 +21,8 @@ export interface AgentInfo {
   type: "claude";
   sessionId?: string;
   error?: string;
+  currentModeId?: string;
+  availableModes?: SessionMode[];
 }
 
 /**
@@ -34,12 +36,13 @@ export interface AgentUpdate {
 }
 
 /**
- * Permission modes for agent file operations
+ * Session mode definition from ACP
  */
-export type PermissionMode =
-  | "auto_approve"      // Automatically approve all permissions
-  | "ask_user"          // Prompt user for each permission
-  | "reject_all";       // Reject all permission requests
+export interface SessionMode {
+  id: string;
+  name: string;
+  description?: string | null;
+}
 
 /**
  * Options for creating an agent
@@ -47,7 +50,7 @@ export type PermissionMode =
 export interface CreateAgentOptions {
   cwd: string;
   initialPrompt?: string;
-  permissionsMode?: PermissionMode;
+  initialMode?: string;
 }
 
 /**

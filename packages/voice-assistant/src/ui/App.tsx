@@ -74,9 +74,26 @@ function App() {
   const [agents, setAgents] = useState<
     Map<
       string,
-      { id: string; status: AgentStatus; createdAt: Date; type: "claude" }
+      {
+        id: string;
+        status: AgentStatus;
+        createdAt: Date;
+        type: "claude";
+        currentModeId?: string;
+        availableModes?: Array<{ id: string; name: string; description?: string | null }>;
+      }
     >
   >(new Map());
+  const [commands, setCommands] = useState<
+    Array<{
+      id: string;
+      name: string;
+      workingDirectory: string;
+      currentCommand: string;
+      isDead: boolean;
+      exitCode: number | null;
+    }>
+  >([]);
   const [agentUpdates, setAgentUpdates] = useState<
     Map<string, Array<{ timestamp: Date; notification: SessionNotification }>>
   >(new Map());
@@ -345,10 +362,39 @@ function App() {
       }
     });
 
+    // Listen for session state
+    const unsubSessionState = ws.on("session_state", (message) => {
+      if (message.type !== "session_state") return;
+      const { agents: liveAgents, commands: liveCommands } = message.payload;
+
+      // Update agents with session modes
+      setAgents((prev) => {
+        const newMap = new Map(prev);
+        liveAgents.forEach((agent) => {
+          newMap.set(agent.id, {
+            id: agent.id,
+            status: agent.status as AgentStatus,
+            createdAt: new Date(agent.createdAt),
+            type: agent.type,
+            currentModeId: agent.currentModeId,
+            availableModes: agent.availableModes,
+          });
+        });
+        return newMap;
+      });
+
+      // Update commands
+      setCommands(liveCommands);
+
+      console.log(
+        `[App] Session state loaded: ${liveAgents.length} agents, ${liveCommands.length} commands`
+      );
+    });
+
     // Listen for agent created
     const unsubAgentCreated = ws.on("agent_created", (message) => {
       if (message.type !== "agent_created") return;
-      const { agentId, status, type } = message.payload;
+      const { agentId, status, type, currentModeId, availableModes } = message.payload;
 
       setAgents((prev) => {
         const newMap = new Map(prev);
@@ -357,6 +403,8 @@ function App() {
           status: status as AgentStatus,
           createdAt: new Date(),
           type,
+          currentModeId,
+          availableModes,
         });
         return newMap;
       });
@@ -411,6 +459,7 @@ function App() {
       unsubConversationLoaded();
       unsubArtifact();
       unsubAudioOutput();
+      unsubSessionState();
       unsubAgentCreated();
       unsubAgentUpdate();
       unsubAgentStatus();
@@ -599,6 +648,8 @@ function App() {
     setCurrentAssistantMessage("");
     setArtifacts(new Map());
     setCurrentArtifact(null);
+    setAgents(new Map());
+    setCommands([]);
   };
 
   const handleSelectProcess = (id: string, type: "terminal" | "agent") => {
@@ -868,6 +919,7 @@ function App() {
           <ActiveProcesses
             terminals={[]}
             agents={Array.from(agents.values())}
+            commands={commands}
             activeProcessId={activeProcessId}
             activeProcessType={activeView === "orchestrator" ? null : activeView}
             onSelectProcess={handleSelectProcess}
