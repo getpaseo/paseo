@@ -212,13 +212,13 @@ export class AgentManager {
    * Send a prompt to an agent
    * @param agentId - Agent ID
    * @param prompt - The prompt text
-   * @param maxWait - Optional max milliseconds to wait for completion. If not provided, returns immediately without waiting.
+   * @param options - Optional settings: maxWait (ms), sessionMode to set before sending
    * @returns Object with didComplete boolean indicating if agent finished within maxWait time
    */
   async sendPrompt(
     agentId: string,
     prompt: string,
-    maxWait?: number
+    options?: { maxWait?: number; sessionMode?: string }
   ): Promise<{ didComplete: boolean; stopReason?: string }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -227,6 +227,11 @@ export class AgentManager {
 
     if (agent.status === "killed" || agent.status === "failed") {
       throw new Error(`Agent ${agentId} is ${agent.status}`);
+    }
+
+    // Set session mode if specified
+    if (options?.sessionMode) {
+      await this.setSessionMode(agentId, options.sessionMode);
     }
 
     agent.status = "processing";
@@ -269,6 +274,8 @@ export class AgentManager {
           `Prompt failed: ${error instanceof Error ? error.message : String(error)}`
         );
       });
+
+    const maxWait = options?.maxWait;
 
     // If no maxWait specified, return immediately
     if (maxWait === undefined) {
