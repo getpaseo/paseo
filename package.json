@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/voice-assistant"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=@voice-dev/web",
