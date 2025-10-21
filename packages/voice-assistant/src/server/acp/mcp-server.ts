@@ -74,12 +74,12 @@ export async function createAgentMcpServer(
             "Current agent status: 'initializing', 'ready', 'processing', etc."
           ),
         cwd: z.string().describe("The resolved absolute working directory the agent is running in"),
-        currentModeId: z.string().optional().describe("The agent's current session mode"),
+        currentModeId: z.string().nullable().describe("The agent's current session mode"),
         availableModes: z.array(z.object({
           id: z.string(),
           name: z.string(),
           description: z.string().optional(),
-        })).optional().describe("Available session modes for this agent"),
+        })).nullable().describe("Available session modes for this agent"),
       },
     },
     async ({ cwd, initialPrompt, initialMode }) => {
@@ -100,8 +100,8 @@ export async function createAgentMcpServer(
         agentId,
         status,
         cwd: resolvedCwd,
-        currentModeId,
-        availableModes,
+        currentModeId: currentModeId ?? null,
+        availableModes: availableModes ?? null,
       };
 
       return {
@@ -162,14 +162,14 @@ export async function createAgentMcpServer(
             status: z.string(),
             createdAt: z.date(),
             type: z.literal("claude"),
-            sessionId: z.string().optional(),
-            error: z.string().optional(),
-            currentModeId: z.string().optional(),
+            sessionId: z.string().nullable(),
+            error: z.string().nullable(),
+            currentModeId: z.string().nullable(),
             availableModes: z.array(z.object({
               id: z.string(),
               name: z.string(),
               description: z.string().optional(),
-            })).optional(),
+            })).nullable(),
           })
           .describe("Detailed agent information"),
       },
@@ -210,14 +210,14 @@ export async function createAgentMcpServer(
             status: z.string(),
             createdAt: z.date(),
             type: z.literal("claude"),
-            sessionId: z.string().optional(),
-            error: z.string().optional(),
-            currentModeId: z.string().optional(),
+            sessionId: z.string().nullable(),
+            error: z.string().nullable(),
+            currentModeId: z.string().nullable(),
             availableModes: z.array(z.object({
               id: z.string(),
               name: z.string(),
               description: z.string().optional(),
-            })).optional(),
+            })).nullable(),
           })
         ),
       },
@@ -362,7 +362,7 @@ export async function createAgentMcpServer(
       },
       outputSchema: {
         success: z.boolean().describe("Whether the mode change succeeded"),
-        previousMode: z.string().optional().describe("The previous session mode"),
+        previousMode: z.string().nullable().describe("The previous session mode"),
         newMode: z.string().describe("The new session mode"),
       },
     },
@@ -372,7 +372,7 @@ export async function createAgentMcpServer(
 
       const result = {
         success: true,
-        previousMode,
+        previousMode: previousMode ?? null,
         newMode: modeId,
       };
 

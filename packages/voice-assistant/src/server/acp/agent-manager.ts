@@ -315,10 +315,10 @@ export class AgentManager {
       status: agent.status,
       createdAt: agent.createdAt,
       type: "claude" as const,
-      sessionId: agent.sessionId,
-      error: agent.error,
-      currentModeId: agent.currentModeId,
-      availableModes: agent.availableModes,
+      sessionId: agent.sessionId ?? null,
+      error: agent.error ?? null,
+      currentModeId: agent.currentModeId ?? null,
+      availableModes: agent.availableModes ?? null,
     }));
   }
 
@@ -356,23 +356,23 @@ export class AgentManager {
   /**
    * Get the current session mode for an agent
    */
-  getCurrentMode(agentId: string): string | undefined {
+  getCurrentMode(agentId: string): string | null {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.currentModeId;
+    return agent.currentModeId ?? null;
   }
 
   /**
    * Get available session modes for an agent
    */
-  getAvailableModes(agentId: string): SessionMode[] {
+  getAvailableModes(agentId: string): SessionMode[] | null {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.availableModes || [];
+    return agent.availableModes ?? null;
   }
 
   /**
