@@ -3,7 +3,7 @@ import type {
   WSInboundMessage,
   WSOutboundMessage,
   SessionOutboundMessage
-} from '../../server/messages.js';
+} from '@voice-assistant/server/messages';
 
 export interface UseWebSocketReturn {
   isConnected: boolean;
@@ -19,7 +19,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<SessionOutboundMessage['type'], Set<(message: SessionOutboundMessage) => void>>>(new Map());
-  const reconnectTimeoutRef = useRef<number | undefined>(undefined);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -41,7 +41,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
         setIsConnected(false);
 
         // Attempt to reconnect after 3 seconds
-        reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectTimeoutRef.current = setTimeout(() => {
           console.log('[WS] Attempting to reconnect...');
           connect();
         }, 3000);

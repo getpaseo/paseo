@@ -3,7 +3,10 @@
     "allow": [
       "WebSearch",
       "WebFetch(domain:ai-sdk.dev)",
-      "WebFetch(domain:docs.vad.ricky0123.com)"
+      "WebFetch(domain:docs.vad.ricky0123.com)",
+      "mcp__playwright__browser_close",
+      "Bash(cat:*)",
+      "mcp__playwright__browser_snapshot"
     ],
     "deny": [],
     "ask": []
