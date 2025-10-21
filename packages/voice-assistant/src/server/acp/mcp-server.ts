@@ -117,7 +117,7 @@ export async function createAgentMcpServer(
     {
       title: "Send Agent Prompt",
       description:
-        "Sends a task or prompt to an existing agent. The agent will process the prompt and execute the required actions. Use this to give the agent new tasks, provide feedback, or steer its work. Only works if agent is in 'ready' or 'completed' state.",
+        "Sends a task or prompt to an existing agent. By default, returns immediately without waiting (non-blocking). The agent will process the prompt in the background. Use get_agent_status or get_agent_activity to check progress. Optionally, you can specify maxWait to wait up to that many milliseconds for completion before returning.",
       inputSchema: {
         agentId: z.string().describe("Agent ID returned from create_coding_agent"),
         prompt: z
@@ -125,16 +125,26 @@ export async function createAgentMcpServer(
           .describe(
             "The task, instruction, or feedback to send to the agent. Be specific about what you want the agent to accomplish."
           ),
+        maxWait: z
+          .number()
+          .optional()
+          .describe(
+            "Optional: Maximum milliseconds to wait for agent to complete. If not provided, returns immediately (non-blocking). If agent doesn't finish within this time, returns with didComplete=false and agent continues processing in background."
+          ),
       },
       outputSchema: {
         success: z.boolean().describe("Whether the prompt was sent successfully"),
+        didComplete: z.boolean().describe("Whether the agent completed within maxWait time (always false if maxWait not specified)"),
+        stopReason: z.string().nullable().describe("Reason agent stopped if it completed: 'end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'"),
       },
     },
-    async ({ agentId, prompt }) => {
-      await agentManager.sendPrompt(agentId, prompt);
+    async ({ agentId, prompt, maxWait }) => {
+      const response = await agentManager.sendPrompt(agentId, prompt, maxWait);
 
       const result = {
         success: true,
+        didComplete: response.didComplete,
+        stopReason: response.stopReason ?? null,
       };
 
       return {
