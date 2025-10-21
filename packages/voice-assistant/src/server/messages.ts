@@ -25,11 +25,17 @@ export const AudioPlayedMessageSchema = z.object({
   id: z.string(),
 });
 
+export const LoadConversationRequestMessageSchema = z.object({
+  type: z.literal("load_conversation_request"),
+  conversationId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   AudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
+  LoadConversationRequestMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -103,6 +109,48 @@ export const ArtifactMessageSchema = z.object({
   }),
 });
 
+export const ConversationLoadedMessageSchema = z.object({
+  type: z.literal("conversation_loaded"),
+  payload: z.object({
+    conversationId: z.string(),
+    messageCount: z.number(),
+  }),
+});
+
+export const AgentCreatedMessageSchema = z.object({
+  type: z.literal("agent_created"),
+  payload: z.object({
+    agentId: z.string(),
+    status: z.string(),
+    type: z.literal("claude"),
+  }),
+});
+
+export const AgentUpdateMessageSchema = z.object({
+  type: z.literal("agent_update"),
+  payload: z.object({
+    agentId: z.string(),
+    timestamp: z.date(),
+    notification: z.any(), // SessionNotification from ACP - complex type, using any for simplicity
+  }),
+});
+
+export const AgentStatusMessageSchema = z.object({
+  type: z.literal("agent_status"),
+  payload: z.object({
+    agentId: z.string(),
+    status: z.string(),
+    info: z.object({
+      id: z.string(),
+      status: z.string(),
+      createdAt: z.date(),
+      type: z.literal("claude"),
+      sessionId: z.string().optional(),
+      error: z.string().optional(),
+    }),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -110,6 +158,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   TranscriptionResultMessageSchema,
   StatusMessageSchema,
   ArtifactMessageSchema,
+  ConversationLoadedMessageSchema,
+  AgentCreatedMessageSchema,
+  AgentUpdateMessageSchema,
+  AgentStatusMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -123,6 +175,10 @@ export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>;
 export type TranscriptionResultMessage = z.infer<typeof TranscriptionResultMessageSchema>;
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
+export type ConversationLoadedMessage = z.infer<typeof ConversationLoadedMessageSchema>;
+export type AgentCreatedMessage = z.infer<typeof AgentCreatedMessageSchema>;
+export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
+export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

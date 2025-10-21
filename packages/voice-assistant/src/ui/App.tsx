@@ -10,6 +10,16 @@ import {
 } from "./lib/audio-realtime";
 import { ToolCallCard } from "./components/ToolCallCard";
 import { ArtifactDrawer, type Artifact } from "./components/ArtifactDrawer";
+import { ConversationSelector } from "./components/ConversationSelector";
+import { ActiveProcesses } from "./components/ActiveProcesses";
+import { AgentStreamView } from "./components/AgentStreamView";
+import {
+  getCurrentConversationId,
+  setCurrentConversationId,
+  clearCurrentConversationId,
+} from "./lib/conversation-storage";
+import type { AgentStatus } from "../server/acp/types.js";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 import "./App.css";
 
 type LogEntry =
@@ -58,6 +68,22 @@ function App() {
   const [isVADLoading, setIsVADLoading] = useState(false);
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
   const [artifacts, setArtifacts] = useState<Map<string, Artifact>>(new Map());
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(() => getCurrentConversationId());
+  const [agents, setAgents] = useState<
+    Map<
+      string,
+      { id: string; status: AgentStatus; createdAt: Date; type: "claude" }
+    >
+  >(new Map());
+  const [agentUpdates, setAgentUpdates] = useState<
+    Map<string, Array<{ timestamp: Date; notification: SessionNotification }>>
+  >(new Map());
+  const [activeView, setActiveView] = useState<
+    "orchestrator" | "terminal" | "agent"
+  >("orchestrator");
+  const [activeProcessId, setActiveProcessId] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const audioPlayerRef = useRef(createAudioPlayer());
   const recorderRef = useRef<AudioRecorder | null>(null);
@@ -69,7 +95,7 @@ function App() {
     window.location.host
   }/ws`;
 
-  const ws = useWebSocket(wsUrl);
+  const ws = useWebSocket(wsUrl, selectedConversationId);
 
   useEffect(() => {
     recorderRef.current = createAudioRecorder();
@@ -236,6 +262,20 @@ function App() {
       }
     });
 
+    // Listen for conversation loaded confirmation
+    const unsubConversationLoaded = ws.on("conversation_loaded", (message) => {
+      if (message.type !== "conversation_loaded") return;
+      const { conversationId, messageCount } = message.payload;
+
+      // Save to localStorage for persistence
+      setCurrentConversationId(conversationId);
+
+      addLog(
+        "success",
+        `Loaded conversation with ${messageCount} messages`
+      );
+    });
+
     // Listen for artifacts
     const unsubArtifact = ws.on("artifact", (message) => {
       if (message.type !== "artifact") return;
@@ -305,13 +345,75 @@ function App() {
       }
     });
 
+    // Listen for agent created
+    const unsubAgentCreated = ws.on("agent_created", (message) => {
+      if (message.type !== "agent_created") return;
+      const { agentId, status, type } = message.payload;
+
+      setAgents((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(agentId, {
+          id: agentId,
+          status: status as AgentStatus,
+          createdAt: new Date(),
+          type,
+        });
+        return newMap;
+      });
+
+      addLog("success", `Agent ${agentId.substring(0, 8)} created`);
+    });
+
+    // Listen for agent updates
+    const unsubAgentUpdate = ws.on("agent_update", (message) => {
+      if (message.type !== "agent_update") return;
+      const { agentId, timestamp, notification } = message.payload;
+
+      setAgentUpdates((prev) => {
+        const newMap = new Map(prev);
+        const updates = newMap.get(agentId) || [];
+        newMap.set(agentId, [
+          ...updates,
+          {
+            timestamp: new Date(timestamp),
+            notification: notification as SessionNotification,
+          },
+        ]);
+        return newMap;
+      });
+    });
+
+    // Listen for agent status changes
+    const unsubAgentStatus = ws.on("agent_status", (message) => {
+      if (message.type !== "agent_status") return;
+      const { agentId, status } = message.payload;
+
+      setAgents((prev) => {
+        const newMap = new Map(prev);
+        const agent = newMap.get(agentId);
+        if (agent) {
+          newMap.set(agentId, {
+            ...agent,
+            status: status as AgentStatus,
+          });
+        }
+        return newMap;
+      });
+
+      addLog("info", `Agent ${agentId.substring(0, 8)}: ${status}`);
+    });
+
     return () => {
       unsubStatus();
       unsubActivity();
       unsubChunk();
       unsubTranscription();
+      unsubConversationLoaded();
       unsubArtifact();
       unsubAudioOutput();
+      unsubAgentCreated();
+      unsubAgentUpdate();
+      unsubAgentStatus();
     };
   }, [ws]);
 
@@ -470,6 +572,59 @@ function App() {
     }
   };
 
+  const handleSelectConversation = (conversationId: string | null) => {
+    if (conversationId === null) {
+      // New conversation
+      clearCurrentConversationId();
+    } else {
+      // Load existing conversation
+      setCurrentConversationId(conversationId);
+    }
+
+    // Update state to trigger WebSocket reconnection
+    setSelectedConversationId(conversationId);
+
+    // Clear UI state
+    setLogs([
+      {
+        id: "1",
+        timestamp: Date.now(),
+        type: "system",
+        message: conversationId
+          ? "Loading conversation..."
+          : "Starting new conversation...",
+      },
+    ]);
+    setUserInput("");
+    setCurrentAssistantMessage("");
+    setArtifacts(new Map());
+    setCurrentArtifact(null);
+  };
+
+  const handleSelectProcess = (id: string, type: "terminal" | "agent") => {
+    setActiveProcessId(id);
+    setActiveView(type);
+  };
+
+  const handleBackToOrchestrator = () => {
+    setActiveView("orchestrator");
+    setActiveProcessId(null);
+  };
+
+  const handleKillAgent = async (agentId: string) => {
+    // In a full implementation, this would send a message to the server
+    // For now, just log
+    console.log("[App] Kill agent:", agentId);
+    addLog("info", `Killing agent ${agentId.substring(0, 8)}...`);
+  };
+
+  const handleCancelAgent = async (agentId: string) => {
+    // In a full implementation, this would send a message to the server
+    // For now, just log
+    console.log("[App] Cancel agent:", agentId);
+    addLog("info", `Cancelling agent ${agentId.substring(0, 8)}...`);
+  };
+
   const handleToggleRealtimeMode = async () => {
     if (!ws.isConnected) return;
 
@@ -575,131 +730,149 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Voice Assistant</h1>
-        <div className="header-status">
-          {isPlayingAudio && (
-            <div className="audio-playing-indicator" title="Playing audio" />
-          )}
-          <div
-            className={`status-indicator ${
-              ws.isConnected ? "connected" : "disconnected"
-            }`}
-          >
-            {ws.isConnected ? "connected" : "disconnected"}
-          </div>
-        </div>
+        <ConversationSelector
+          currentConversationId={ws.conversationId}
+          onSelectConversation={handleSelectConversation}
+        />
+        {isPlayingAudio && (
+          <div className="audio-playing-indicator" title="Playing audio" />
+        )}
       </header>
 
       <main className="main">
         <div className="chat-interface">
-          <div className="activity-log">
-            <div className="log-entries">
-              {logs.map((log) => {
-                if (log.type === "tool_call") {
-                  return (
-                    <ToolCallCard
-                      key={log.id}
-                      toolName={log.toolName}
-                      args={log.args}
-                      result={log.result}
-                      error={log.error}
-                      status={log.status}
-                    />
-                  );
-                }
+          {activeView === "orchestrator" && (
+            <>
+              <div className="activity-log">
+                <div className="log-entries">
+                  {logs.map((log) => {
+                    if (log.type === "tool_call") {
+                      return (
+                        <ToolCallCard
+                          key={log.id}
+                          toolName={log.toolName}
+                          args={log.args}
+                          result={log.result}
+                          error={log.error}
+                          status={log.status}
+                        />
+                      );
+                    }
 
-                if (log.type === "artifact") {
-                  return (
-                    <div
-                      key={log.id}
-                      className="log-entry artifact clickable"
-                      onClick={() => handleOpenArtifact(log.artifactId)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          handleOpenArtifact(log.artifactId);
-                        }
-                      }}
-                    >
-                      <span className="log-message">
-                        📋 {log.artifactType}: {log.title}
-                      </span>
+                    if (log.type === "artifact") {
+                      return (
+                        <div
+                          key={log.id}
+                          className="log-entry artifact clickable"
+                          onClick={() => handleOpenArtifact(log.artifactId)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              handleOpenArtifact(log.artifactId);
+                            }
+                          }}
+                        >
+                          <span className="log-message">
+                            📋 {log.artifactType}: {log.title}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={log.id} className={`log-entry ${log.type}`}>
+                        <span className="log-message">{log.message}</span>
+                        {log.metadata && (
+                          <details className="log-metadata">
+                            <summary>Details</summary>
+                            <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {currentAssistantMessage && (
+                    <div className="log-entry assistant streaming">
+                      <span className="log-message">{currentAssistantMessage}</span>
+                      <span className="streaming-indicator">...</span>
                     </div>
-                  );
-                }
-
-                return (
-                  <div key={log.id} className={`log-entry ${log.type}`}>
-                    <span className="log-message">{log.message}</span>
-                    {log.metadata && (
-                      <details className="log-metadata">
-                        <summary>Details</summary>
-                        <pre>{JSON.stringify(log.metadata, null, 2)}</pre>
-                      </details>
-                    )}
-                  </div>
-                );
-              })}
-              {currentAssistantMessage && (
-                <div className="log-entry assistant streaming">
-                  <span className="log-message">{currentAssistantMessage}</span>
-                  <span className="streaming-indicator">...</span>
+                  )}
+                  <div ref={logEndRef} />
                 </div>
-              )}
-              <div ref={logEndRef} />
-            </div>
-          </div>
+              </div>
 
-          <div className="message-form">
-            <textarea
-              ref={textareaRef}
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message"
-              disabled={!ws.isConnected || isRecording}
-              className="message-input"
-              rows={1}
+              <div className="message-form">
+                <textarea
+                  ref={textareaRef}
+                  value={userInput}
+                  onChange={(e) => setUserInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message"
+                  disabled={!ws.isConnected || isRecording}
+                  className="message-input"
+                  rows={1}
+                />
+                <button
+                  type="button"
+                  onClick={handleToggleRealtimeMode}
+                  disabled={!ws.isConnected || isRecording || isVADLoading}
+                  className={`send-button realtime-button ${
+                    isRealtimeMode ? "active" : ""
+                  } ${isSpeechDetected ? "speech-detected" : ""} ${
+                    isVADLoading ? "loading" : ""
+                  }`}
+                  title={
+                    isRealtimeMode ? "Stop realtime mode" : "Start realtime mode"
+                  }
+                >
+                  {isVADLoading ? (
+                    <span className="loading-indicator" />
+                  ) : (
+                    <Radio size={20} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleButtonClick}
+                  disabled={!ws.isConnected}
+                  className={`send-button ${isInProgress ? "cancelling" : ""} ${
+                    isRecording ? "recording" : ""
+                  } ${userInput.trim() ? "has-text" : ""}`}
+                >
+                  {isInProgress ? (
+                    <X size={20} />
+                  ) : isRecording ? (
+                    <span className="recording-indicator" />
+                  ) : userInput.trim() ? (
+                    <Send size={20} />
+                  ) : (
+                    <Mic size={20} />
+                  )}
+                </button>
+              </div>
+            </>
+          )}
+
+          {activeView === "agent" && activeProcessId && (
+            <AgentStreamView
+              agentId={activeProcessId}
+              agent={agents.get(activeProcessId)!}
+              updates={agentUpdates.get(activeProcessId) || []}
+              onBack={handleBackToOrchestrator}
+              onKillAgent={handleKillAgent}
+              onCancelAgent={handleCancelAgent}
             />
-            <button
-              type="button"
-              onClick={handleToggleRealtimeMode}
-              disabled={!ws.isConnected || isRecording || isVADLoading}
-              className={`send-button realtime-button ${
-                isRealtimeMode ? "active" : ""
-              } ${isSpeechDetected ? "speech-detected" : ""} ${
-                isVADLoading ? "loading" : ""
-              }`}
-              title={
-                isRealtimeMode ? "Stop realtime mode" : "Start realtime mode"
-              }
-            >
-              {isVADLoading ? (
-                <span className="loading-indicator" />
-              ) : (
-                <Radio size={20} />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleButtonClick}
-              disabled={!ws.isConnected}
-              className={`send-button ${isInProgress ? "cancelling" : ""} ${
-                isRecording ? "recording" : ""
-              } ${userInput.trim() ? "has-text" : ""}`}
-            >
-              {isInProgress ? (
-                <X size={20} />
-              ) : isRecording ? (
-                <span className="recording-indicator" />
-              ) : userInput.trim() ? (
-                <Send size={20} />
-              ) : (
-                <Mic size={20} />
-              )}
-            </button>
-          </div>
+          )}
+
+          <ActiveProcesses
+            terminals={[]}
+            agents={Array.from(agents.values())}
+            activeProcessId={activeProcessId}
+            activeProcessType={activeView === "orchestrator" ? null : activeView}
+            onSelectProcess={handleSelectProcess}
+            onBackToOrchestrator={handleBackToOrchestrator}
+          />
         </div>
       </main>
 

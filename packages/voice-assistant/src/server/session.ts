@@ -19,6 +19,9 @@ import { saveConversation } from "./persistence.js";
 import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
+import { AgentManager } from "./acp/agent-manager.js";
+import { createAgentMcpServer } from "./acp/mcp-server.js";
+import type { AgentUpdate } from "./acp/types.js";
 
 const execAsync = promisify(exec);
 
@@ -67,6 +70,10 @@ export class Session {
   // Per-session MCP client and tools
   private terminalMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private terminalTools: Record<string, any> | null = null;
+  private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
+  private agentTools: Record<string, any> | null = null;
+  private agentManager: AgentManager | null = null;
+  private agentUpdateUnsubscribers: Map<string, () => void> = new Map();
 
   constructor(
     clientId: string,
@@ -96,6 +103,9 @@ export class Session {
     // Initialize terminal MCP client asynchronously
     this.initializeTerminalMcp();
 
+    // Initialize agent MCP client asynchronously
+    this.initializeAgentMcp();
+
     console.log(
       `[Session ${this.clientId}] Created with conversation ${this.conversationId}`
     );
@@ -106,6 +116,39 @@ export class Session {
    */
   public getConversationId(): string {
     return this.conversationId;
+  }
+
+  /**
+   * Subscribe to updates from an agent
+   */
+  private subscribeToAgent(agentId: string): void {
+    if (!this.agentManager) {
+      console.error(`[Session ${this.clientId}] Cannot subscribe to agent: AgentManager not initialized`);
+      return;
+    }
+
+    // Don't subscribe twice
+    if (this.agentUpdateUnsubscribers.has(agentId)) {
+      return;
+    }
+
+    const unsubscribe = this.agentManager.subscribeToUpdates(
+      agentId,
+      (update: AgentUpdate) => {
+        // Forward agent updates to WebSocket
+        this.emit({
+          type: "agent_update",
+          payload: {
+            agentId: update.agentId,
+            timestamp: update.timestamp,
+            notification: update.notification,
+          },
+        });
+      }
+    );
+
+    this.agentUpdateUnsubscribers.set(agentId, unsubscribe);
+    console.log(`[Session ${this.clientId}] Subscribed to agent ${agentId} updates`);
   }
 
   /**
@@ -138,6 +181,45 @@ export class Session {
     } catch (error) {
       console.error(
         `[Session ${this.clientId}] Failed to initialize Terminal MCP:`,
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Initialize Agent MCP client for this session
+   */
+  private async initializeAgentMcp(): Promise<void> {
+    try {
+      // Create AgentManager instance
+      this.agentManager = new AgentManager();
+
+      // Create Agent MCP server with the manager
+      const server = await createAgentMcpServer({
+        agentManager: this.agentManager,
+      });
+
+      // Create linked transport pair
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+      // Connect server to its transport
+      await server.connect(serverTransport);
+
+      // Create client connected to the other side
+      this.agentMcpClient = await experimental_createMCPClient({
+        transport: clientTransport,
+      });
+
+      // Get tools from the client
+      this.agentTools = await this.agentMcpClient.tools();
+
+      console.log(
+        `[Session ${this.clientId}] Agent MCP initialized with ${Object.keys(this.agentTools).length} tools`
+      );
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to initialize Agent MCP:`,
         error
       );
       throw error;
@@ -459,7 +541,22 @@ export class Session {
         }
       }
 
-      const allTools = await getAllTools(this.terminalTools);
+      // Wait for agent MCP to initialize if needed
+      if (!this.agentTools) {
+        console.log(
+          `[Session ${this.clientId}] Waiting for agent MCP initialization...`
+        );
+        // Wait up to 5 seconds for initialization
+        const startTime = Date.now();
+        while (!this.agentTools && Date.now() - startTime < 5000) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!this.agentTools) {
+          throw new Error("Agent MCP failed to initialize");
+        }
+      }
+
+      const allTools = await getAllTools(this.terminalTools, this.agentTools);
 
       const result = await streamText({
         model: openrouter("anthropic/claude-haiku-4.5"),
@@ -534,6 +631,28 @@ export class Session {
               },
             });
           } else if (chunk.type === "tool-result") {
+            // Check if this is a create_coding_agent result
+            if (chunk.toolName === "create_coding_agent" && chunk.output) {
+              const result = chunk.output as any;
+              if (result.structuredContent?.agentId) {
+                const agentId = result.structuredContent.agentId;
+                const status = result.structuredContent.status;
+
+                // Subscribe to agent updates
+                this.subscribeToAgent(agentId);
+
+                // Emit agent_created message
+                this.emit({
+                  type: "agent_created",
+                  payload: {
+                    agentId,
+                    status,
+                    type: "claude",
+                  },
+                });
+              }
+            }
+
             // Emit tool result event
             this.emit({
               type: "activity_log",
@@ -864,6 +983,46 @@ export class Session {
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
 
+    // Kill all agents
+    if (this.agentManager) {
+      try {
+        const agents = this.agentManager.listAgents();
+        console.log(
+          `[Session ${this.clientId}] Killing ${agents.length} agents`
+        );
+        for (const agent of agents) {
+          try {
+            await this.agentManager.killAgent(agent.id);
+            console.log(`[Session ${this.clientId}] Killed agent ${agent.id}`);
+          } catch (error) {
+            console.error(
+              `[Session ${this.clientId}] Failed to kill agent ${agent.id}:`,
+              error
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          `[Session ${this.clientId}] Error during agent cleanup:`,
+          error
+        );
+      }
+    }
+
+    // Unsubscribe from all agent updates
+    for (const [agentId, unsubscribe] of this.agentUpdateUnsubscribers) {
+      try {
+        unsubscribe();
+        console.log(`[Session ${this.clientId}] Unsubscribed from agent ${agentId}`);
+      } catch (error) {
+        console.error(
+          `[Session ${this.clientId}] Failed to unsubscribe from agent ${agentId}:`,
+          error
+        );
+      }
+    }
+    this.agentUpdateUnsubscribers.clear();
+
     // Kill tmux session for this conversation
     try {
       console.log(
@@ -881,7 +1040,7 @@ export class Session {
       );
     }
 
-    // Close MCP client
+    // Close MCP clients
     if (this.terminalMcpClient) {
       try {
         await this.terminalMcpClient.close();
@@ -889,6 +1048,18 @@ export class Session {
       } catch (error) {
         console.error(
           `[Session ${this.clientId}] Failed to close Terminal MCP client:`,
+          error
+        );
+      }
+    }
+
+    if (this.agentMcpClient) {
+      try {
+        await this.agentMcpClient.close();
+        console.log(`[Session ${this.clientId}] Agent MCP client closed`);
+      } catch (error) {
+        console.error(
+          `[Session ${this.clientId}] Failed to close Agent MCP client:`,
           error
         );
       }

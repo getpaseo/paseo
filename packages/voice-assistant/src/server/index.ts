@@ -11,6 +11,10 @@ import type { ServerConfig } from "./types.js";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { initializeSTT } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
+import {
+  listConversations,
+  deleteConversation,
+} from "./persistence.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +37,28 @@ async function createServer(httpServer: HttpServer, config: ServerConfig) {
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Conversation management endpoints
+  app.get("/api/conversations", async (_req, res) => {
+    try {
+      const conversations = await listConversations();
+      res.json(conversations);
+    } catch (error) {
+      console.error("[API] Failed to list conversations:", error);
+      res.status(500).json({ error: "Failed to list conversations" });
+    }
+  });
+
+  app.delete("/api/conversations/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await deleteConversation(id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[API] Failed to delete conversation:", error);
+      res.status(500).json({ error: "Failed to delete conversation" });
+    }
   });
 
   let vite: ViteDevServer | undefined;

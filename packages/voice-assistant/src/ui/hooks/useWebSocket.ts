@@ -7,14 +7,16 @@ import type {
 
 export interface UseWebSocketReturn {
   isConnected: boolean;
+  conversationId: string | null;
   send: (message: WSInboundMessage) => void;
   on: (type: SessionOutboundMessage['type'], handler: (message: SessionOutboundMessage) => void) => () => void;
   sendPing: () => void;
   sendUserMessage: (message: string) => void;
 }
 
-export function useWebSocket(url: string): UseWebSocketReturn {
+export function useWebSocket(url: string, conversationId?: string | null): UseWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<SessionOutboundMessage['type'], Set<(message: SessionOutboundMessage) => void>>>(new Map());
   const reconnectTimeoutRef = useRef<number>();
@@ -25,7 +27,9 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     }
 
     try {
-      const ws = new WebSocket(url);
+      // Add conversation ID to URL if provided
+      const wsUrl = conversationId ? `${url}?conversationId=${conversationId}` : url;
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         console.log('[WS] Connected to server');
@@ -56,6 +60,11 @@ export function useWebSocket(url: string): UseWebSocketReturn {
             const sessionMessage = wsMessage.message;
             console.log(`[WS] Received session message type: ${sessionMessage.type}`);
 
+            // Track conversation ID when loaded
+            if (sessionMessage.type === 'conversation_loaded') {
+              setCurrentConversationId(sessionMessage.payload.conversationId);
+            }
+
             // Call all registered handlers for this message type
             const handlers = handlersRef.current.get(sessionMessage.type);
             if (handlers) {
@@ -80,7 +89,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     } catch (err) {
       console.error('[WS] Failed to create WebSocket:', err);
     }
-  }, [url]);
+  }, [url, conversationId]);
 
   useEffect(() => {
     connect();
@@ -143,6 +152,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
 
   return {
     isConnected,
+    conversationId: currentConversationId,
     send,
     on,
     sendPing,

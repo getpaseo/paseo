@@ -5,7 +5,7 @@ import { standardizePrompt } from "ai/internal";
 async function processConversation() {
   try {
     const conversationPath =
-      ".conversations/ce44c79a-0689-4210-8e00-72c0a627406d-2.json";
+      ".debug.conversations/ce44c79a-0689-4210-8e00-72c0a627406d-2.json";
 
     console.log("Loading conversation from:", conversationPath);
 

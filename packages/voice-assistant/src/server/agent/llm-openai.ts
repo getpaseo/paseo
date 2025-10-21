@@ -153,10 +153,14 @@ const manualTools = {
 /**
  * Get all tools (MCP + manual) for LLM
  * @param terminalTools - Optional custom terminal tools (per-session). If not provided, uses global singleton.
+ * @param agentTools - Optional agent tools (per-session).
  */
-export async function getAllTools(terminalTools?: Record<string, any>): Promise<Record<string, any>> {
+export async function getAllTools(
+  terminalTools?: Record<string, any>,
+  agentTools?: Record<string, any>
+): Promise<Record<string, any>> {
   if (terminalTools) {
-    // Use provided terminal tools (per-session) and merge with Playwright
+    // Use provided terminal tools (per-session) and merge with Playwright and agent tools
     const playwrightClient = await getPlaywrightMcpClient().catch((error) => {
       console.error("Failed to initialize Playwright MCP:", error);
       return null;
@@ -169,6 +173,7 @@ export async function getAllTools(terminalTools?: Record<string, any>): Promise<
     return {
       ...terminalTools,
       ...playwrightTools,
+      ...(agentTools || {}),
       ...manualTools,
     };
   }
@@ -177,6 +182,7 @@ export async function getAllTools(terminalTools?: Record<string, any>): Promise<
   const mcpTools = await getMcpTools();
   return {
     ...mcpTools,
+    ...(agentTools || {}),
     ...manualTools,
   };
 }
