@@ -18,7 +18,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to the microphone for voice commands."
-      }
+      },
+      "bundleIdentifier": "com.moboudra.voicemobile"
     },
     "android": {
       "adaptiveIcon": {
