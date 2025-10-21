@@ -30,12 +30,23 @@ export const LoadConversationRequestMessageSchema = z.object({
   conversationId: z.string(),
 });
 
+export const ListConversationsRequestMessageSchema = z.object({
+  type: z.literal("list_conversations_request"),
+});
+
+export const DeleteConversationRequestMessageSchema = z.object({
+  type: z.literal("delete_conversation_request"),
+  conversationId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   AudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   LoadConversationRequestMessageSchema,
+  ListConversationsRequestMessageSchema,
+  DeleteConversationRequestMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -189,6 +200,28 @@ export const SessionStateMessageSchema = z.object({
   }),
 });
 
+export const ListConversationsResponseMessageSchema = z.object({
+  type: z.literal("list_conversations_response"),
+  payload: z.object({
+    conversations: z.array(
+      z.object({
+        id: z.string(),
+        lastUpdated: z.string(),
+        messageCount: z.number(),
+      })
+    ),
+  }),
+});
+
+export const DeleteConversationResponseMessageSchema = z.object({
+  type: z.literal("delete_conversation_response"),
+  payload: z.object({
+    conversationId: z.string(),
+    success: z.boolean(),
+    error: z.string().optional(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -201,6 +234,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentUpdateMessageSchema,
   AgentStatusMessageSchema,
   SessionStateMessageSchema,
+  ListConversationsResponseMessageSchema,
+  DeleteConversationResponseMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -219,6 +254,8 @@ export type AgentCreatedMessage = z.infer<typeof AgentCreatedMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
+export type ListConversationsResponseMessage = z.infer<typeof ListConversationsResponseMessageSchema>;
+export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

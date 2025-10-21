@@ -15,7 +15,7 @@ import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
-import { saveConversation } from "./persistence.js";
+import { saveConversation, listConversations, deleteConversation } from "./persistence.js";
 import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
@@ -257,6 +257,14 @@ export class Session {
         case "load_conversation_request":
           await this.handleLoadConversation();
           break;
+
+        case "list_conversations_request":
+          await this.handleListConversations();
+          break;
+
+        case "delete_conversation_request":
+          await this.handleDeleteConversation(msg.conversationId);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -290,6 +298,71 @@ export class Session {
 
     // Send current session state (live agents and commands)
     await this.sendSessionState();
+  }
+
+  /**
+   * List all conversations
+   */
+  public async handleListConversations(): Promise<void> {
+    try {
+      const conversations = await listConversations();
+      this.emit({
+        type: "list_conversations_response",
+        payload: {
+          conversations: conversations.map(conv => ({
+            id: conv.id,
+            lastUpdated: conv.lastUpdated.toISOString(),
+            messageCount: conv.messageCount,
+          })),
+        },
+      });
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to list conversations:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to list conversations: ${error.message}`,
+        },
+      });
+    }
+  }
+
+  /**
+   * Delete a conversation
+   */
+  public async handleDeleteConversation(conversationId: string): Promise<void> {
+    try {
+      await deleteConversation(conversationId);
+      this.emit({
+        type: "delete_conversation_response",
+        payload: {
+          conversationId,
+          success: true,
+        },
+      });
+      console.log(
+        `[Session ${this.clientId}] Deleted conversation ${conversationId}`
+      );
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to delete conversation ${conversationId}:`,
+        error
+      );
+      this.emit({
+        type: "delete_conversation_response",
+        payload: {
+          conversationId,
+          success: false,
+          error: error.message,
+        },
+      });
+    }
   }
 
   /**
