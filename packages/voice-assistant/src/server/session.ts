@@ -15,6 +15,10 @@ import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
+import { saveConversation } from "./persistence.js";
+import { experimental_createMCPClient } from "ai";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 
 const execAsync = promisify(exec);
 
@@ -60,18 +64,37 @@ export class Session {
   private readonly ttsManager: TTSManager;
   private readonly sttManager: STTManager;
 
+  // Per-session MCP client and tools
+  private terminalMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
+  private terminalTools: Record<string, any> | null = null;
+
   constructor(
     clientId: string,
-    onMessage: (msg: SessionOutboundMessage) => void
+    onMessage: (msg: SessionOutboundMessage) => void,
+    options?: {
+      conversationId?: string;
+      initialMessages?: ModelMessage[];
+    }
   ) {
     this.clientId = clientId;
-    this.conversationId = uuidv4();
+    this.conversationId = options?.conversationId || uuidv4();
     this.onMessage = onMessage;
     this.abortController = new AbortController();
+
+    // Initialize conversation history
+    if (options?.initialMessages) {
+      this.messages = options.initialMessages;
+      console.log(
+        `[Session ${this.clientId}] Restored conversation ${this.conversationId} with ${this.messages.length} messages`
+      );
+    }
 
     // Initialize per-session managers
     this.ttsManager = new TTSManager(this.conversationId);
     this.sttManager = new STTManager(this.conversationId);
+
+    // Initialize terminal MCP client asynchronously
+    this.initializeTerminalMcp();
 
     console.log(
       `[Session ${this.clientId}] Created with conversation ${this.conversationId}`
@@ -83,6 +106,42 @@ export class Session {
    */
   public getConversationId(): string {
     return this.conversationId;
+  }
+
+  /**
+   * Initialize Terminal MCP client for this session
+   */
+  private async initializeTerminalMcp(): Promise<void> {
+    try {
+      // Create Terminal MCP server with conversation-specific session
+      const server = await createTerminalMcpServer({
+        sessionName: this.conversationId
+      });
+
+      // Create linked transport pair
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+      // Connect server to its transport
+      await server.connect(serverTransport);
+
+      // Create client connected to the other side
+      this.terminalMcpClient = await experimental_createMCPClient({
+        transport: clientTransport,
+      });
+
+      // Get tools from the client
+      this.terminalTools = await this.terminalMcpClient.tools();
+
+      console.log(
+        `[Session ${this.clientId}] Terminal MCP initialized with session ${this.conversationId}`
+      );
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to initialize Terminal MCP:`,
+        error
+      );
+      throw error;
+    }
   }
 
   /**
@@ -106,6 +165,10 @@ export class Session {
         case "audio_played":
           this.handleAudioPlayed(msg.id);
           break;
+
+        case "load_conversation_request":
+          await this.handleLoadConversation();
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -122,6 +185,20 @@ export class Session {
         },
       });
     }
+  }
+
+  /**
+   * Load existing conversation
+   */
+  public async handleLoadConversation(): Promise<void> {
+    // This is handled during construction, but we emit a confirmation message
+    this.emit({
+      type: "conversation_loaded",
+      payload: {
+        conversationId: this.conversationId,
+        messageCount: this.messages.length,
+      },
+    });
   }
 
   /**
@@ -367,7 +444,22 @@ export class Session {
         apiKey: process.env.OPENROUTER_API_KEY,
       });
 
-      const allTools = await getAllTools();
+      // Wait for terminal MCP to initialize if needed
+      if (!this.terminalTools) {
+        console.log(
+          `[Session ${this.clientId}] Waiting for terminal MCP initialization...`
+        );
+        // Wait up to 5 seconds for initialization
+        const startTime = Date.now();
+        while (!this.terminalTools && Date.now() - startTime < 5000) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!this.terminalTools) {
+          throw new Error("Terminal MCP failed to initialize");
+        }
+      }
+
+      const allTools = await getAllTools(this.terminalTools);
 
       const result = await streamText({
         model: openrouter("anthropic/claude-haiku-4.5"),
@@ -382,6 +474,17 @@ export class Session {
             console.log(
               `[Session ${this.clientId}] onFinish - saved message with ${newMessages.length} steps`
             );
+          }
+
+          // Persist conversation to disk
+          try {
+            await saveConversation(this.conversationId, this.messages);
+          } catch (error) {
+            console.error(
+              `[Session ${this.clientId}] Failed to persist conversation:`,
+              error
+            );
+            // Don't break conversation flow on persistence errors
           }
         },
         onChunk: async ({ chunk }) => {
@@ -716,7 +819,7 @@ export class Session {
    */
   private async dumpConversation(): Promise<void> {
     try {
-      const dumpDir = join(process.cwd(), ".conversations");
+      const dumpDir = join(process.cwd(), ".debug.conversations");
       await mkdir(dumpDir, { recursive: true });
 
       const filename = `${this.conversationId}-${this.turnIndex}.json`;
@@ -744,7 +847,7 @@ export class Session {
   /**
    * Clean up session resources
    */
-  public cleanup(): void {
+  public async cleanup(): Promise<void> {
     console.log(`[Session ${this.clientId}] Cleaning up`);
 
     // Abort any ongoing operations
@@ -760,5 +863,35 @@ export class Session {
     // Cleanup managers
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
+
+    // Kill tmux session for this conversation
+    try {
+      console.log(
+        `[Session ${this.clientId}] Killing tmux session ${this.conversationId}`
+      );
+      await execAsync(`tmux kill-session -t ${this.conversationId}`);
+      console.log(
+        `[Session ${this.clientId}] Tmux session ${this.conversationId} killed`
+      );
+    } catch (error) {
+      // Session might not exist or already be killed - that's okay
+      console.log(
+        `[Session ${this.clientId}] Tmux session cleanup (session may not exist):`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
+    // Close MCP client
+    if (this.terminalMcpClient) {
+      try {
+        await this.terminalMcpClient.close();
+        console.log(`[Session ${this.clientId}] Terminal MCP client closed`);
+      } catch (error) {
+        console.error(
+          `[Session ${this.clientId}] Failed to close Terminal MCP client:`,
+          error
+        );
+      }
+    }
   }
 }

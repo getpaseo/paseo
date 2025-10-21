@@ -259,6 +259,28 @@ export async function getCurrentWorkingDirectory(
 }
 
 /**
+ * Get stored working directory from window user option (for dead panes)
+ * Falls back to current working directory if not stored
+ */
+export async function getStoredWorkingDirectory(windowId: string, paneId: string): Promise<string> {
+  try {
+    const stored = await executeTmux([
+      "show-window-options",
+      "-t",
+      windowId,
+      "-v",
+      "@working_directory",
+    ]);
+    if (stored && stored.trim()) {
+      return stored.trim();
+    }
+  } catch (error) {
+    // Option not set, fall back to current
+  }
+  return getCurrentWorkingDirectory(paneId);
+}
+
+/**
  * Get the current command running in a pane (full command line with arguments)
  * Gets the immediate child process of the shell, not the shell itself
  */
@@ -303,6 +325,28 @@ export async function getCurrentCommand(paneId: string): Promise<string> {
       "#{pane_current_command}",
     ]);
   }
+}
+
+/**
+ * Get stored command from window user option (for dead panes)
+ * Falls back to current command if not stored
+ */
+export async function getStoredCommand(windowId: string, paneId: string): Promise<string> {
+  try {
+    const stored = await executeTmux([
+      "show-window-options",
+      "-t",
+      windowId,
+      "-v",
+      "@command",
+    ]);
+    if (stored && stored.trim()) {
+      return stored.trim();
+    }
+  } catch (error) {
+    // Option not set, fall back to current
+  }
+  return getCurrentCommand(paneId);
 }
 
 /**
@@ -355,7 +399,7 @@ export async function createWindow(
   name: string,
   options?: {
     workingDirectory?: string;
-    command?: string;
+    command?: string | null;
   }
 ): Promise<(TmuxWindow & { paneId: string; output?: string | null }) | null> {
   // Validate name uniqueness
@@ -412,6 +456,155 @@ export async function createWindow(
     ...window,
     paneId: defaultPane?.id || "",
     output: commandOutput,
+  };
+}
+
+/**
+ * Execute a command in a new window with remain-on-exit enabled
+ * This allows capturing output and exit code even after the command finishes
+ *
+ * @param sessionId - The tmux session ID
+ * @param command - The command to execute (will be wrapped in bash -c)
+ * @param workingDirectory - Directory to execute command in
+ * @param maxWait - Maximum milliseconds to wait for command completion or stability
+ * @returns Window ID, output, exit code (if finished), and whether process is still running
+ */
+export async function executeCommand({
+  sessionId,
+  command,
+  workingDirectory,
+  maxWait = 120000,
+}: {
+  sessionId: string;
+  command: string;
+  workingDirectory: string;
+  maxWait?: number;
+}): Promise<{
+  windowId: string;
+  paneId: string;
+  output: string;
+  exitCode: number | null;
+  isDead: boolean;
+}> {
+  // Generate unique window name using timestamp
+  const windowName = `cmd-${Date.now()}`;
+  const expandedPath = expandTilde(workingDirectory);
+
+  // Create window
+  const args = ["new-window", "-t", sessionId, "-n", windowName, "-c", expandedPath];
+  await executeTmux(args);
+
+  const windows = await listWindows(sessionId);
+  const window = windows.find((w) => w.name === windowName);
+  if (!window) {
+    throw new Error("Failed to create window for command execution");
+  }
+
+  // Enable remain-on-exit to keep window after command finishes
+  await executeTmux([
+    "set-window-option",
+    "-t",
+    window.id,
+    "remain-on-exit",
+    "on",
+  ]);
+
+  // Disable automatic window renaming
+  await executeTmux([
+    "set-window-option",
+    "-t",
+    window.id,
+    "automatic-rename",
+    "off",
+  ]);
+
+  // Store command and working directory as window options for later retrieval
+  await executeTmux([
+    "set-window-option",
+    "-t",
+    window.id,
+    "@command",
+    command,
+  ]);
+  await executeTmux([
+    "set-window-option",
+    "-t",
+    window.id,
+    "@working_directory",
+    expandedPath,
+  ]);
+
+  // Get the pane
+  const panes = await listPanes(window.id);
+  const pane = panes[0];
+  if (!pane) {
+    throw new Error("No pane found in created window");
+  }
+
+  // Execute command via respawn-pane with bash -c wrapper
+  // This ensures all bash features work (pipes, operators, etc.)
+  const wrappedCommand = `bash -c 'cd "${expandedPath}" && ${command.replace(/'/g, "'\\''")} 2>&1; exit $?'`;
+  await executeTmux(["respawn-pane", "-t", pane.id, "-k", wrappedCommand]);
+
+  // Wait for command to finish or reach stability
+  const startTime = Date.now();
+  let output = "";
+  let isDead = false;
+  let exitCode: number | null = null;
+
+  while (Date.now() - startTime < maxWait) {
+    // Check if pane is dead (command exited)
+    const deadStatus = await executeTmux([
+      "display-message",
+      "-p",
+      "-t",
+      pane.id,
+      "#{pane_dead}",
+    ]);
+    isDead = deadStatus === "1";
+
+    if (isDead) {
+      // Command finished - capture output and exit code
+      output = await capturePaneContent(pane.id, 1000, false);
+      const exitCodeStr = await executeTmux([
+        "display-message",
+        "-p",
+        "-t",
+        pane.id,
+        "#{pane_dead_status}",
+      ]);
+      exitCode = parseInt(exitCodeStr, 10);
+      break;
+    }
+
+    // Check for stability (output hasn't changed)
+    const currentOutput = await capturePaneContent(pane.id, 1000, false);
+    if (currentOutput === output) {
+      // Wait a bit more to confirm stability
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const confirmedOutput = await capturePaneContent(pane.id, 1000, false);
+      if (confirmedOutput === currentOutput) {
+        // Stable - command is likely waiting for input or running steadily
+        output = confirmedOutput;
+        break;
+      }
+    }
+    output = currentOutput;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  // Final capture if we hit timeout
+  if (!isDead && !output) {
+    output = await capturePaneContent(pane.id, 1000, false);
+  }
+
+  return {
+    windowId: window.id,
+    paneId: pane.id,
+    output,
+    exitCode,
+    isDead,
   };
 }
 
@@ -527,8 +720,8 @@ const activeCommands = new Map<string, CommandExecution>();
 const startMarkerText = "TMUX_MCP_START";
 const endMarkerPrefix = "TMUX_MCP_DONE_";
 
-// Execute a command in a tmux pane and track its execution
-export async function executeCommand(
+// Execute a command in a tmux pane and track its execution (OLD - for backward compat)
+export async function executeCommandLegacy(
   paneId: string,
   command: string,
   rawMode?: boolean,
@@ -888,7 +1081,7 @@ export async function sendKeys({
     waitForSettled?: boolean;
     maxWait?: number;
   };
-}): Promise<string | void> {
+}): Promise<string | null> {
   // Repeat the key press the specified number of times
   for (let i = 0; i < repeat; i++) {
     // Raw pass-through, no validation or processing
@@ -909,6 +1102,8 @@ export async function sendKeys({
       return capturePaneContent(paneId, lines, false);
     }
   }
+
+  return null;
 }
 
 export async function waitForPaneActivityToSettle(
@@ -959,7 +1154,7 @@ export async function sendText({
     waitForSettled?: boolean;
     maxWait?: number;
   };
-}): Promise<string | void> {
+}): Promise<string | null> {
   // Send each character with -l flag for literal interpretation
   // Using execFile avoids shell interpretation of special characters like ; | & $
   for (const char of text) {
@@ -983,4 +1178,6 @@ export async function sendText({
       return capturePaneContent(paneId, lines, false);
     }
   }
+
+  return null;
 }
