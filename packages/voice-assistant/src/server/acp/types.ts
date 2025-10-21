@@ -19,10 +19,10 @@ export interface AgentInfo {
   status: AgentStatus;
   createdAt: Date;
   type: "claude";
-  sessionId?: string;
-  error?: string;
-  currentModeId?: string;
-  availableModes?: SessionMode[];
+  sessionId: string | null;
+  error: string | null;
+  currentModeId: string | null;
+  availableModes: SessionMode[] | null;
 }
 
 /**
