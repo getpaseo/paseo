@@ -225,7 +225,7 @@ export class AgentManager {
     this.notifySubscribers(agentId);
 
     try {
-      await agent.connection.prompt({
+      const response = await agent.connection.prompt({
         sessionId: agent.sessionId!,
         prompt: [
           {
@@ -234,6 +234,23 @@ export class AgentManager {
           },
         ],
       });
+
+      // Handle completion based on stopReason from the protocol
+      console.log(`[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`);
+
+      if (response.stopReason === "end_turn") {
+        agent.status = "completed";
+      } else if (response.stopReason === "refusal") {
+        agent.status = "failed";
+        agent.error = "Agent refused to process the prompt";
+      } else if (response.stopReason === "cancelled") {
+        agent.status = "ready";
+      } else {
+        // max_tokens, max_turn_requests - still completed but may be truncated
+        agent.status = "completed";
+      }
+
+      this.notifyStatusChange(agentId);
     } catch (error) {
       this.handleAgentError(
         agentId,
@@ -435,29 +452,8 @@ export class AgentManager {
       console.log(`[Agent ${agentId}] Mode changed to: ${agent.currentModeId}`);
     }
 
-    // Track completion based on final message state
-    // ACP protocol indicates completion when the last agent_message_chunk arrives
-    // We detect this by tracking a completion timer that fires if no more updates arrive
-    const updateType = update.update.sessionUpdate;
-
-    // Clear and reset completion timer on any update during processing
-    if (agent.status === "processing") {
-      if ((agent as any).completionTimer) {
-        clearTimeout((agent as any).completionTimer);
-      }
-
-      // Set a new timer to mark as completed if no more updates arrive
-      // This is a heuristic - if no updates for 2 seconds, consider complete
-      (agent as any).completionTimer = setTimeout(() => {
-        if (agent.status === "processing") {
-          console.log(`[Agent ${agentId}] No more updates, marking as completed`);
-          agent.status = "completed";
-          this.notifyStatusChange(agentId);
-        }
-      }, 2000);
-    }
-
     // Log update for debugging
+    const updateType = update.update.sessionUpdate;
     console.log(
       `[Agent ${agentId}] Session update:`,
       updateType
