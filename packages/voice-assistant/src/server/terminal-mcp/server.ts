@@ -24,28 +24,78 @@ export async function createTerminalMcpServer(
     version: "1.0.0",
   });
 
-  // Tool: list_terminals
+  // COMMAND-BASED TOOLS
+
+  // Tool: execute_command
   server.registerTool(
-    "list_terminals",
+    "execute_command",
     {
-      title: "List Terminals",
+      title: "Execute Command",
       description:
-        "List all terminals (isolated shell environments). Returns terminal name, active status, current working directory, currently running command, and the last 5 lines of output for each terminal.",
+        "Execute a shell command in a specified directory. Commands are wrapped in bash -c, so you can use pipes, operators, redirects, and all bash features. The command runs until completion or until output stabilizes (for interactive processes). Returns command ID for follow-up interactions, output, exit code (if finished), and whether the process is still running. Windows remain after command exits for inspection.",
+      inputSchema: {
+        command: z
+          .string()
+          .describe(
+            "The command to execute. Can include pipes (|), operators (&&, ||, ;), redirects (>, >>), and any bash syntax. Examples: 'npm test', 'ls | grep foo', 'cd src && npm run build'"
+          ),
+        directory: z
+          .string()
+          .describe(
+            "Absolute path to the working directory. Can use ~ for home directory."
+          ),
+        maxWait: z
+          .number()
+          .optional()
+          .describe(
+            "Maximum milliseconds to wait for command completion or output stability (default: 120000 = 2 minutes). For interactive commands, returns when output stabilizes. For one-shot commands, returns when command exits."
+          ),
+      },
+      outputSchema: {
+        commandId: z.string(),
+        output: z.string(),
+        exitCode: z.number().nullable(),
+        isDead: z.boolean(),
+      },
+    },
+    async ({ command, directory, maxWait }) => {
+      const result = await terminalManager.executeCommand(
+        command,
+        directory,
+        maxWait
+      );
+      return {
+        content: [],
+        structuredContent: result,
+      };
+    }
+  );
+
+  // Tool: list_commands
+  server.registerTool(
+    "list_commands",
+    {
+      title: "List Commands",
+      description:
+        "List all commands (both running and exited). Shows command ID, working directory, current process, whether it has exited (isDead), exit code (if exited), and last few lines of output. Includes dead commands that remain for inspection until explicitly killed.",
       inputSchema: {},
       outputSchema: {
-        terminals: z.array(
+        commands: z.array(
           z.object({
+            id: z.string(),
             name: z.string(),
             workingDirectory: z.string(),
             currentCommand: z.string(),
-            lastLines: z.string().optional(),
+            isDead: z.boolean(),
+            exitCode: z.number().nullable(),
+            lastLines: z.string().nullable(),
           })
         ),
       },
     },
     async () => {
-      const terminals = await terminalManager.listTerminals();
-      const output = { terminals };
+      const commands = await terminalManager.listCommands();
+      const output = { commands };
       return {
         content: [],
         structuredContent: output,
@@ -53,85 +103,32 @@ export async function createTerminalMcpServer(
     }
   );
 
-  // Tool: create_terminal
+  // Tool: capture_command
   server.registerTool(
-    "create_terminal",
+    "capture_command",
     {
-      title: "Create Terminal",
+      title: "Capture Command Output",
       description:
-        "Create a new terminal (isolated shell environment) at a specific working directory. Optionally execute an initial command after creation. Terminal names must be unique. Always specify workingDirectory based on context - use project paths when working on projects, or the same directory as current terminal when user says 'another terminal here'. Defaults to ~ only if no context.",
+        "Capture output from a command by its ID. Works for both running and exited commands. Returns output, exit code (if exited), and whether the command has finished.",
       inputSchema: {
-        name: z
+        commandId: z
           .string()
           .describe(
-            "Unique name for the terminal. Should be descriptive of what the terminal is used for (e.g., 'web-dev', 'api-server', 'tests')."
+            "Command ID (window ID like @123) returned from execute_command or list_commands"
           ),
-        workingDirectory: z
-          .string()
-          .describe(
-            "Absolute path to the working directory for this terminal. Can use ~ for home directory. Required parameter - set contextually based on what the user is working on. Use project paths when working on projects. Defaults to home directory (~) only if no context."
-          ),
-        initialCommand: z
-          .string()
-          .optional()
-          .describe(
-            "Optional command to execute after creating the terminal (e.g., 'npm run dev', 'python -m venv venv'). The command runs after changing to the working directory."
-          ),
-      },
-      outputSchema: {
-        terminal: z.object({
-          name: z.string(),
-          workingDirectory: z.string(),
-          currentCommand: z.string(),
-          commandOutput: z.string().optional(),
-        }),
-      },
-    },
-    async ({ name, workingDirectory, initialCommand }) => {
-      const terminal = await terminalManager.createTerminal({
-        name,
-        workingDirectory,
-        initialCommand,
-      });
-      const output = { terminal };
-      return {
-        content: [],
-        structuredContent: output,
-      };
-    }
-  );
-
-  // Tool: capture_terminal
-  server.registerTool(
-    "capture_terminal",
-    {
-      title: "Capture Terminal",
-      description:
-        "Capture and return the output from a terminal. Returns the last N lines of terminal content. Useful for checking command results, monitoring running processes, or debugging issues.",
-      inputSchema: {
-        terminalName: z.string().describe("Name of the terminal"),
         lines: z
           .number()
           .optional()
           .describe("Number of lines to capture (default: 200)"),
-        maxWait: z
-          .number()
-          .optional()
-          .describe(
-            "Maximum milliseconds to wait for terminal activity to settle before capturing. Polls every 100ms and waits for 1s of no changes. Useful for commands with delayed output."
-          ),
       },
       outputSchema: {
         output: z.string(),
+        exitCode: z.number().nullable(),
+        isDead: z.boolean(),
       },
     },
-    async ({ terminalName, lines, maxWait }) => {
-      const output = await terminalManager.captureTerminal(
-        terminalName,
-        lines,
-        maxWait
-      );
-      const result = { output };
+    async ({ commandId, lines }) => {
+      const result = await terminalManager.captureCommand(commandId, lines);
       return {
         content: [],
         structuredContent: result,
@@ -139,26 +136,24 @@ export async function createTerminalMcpServer(
     }
   );
 
-  // Tool: send_text
+  // Tool: send_text_to_command
   server.registerTool(
-    "send_text",
+    "send_text_to_command",
     {
-      title: "Send Text",
+      title: "Send Text to Command",
       description:
-        "Type text into a terminal. This is the PRIMARY way to execute shell commands with bash operators (&&, ||, |, ;, etc.) - set pressEnter=true to run the command. Also use for interactive applications, REPLs, forms, and text entry. For special keys or control sequences, use send_keys instead.",
+        "Send text input to a running command (by ID). Use this for interactive processes like REPLs, prompts, or text-based interfaces. Only works if the command is still running (isDead=false).",
       inputSchema: {
-        terminalName: z.string().describe("Name of the terminal"),
-        text: z
+        commandId: z
           .string()
           .describe(
-            "Text to type into the terminal. For shell commands, can use any bash operators: && (chain), || (or), | (pipe), ; (sequential), etc."
+            "Command ID (window ID like @123) from execute_command or list_commands"
           ),
+        text: z.string().describe("Text to send to the command"),
         pressEnter: z
           .boolean()
           .optional()
-          .describe(
-            "Press Enter after typing the text (default: false). Set to true to execute shell commands or submit text input."
-          ),
+          .describe("Press Enter after typing text (default: false)"),
         return_output: z
           .object({
             lines: z
@@ -169,32 +164,30 @@ export async function createTerminalMcpServer(
               .boolean()
               .optional()
               .describe(
-                "Wait for terminal activity to settle before returning output. Polls terminal and waits 500ms after last change (default: true)"
+                "Wait for output to stabilize before returning (default: true)"
               ),
             maxWait: z
               .number()
               .optional()
               .describe(
-                "Maximum milliseconds to wait for activity to settle (default: 120000 = 2 minutes)"
+                "Maximum milliseconds to wait for stability (default: 120000)"
               ),
           })
           .optional()
-          .describe(
-            "Capture terminal output after sending text. By default waits for activity to settle."
-          ),
+          .describe("Capture output after sending text"),
       },
       outputSchema: {
-        output: z.string().optional(),
+        output: z.string().nullable(),
       },
     },
-    async ({ terminalName, text, pressEnter, return_output }) => {
-      const output = await terminalManager.sendText(
-        terminalName,
+    async ({ commandId, text, pressEnter, return_output }) => {
+      const output = await terminalManager.sendTextToCommand(
+        commandId,
         text,
         pressEnter,
         return_output
       );
-      const result = { output: output || undefined };
+      const result = { output: output || null };
       return {
         content: [],
         structuredContent: result,
@@ -202,61 +195,47 @@ export async function createTerminalMcpServer(
     }
   );
 
-  // Tool: send_keys
+  // Tool: send_keys_to_command
   server.registerTool(
-    "send_keys",
+    "send_keys_to_command",
     {
-      title: "Send Keys",
+      title: "Send Keys to Command",
       description:
-        "Send special keys or key combinations to a terminal. Use for TUI navigation and control sequences. Examples: 'Up', 'Down', 'Enter', 'Escape', 'C-c' (Ctrl+C), 'M-x' (Alt+X). For typing regular text, use send_text instead. Supports repeating key presses and optionally capturing output after sending keys.",
+        "Send special keys or key combinations to a running command. Use for control sequences and navigation. Examples: 'C-c' (Ctrl+C), 'Enter', 'Escape', 'BTab' (Shift+Tab). Only works if command is still running.",
       inputSchema: {
-        terminalName: z.string().describe("Name of the terminal"),
+        commandId: z
+          .string()
+          .describe("Command ID (window ID like @123)"),
         keys: z
           .string()
           .describe(
-            "Special key name or key combination: 'Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'Space', 'C-c', 'M-x', etc."
+            "Special key or combination: 'C-c', 'Enter', 'Escape', 'BTab', etc."
           ),
         repeat: z
           .number()
-          .min(1)
           .optional()
           .describe("Number of times to repeat the key press (default: 1)"),
         return_output: z
           .object({
-            lines: z
-              .number()
-              .optional()
-              .describe("Number of lines to capture (default: 200)"),
-            waitForSettled: z
-              .boolean()
-              .optional()
-              .describe(
-                "Wait for terminal activity to settle before returning output. Polls terminal and waits 500ms after last change (default: true)"
-              ),
-            maxWait: z
-              .number()
-              .optional()
-              .describe(
-                "Maximum milliseconds to wait for activity to settle (default: 120000 = 2 minutes)"
-              ),
+            lines: z.number().optional(),
+            waitForSettled: z.boolean().optional(),
+            maxWait: z.number().optional(),
           })
           .optional()
-          .describe(
-            "Capture terminal output after sending keys. By default waits for activity to settle."
-          ),
+          .describe("Capture output after sending keys"),
       },
       outputSchema: {
-        output: z.string().optional(),
+        output: z.string().nullable(),
       },
     },
-    async ({ terminalName, keys, repeat, return_output }) => {
-      const output = await terminalManager.sendKeys(
-        terminalName,
+    async ({ commandId, keys, repeat, return_output }) => {
+      const output = await terminalManager.sendKeysToCommand(
+        commandId,
         keys,
         repeat,
         return_output
       );
-      const result = { output: output || undefined };
+      const result = { output: output || null };
       return {
         content: [],
         structuredContent: result,
@@ -264,56 +243,33 @@ export async function createTerminalMcpServer(
     }
   );
 
-  // Tool: rename_terminal
+  // Tool: kill_command
   server.registerTool(
-    "rename_terminal",
+    "kill_command",
     {
-      title: "Rename Terminal",
+      title: "Kill Command",
       description:
-        "Rename a terminal to a more descriptive name. The new name must be unique among all terminals.",
+        "Kill one or more commands and close their windows. Use this to terminate running processes or clean up finished commands. This removes the commands from list_commands.",
       inputSchema: {
-        terminalName: z.string().describe("Current name of the terminal"),
-        newName: z
-          .string()
+        commandIds: z
+          .array(z.string())
+          .min(1)
           .describe(
-            "New unique name for the terminal. Should be descriptive of the terminal's purpose."
+            "Array of command IDs (window IDs like @123) from execute_command or list_commands. Can be a single ID or multiple IDs."
           ),
       },
       outputSchema: {
         success: z.boolean(),
+        killedCount: z.number(),
       },
     },
-    async ({ terminalName, newName }) => {
-      await terminalManager.renameTerminal(terminalName, newName);
-      const output = { success: true };
-      return {
-        content: [],
-        structuredContent: output,
-      };
-    }
-  );
-
-  // Tool: kill_terminal
-  server.registerTool(
-    "kill_terminal",
-    {
-      title: "Kill Terminal",
-      description:
-        "Close and destroy a terminal. This will terminate any running processes in the terminal. Use with caution.",
-      inputSchema: {
-        terminalName: z
-          .string()
-          .describe(
-            "Name of the terminal to kill. Get this from list_terminals."
-          ),
-      },
-      outputSchema: {
-        success: z.boolean(),
-      },
-    },
-    async ({ terminalName }) => {
-      await terminalManager.killTerminal(terminalName);
-      const output = { success: true };
+    async ({ commandIds }) => {
+      let killedCount = 0;
+      for (const commandId of commandIds) {
+        await terminalManager.killCommand(commandId);
+        killedCount++;
+      }
+      const output = { success: true, killedCount };
       return {
         content: [],
         structuredContent: output,

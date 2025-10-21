@@ -13,7 +13,11 @@ import {
   isWindowNameUnique,
   getCurrentWorkingDirectory,
   getCurrentCommand,
+  getStoredWorkingDirectory,
+  getStoredCommand,
   waitForPaneActivityToSettle,
+  executeCommand as tmuxExecuteCommand,
+  executeTmux,
 } from "./tmux.js";
 
 // Terminal model: session → windows (single pane per window)
@@ -23,7 +27,17 @@ export interface TerminalInfo {
   name: string;
   workingDirectory: string;
   currentCommand: string;
-  lastLines?: string;
+  lastLines: string | null;
+}
+
+export interface CommandInfo {
+  id: string;
+  name: string;
+  workingDirectory: string;
+  currentCommand: string;
+  isDead: boolean;
+  exitCode: number | null;
+  lastLines: string | null;
 }
 
 export interface CreateTerminalParams {
@@ -33,7 +47,7 @@ export interface CreateTerminalParams {
 }
 
 export interface CreateTerminalResult extends TerminalInfo {
-  commandOutput?: string;
+  commandOutput: string | null;
 }
 
 /**
@@ -84,7 +98,7 @@ export class TerminalManager {
         name: window.name,
         workingDirectory,
         currentCommand,
-        lastLines,
+        lastLines: lastLines || null,
       });
     }
 
@@ -117,7 +131,7 @@ export class TerminalManager {
     // Create the window
     const windowResult = await createWindow(session.id, params.name, {
       workingDirectory: params.workingDirectory,
-      command: params.initialCommand,
+      command: params.initialCommand ?? null,
     });
 
     if (!windowResult) {
@@ -134,7 +148,8 @@ export class TerminalManager {
       name: windowResult.name,
       workingDirectory,
       currentCommand,
-      commandOutput: windowResult.output,
+      commandOutput: windowResult.output || null,
+      lastLines: null,
     };
   }
 
@@ -186,7 +201,7 @@ export class TerminalManager {
     text: string,
     pressEnter: boolean = false,
     return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number }
-  ): Promise<string | void> {
+  ): Promise<string | null> {
     const session = await findSessionByName(this.sessionName);
     if (!session) {
       throw new Error(`Session '${this.sessionName}' not found.`);
@@ -226,7 +241,7 @@ export class TerminalManager {
     keys: string,
     repeat: number = 1,
     return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number }
-  ): Promise<string | void> {
+  ): Promise<string | null> {
     const session = await findSessionByName(this.sessionName);
     if (!session) {
       throw new Error(`Session '${this.sessionName}' not found.`);
@@ -296,5 +311,210 @@ export class TerminalManager {
     }
 
     await killWindow(window.id);
+  }
+
+  /**
+   * Execute a command and return its output, exit code, and running status
+   * Commands are wrapped in bash -c to support all bash features
+   * Windows remain after command exits (remain-on-exit) for inspection
+   */
+  async executeCommand(
+    command: string,
+    workingDirectory: string,
+    maxWait?: number
+  ): Promise<{
+    commandId: string;
+    output: string;
+    exitCode: number | null;
+    isDead: boolean;
+  }> {
+    const session = await findSessionByName(this.sessionName);
+    if (!session) {
+      throw new Error(
+        `Session '${this.sessionName}' not found. Call initialize() first.`
+      );
+    }
+
+    const result = await tmuxExecuteCommand({
+      sessionId: session.id,
+      command,
+      workingDirectory,
+      maxWait,
+    });
+
+    return {
+      commandId: result.windowId,
+      output: result.output,
+      exitCode: result.exitCode,
+      isDead: result.isDead,
+    };
+  }
+
+  /**
+   * List all commands (windows), including those that have exited
+   * Shows both running and dead commands for inspection
+   */
+  async listCommands(): Promise<CommandInfo[]> {
+    const session = await findSessionByName(this.sessionName);
+
+    if (!session) {
+      throw new Error(
+        `Session '${this.sessionName}' not found. Call initialize() first.`
+      );
+    }
+
+    const windows = await listWindows(session.id);
+    const commands: CommandInfo[] = [];
+
+    for (const window of windows) {
+      const paneId = `${window.id}.0`;
+
+      // Check if pane is dead first
+      const deadStatus = await executeTmux([
+        "display-message",
+        "-p",
+        "-t",
+        paneId,
+        "#{pane_dead}",
+      ]);
+      const isDead = deadStatus === "1";
+
+      // Use stored values for dead panes, current values for live ones
+      const workingDirectory = await getStoredWorkingDirectory(window.id, paneId);
+      const currentCommand = await getStoredCommand(window.id, paneId);
+      const lastLines = await capturePaneContent(paneId, 5, false);
+
+      let exitCode: number | null = null;
+      if (isDead) {
+        const exitCodeStr = await executeTmux([
+          "display-message",
+          "-p",
+          "-t",
+          paneId,
+          "#{pane_dead_status}",
+        ]);
+        exitCode = parseInt(exitCodeStr, 10);
+      }
+
+      commands.push({
+        id: window.id,
+        name: window.name,
+        workingDirectory,
+        currentCommand,
+        isDead,
+        exitCode,
+        lastLines: lastLines || null,
+      });
+    }
+
+    return commands;
+  }
+
+  /**
+   * Capture output from a command by ID (window ID)
+   */
+  async captureCommand(
+    commandId: string,
+    lines: number = 200
+  ): Promise<{
+    output: string;
+    exitCode: number | null;
+    isDead: boolean;
+  }> {
+    const session = await findSessionByName(this.sessionName);
+    if (!session) {
+      throw new Error(`Session '${this.sessionName}' not found.`);
+    }
+
+    const paneId = `${commandId}.0`;
+
+    const output = await capturePaneContent(paneId, lines, false);
+
+    const deadStatus = await executeTmux([
+      "display-message",
+      "-p",
+      "-t",
+      paneId,
+      "#{pane_dead}",
+    ]);
+    const isDead = deadStatus === "1";
+
+    let exitCode: number | null = null;
+    if (isDead) {
+      const exitCodeStr = await executeTmux([
+        "display-message",
+        "-p",
+        "-t",
+        paneId,
+        "#{pane_dead_status}",
+      ]);
+      exitCode = parseInt(exitCodeStr, 10);
+    }
+
+    return {
+      output,
+      exitCode,
+      isDead,
+    };
+  }
+
+  /**
+   * Send text to a command by ID (window ID)
+   */
+  async sendTextToCommand(
+    commandId: string,
+    text: string,
+    pressEnter: boolean = false,
+    return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number }
+  ): Promise<string | null> {
+    const session = await findSessionByName(this.sessionName);
+    if (!session) {
+      throw new Error(`Session '${this.sessionName}' not found.`);
+    }
+
+    const paneId = `${commandId}.0`;
+
+    return tmuxSendText({
+      paneId,
+      text,
+      pressEnter,
+      return_output,
+    });
+  }
+
+  /**
+   * Send keys to a command by ID (window ID)
+   */
+  async sendKeysToCommand(
+    commandId: string,
+    keys: string,
+    repeat: number = 1,
+    return_output?: { lines?: number; waitForSettled?: boolean; maxWait?: number }
+  ): Promise<string | null> {
+    const session = await findSessionByName(this.sessionName);
+    if (!session) {
+      throw new Error(`Session '${this.sessionName}' not found.`);
+    }
+
+    const paneId = `${commandId}.0`;
+
+    return tmuxSendKeys({
+      paneId,
+      keys,
+      repeat,
+      return_output,
+    });
+  }
+
+  /**
+   * Kill a command by ID (window ID)
+   */
+  async killCommand(commandId: string): Promise<void> {
+    const session = await findSessionByName(this.sessionName);
+    if (!session) {
+      throw new Error(`Session '${this.sessionName}' not found.`);
+    }
+
+    await killWindow(commandId);
   }
 }

@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { Server as HTTPServer } from "http";
+import { parse as parseUrl } from "url";
 import {
   WSInboundMessageSchema,
   type WSOutboundMessage,
@@ -7,6 +8,7 @@ import {
   wrapSessionMessage,
 } from "./messages.js";
 import { Session } from "./session.js";
+import { loadConversation } from "./persistence.js";
 
 /**
  * WebSocket server that routes messages between clients and their sessions.
@@ -21,8 +23,8 @@ export class VoiceAssistantWebSocketServer {
   constructor(server: HTTPServer) {
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
-    this.wss.on("connection", (ws) => {
-      this.handleConnection(ws);
+    this.wss.on("connection", (ws, request) => {
+      this.handleConnection(ws, request);
     });
 
     console.log("✓ WebSocket server initialized on /ws");
@@ -31,14 +33,44 @@ export class VoiceAssistantWebSocketServer {
   /**
    * Handle new WebSocket connection
    */
-  private handleConnection(ws: WebSocket): void {
+  private async handleConnection(ws: WebSocket, request: any): Promise<void> {
     // Generate unique client ID
     const clientId = `client-${++this.clientIdCounter}`;
 
+    // Extract conversation ID from URL query parameter if present
+    const url = parseUrl(request.url || "", true);
+    const conversationId = url.query.conversationId as string | undefined;
+
+    // Load conversation if ID provided
+    let initialMessages = null;
+    if (conversationId) {
+      console.log(
+        `[WS] Client requesting conversation ${conversationId}`
+      );
+      initialMessages = await loadConversation(conversationId);
+
+      if (initialMessages) {
+        console.log(
+          `[WS] Loaded conversation ${conversationId} with ${initialMessages.length} messages`
+        );
+      } else {
+        console.log(
+          `[WS] Conversation ${conversationId} not found, starting fresh`
+        );
+      }
+    }
+
     // Create session with message emission callback
-    const session = new Session(clientId, (msg) => {
-      this.sendToClient(ws, wrapSessionMessage(msg));
-    });
+    const session = new Session(
+      clientId,
+      (msg) => {
+        this.sendToClient(ws, wrapSessionMessage(msg));
+      },
+      {
+        conversationId,
+        initialMessages: initialMessages || undefined,
+      }
+    );
 
     // Store session and reverse mapping
     this.sessions.set(ws, session);
@@ -62,13 +94,25 @@ export class VoiceAssistantWebSocketServer {
       })
     );
 
+    // Send conversation confirmation (whether new or loaded)
+    this.sendToClient(
+      ws,
+      wrapSessionMessage({
+        type: "conversation_loaded",
+        payload: {
+          conversationId: session.getConversationId(),
+          messageCount: initialMessages?.length || 0,
+        },
+      })
+    );
+
     // Set up message handler
     ws.on("message", (data) => {
       this.handleMessage(ws, data);
     });
 
     // Set up close handler
-    ws.on("close", () => {
+    ws.on("close", async () => {
       const session = this.sessions.get(ws);
       if (!session) return;
 
@@ -79,7 +123,7 @@ export class VoiceAssistantWebSocketServer {
       );
 
       // Clean up session
-      session.cleanup();
+      await session.cleanup();
 
       // Remove from maps
       this.sessions.delete(ws);
@@ -89,13 +133,13 @@ export class VoiceAssistantWebSocketServer {
     });
 
     // Set up error handler
-    ws.on("error", (error) => {
+    ws.on("error", async (error) => {
       console.error(`[WS] Client error:`, error);
       const session = this.sessions.get(ws);
       if (!session) return;
 
       // Clean up session
-      session.cleanup();
+      await session.cleanup();
 
       // Remove from maps
       this.sessions.delete(ws);
@@ -184,11 +228,13 @@ export class VoiceAssistantWebSocketServer {
   /**
    * Close the WebSocket server
    */
-  public close(): void {
+  public async close(): Promise<void> {
+    const cleanupPromises: Promise<void>[] = [];
     this.sessions.forEach((session, ws) => {
-      session.cleanup();
+      cleanupPromises.push(session.cleanup());
       ws.close();
     });
+    await Promise.all(cleanupPromises);
     this.wss.close();
   }
 }
