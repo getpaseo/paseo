@@ -210,8 +210,16 @@ export class AgentManager {
 
   /**
    * Send a prompt to an agent
+   * @param agentId - Agent ID
+   * @param prompt - The prompt text
+   * @param maxWait - Optional max milliseconds to wait for completion. If not provided, returns immediately without waiting.
+   * @returns Object with didComplete boolean indicating if agent finished within maxWait time
    */
-  async sendPrompt(agentId: string, prompt: string): Promise<void> {
+  async sendPrompt(
+    agentId: string,
+    prompt: string,
+    maxWait?: number
+  ): Promise<{ didComplete: boolean; stopReason?: string }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
@@ -224,38 +232,66 @@ export class AgentManager {
     agent.status = "processing";
     this.notifySubscribers(agentId);
 
-    try {
-      const response = await agent.connection.prompt({
-        sessionId: agent.sessionId!,
-        prompt: [
-          {
-            type: "text",
-            text: prompt,
-          },
-        ],
+    // Start the prompt (this will eventually complete and update status)
+    const promptPromise = agent.connection.prompt({
+      sessionId: agent.sessionId!,
+      prompt: [
+        {
+          type: "text",
+          text: prompt,
+        },
+      ],
+    });
+
+    // Handle completion in background
+    promptPromise
+      .then((response) => {
+        // Handle completion based on stopReason from the protocol
+        console.log(`[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`);
+
+        if (response.stopReason === "end_turn") {
+          agent.status = "completed";
+        } else if (response.stopReason === "refusal") {
+          agent.status = "failed";
+          agent.error = "Agent refused to process the prompt";
+        } else if (response.stopReason === "cancelled") {
+          agent.status = "ready";
+        } else {
+          // max_tokens, max_turn_requests - still completed but may be truncated
+          agent.status = "completed";
+        }
+
+        this.notifyStatusChange(agentId);
+      })
+      .catch((error) => {
+        this.handleAgentError(
+          agentId,
+          `Prompt failed: ${error instanceof Error ? error.message : String(error)}`
+        );
       });
 
-      // Handle completion based on stopReason from the protocol
-      console.log(`[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`);
+    // If no maxWait specified, return immediately
+    if (maxWait === undefined) {
+      console.log(`[Agent ${agentId}] Prompt sent (non-blocking, use get_agent_status to check completion)`);
+      return { didComplete: false };
+    }
 
-      if (response.stopReason === "end_turn") {
-        agent.status = "completed";
-      } else if (response.stopReason === "refusal") {
-        agent.status = "failed";
-        agent.error = "Agent refused to process the prompt";
-      } else if (response.stopReason === "cancelled") {
-        agent.status = "ready";
-      } else {
-        // max_tokens, max_turn_requests - still completed but may be truncated
-        agent.status = "completed";
-      }
-
-      this.notifyStatusChange(agentId);
-    } catch (error) {
-      this.handleAgentError(
-        agentId,
-        `Prompt failed: ${error instanceof Error ? error.message : String(error)}`
+    // If maxWait specified, race between completion and timeout
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), maxWait)
       );
+
+      const response = await Promise.race([promptPromise, timeoutPromise]);
+
+      console.log(`[Agent ${agentId}] Prompt completed within ${maxWait}ms with stopReason: ${response.stopReason}`);
+      return { didComplete: true, stopReason: response.stopReason };
+    } catch (error) {
+      if (error instanceof Error && error.message === "timeout") {
+        console.log(`[Agent ${agentId}] Prompt did not complete within ${maxWait}ms (still processing)`);
+        return { didComplete: false };
+      }
+      // Real error - rethrow
       throw error;
     }
   }
