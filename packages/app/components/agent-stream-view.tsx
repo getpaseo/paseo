@@ -288,27 +288,27 @@ export function AgentStreamView({
   );
 }
 
-const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
   },
   header: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[4],
   },
   backButton: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[4],
   },
   backButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
     textAlign: "center",
@@ -325,11 +325,11 @@ const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) =>
     gap: theme.spacing[2],
   },
   agentLabel: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
   agentId: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontFamily: "monospace",
   },
@@ -342,16 +342,16 @@ const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) =>
     borderRadius: theme.borderRadius.full,
   },
   statusIcon: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
   },
   statusText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
   createdText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
   },
   controlButtons: {
@@ -361,20 +361,20 @@ const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) =>
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: theme.colors.orange[600],
+    backgroundColor: theme.colors.palette.orange[600],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   killButton: {
     flex: 1,
-    backgroundColor: theme.colors.red[600],
+    backgroundColor: theme.colors.destructive,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   controlButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
     textAlign: "center",
@@ -390,18 +390,18 @@ const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) =>
     paddingVertical: theme.spacing[12],
   },
   emptyStateText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
   },
   updateCard: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[3],
     marginBottom: theme.spacing[2],
   },
   collapsibleCard: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     overflow: "hidden",
@@ -414,38 +414,38 @@ const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) =>
     paddingHorizontal: theme.spacing[3],
     paddingBottom: theme.spacing[3],
     borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.zinc[700],
+    borderTopColor: theme.colors.border,
   },
   timestampText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginBottom: theme.spacing[1],
   },
   messageText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
   toolCallText: {
-    color: "#60a5fa",
+    color: theme.colors.palette.blue[400],
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
   updateStatusText: {
-    color: "#fbbf24",
+    color: theme.colors.palette.yellow[400],
     fontSize: theme.fontSize.sm,
   },
   commandsText: {
-    color: "#4ade80",
+    color: theme.colors.palette.green[400],
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
   commandItem: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
   codeText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     fontFamily: "monospace",
     marginTop: theme.spacing[2],

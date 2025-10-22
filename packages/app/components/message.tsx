@@ -9,7 +9,7 @@ interface UserMessageProps {
   timestamp: number;
 }
 
-const userMessageStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const userMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -17,7 +17,7 @@ const userMessageStylesheet = StyleSheet.create((theme: import('../styles/theme'
     paddingHorizontal: theme.spacing[4],
   },
   bubble: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.primary,
     borderRadius: theme.borderRadius['2xl'],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
@@ -25,7 +25,7 @@ const userMessageStylesheet = StyleSheet.create((theme: import('../styles/theme'
     maxWidth: '80%',
   },
   text: {
-    color: theme.colors.white,
+    color: theme.colors.primaryForeground,
     fontSize: theme.fontSize.lg,
     lineHeight: 24,
   },
@@ -47,7 +47,7 @@ interface AssistantMessageProps {
   isStreaming?: boolean;
 }
 
-const assistantMessageStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     marginBottom: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
@@ -57,7 +57,7 @@ const assistantMessageStylesheet = StyleSheet.create((theme: import('../styles/t
     marginTop: theme.spacing[1],
   },
   streamingText: {
-    color: theme.colors.teal[200],
+    color: theme.colors.palette.teal[200],
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.bold,
   },
@@ -166,7 +166,7 @@ interface ActivityLogProps {
   onArtifactClick?: (artifactId: string) => void;
 }
 
-const activityLogStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const activityLogStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     marginHorizontal: theme.spacing[2],
     marginBottom: theme.spacing[1],
@@ -177,19 +177,19 @@ const activityLogStylesheet = StyleSheet.create((theme: import('../styles/theme'
     opacity: 0.7,
   },
   systemBg: {
-    backgroundColor: 'rgba(39, 39, 42, 0.5)', // zinc-800/50
+    backgroundColor: 'rgba(39, 39, 42, 0.5)',
   },
   infoBg: {
-    backgroundColor: 'rgba(30, 58, 138, 0.3)', // blue-900/30
+    backgroundColor: 'rgba(30, 58, 138, 0.3)',
   },
   successBg: {
-    backgroundColor: 'rgba(20, 83, 45, 0.3)', // green-900/30
+    backgroundColor: 'rgba(20, 83, 45, 0.3)',
   },
   errorBg: {
-    backgroundColor: 'rgba(127, 29, 29, 0.3)', // red-900/30
+    backgroundColor: 'rgba(127, 29, 29, 0.3)',
   },
   artifactBg: {
-    backgroundColor: 'rgba(30, 58, 138, 0.4)', // blue-900/40
+    backgroundColor: 'rgba(30, 58, 138, 0.4)',
   },
   content: {
     paddingHorizontal: theme.spacing[3],
@@ -216,7 +216,7 @@ const activityLogStylesheet = StyleSheet.create((theme: import('../styles/theme'
     marginTop: theme.spacing[1],
   },
   detailsText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginRight: theme.spacing[1],
   },
@@ -226,10 +226,10 @@ const activityLogStylesheet = StyleSheet.create((theme: import('../styles/theme'
     borderRadius: theme.borderRadius.base,
     padding: theme.spacing[2],
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.zinc[700],
+    borderColor: theme.colors.border,
   },
   metadataText: {
-    color: theme.colors.zinc[300],
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
     fontFamily: 'monospace',
     lineHeight: 16,
@@ -324,11 +324,11 @@ interface ToolCallProps {
   status: 'executing' | 'completed' | 'failed';
 }
 
-const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const toolCallStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     marginHorizontal: theme.spacing[2],
     marginBottom: theme.spacing[2],
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     overflow: 'hidden',
@@ -337,13 +337,13 @@ const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').T
     opacity: 0.8,
   },
   executingBorder: {
-    borderColor: theme.colors.amber[500],
+    borderColor: theme.colors.palette.amber[500],
   },
   completedBorder: {
-    borderColor: theme.colors.green[500],
+    borderColor: theme.colors.palette.green[500],
   },
   failedBorder: {
-    borderColor: theme.colors.red[500],
+    borderColor: theme.colors.destructive,
   },
   content: {
     padding: theme.spacing[3],
@@ -356,7 +356,7 @@ const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').T
     marginRight: theme.spacing[2],
   },
   toolName: {
-    color: theme.colors.slate[200],
+    color: theme.colors.foreground,
     fontFamily: 'monospace',
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.sm,
@@ -371,13 +371,13 @@ const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').T
     borderRadius: theme.borderRadius.base,
   },
   executingBadgeBg: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)', // amber-500/20
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
   },
   completedBadgeBg: {
-    backgroundColor: 'rgba(34, 197, 94, 0.2)', // green-500/20
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
   },
   failedBadgeBg: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)', // red-500/20
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
   },
   statusText: {
     fontSize: theme.fontSize.xs,
@@ -392,7 +392,7 @@ const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').T
     // empty - just for grouping
   },
   sectionTitle: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     textTransform: 'uppercase',
@@ -400,20 +400,20 @@ const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').T
     marginBottom: 6,
   },
   errorSectionTitle: {
-    color: '#fca5a5', // red-300
+    color: theme.colors.palette.red[300],
   },
   sectionContent: {
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
     borderRadius: theme.borderRadius.base,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.zinc[700],
+    borderColor: theme.colors.border,
     padding: theme.spacing[2],
   },
   errorSectionContent: {
-    borderColor: '#991b1b', // red-800
+    borderColor: theme.colors.palette.red[800],
   },
   sectionText: {
-    color: theme.colors.slate[200],
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
     fontFamily: 'monospace',
     lineHeight: 16,

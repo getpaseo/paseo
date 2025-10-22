@@ -60,29 +60,29 @@ function getModeColor(modeId?: string): string {
   return '#9ca3af'; // gray - unknown
 }
 
-const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   header: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   backButton: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
   },
   backButtonActive: {
-    backgroundColor: theme.colors.zinc[700],
+    backgroundColor: theme.colors.palette.zinc[700],
   },
   backButtonText: {
-    color: '#fff',
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: '600',
     textAlign: 'center',
@@ -100,25 +100,25 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   processItemActive: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.primary,
   },
   processItemInactive: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
   },
   agentIcon: {
     width: 12,
     height: 12,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
   },
   commandIcon: {
     width: 12,
     height: 12,
     borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.purple[500],
+    backgroundColor: theme.colors.palette.purple[500],
   },
   processText: {
-    color: '#fff',
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
     fontWeight: '500',
   },

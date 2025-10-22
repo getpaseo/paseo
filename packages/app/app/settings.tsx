@@ -13,28 +13,28 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { useSettings } from "@/hooks/use-settings";
-import type { Theme } from "@/styles/theme";
+import { theme as defaultTheme } from "@/styles/theme";
 
-const styles = StyleSheet.create((theme: Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   loadingContainer: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
     alignItems: "center",
     justifyContent: "center",
   },
   loadingText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
   },
   container: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
   },
   header: {
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   headerRow: {
     flexDirection: "row",
@@ -42,12 +42,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "space-between",
   },
   headerTitle: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize["3xl"],
     fontWeight: theme.fontWeight.bold,
   },
   cancelButton: {
-    color: theme.colors.blue[500],
+    color: theme.colors.palette.blue[500],
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
@@ -61,25 +61,25 @@ const styles = StyleSheet.create((theme: Theme) => ({
     marginBottom: theme.spacing[8],
   },
   sectionTitle: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[4],
   },
   label: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
   input: {
-    backgroundColor: theme.colors.zinc[900],
-    color: theme.colors.white,
+    backgroundColor: theme.colors.card,
+    color: theme.colors.foreground,
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
   },
   helperText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginBottom: theme.spacing[3],
   },
@@ -90,38 +90,38 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.palette.blue[600],
   },
   testButtonDisabled: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
   },
   testButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.palette.white,
     fontWeight: theme.fontWeight.semibold,
     marginLeft: theme.spacing[2],
   },
   testResultSuccess: {
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: "#14532d",
+    backgroundColor: theme.colors.palette.green[900],
     borderWidth: theme.borderWidth[1],
-    borderColor: "#15803d",
+    borderColor: theme.colors.palette.green[600],
   },
   testResultError: {
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: "#7f1d1d",
+    backgroundColor: theme.colors.palette.red[900],
     borderWidth: theme.borderWidth[1],
-    borderColor: "#b91c1c",
+    borderColor: theme.colors.palette.red[600],
   },
   testResultTextSuccess: {
-    color: "#4ade80",
+    color: theme.colors.palette.green[200],
   },
   testResultTextError: {
-    color: "#f87171",
+    color: theme.colors.palette.red[200],
   },
   settingCard: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[4],
     marginBottom: theme.spacing[3],
@@ -135,22 +135,22 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flex: 1,
   },
   settingTitle: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     marginBottom: theme.spacing[1],
   },
   settingDescription: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
   themeCardDisabled: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[4],
     opacity: theme.opacity[50],
   },
   themeHelpText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[3],
   },
@@ -169,19 +169,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
   },
   radioOuterSelected: {
-    borderColor: theme.colors.blue[500],
+    borderColor: theme.colors.palette.blue[500],
   },
   radioOuterUnselected: {
-    borderColor: theme.colors.zinc[600],
+    borderColor: theme.colors.border,
   },
   radioInner: {
     width: 12,
     height: 12,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
   },
   themeOptionText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.base,
     textTransform: "capitalize",
   },
@@ -189,14 +189,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[3],
-    backgroundColor: theme.colors.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
   },
   saveButtonDisabled: {
-    backgroundColor: "#1e3a8a",
+    backgroundColor: theme.colors.palette.blue[900],
     opacity: theme.opacity[50],
   },
   saveButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.palette.white,
     textAlign: "center",
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
@@ -205,26 +205,26 @@ const styles = StyleSheet.create((theme: Theme) => ({
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    borderColor: "#7f1d1d",
+    borderColor: theme.colors.destructive,
   },
   resetButtonText: {
-    color: theme.colors.red[500],
+    color: theme.colors.destructive,
     textAlign: "center",
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
   footer: {
     borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.zinc[800],
+    borderTopColor: theme.colors.border,
     paddingTop: theme.spacing[6],
   },
   footerText: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
   },
   footerVersion: {
-    color: theme.colors.zinc[600],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     textAlign: "center",
     marginTop: theme.spacing[1],
@@ -438,7 +438,7 @@ export default function SettingsScreen() {
             <TextInput
               style={styles.input}
               placeholder="wss://example.com/ws"
-              placeholderTextColor="#6b7280"
+              placeholderTextColor={defaultTheme.colors.mutedForeground}
               value={serverUrl}
               onChangeText={(text) => {
                 setServerUrl(text);
@@ -509,8 +509,8 @@ export default function SettingsScreen() {
                 <Switch
                   value={useSpeaker}
                   onValueChange={setUseSpeaker}
-                  trackColor={{ false: "#374151", true: "#3b82f6" }}
-                  thumbColor={useSpeaker ? "#60a5fa" : "#d1d5db"}
+                  trackColor={{ false: defaultTheme.colors.palette.gray[700], true: defaultTheme.colors.palette.blue[500] }}
+                  thumbColor={useSpeaker ? defaultTheme.colors.palette.blue[400] : defaultTheme.colors.palette.gray[300]}
                 />
               </View>
             </View>
@@ -526,8 +526,8 @@ export default function SettingsScreen() {
                 <Switch
                   value={keepScreenOn}
                   onValueChange={setKeepScreenOn}
-                  trackColor={{ false: "#374151", true: "#3b82f6" }}
-                  thumbColor={keepScreenOn ? "#60a5fa" : "#d1d5db"}
+                  trackColor={{ false: defaultTheme.colors.palette.gray[700], true: defaultTheme.colors.palette.blue[500] }}
+                  thumbColor={keepScreenOn ? defaultTheme.colors.palette.blue[400] : defaultTheme.colors.palette.gray[300]}
                 />
               </View>
             </View>
