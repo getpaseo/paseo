@@ -76,12 +76,13 @@ export class Session {
   private terminalManager: any | null = null;
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private agentTools: Record<string, any> | null = null;
-  private agentManager: AgentManager | null = null;
+  private agentManager: AgentManager;
   private agentUpdateUnsubscribers: Map<string, () => void> = new Map();
 
   constructor(
     clientId: string,
     onMessage: (msg: SessionOutboundMessage) => void,
+    agentManager: AgentManager,
     options?: {
       conversationId?: string;
       initialMessages?: ModelMessage[];
@@ -90,6 +91,7 @@ export class Session {
     this.clientId = clientId;
     this.conversationId = options?.conversationId || uuidv4();
     this.onMessage = onMessage;
+    this.agentManager = agentManager;
     this.abortController = new AbortController();
 
     // Initialize conversation history
@@ -120,6 +122,13 @@ export class Session {
    */
   public getConversationId(): string {
     return this.conversationId;
+  }
+
+  /**
+   * Send initial state to client after connection
+   */
+  public async sendInitialState(): Promise<void> {
+    await this.sendSessionState();
   }
 
   /**
@@ -236,10 +245,7 @@ export class Session {
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
-      // Create AgentManager instance
-      this.agentManager = new AgentManager();
-
-      // Create Agent MCP server with the manager
+      // Create Agent MCP server with the global manager
       const server = await createAgentMcpServer({
         agentManager: this.agentManager,
       });
@@ -1164,33 +1170,10 @@ export class Session {
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
 
-    // Kill all agents
-    if (this.agentManager) {
-      try {
-        const agents = this.agentManager.listAgents();
-        console.log(
-          `[Session ${this.clientId}] Killing ${agents.length} agents`
-        );
-        for (const agent of agents) {
-          try {
-            await this.agentManager.killAgent(agent.id);
-            console.log(`[Session ${this.clientId}] Killed agent ${agent.id}`);
-          } catch (error) {
-            console.error(
-              `[Session ${this.clientId}] Failed to kill agent ${agent.id}:`,
-              error
-            );
-          }
-        }
-      } catch (error) {
-        console.error(
-          `[Session ${this.clientId}] Error during agent cleanup:`,
-          error
-        );
-      }
-    }
-
-    // Unsubscribe from all agent updates
+    // Unsubscribe from all agent updates (agents remain global and persist)
+    console.log(
+      `[Session ${this.clientId}] Unsubscribing from ${this.agentUpdateUnsubscribers.size} agent(s)`
+    );
     for (const [agentId, unsubscribe] of this.agentUpdateUnsubscribers) {
       try {
         unsubscribe();

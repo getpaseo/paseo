@@ -9,6 +9,7 @@ import {
 } from "./messages.js";
 import { Session } from "./session.js";
 import { loadConversation } from "./persistence.js";
+import { AgentManager } from "./acp/agent-manager.js";
 
 /**
  * WebSocket server that routes messages between clients and their sessions.
@@ -19,8 +20,10 @@ export class VoiceAssistantWebSocketServer {
   private sessions: Map<WebSocket, Session> = new Map();
   private conversationIdToWs: Map<string, WebSocket> = new Map();
   private clientIdCounter: number = 0;
+  private agentManager: AgentManager;
 
-  constructor(server: HTTPServer) {
+  constructor(server: HTTPServer, agentManager: AgentManager) {
+    this.agentManager = agentManager;
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", (ws, request) => {
@@ -66,6 +69,7 @@ export class VoiceAssistantWebSocketServer {
       (msg) => {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
+      this.agentManager,
       {
         conversationId,
         initialMessages: initialMessages || undefined,
@@ -81,6 +85,9 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.size
       })`
     );
+
+    // Send initial session state (global agents and commands)
+    await session.sendInitialState();
 
     // Set up message handler
     ws.on("message", (data) => {

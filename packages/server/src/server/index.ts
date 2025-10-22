@@ -9,6 +9,7 @@ import {
   listConversations,
   deleteConversation,
 } from "./persistence.js";
+import { AgentManager } from "./acp/agent-manager.js";
 
 function createServer() {
   const app = express();
@@ -64,8 +65,12 @@ function main() {
   const app = createServer();
   const httpServer = createHTTPServer(app);
 
+  // Initialize global agent manager
+  const agentManager = new AgentManager();
+  console.log("✓ Global agent manager initialized");
+
   // Initialize WebSocket server
-  const wsServer = new VoiceAssistantWebSocketServer(httpServer);
+  const wsServer = new VoiceAssistantWebSocketServer(httpServer, agentManager);
 
   // Initialize OpenAI client
   const apiKey = process.env.OPENAI_API_KEY;
