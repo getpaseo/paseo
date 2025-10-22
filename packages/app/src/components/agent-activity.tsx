@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { AgentActivity, GroupedTextMessage, SessionUpdate } from '@/types/agent-activity';
+import type { AgentActivity, GroupedTextMessage, MergedToolCall, SessionUpdate } from '@/types/agent-activity';
 
 interface AgentActivityItemProps {
-  item: GroupedTextMessage | AgentActivity;
+  item: GroupedTextMessage | MergedToolCall | AgentActivity;
 }
 
 function formatTimestamp(date: Date): string {
@@ -74,17 +74,8 @@ function GroupedTextItem({ item }: { item: GroupedTextMessage }) {
   );
 }
 
-function ToolCallItem({ update, timestamp }: { update: SessionUpdate; timestamp: Date }) {
+function MergedToolCallItem({ item }: { item: MergedToolCall }) {
   const [isExpanded, setIsExpanded] = useState(false);
-
-  if (update.kind !== 'tool_call' && update.kind !== 'tool_call_update') {
-    return null;
-  }
-
-  const isUpdate = update.kind === 'tool_call_update';
-  const title = update.title || 'Tool Call';
-  const status = update.status;
-  const toolKind = update.toolKind;
 
   return (
     <View style={stylesheet.toolCard}>
@@ -94,21 +85,19 @@ function ToolCallItem({ update, timestamp }: { update: SessionUpdate; timestamp:
       >
         <View style={stylesheet.toolHeaderLeft}>
           <Text style={stylesheet.timestamp}>
-            {formatTimestamp(timestamp)}
+            {formatTimestamp(item.startTimestamp)}
           </Text>
           <View style={stylesheet.toolTitleRow}>
-            <Text style={stylesheet.toolIcon}>{getToolIcon(toolKind)}</Text>
-            <Text style={stylesheet.toolTitle}>{title}</Text>
-            {status && (
-              <View
-                style={[
-                  stylesheet.statusBadge,
-                  { backgroundColor: getStatusColor(status) },
-                ]}
-              >
-                <Text style={stylesheet.statusText}>{status}</Text>
-              </View>
-            )}
+            <Text style={stylesheet.toolIcon}>{getToolIcon(item.toolKind)}</Text>
+            <Text style={stylesheet.toolTitle}>{item.title}</Text>
+            <View
+              style={[
+                stylesheet.statusBadge,
+                { backgroundColor: getStatusColor(item.status) },
+              ]}
+            >
+              <Text style={stylesheet.statusText}>{item.status}</Text>
+            </View>
           </View>
         </View>
         <Text style={stylesheet.expandIcon}>{isExpanded ? '▼' : '▶'}</Text>
@@ -116,25 +105,25 @@ function ToolCallItem({ update, timestamp }: { update: SessionUpdate; timestamp:
 
       {isExpanded && (
         <View style={stylesheet.toolContent}>
-          {update.rawInput && (
+          {item.rawInput && (
             <View style={stylesheet.section}>
               <Text style={stylesheet.sectionTitle}>Input:</Text>
               <Text style={stylesheet.code}>
-                {JSON.stringify(update.rawInput, null, 2)}
+                {JSON.stringify(item.rawInput, null, 2)}
               </Text>
             </View>
           )}
-          {update.rawOutput && (
+          {item.rawOutput && (
             <View style={stylesheet.section}>
               <Text style={stylesheet.sectionTitle}>Output:</Text>
               <Text style={stylesheet.code}>
-                {JSON.stringify(update.rawOutput, null, 2)}
+                {JSON.stringify(item.rawOutput, null, 2)}
               </Text>
             </View>
           )}
-          {!update.rawInput && !update.rawOutput && (
+          {!item.rawInput && !item.rawOutput && (
             <Text style={stylesheet.emptyText}>
-              {isUpdate ? 'Tool call updated' : 'No details available'}
+              No details available
             </Text>
           )}
         </View>
@@ -218,14 +207,14 @@ export function AgentActivityItem({ item }: AgentActivityItemProps) {
     return <GroupedTextItem item={item} />;
   }
 
+  // Merged tool call
+  if ('kind' in item && item.kind === 'merged_tool_call') {
+    return <MergedToolCallItem item={item} />;
+  }
+
   // Individual activity
   const activity = item as AgentActivity;
   const update = activity.update;
-
-  // Tool calls
-  if (update.kind === 'tool_call' || update.kind === 'tool_call_update') {
-    return <ToolCallItem update={update} timestamp={activity.timestamp} />;
-  }
 
   // Plan
   if (update.kind === 'plan') {

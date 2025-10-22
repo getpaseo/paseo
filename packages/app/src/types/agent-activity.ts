@@ -103,6 +103,23 @@ export interface GroupedTextMessage {
 }
 
 /**
+ * Merged tool call (initial call + all updates combined)
+ */
+export interface MergedToolCall {
+  kind: 'merged_tool_call';
+  toolCallId: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  toolKind?: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
+  rawInput?: Record<string, unknown>;
+  rawOutput?: Record<string, unknown>;
+  content?: unknown[];
+  locations?: unknown[];
+  startTimestamp: Date;
+  endTimestamp: Date;
+}
+
+/**
  * Parse SessionNotification into typed SessionUpdate
  */
 export function parseSessionUpdate(notification: SessionNotification): SessionUpdate | null {
@@ -183,21 +200,51 @@ export function parseSessionUpdate(notification: SessionNotification): SessionUp
 }
 
 /**
- * Group consecutive text chunks into messages
+ * Group consecutive text chunks into messages and merge tool calls by ID
  */
-export function groupTextChunks(activities: AgentActivity[]): Array<GroupedTextMessage | AgentActivity> {
-  const result: Array<GroupedTextMessage | AgentActivity> = [];
-  let currentGroup: {
+export function groupActivities(activities: AgentActivity[]): Array<GroupedTextMessage | MergedToolCall | AgentActivity> {
+  const result: Array<GroupedTextMessage | MergedToolCall | AgentActivity> = [];
+
+  // Track current text group
+  let currentTextGroup: {
     messageType: 'user' | 'agent' | 'thought';
     chunks: string[];
     startTimestamp: Date;
     endTimestamp: Date;
   } | null = null;
 
+  // Track tool calls by ID
+  const toolCallsById = new Map<string, {
+    toolCallId: string;
+    title: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'failed';
+    toolKind?: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
+    rawInput?: Record<string, unknown>;
+    rawOutput?: Record<string, unknown>;
+    content?: unknown[];
+    locations?: unknown[];
+    startTimestamp: Date;
+    endTimestamp: Date;
+    insertIndex: number; // Track where to insert in result
+  }>();
+
+  function flushTextGroup() {
+    if (currentTextGroup) {
+      result.push({
+        kind: 'grouped_text',
+        messageType: currentTextGroup.messageType,
+        text: currentTextGroup.chunks.join(''),
+        startTimestamp: currentTextGroup.startTimestamp,
+        endTimestamp: currentTextGroup.endTimestamp,
+      });
+      currentTextGroup = null;
+    }
+  }
+
   for (const activity of activities) {
     const update = activity.update;
 
-    // Check if this is a text chunk
+    // Handle text chunks
     if (
       update.kind === 'user_message_chunk' ||
       update.kind === 'agent_message_chunk' ||
@@ -211,56 +258,117 @@ export function groupTextChunks(activities: AgentActivity[]): Array<GroupedTextM
       const text = update.content.text;
 
       // If we have a current group of the same type, add to it
-      if (currentGroup && currentGroup.messageType === messageType) {
-        currentGroup.chunks.push(text);
-        currentGroup.endTimestamp = activity.timestamp;
+      if (currentTextGroup && currentTextGroup.messageType === messageType) {
+        currentTextGroup.chunks.push(text);
+        currentTextGroup.endTimestamp = activity.timestamp;
       } else {
-        // Flush current group if exists
-        if (currentGroup) {
-          result.push({
-            kind: 'grouped_text',
-            messageType: currentGroup.messageType,
-            text: currentGroup.chunks.join(''),
-            startTimestamp: currentGroup.startTimestamp,
-            endTimestamp: currentGroup.endTimestamp,
-          });
-        }
+        flushTextGroup();
 
         // Start new group
-        currentGroup = {
+        currentTextGroup = {
           messageType,
           chunks: [text],
           startTimestamp: activity.timestamp,
           endTimestamp: activity.timestamp,
         };
       }
-    } else {
-      // Flush current group if exists
-      if (currentGroup) {
-        result.push({
-          kind: 'grouped_text',
-          messageType: currentGroup.messageType,
-          text: currentGroup.chunks.join(''),
-          startTimestamp: currentGroup.startTimestamp,
-          endTimestamp: currentGroup.endTimestamp,
-        });
-        currentGroup = null;
-      }
+    }
+    // Handle tool calls and updates
+    else if (update.kind === 'tool_call' || update.kind === 'tool_call_update') {
+      flushTextGroup();
 
-      // Add non-text activity as-is
+      const toolCallId = update.toolCallId;
+      const existing = toolCallsById.get(toolCallId);
+
+      if (update.kind === 'tool_call') {
+        // Initial tool call
+        if (!existing) {
+          // Create new entry and placeholder in result
+          const insertIndex = result.length;
+          result.push(null as any); // Placeholder
+
+          toolCallsById.set(toolCallId, {
+            toolCallId,
+            title: update.title,
+            status: update.status || 'pending',
+            toolKind: update.toolKind,
+            rawInput: update.rawInput,
+            rawOutput: update.rawOutput,
+            content: update.content,
+            locations: update.locations,
+            startTimestamp: activity.timestamp,
+            endTimestamp: activity.timestamp,
+            insertIndex,
+          });
+        } else {
+          // Update existing
+          existing.title = update.title;
+          if (update.status) existing.status = update.status;
+          if (update.toolKind) existing.toolKind = update.toolKind;
+          if (update.rawInput) existing.rawInput = update.rawInput;
+          if (update.rawOutput) existing.rawOutput = update.rawOutput;
+          if (update.content) existing.content = update.content;
+          if (update.locations) existing.locations = update.locations;
+          existing.endTimestamp = activity.timestamp;
+        }
+      } else {
+        // Tool call update
+        if (existing) {
+          // Merge update into existing
+          if (update.title) existing.title = update.title;
+          if (update.status) existing.status = update.status;
+          if (update.toolKind) existing.toolKind = update.toolKind;
+          if (update.rawInput) existing.rawInput = { ...existing.rawInput, ...update.rawInput };
+          if (update.rawOutput) existing.rawOutput = { ...existing.rawOutput, ...update.rawOutput };
+          if (update.content) existing.content = update.content;
+          if (update.locations) existing.locations = update.locations;
+          existing.endTimestamp = activity.timestamp;
+        } else {
+          // Update without initial call - create entry
+          const insertIndex = result.length;
+          result.push(null as any); // Placeholder
+
+          toolCallsById.set(toolCallId, {
+            toolCallId,
+            title: update.title || 'Tool Call',
+            status: update.status || 'pending',
+            toolKind: update.toolKind || undefined,
+            rawInput: update.rawInput,
+            rawOutput: update.rawOutput,
+            content: update.content || undefined,
+            locations: update.locations || undefined,
+            startTimestamp: activity.timestamp,
+            endTimestamp: activity.timestamp,
+            insertIndex,
+          });
+        }
+      }
+    }
+    // Handle other activities
+    else {
+      flushTextGroup();
       result.push(activity);
     }
   }
 
-  // Flush final group if exists
-  if (currentGroup) {
-    result.push({
-      kind: 'grouped_text',
-      messageType: currentGroup.messageType,
-      text: currentGroup.chunks.join(''),
-      startTimestamp: currentGroup.startTimestamp,
-      endTimestamp: currentGroup.endTimestamp,
-    });
+  // Flush final text group
+  flushTextGroup();
+
+  // Replace placeholders with merged tool calls
+  for (const toolCall of toolCallsById.values()) {
+    result[toolCall.insertIndex] = {
+      kind: 'merged_tool_call',
+      toolCallId: toolCall.toolCallId,
+      title: toolCall.title,
+      status: toolCall.status,
+      toolKind: toolCall.toolKind,
+      rawInput: toolCall.rawInput,
+      rawOutput: toolCall.rawOutput,
+      content: toolCall.content,
+      locations: toolCall.locations,
+      startTimestamp: toolCall.startTimestamp,
+      endTimestamp: toolCall.endTimestamp,
+    };
   }
 
   return result;
