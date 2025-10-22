@@ -3,22 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
-    "packages/voice-assistant"
+    "packages/server",
+    "packages/app"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@voice-dev/web",
-    "dev:agent": "npm run dev --workspace=@voice-dev/agent",
-    "dev:mcp": "npm run dev --workspace=@voice-dev/mcp-server",
+    "dev": "npm run dev --workspace=@voice-dev/server",
+    "dev:app": "npm run start --workspace=@voice-dev/app",
     "build": "npm run build --workspaces --if-present",
-    "build:agent": "npm run build --workspace=@voice-dev/agent",
-    "build:mcp": "npm run build --workspace=@voice-dev/mcp-server",
-    "build:web": "npm run build --workspace=@voice-dev/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "start": "npm run start --workspace=@voice-dev/web",
-    "start:agent": "npm run start --workspace=@voice-dev/agent",
-    "start:mcp": "npm run start --workspace=@voice-dev/mcp-server",
-    "android": "expo run:android",
-    "ios": "expo run:ios"
+    "start": "npm run start --workspace=@voice-dev/server",
+    "android": "npm run android --workspace=@voice-dev/app",
+    "ios": "npm run ios --workspace=@voice-dev/app",
+    "web": "npm run web --workspace=@voice-dev/app"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
