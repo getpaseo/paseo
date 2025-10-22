@@ -349,6 +349,9 @@ export class AgentManager {
     }
 
     agent.status = "killed";
+
+    // Notify subscribers BEFORE removing from manager
+    // This ensures subscribers can still query agent info
     this.notifySubscribers(agentId);
 
     // Kill the process
@@ -361,8 +364,11 @@ export class AgentManager {
       }
     }, 5000);
 
-    // Remove from manager
-    this.agents.delete(agentId);
+    // Remove from manager after a small delay to allow status updates to propagate
+    setTimeout(() => {
+      this.agents.delete(agentId);
+      console.log(`[Agent ${agentId}] Removed from manager`);
+    }, 100);
   }
 
   /**

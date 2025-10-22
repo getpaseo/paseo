@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
+import { AgentActivityItem } from './agent-activity';
+import { parseSessionUpdate, groupTextChunks, type AgentActivity } from '@/types/agent-activity';
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -66,125 +68,6 @@ function formatTimestamp(date: Date): string {
   }).format(date);
 }
 
-function AgentUpdate({
-  update,
-}: {
-  update: { timestamp: Date; notification: SessionNotification };
-}) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const notification = update.notification as any;
-
-  // Parse different notification types
-  if (notification.type === 'sessionUpdate') {
-    const sessionUpdate = notification.sessionUpdate || {};
-
-    // Handle message chunks
-    if (sessionUpdate.kind === 'agent_message_chunk') {
-      return (
-        <View style={stylesheet.updateCard}>
-          <Text style={stylesheet.timestampText}>
-            {formatTimestamp(update.timestamp)}
-          </Text>
-          <Text style={stylesheet.messageText}>{sessionUpdate.chunk || ''}</Text>
-        </View>
-      );
-    }
-
-    // Handle tool calls
-    if (sessionUpdate.kind === 'tool_call') {
-      return (
-        <View style={stylesheet.collapsibleCard}>
-          <Pressable
-            onPress={() => setIsExpanded(!isExpanded)}
-            style={stylesheet.collapsibleHeader}
-          >
-            <Text style={stylesheet.timestampText}>
-              {formatTimestamp(update.timestamp)}
-            </Text>
-            <Text style={stylesheet.toolCallText}>
-              Tool Call: {sessionUpdate.toolName || 'unknown'}
-            </Text>
-          </Pressable>
-          {isExpanded && sessionUpdate.arguments && (
-            <View style={stylesheet.collapsibleContent}>
-              <Text style={stylesheet.codeText}>
-                {JSON.stringify(sessionUpdate.arguments, null, 2)}
-              </Text>
-            </View>
-          )}
-        </View>
-      );
-    }
-
-    // Handle tool call updates
-    if (sessionUpdate.kind === 'tool_call_update') {
-      return (
-        <View style={stylesheet.updateCard}>
-          <Text style={stylesheet.timestampText}>
-            {formatTimestamp(update.timestamp)}
-          </Text>
-          <Text style={stylesheet.updateStatusText}>
-            {sessionUpdate.status || 'updating'}
-          </Text>
-        </View>
-      );
-    }
-
-    // Handle available commands
-    if (sessionUpdate.kind === 'available_commands_update') {
-      const commands = sessionUpdate.commands || [];
-      return (
-        <View style={stylesheet.collapsibleCard}>
-          <Pressable
-            onPress={() => setIsExpanded(!isExpanded)}
-            style={stylesheet.collapsibleHeader}
-          >
-            <Text style={stylesheet.timestampText}>
-              {formatTimestamp(update.timestamp)}
-            </Text>
-            <Text style={stylesheet.commandsText}>
-              Available Commands ({commands.length})
-            </Text>
-          </Pressable>
-          {isExpanded && (
-            <View style={stylesheet.collapsibleContent}>
-              {commands.map((cmd: any, idx: number) => (
-                <Text key={idx} style={stylesheet.commandItem}>
-                  • {cmd.name || cmd}
-                </Text>
-              ))}
-            </View>
-          )}
-        </View>
-      );
-    }
-
-    // Generic session update
-    return (
-      <View style={stylesheet.updateCard}>
-        <Text style={stylesheet.timestampText}>
-          {formatTimestamp(update.timestamp)}
-        </Text>
-        <Text style={stylesheet.codeText}>
-          {JSON.stringify(sessionUpdate, null, 2)}
-        </Text>
-      </View>
-    );
-  }
-
-  // Fallback for unknown notification types
-  return (
-    <View style={stylesheet.updateCard}>
-      <Text style={stylesheet.timestampText}>
-        {formatTimestamp(update.timestamp)}
-      </Text>
-      <Text style={stylesheet.codeText}>
-        {JSON.stringify(notification, null, 2)}
-      </Text>
-    </View>
-  );
-}
-
 export function AgentStreamView({
   agentId,
   agent,
@@ -196,10 +79,29 @@ export function AgentStreamView({
   const scrollViewRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
 
+  // Parse and group activities
+  const groupedActivities = useMemo(() => {
+    // Parse all notifications into typed activities
+    const activities: AgentActivity[] = updates
+      .map((update) => {
+        const parsedUpdate = parseSessionUpdate(update.notification);
+        if (!parsedUpdate) return null;
+
+        return {
+          timestamp: update.timestamp,
+          update: parsedUpdate,
+        };
+      })
+      .filter((activity): activity is AgentActivity => activity !== null);
+
+    // Group consecutive text chunks
+    return groupTextChunks(activities);
+  }, [updates]);
+
   // Auto-scroll to bottom when new updates arrive
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [updates]);
+  }, [groupedActivities]);
 
   const canCancel = agent.status === 'processing';
   const canKill = agent.status !== 'killed' && agent.status !== 'completed';
@@ -274,14 +176,16 @@ export function AgentStreamView({
         style={stylesheet.scrollView}
         contentContainerStyle={{ paddingTop: 16, paddingBottom: Math.max(insets.bottom, 32) }}
       >
-        {updates.length === 0 ? (
+        {groupedActivities.length === 0 ? (
           <View style={stylesheet.emptyState}>
             <Text style={stylesheet.emptyStateText}>
               No updates yet.{'\n'}Waiting for agent activity...
             </Text>
           </View>
         ) : (
-          updates.map((update, idx) => <AgentUpdate key={idx} update={update} />)
+          groupedActivities.map((item, idx) => (
+            <AgentActivityItem key={idx} item={item} />
+          ))
         )}
       </ScrollView>
     </View>
@@ -393,61 +297,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
-  },
-  updateCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[3],
-    marginBottom: theme.spacing[2],
-  },
-  collapsibleCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[2],
-    overflow: "hidden",
-  },
-  collapsibleHeader: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  collapsibleContent: {
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[3],
-    borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.border,
-  },
-  timestampText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    marginBottom: theme.spacing[1],
-  },
-  messageText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  toolCallText: {
-    color: theme.colors.palette.blue[400],
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  updateStatusText: {
-    color: theme.colors.palette.yellow[400],
-    fontSize: theme.fontSize.sm,
-  },
-  commandsText: {
-    color: theme.colors.palette.green[400],
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  commandItem: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    marginTop: theme.spacing[1],
-  },
-  codeText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    fontFamily: "monospace",
-    marginTop: theme.spacing[2],
   },
 }));

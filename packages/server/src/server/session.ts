@@ -145,6 +145,41 @@ export class Session {
             notification: update.notification,
           },
         });
+
+        // Check if this is a status change notification
+        // The agent manager sends custom notifications with status field
+        const notification = update.notification as any;
+        if (notification && notification.sessionUpdate && notification.sessionUpdate.status) {
+          const status = notification.sessionUpdate.status;
+
+          // Get current agent info
+          try {
+            const info = this.agentManager!.listAgents().find(a => a.id === agentId);
+            if (info) {
+              // Emit agent_status message
+              this.emit({
+                type: "agent_status",
+                payload: {
+                  agentId,
+                  status,
+                  info: {
+                    id: info.id,
+                    status: info.status,
+                    createdAt: info.createdAt.toISOString(),
+                    type: info.type,
+                    sessionId: info.sessionId,
+                    error: info.error,
+                    currentModeId: info.currentModeId,
+                    availableModes: info.availableModes,
+                  },
+                },
+              });
+              console.log(`[Session ${this.clientId}] Agent ${agentId} status changed to: ${status}`);
+            }
+          } catch (error) {
+            console.error(`[Session ${this.clientId}] Failed to get agent info for status update:`, error);
+          }
+        }
       }
     );
 
