@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import { AgentActivityItem } from './agent-activity';
-import { parseSessionUpdate, groupTextChunks, type AgentActivity } from '@/types/agent-activity';
+import { parseSessionUpdate, groupActivities, type AgentActivity } from '@/types/agent-activity';
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -94,8 +94,8 @@ export function AgentStreamView({
       })
       .filter((activity): activity is AgentActivity => activity !== null);
 
-    // Group consecutive text chunks
-    return groupTextChunks(activities);
+    // Group consecutive text chunks and merge tool calls
+    return groupActivities(activities);
   }, [updates]);
 
   // Auto-scroll to bottom when new updates arrive
