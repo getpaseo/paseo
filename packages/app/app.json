@@ -58,6 +58,12 @@
       ],
       "expo-audio",
       [
+        "@siteed/expo-audio-studio",
+        {
+          "enableBackgroundAudio": true
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

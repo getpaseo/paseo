@@ -65,13 +65,26 @@ export function useRealtimeAudio(config: RealtimeAudioConfig): RealtimeAudio {
         bytes[i] = binary.charCodeAt(i);
       }
 
-      // Calculate RMS from PCM data (assuming 16-bit PCM)
+      // Calculate RMS from PCM data (16-bit signed PCM, little-endian)
       let sum = 0;
+      const sampleCount = Math.floor(bytes.length / 2);
+
       for (let i = 0; i < bytes.length - 1; i += 2) {
-        const sample = (bytes[i] | (bytes[i + 1] << 8)) / 32768.0; // Convert to -1 to 1
-        sum += sample * sample;
+        // Read 16-bit value as unsigned first
+        let sample = bytes[i] | (bytes[i + 1] << 8);
+
+        // Convert to signed 16-bit (two's complement)
+        if (sample > 32767) {
+          sample -= 65536;
+        }
+
+        // Normalize to -1.0 to 1.0 range
+        const normalized = sample / 32768.0;
+        sum += normalized * normalized;
       }
-      const rms = Math.sqrt(sum / (bytes.length / 2));
+
+      const rms = Math.sqrt(sum / sampleCount);
+      console.log('[RealtimeAudio] Volume:', rms.toFixed(6));
       return rms;
     } catch (error) {
       console.error('[RealtimeAudio] Volume calculation error:', error);
