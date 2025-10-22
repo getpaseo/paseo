@@ -315,7 +315,7 @@ export class Session {
           break;
 
         case "send_agent_message":
-          await this.handleSendAgentMessage(msg.agentId, msg.text);
+          await this.handleSendAgentMessage(msg.agentId, msg.text, msg.messageId);
           break;
 
         case "send_agent_audio":
@@ -442,7 +442,7 @@ export class Session {
   /**
    * Handle text message to agent
    */
-  private async handleSendAgentMessage(agentId: string, text: string): Promise<void> {
+  private async handleSendAgentMessage(agentId: string, text: string, messageId?: string): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Sending text to agent ${agentId}: ${text.substring(0, 50)}...`
     );
@@ -463,6 +463,7 @@ export class Session {
                 type: "text",
                 text: text,
               },
+              ...(messageId ? { messageId } : {}),
             },
           } as any,
         },
@@ -660,9 +661,27 @@ export class Session {
       // Get live agents with session modes
       const agents = this.agentManager?.listAgents() || [];
 
-      // Subscribe to all existing agents (in case of reconnection)
+      // Subscribe to all existing agents and send their history (in case of reconnection)
       for (const agent of agents) {
         this.subscribeToAgent(agent.id);
+
+        // Get historical updates from AgentManager
+        const history = this.agentManager.getAgentUpdates(agent.id);
+
+        // Send each historical update to client
+        console.log(
+          `[Session ${this.clientId}] Sending ${history.length} historical updates for agent ${agent.id}`
+        );
+        for (const update of history) {
+          this.emit({
+            type: "agent_update",
+            payload: {
+              agentId: update.agentId,
+              timestamp: update.timestamp.toISOString(),
+              notification: update.notification,
+            },
+          });
+        }
       }
 
       // Get live commands from terminal manager

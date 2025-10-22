@@ -1,9 +1,51 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 
-// Simple ID generator that works in React Native
-let idCounter = 0;
-function generateId(): string {
-  return `stream_${Date.now()}_${idCounter++}`;
+/**
+ * Simple hash function for deterministic ID generation
+ * Uses a basic string hash algorithm for consistency across runs
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Generate a simple unique ID (timestamp + random)
+ */
+export function generateMessageId(): string {
+  return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+}
+
+/**
+ * Derive deterministic ID for user message based on timestamp and content
+ * If messageId is provided from server, use that instead
+ */
+function deriveUserMessageId(text: string, timestamp: Date, messageId?: string): string {
+  if (messageId) {
+    return messageId;
+  }
+  return `user_${timestamp.getTime()}_${simpleHash(text)}`;
+}
+
+/**
+ * Derive deterministic ID for assistant message based on index in state
+ */
+function deriveAssistantMessageId(state: StreamItem[]): string {
+  const count = state.filter(s => s.kind === 'assistant_message').length;
+  return `assistant_${count}`;
+}
+
+/**
+ * Derive deterministic ID for thought based on index in state
+ */
+function deriveThoughtId(state: StreamItem[]): string {
+  const count = state.filter(s => s.kind === 'thought').length;
+  return `thought_${count}`;
 }
 
 /**
@@ -86,7 +128,7 @@ export interface ArtifactItem {
  * Parsed notification types (internal representation before converting to StreamItem)
  */
 type ParsedNotification =
-  | { kind: 'user_message_chunk'; text: string }
+  | { kind: 'user_message_chunk'; text: string; messageId?: string }
   | { kind: 'agent_message_chunk'; text: string }
   | { kind: 'agent_thought_chunk'; text: string }
   | { kind: 'tool_call'; toolCallId: string; title: string; status?: string; toolKind?: string; rawInput?: any; rawOutput?: any; content?: any[]; locations?: any[] }
@@ -113,6 +155,7 @@ function parseNotification(notification: SessionNotification | any): ParsedNotif
       return {
         kind: 'user_message_chunk',
         text: update.content?.text || '',
+        messageId: update.messageId,
       };
 
     case 'agent_message_chunk':
@@ -201,9 +244,16 @@ export function reduceStreamUpdate(
 
   // User message chunks - always create new message (they're complete from server)
   if (parsed.kind === 'user_message_chunk') {
+    const id = deriveUserMessageId(parsed.text, timestamp, parsed.messageId);
+
+    // Idempotency check - if this exact message already exists, don't add it again
+    if (state.some(item => item.id === id)) {
+      return state;
+    }
+
     return [...state, {
       kind: 'user_message',
-      id: generateId(),
+      id,
       text: parsed.text,
       timestamp,
     }];
@@ -222,10 +272,11 @@ export function reduceStreamUpdate(
         },
       ];
     }
-    // Create new message
+    // Create new message with deterministic ID
+    const id = deriveAssistantMessageId(state);
     return [...state, {
       kind: 'assistant_message',
-      id: generateId(),
+      id,
       text: parsed.text,
       timestamp,
     }];
@@ -244,10 +295,11 @@ export function reduceStreamUpdate(
         },
       ];
     }
-    // Create new thought
+    // Create new thought with deterministic ID
+    const id = deriveThoughtId(state);
     return [...state, {
       kind: 'thought',
-      id: generateId(),
+      id,
       text: parsed.text,
       timestamp,
     }];
@@ -273,8 +325,33 @@ export function reduceStreamUpdate(
     });
   }
 
-  // New tool call
+  // New tool call - check if exists first (server may send multiple notifications for same tool)
   if (parsed.kind === 'tool_call') {
+    const existingIndex = state.findIndex(
+      item => item.kind === 'tool_call' && item.toolCallId === parsed.toolCallId
+    );
+
+    if (existingIndex >= 0) {
+      // Update existing tool call
+      return state.map((item, idx) => {
+        if (idx === existingIndex && item.kind === 'tool_call') {
+          return {
+            ...item,
+            title: parsed.title,
+            status: (parsed.status as any) || item.status,
+            toolKind: (parsed.toolKind as any) || item.toolKind,
+            rawInput: parsed.rawInput ? { ...item.rawInput, ...parsed.rawInput } : item.rawInput,
+            rawOutput: parsed.rawOutput ? { ...item.rawOutput, ...parsed.rawOutput } : item.rawOutput,
+            content: parsed.content || item.content,
+            locations: parsed.locations || item.locations,
+            timestamp,
+          };
+        }
+        return item;
+      });
+    }
+
+    // Create new tool call
     return [...state, {
       kind: 'tool_call',
       id: parsed.toolCallId,
@@ -290,12 +367,12 @@ export function reduceStreamUpdate(
     }];
   }
 
-  // Plan - replace existing or create new
+  // Plan - replace existing or create new (uses constant ID since only one plan exists)
   if (parsed.kind === 'plan') {
     const withoutPlan = state.filter(item => item.kind !== 'plan');
     return [...withoutPlan, {
       kind: 'plan',
-      id: generateId(),
+      id: 'plan_latest',
       entries: parsed.entries as any,
       timestamp,
     }];

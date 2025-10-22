@@ -48,7 +48,7 @@ import { ActiveProcesses } from "@/components/active-processes";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { ConversationSelector } from "@/components/conversation-selector";
 import { VolumeMeter } from "@/components/volume-meter";
-import { reduceStreamUpdate, type StreamItem } from "@/types/stream";
+import { reduceStreamUpdate, generateMessageId, type StreamItem } from "@/types/stream";
 import { CreateAgentModal } from "@/components/create-agent-modal";
 import {
   Settings,
@@ -1015,6 +1015,9 @@ export default function VoiceAssistantScreen() {
       // Realtime mode always routes to orchestrator (handled by realtime audio)
       ws.sendUserMessage(userInput);
     } else if (viewMode === "agent" && activeAgentId) {
+      // Generate unique message ID for deduplication
+      const messageId = generateMessageId();
+
       // Optimistically add user message to stream
       setAgentStreamState((prev) => {
         const currentStream = prev.get(activeAgentId) || [];
@@ -1025,6 +1028,7 @@ export default function VoiceAssistantScreen() {
             update: {
               sessionUpdate: "user_message_chunk",
               content: { type: "text", text: userInput },
+              messageId,
             },
           },
           new Date()
@@ -1034,13 +1038,14 @@ export default function VoiceAssistantScreen() {
         return updated;
       });
 
-      // Send to agent
+      // Send to agent with messageId
       const message: WSInboundMessage = {
         type: "session",
         message: {
           type: "send_agent_message",
           agentId: activeAgentId,
           text: userInput,
+          messageId,
         },
       };
       ws.send(message);

@@ -48,6 +48,7 @@ export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
   text: z.string(),
+  messageId: z.string().optional(), // Client-provided ID for deduplication
 });
 
 export const SendAgentAudioSchema = z.object({
