@@ -25,6 +25,7 @@ export interface SpeechmaticsAudio {
   isActive: boolean;
   isSpeaking: boolean;
   isDetecting: boolean;
+  volume: number;
 }
 
 /**
@@ -129,6 +130,7 @@ export function useSpeechmaticsAudio(
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [audioInitialized, setAudioInitialized] = useState(false);
+  const [volume, setVolume] = useState(0);
 
   const audioBufferRef = useRef<Uint8Array[]>([]);
   const silenceStartRef = useRef<number | null>(null);
@@ -188,17 +190,18 @@ export function useSpeechmaticsAudio(
       (event) => {
         if (!isActive) return;
 
-        const volume: number = event.data;
-        const speechDetected = volume > VOLUME_THRESHOLD;
+        const volumeLevel: number = event.data;
+        setVolume(volumeLevel);
+        const speechDetected = volumeLevel > VOLUME_THRESHOLD;
 
-        // console.log('[SpeechmaticsAudio] Volume:', volume.toFixed(6));
+        // console.log('[SpeechmaticsAudio] Volume:', volumeLevel.toFixed(6), 'Threshold:', VOLUME_THRESHOLD);
 
         if (speechDetected && !isSpeakingRef.current && !speechConfirmedRef.current) {
           // Initial speech detection - start tracking
           if (speechDetectionStartRef.current === null) {
             console.log(
               "[SpeechmaticsAudio] Speech started (volume:",
-              volume.toFixed(4),
+              volumeLevel.toFixed(4),
               ")"
             );
             speechDetectionStartRef.current = Date.now();
@@ -329,6 +332,7 @@ export function useSpeechmaticsAudio(
     setIsActive(false);
     setIsSpeaking(false);
     setIsDetecting(false);
+    setVolume(0);
 
     console.log("[SpeechmaticsAudio] Audio capture stopped");
   }
@@ -348,5 +352,6 @@ export function useSpeechmaticsAudio(
     isActive,
     isSpeaking,
     isDetecting,
+    volume,
   };
 }

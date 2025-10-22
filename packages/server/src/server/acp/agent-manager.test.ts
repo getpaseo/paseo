@@ -166,6 +166,16 @@ describe("AgentManager", () => {
   // ==========================================================================
 
   describe("Agent Creation and Directory Control", () => {
+    it("should reject creation when working directory does not exist", async () => {
+      const nonExistentDir = join(tmpDir, "does-not-exist");
+
+      await expect(
+        manager.createAgent({
+          cwd: nonExistentDir,
+        })
+      ).rejects.toThrow(/Working directory does not exist or is not accessible/);
+    });
+
     it(
       "should create agent and run in specified directory",
       async () => {

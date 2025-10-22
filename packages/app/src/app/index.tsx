@@ -11,11 +11,18 @@ import {
   Keyboard,
 } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
+import ReanimatedAnimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { theme as defaultTheme } from "../styles/theme";
 
 // Simple unique ID generator
@@ -39,6 +46,7 @@ import { ArtifactDrawer, type Artifact } from "@/components/artifact-drawer";
 import { ActiveProcesses } from "@/components/active-processes";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { ConversationSelector } from "@/components/conversation-selector";
+import { VolumeMeter } from "@/components/volume-meter";
 import {
   Settings,
   Mic,
@@ -125,6 +133,97 @@ interface AgentUpdate {
   notification: SessionNotification;
 }
 
+interface RealtimeCircleProps {
+  volume: number;
+  onClose: () => void;
+}
+
+function RealtimeCircle({ volume, onClose }: RealtimeCircleProps) {
+  const { theme } = useUnistyles();
+
+  // Base size for the circles
+  const BASE_SIZE = 80;
+  const MIN_SCALE = 1;
+  const MAX_SCALE = 1.8;
+
+  // Create animated value for volume-based scaling
+  const volumeScale = useSharedValue(MIN_SCALE);
+  const pulseScale = useSharedValue(1);
+
+  // Update volume scale when volume changes
+  useEffect(() => {
+    // Map volume (0-1) to scale range (MIN_SCALE - MAX_SCALE)
+    const targetScale = MIN_SCALE + (volume * (MAX_SCALE - MIN_SCALE));
+    volumeScale.value = withSpring(targetScale, {
+      damping: 15,
+      stiffness: 150,
+    });
+  }, [volume]);
+
+  // Continuous pulsating animation for outer circle
+  useEffect(() => {
+    pulseScale.value = withRepeat(
+      withSequence(
+        withTiming(1.3, { duration: 1000 }),
+        withTiming(1, { duration: 1000 })
+      ),
+      -1,
+      false
+    );
+  }, []);
+
+  // Animated style for inner circle (volume reactive)
+  const innerCircleStyle = useAnimatedStyle(() => ({
+    width: BASE_SIZE,
+    height: BASE_SIZE,
+    borderRadius: BASE_SIZE / 2,
+    transform: [{ scale: volumeScale.value }],
+  }));
+
+  // Animated style for outer circle (continuous pulse)
+  const outerCircleStyle = useAnimatedStyle(() => ({
+    width: BASE_SIZE * 1.5,
+    height: BASE_SIZE * 1.5,
+    borderRadius: (BASE_SIZE * 1.5) / 2,
+    transform: [{ scale: pulseScale.value }],
+    opacity: 0.3,
+  }));
+
+  return (
+    <Pressable
+      onPress={onClose}
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View style={{ position: "relative", alignItems: "center", justifyContent: "center" }}>
+        {/* Outer pulsating circle */}
+        <ReanimatedAnimated.View
+          style={[
+            outerCircleStyle,
+            {
+              position: "absolute",
+              backgroundColor: theme.colors.palette.blue[600],
+            },
+          ]}
+        />
+
+        {/* Inner volume-reactive circle */}
+        <ReanimatedAnimated.View
+          style={[
+            innerCircleStyle,
+            {
+              backgroundColor: theme.colors.palette.blue[600],
+            },
+          ]}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
 export default function VoiceAssistantScreen() {
   const { settings, isLoading: settingsLoading } = useSettings();
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -142,7 +241,7 @@ export default function VoiceAssistantScreen() {
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const bottomInset = insets.bottom;
   const animatedKeyboardStyle = useAnimatedStyle(() => {
-    'worklet';
+    "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
     const padding = Math.max(0, absoluteHeight - bottomInset);
     return {
@@ -1100,64 +1199,95 @@ export default function VoiceAssistantScreen() {
         {/* Fixed Footer */}
         <View
           style={[
-            styles.inputArea,
+            styles.inputAreaWrapper,
             { paddingBottom: Math.max(insets.bottom, 8) },
           ]}
         >
-          {/* Text input */}
-          <TextInput
-            value={userInput}
-            onChangeText={setUserInput}
-            placeholder="Say something..."
-            placeholderTextColor={defaultTheme.colors.mutedForeground}
-            style={styles.textInput}
-            multiline
-            editable={!isRecording && ws.isConnected}
-          />
-
-          {/* Buttons */}
-          <View style={styles.buttonRow}>
-            {/* Realtime mode button */}
+          {isRealtimeMode ? (
+            // Realtime mode - show volume meter
             <Pressable
               onPress={handleRealtimeToggle}
-              disabled={!ws.isConnected}
-              style={[
-                styles.realtimeButton,
-                !ws.isConnected && styles.buttonDisabled,
-                isRealtimeMode && styles.realtimeButtonActive,
-              ]}
+              style={[styles.inputArea, { minHeight: 200, justifyContent: "center" }]}
             >
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <AudioLines size={20} color="white" />
-              </Animated.View>
+              <VolumeMeter volume={realtimeAudio.volume} />
             </Pressable>
+          ) : (
+            // Normal mode - show text input and buttons
+            <View style={styles.inputArea}>
+              {/* Text input */}
+              <TextInput
+                value={userInput}
+                onChangeText={setUserInput}
+                placeholder="Say something..."
+                placeholderTextColor={defaultTheme.colors.mutedForeground}
+                style={styles.textInput}
+                multiline
+                editable={!isRecording && ws.isConnected}
+              />
 
-            {/* Main action button */}
-            <Pressable
-              onPress={handleButtonClick}
-              disabled={!ws.isConnected}
-              style={[
-                styles.mainButton,
-                !ws.isConnected && styles.buttonDisabled,
-                isRecording && styles.mainButtonRecording,
-                isInProgress && styles.mainButtonInProgress,
-                userInput.trim() &&
-                  !isRecording &&
-                  !isInProgress &&
-                  styles.mainButtonWithText,
-              ]}
-            >
-              {isInProgress ? (
-                <Square size={18} color="white" fill="white" />
-              ) : isRecording ? (
-                <Square size={14} color="white" fill="white" />
-              ) : userInput.trim() ? (
-                <ArrowUp size={20} color="white" />
-              ) : (
-                <Mic size={20} color="white" />
-              )}
-            </Pressable>
-          </View>
+              {/* Buttons */}
+              <View style={styles.buttonRow}>
+                {userInput.trim().length > 0 ? (
+                  // Send button when text is entered
+                  <Pressable
+                    onPress={handleSendMessage}
+                    disabled={!ws.isConnected || isInProgress}
+                    style={[
+                      styles.sendButton,
+                      !ws.isConnected && styles.buttonDisabled,
+                    ]}
+                  >
+                    <ArrowUp size={20} color="white" />
+                  </Pressable>
+                ) : (
+                  // Record and Realtime buttons when no text
+                  <>
+                    {/* Main action button */}
+                    <Pressable
+                      onPress={handleButtonClick}
+                      disabled={!ws.isConnected}
+                      style={[
+                        styles.mainButton,
+                        !ws.isConnected && styles.buttonDisabled,
+                        isRecording && styles.mainButtonRecording,
+                        isInProgress && styles.mainButtonInProgress,
+                      ]}
+                    >
+                      {isInProgress ? (
+                        <Square size={18} color="white" fill="white" />
+                      ) : isRecording ? (
+                        <Square size={14} color="white" fill="white" />
+                      ) : (
+                        <Mic size={20} color={defaultTheme.colors.foreground} />
+                      )}
+                    </Pressable>
+
+                    {/* Realtime mode button */}
+                    <Pressable
+                      onPress={handleRealtimeToggle}
+                      disabled={!ws.isConnected}
+                      style={[
+                        styles.realtimeButton,
+                        !ws.isConnected && styles.buttonDisabled,
+                        isRealtimeMode && styles.realtimeButtonActive,
+                      ]}
+                    >
+                      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                        <AudioLines
+                          size={20}
+                          color={
+                            isRealtimeMode
+                              ? defaultTheme.colors.accentForeground
+                              : defaultTheme.colors.background
+                          }
+                        />
+                      </Animated.View>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            </View>
+          )}
         </View>
       </ReanimatedAnimated.View>
 
@@ -1221,50 +1351,65 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
     flexGrow: 1,
   },
-  inputArea: {
-    paddingTop: theme.spacing[4],
-    paddingHorizontal: theme.spacing[6],
+  inputAreaWrapper: {
+    borderTopRightRadius: theme.borderRadius["2xl"],
+    borderTopLeftRadius: theme.borderRadius["2xl"],
+    paddingTop: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.muted,
+  },
+  inputArea: {
+    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
   },
   textInput: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: "transparent",
     color: theme.colors.foreground,
-    borderRadius: theme.borderRadius["2xl"],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    marginBottom: theme.spacing[4],
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    fontSize: theme.fontSize.lg,
+    marginBottom: theme.spacing[3],
     maxHeight: 128,
   },
   buttonRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: theme.spacing[3],
-    marginBottom: theme.spacing[2],
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[1],
   },
   realtimeButton: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.accentForeground,
   },
   realtimeButtonActive: {
-    backgroundColor: theme.colors.palette.blue[600],
+    backgroundColor: theme.colors.foreground,
   },
   mainButton: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.secondary,
+    backgroundColor: "transparent",
   },
   mainButtonRecording: {
     backgroundColor: theme.colors.palette.red[500],
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.palette.blue[600],
   },
   mainButtonInProgress: {
     backgroundColor: theme.colors.palette.red[600],

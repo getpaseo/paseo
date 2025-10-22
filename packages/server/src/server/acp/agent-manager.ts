@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import { Writable, Readable } from "stream";
+import { access, constants } from "fs/promises";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -101,6 +102,15 @@ export class AgentManager {
   async createAgent(options: CreateAgentOptions): Promise<string> {
     const agentId = uuidv4();
     const cwd = options.cwd;
+
+    // Validate that the working directory exists
+    try {
+      await access(cwd, constants.R_OK | constants.X_OK);
+    } catch (error) {
+      throw new Error(
+        `Working directory does not exist or is not accessible: ${cwd}`
+      );
+    }
 
     // Spawn the ACP process
     const agentProcess = spawn("npx", ["@zed-industries/claude-code-acp"], {
