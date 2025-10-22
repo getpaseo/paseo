@@ -170,6 +170,7 @@ const commonTheme = {
     xl: 18,
     "2xl": 20,
     "3xl": 24,
+    "4xl": 32,
   },
 
   fontWeight: {

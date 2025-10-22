@@ -82,30 +82,6 @@ export class VoiceAssistantWebSocketServer {
       })`
     );
 
-    // Send welcome message
-    this.sendToClient(
-      ws,
-      wrapSessionMessage({
-        type: "status",
-        payload: {
-          status: "connected",
-          message: "WebSocket connection established",
-        },
-      })
-    );
-
-    // Send conversation confirmation (whether new or loaded)
-    this.sendToClient(
-      ws,
-      wrapSessionMessage({
-        type: "conversation_loaded",
-        payload: {
-          conversationId: session.getConversationId(),
-          messageCount: initialMessages?.length || 0,
-        },
-      })
-    );
-
     // Set up message handler
     ws.on("message", (data) => {
       this.handleMessage(ws, data);

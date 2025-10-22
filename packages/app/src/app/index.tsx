@@ -23,7 +23,7 @@ import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { theme as defaultTheme } from "../styles/theme";
+import { theme as defaultTheme, theme } from "../styles/theme";
 
 // Simple unique ID generator
 let messageIdCounter = 0;
@@ -154,7 +154,7 @@ function RealtimeCircle({ volume, onClose }: RealtimeCircleProps) {
   // Update volume scale when volume changes
   useEffect(() => {
     // Map volume (0-1) to scale range (MIN_SCALE - MAX_SCALE)
-    const targetScale = MIN_SCALE + (volume * (MAX_SCALE - MIN_SCALE));
+    const targetScale = MIN_SCALE + volume * (MAX_SCALE - MIN_SCALE);
     volumeScale.value = withSpring(targetScale, {
       damping: 15,
       stiffness: 150,
@@ -199,7 +199,13 @@ function RealtimeCircle({ volume, onClose }: RealtimeCircleProps) {
         justifyContent: "center",
       }}
     >
-      <View style={{ position: "relative", alignItems: "center", justifyContent: "center" }}>
+      <View
+        style={{
+          position: "relative",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         {/* Outer pulsating circle */}
         <ReanimatedAnimated.View
           style={[
@@ -610,7 +616,11 @@ export default function VoiceAssistantScreen() {
       // Drift protection: Don't play audio generated in different mode
       if (data.isRealtimeMode !== currentIsRealtimeMode) {
         console.log(
-          `[App] Skipping audio playback due to mode drift (generated in ${data.isRealtimeMode ? "realtime" : "normal"} mode, currently in ${currentIsRealtimeMode ? "realtime" : "normal"} mode)`
+          `[App] Skipping audio playback due to mode drift (generated in ${
+            data.isRealtimeMode ? "realtime" : "normal"
+          } mode, currently in ${
+            currentIsRealtimeMode ? "realtime" : "normal"
+          } mode)`
         );
 
         // Still send confirmation to prevent server from waiting
@@ -770,7 +780,6 @@ export default function VoiceAssistantScreen() {
       unsubArtifact();
     };
   }, [ws, audioPlayer]);
-
 
   // Voice button handler
   async function handleVoicePress() {
@@ -984,29 +993,8 @@ export default function VoiceAssistantScreen() {
           },
         };
         ws.send(modeMessage);
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: "activity",
-            id: generateMessageId(),
-            timestamp: Date.now(),
-            activityType: "success",
-            message: "Realtime mode started - speak anytime!",
-          },
-        ]);
       } catch (error: any) {
         console.error("[App] Failed to start realtime mode:", error);
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: "activity",
-            id: generateMessageId(),
-            timestamp: Date.now(),
-            activityType: "error",
-            message: `Failed to start realtime mode: ${error.message}`,
-          },
-        ]);
       }
     } else {
       // Stop realtime mode
@@ -1024,17 +1012,6 @@ export default function VoiceAssistantScreen() {
           },
         };
         ws.send(modeMessage);
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: "activity",
-            id: generateMessageId(),
-            timestamp: Date.now(),
-            activityType: "info",
-            message: "Realtime mode stopped",
-          },
-        ]);
       } catch (error: any) {
         console.error("[App] Failed to stop realtime mode:", error);
       }
@@ -1138,10 +1115,22 @@ export default function VoiceAssistantScreen() {
         <ScrollView
           ref={scrollViewRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            messages.length === 0 && styles.emptyStateContainer,
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
+          {messages.length === 0 && !currentAssistantMessage && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateTitle}>OnTheGo</Text>
+              <Text style={styles.emptyStateSubtitle}>
+                What would you like to work on?
+              </Text>
+            </View>
+          )}
+
           {messages.map((msg) => {
             if (msg.type === "user") {
               return (
@@ -1226,8 +1215,19 @@ export default function VoiceAssistantScreen() {
         >
           {isRealtimeMode ? (
             // Realtime mode - show volume meter and mute button
-            <View style={[styles.inputArea, { minHeight: 200 }]}>
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+            <View
+              style={[
+                styles.inputArea,
+                { minHeight: 200, padding: theme.spacing[4] },
+              ]}
+            >
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
                 <VolumeMeter
                   volume={realtimeAudio.volume}
                   isMuted={realtimeAudio.isMuted}
@@ -1329,14 +1329,12 @@ export default function VoiceAssistantScreen() {
                         isRealtimeMode && styles.realtimeButtonActive,
                       ]}
                     >
-                      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                      <Animated.View
+                        style={{ transform: [{ scale: pulseAnim }] }}
+                      >
                         <AudioLines
                           size={20}
-                          color={
-                            isRealtimeMode
-                              ? defaultTheme.colors.accentForeground
-                              : defaultTheme.colors.background
-                          }
+                          color={defaultTheme.colors.background}
                         />
                       </Animated.View>
                     </Pressable>
@@ -1408,25 +1406,42 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
     flexGrow: 1,
   },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[6],
+  },
+  emptyStateTitle: {
+    fontSize: theme.fontSize["4xl"],
+    fontWeight: "700",
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing[2],
+  },
+  emptyStateSubtitle: {
+    fontSize: theme.fontSize.lg,
+    color: theme.colors.mutedForeground,
+    textAlign: "center",
+  },
   inputAreaWrapper: {
     borderTopRightRadius: theme.borderRadius["2xl"],
     borderTopLeftRadius: theme.borderRadius["2xl"],
-    paddingTop: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.muted,
   },
-  inputArea: {
-    borderRadius: theme.borderRadius["2xl"],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
-  },
+  inputArea: {},
   textInput: {
+    paddingTop: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    borderRadius: theme.borderRadius["2xl"],
+    paddingVertical: theme.spacing[3],
     backgroundColor: "transparent",
     color: theme.colors.foreground,
-    paddingHorizontal: 0,
-    paddingVertical: 0,
     fontSize: theme.fontSize.lg,
     marginBottom: theme.spacing[3],
     maxHeight: 128,
@@ -1437,6 +1452,8 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.spacing[2],
     marginBottom: theme.spacing[1],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
   },
   realtimeButton: {
     width: 40,
