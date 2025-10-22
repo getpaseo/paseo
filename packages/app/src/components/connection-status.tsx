@@ -1,5 +1,5 @@
-import { View, Text } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, Text } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 
 interface ConnectionStatusProps {
   isConnected: boolean;
@@ -7,14 +7,11 @@ interface ConnectionStatusProps {
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    // No padding or border - parent handles layout
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   dot: {
     width: 8,
@@ -43,9 +40,19 @@ export function ConnectionStatus({ isConnected }: ConnectionStatusProps) {
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        <View style={[styles.dot, isConnected ? styles.dotConnected : styles.dotDisconnected]} />
-        <Text style={[styles.text, isConnected ? styles.textConnected : styles.textDisconnected]}>
-          {isConnected ? 'Connected' : 'Disconnected'}
+        <View
+          style={[
+            styles.dot,
+            isConnected ? styles.dotConnected : styles.dotDisconnected,
+          ]}
+        />
+        <Text
+          style={[
+            styles.text,
+            isConnected ? styles.textConnected : styles.textDisconnected,
+          ]}
+        >
+          {isConnected ? "Connected" : "Disconnected"}
         </Text>
       </View>
     </View>

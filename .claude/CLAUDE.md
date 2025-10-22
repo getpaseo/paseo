@@ -18,6 +18,11 @@ This is an npm workspace monorepo:
 
 We run the mobile app and server in the tmux session `voice-dev`:
 
-tmux capture-pane -t voice-dev:mobile -p
+`tmux capture-pane -t voice-dev:mobile -p`
+`tmux capture-pane -t voice-dev:server -p`
 
-tmux capture-pane -t voice-dev:server -p
+Don't run them anywhere else. Check logs there.
+
+## Andriod
+
+Take screensots like this: `adb exec-out screencap -p > screenshot.png`

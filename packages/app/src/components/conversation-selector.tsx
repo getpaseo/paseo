@@ -1,12 +1,21 @@
-import { useState, useEffect } from 'react';
-import { Modal, View, Text, Pressable, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { MessageSquare, X, Plus, Trash2 } from 'lucide-react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { StyleSheet } from 'react-native-unistyles';
-import type { UseWebSocketReturn } from '../hooks/use-websocket';
+import { useState, useEffect } from "react";
+import {
+  Modal,
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { MessageSquare, X, Plus, Trash2 } from "lucide-react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { StyleSheet } from "react-native-unistyles";
+import type { UseWebSocketReturn } from "../hooks/use-websocket";
 
-const STORAGE_KEY = '@voice-dev:conversation-id';
+const STORAGE_KEY = "@voice-dev:conversation-id";
 
 interface Conversation {
   id: string;
@@ -31,32 +40,41 @@ export function ConversationSelector({
 
   // Listen for conversation list responses
   useEffect(() => {
-    const unsubscribe = websocket.on('list_conversations_response', (message) => {
-      if (message.type !== 'list_conversations_response') return;
-      setConversations(message.payload.conversations);
-      setIsLoading(false);
-    });
+    const unsubscribe = websocket.on(
+      "list_conversations_response",
+      (message) => {
+        if (message.type !== "list_conversations_response") return;
+        setConversations(message.payload.conversations);
+        setIsLoading(false);
+      }
+    );
 
     return unsubscribe;
   }, [websocket]);
 
   // Listen for delete conversation responses
   useEffect(() => {
-    const unsubscribe = websocket.on('delete_conversation_response', (message) => {
-      if (message.type !== 'delete_conversation_response') return;
-      console.log('[ConversationSelector] Delete response:', message.payload);
-      if (message.payload.success) {
-        // Refresh conversations list
-        fetchConversations();
+    const unsubscribe = websocket.on(
+      "delete_conversation_response",
+      (message) => {
+        if (message.type !== "delete_conversation_response") return;
+        console.log("[ConversationSelector] Delete response:", message.payload);
+        if (message.payload.success) {
+          // Refresh conversations list
+          fetchConversations();
 
-        // If we deleted the current conversation, start a new one
-        if (message.payload.conversationId === currentConversationId) {
-          handleNewConversation();
+          // If we deleted the current conversation, start a new one
+          if (message.payload.conversationId === currentConversationId) {
+            handleNewConversation();
+          }
+        } else {
+          Alert.alert(
+            "Error",
+            `Failed to delete conversation: ${message.payload.error}`
+          );
         }
-      } else {
-        Alert.alert('Error', `Failed to delete conversation: ${message.payload.error}`);
       }
-    });
+    );
 
     return unsubscribe;
   }, [websocket, currentConversationId]);
@@ -70,30 +88,35 @@ export function ConversationSelector({
 
   function fetchConversations() {
     setIsLoading(true);
-    console.log('[ConversationSelector] Requesting conversations via WebSocket');
+    console.log(
+      "[ConversationSelector] Requesting conversations via WebSocket"
+    );
     websocket.send({
-      type: 'session',
+      type: "session",
       message: {
-        type: 'list_conversations_request',
+        type: "list_conversations_request",
       },
     });
   }
 
   function handleDeleteConversation(id: string) {
     Alert.alert(
-      'Delete Conversation',
-      'Are you sure you want to delete this conversation?',
+      "Delete Conversation",
+      "Are you sure you want to delete this conversation?",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: "Delete",
+          style: "destructive",
           onPress: () => {
-            console.log('[ConversationSelector] Deleting conversation via WebSocket:', id);
+            console.log(
+              "[ConversationSelector] Deleting conversation via WebSocket:",
+              id
+            );
             websocket.send({
-              type: 'session',
+              type: "session",
               message: {
-                type: 'delete_conversation_request',
+                type: "delete_conversation_request",
                 conversationId: id,
               },
             });
@@ -105,21 +128,23 @@ export function ConversationSelector({
 
   function handleClearAll() {
     Alert.alert(
-      'Clear All Conversations',
-      'Are you sure you want to delete all conversations?',
+      "Clear All Conversations",
+      "Are you sure you want to delete all conversations?",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Clear All',
-          style: 'destructive',
+          text: "Clear All",
+          style: "destructive",
           onPress: () => {
-            console.log('[ConversationSelector] Clearing all conversations via WebSocket');
+            console.log(
+              "[ConversationSelector] Clearing all conversations via WebSocket"
+            );
             // Delete all conversations
             conversations.forEach((conv) => {
               websocket.send({
-                type: 'session',
+                type: "session",
                 message: {
-                  type: 'delete_conversation_request',
+                  type: "delete_conversation_request",
                   conversationId: conv.id,
                 },
               });
@@ -144,7 +169,10 @@ export function ConversationSelector({
       onSelectConversation(id);
       setIsOpen(false);
     } catch (error) {
-      console.error('[ConversationSelector] Failed to save conversation ID:', error);
+      console.error(
+        "[ConversationSelector] Failed to save conversation ID:",
+        error
+      );
     }
   }
 
@@ -155,7 +183,10 @@ export function ConversationSelector({
       onSelectConversation(null);
       setIsOpen(false);
     } catch (error) {
-      console.error('[ConversationSelector] Failed to clear conversation ID:', error);
+      console.error(
+        "[ConversationSelector] Failed to clear conversation ID:",
+        error
+      );
     }
   }
 
@@ -167,7 +198,7 @@ export function ConversationSelector({
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
+    if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
@@ -176,10 +207,7 @@ export function ConversationSelector({
 
   return (
     <View>
-      <Pressable
-        onPress={() => setIsOpen(true)}
-        style={styles.triggerButton}
-      >
+      <Pressable onPress={() => setIsOpen(true)} style={styles.triggerButton}>
         <MessageSquare size={20} color="white" />
       </Pressable>
 
@@ -199,7 +227,8 @@ export function ConversationSelector({
               {/* Header */}
               <View style={styles.header}>
                 <Text style={styles.headerTitle}>
-                  Conversations {conversations.length > 0 && `(${conversations.length})`}
+                  Conversations{" "}
+                  {conversations.length > 0 && `(${conversations.length})`}
                 </Text>
                 <Pressable onPress={() => setIsOpen(false)}>
                   <X size={24} color="white" />
@@ -236,34 +265,40 @@ export function ConversationSelector({
                   </View>
                 )}
 
-                {!isLoading && conversations.map((conversation) => (
-                  <View
-                    key={conversation.id}
-                    style={[
-                      styles.conversationItem,
-                      conversation.id === currentConversationId && styles.conversationItemActive
-                    ]}
-                  >
-                    <Pressable
-                      style={styles.conversationContent}
-                      onPress={() => handleSelectConversation(conversation.id)}
+                {!isLoading &&
+                  conversations.map((conversation) => (
+                    <View
+                      key={conversation.id}
+                      style={[
+                        styles.conversationItem,
+                        conversation.id === currentConversationId &&
+                          styles.conversationItemActive,
+                      ]}
                     >
-                      <Text style={styles.conversationTitle}>
-                        {conversation.messageCount} messages
-                      </Text>
-                      <Text style={styles.conversationDate}>
-                        {formatDate(conversation.lastUpdated)}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => handleDeleteConversation(conversation.id)}
-                      style={styles.deleteButton}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Trash2 size={20} color="#ef4444" />
-                    </Pressable>
-                  </View>
-                ))}
+                      <Pressable
+                        style={styles.conversationContent}
+                        onPress={() =>
+                          handleSelectConversation(conversation.id)
+                        }
+                      >
+                        <Text style={styles.conversationTitle}>
+                          {conversation.messageCount} messages
+                        </Text>
+                        <Text style={styles.conversationDate}>
+                          {formatDate(conversation.lastUpdated)}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() =>
+                          handleDeleteConversation(conversation.id)
+                        }
+                        style={styles.deleteButton}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <Trash2 size={20} color="#ef4444" />
+                      </Pressable>
+                    </View>
+                  ))}
 
                 {!isLoading && conversations.length > 0 && (
                   <View style={styles.clearAllContainer}>
@@ -288,13 +323,12 @@ export function ConversationSelector({
 const styles = StyleSheet.create((theme) => ({
   triggerButton: {
     backgroundColor: theme.colors.muted,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
+    padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
   modalBackdrop: {
     flex: 1,
@@ -303,15 +337,15 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.card,
     borderTopLeftRadius: theme.spacing[6],
     borderTopRightRadius: theme.spacing[6],
-    height: '80%',
+    height: "80%",
   },
   modalInner: {
     flex: 1,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: theme.spacing[6],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
@@ -327,9 +361,9 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   newButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: theme.spacing[2],
     backgroundColor: theme.colors.muted,
     paddingVertical: theme.spacing[3],
@@ -347,26 +381,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   loadingContainer: {
     padding: theme.spacing[8],
-    alignItems: 'center',
+    alignItems: "center",
   },
   loadingText: {
     color: theme.colors.mutedForeground,
   },
   emptyContainer: {
     padding: theme.spacing[8],
-    alignItems: 'center',
+    alignItems: "center",
   },
   emptyText: {
     color: theme.colors.mutedForeground,
   },
   conversationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
-    backgroundColor: 'transparent',
+    backgroundColor: "transparent",
   },
   conversationItemActive: {
     backgroundColor: theme.colors.muted,
@@ -391,11 +425,11 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
   clearAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: theme.spacing[2],
-    backgroundColor: 'rgba(127, 29, 29, 0.2)',
+    backgroundColor: "rgba(127, 29, 29, 0.2)",
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],

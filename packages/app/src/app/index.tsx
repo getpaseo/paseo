@@ -8,7 +8,10 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Animated,
+  Keyboard,
 } from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -131,9 +134,21 @@ export default function VoiceAssistantScreen() {
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
+  const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder();
   const audioPlayer = useAudioPlayer();
-  const insets = useSafeAreaInsets();
+
+  // Keyboard animation
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const bottomInset = insets.bottom;
+  const animatedKeyboardStyle = useAnimatedStyle(() => {
+    'worklet';
+    const absoluteHeight = Math.abs(keyboardHeight.value);
+    const padding = Math.max(0, absoluteHeight - bottomInset);
+    return {
+      paddingBottom: padding,
+    };
+  });
 
   // Realtime audio with Speechmatics (echo cancellation)
   const realtimeAudio = useSpeechmaticsAudio({
@@ -960,197 +975,198 @@ export default function VoiceAssistantScreen() {
 
   // Render orchestrator view (main chat)
   return (
-    <KeyboardAvoidingView
-      behavior="padding"
-      style={styles.container}
-      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
-    >
-      {/* Connection status header with buttons */}
-      <View style={{ paddingTop: insets.top + 16 }}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <ConnectionStatus isConnected={ws.isConnected} />
+    <View style={styles.container}>
+      {/* Fixed Header */}
+      <View style={styles.header}>
+        <View style={{ paddingTop: insets.top + 16 }}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerLeft}>
+              <ConnectionStatus isConnected={ws.isConnected} />
+            </View>
+            <View style={styles.headerRight}>
+              <ConversationSelector
+                currentConversationId={conversationId}
+                onSelectConversation={handleSelectConversation}
+                websocket={ws}
+              />
+              <Pressable
+                onPress={() => router.push("/settings")}
+                style={styles.settingsButton}
+              >
+                <Settings size={20} color="white" />
+              </Pressable>
+            </View>
           </View>
-          <View style={styles.headerRight}>
-            <ConversationSelector
-              currentConversationId={conversationId}
-              onSelectConversation={handleSelectConversation}
-              websocket={ws}
+        </View>
+
+        {/* Active processes bar */}
+        <ActiveProcesses
+          agents={Array.from(agents.values())}
+          commands={Array.from(commands.values())}
+          activeProcessId={activeAgentId}
+          activeProcessType={activeAgentId ? "agent" : null}
+          onSelectAgent={handleSelectAgent}
+          onBackToOrchestrator={handleBackToOrchestrator}
+        />
+      </View>
+
+      {/* Content Area with Keyboard Handling */}
+      <ReanimatedAnimated.View
+        style={[styles.contentArea, animatedKeyboardStyle]}
+      >
+        {/* Scrollable Messages Area */}
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          {messages.map((msg) => {
+            if (msg.type === "user") {
+              return (
+                <UserMessage
+                  key={msg.id}
+                  message={msg.message}
+                  timestamp={msg.timestamp}
+                />
+              );
+            }
+
+            if (msg.type === "assistant") {
+              return (
+                <AssistantMessage
+                  key={msg.id}
+                  message={msg.message}
+                  timestamp={msg.timestamp}
+                />
+              );
+            }
+
+            if (msg.type === "activity") {
+              return (
+                <ActivityLog
+                  key={msg.id}
+                  type={msg.activityType}
+                  message={msg.message}
+                  timestamp={msg.timestamp}
+                  metadata={msg.metadata}
+                  onArtifactClick={handleArtifactClick}
+                />
+              );
+            }
+
+            if (msg.type === "artifact") {
+              return (
+                <ActivityLog
+                  key={msg.id}
+                  type="artifact"
+                  message=""
+                  timestamp={msg.timestamp}
+                  artifactId={msg.artifactId}
+                  artifactType={msg.artifactType}
+                  title={msg.title}
+                  onArtifactClick={handleArtifactClick}
+                />
+              );
+            }
+
+            if (msg.type === "tool_call") {
+              return (
+                <ToolCall
+                  key={msg.id}
+                  toolName={msg.toolName}
+                  args={msg.args}
+                  result={msg.result}
+                  error={msg.error}
+                  status={msg.status}
+                />
+              );
+            }
+
+            return null;
+          })}
+
+          {/* Streaming assistant message */}
+          {currentAssistantMessage && (
+            <AssistantMessage
+              message={currentAssistantMessage}
+              timestamp={Date.now()}
+              isStreaming={true}
             />
+          )}
+        </ScrollView>
+
+        {/* Fixed Footer */}
+        <View
+          style={[
+            styles.inputArea,
+            { paddingBottom: Math.max(insets.bottom, 8) },
+          ]}
+        >
+          {/* Text input */}
+          <TextInput
+            value={userInput}
+            onChangeText={setUserInput}
+            placeholder="Say something..."
+            placeholderTextColor={defaultTheme.colors.mutedForeground}
+            style={styles.textInput}
+            multiline
+            editable={!isRecording && ws.isConnected}
+          />
+
+          {/* Buttons */}
+          <View style={styles.buttonRow}>
+            {/* Realtime mode button */}
             <Pressable
-              onPress={() => router.push("/settings")}
-              style={styles.settingsButton}
+              onPress={handleRealtimeToggle}
+              disabled={!ws.isConnected}
+              style={[
+                styles.realtimeButton,
+                !ws.isConnected && styles.buttonDisabled,
+                isRealtimeMode && styles.realtimeButtonActive,
+              ]}
             >
-              <Settings size={20} color="white" />
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <AudioLines size={20} color="white" />
+              </Animated.View>
+            </Pressable>
+
+            {/* Main action button */}
+            <Pressable
+              onPress={handleButtonClick}
+              disabled={!ws.isConnected}
+              style={[
+                styles.mainButton,
+                !ws.isConnected && styles.buttonDisabled,
+                isRecording && styles.mainButtonRecording,
+                isInProgress && styles.mainButtonInProgress,
+                userInput.trim() &&
+                  !isRecording &&
+                  !isInProgress &&
+                  styles.mainButtonWithText,
+              ]}
+            >
+              {isInProgress ? (
+                <Square size={18} color="white" fill="white" />
+              ) : isRecording ? (
+                <Square size={14} color="white" fill="white" />
+              ) : userInput.trim() ? (
+                <ArrowUp size={20} color="white" />
+              ) : (
+                <Mic size={20} color="white" />
+              )}
             </Pressable>
           </View>
         </View>
-      </View>
-
-      {/* Active processes bar */}
-      <ActiveProcesses
-        agents={Array.from(agents.values())}
-        commands={Array.from(commands.values())}
-        activeProcessId={activeAgentId}
-        activeProcessType={activeAgentId ? "agent" : null}
-        onSelectAgent={handleSelectAgent}
-        onBackToOrchestrator={handleBackToOrchestrator}
-      />
-
-      {/* Messages */}
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {messages.map((msg) => {
-          if (msg.type === "user") {
-            return (
-              <UserMessage
-                key={msg.id}
-                message={msg.message}
-                timestamp={msg.timestamp}
-              />
-            );
-          }
-
-          if (msg.type === "assistant") {
-            return (
-              <AssistantMessage
-                key={msg.id}
-                message={msg.message}
-                timestamp={msg.timestamp}
-              />
-            );
-          }
-
-          if (msg.type === "activity") {
-            return (
-              <ActivityLog
-                key={msg.id}
-                type={msg.activityType}
-                message={msg.message}
-                timestamp={msg.timestamp}
-                metadata={msg.metadata}
-                onArtifactClick={handleArtifactClick}
-              />
-            );
-          }
-
-          if (msg.type === "artifact") {
-            return (
-              <ActivityLog
-                key={msg.id}
-                type="artifact"
-                message=""
-                timestamp={msg.timestamp}
-                artifactId={msg.artifactId}
-                artifactType={msg.artifactType}
-                title={msg.title}
-                onArtifactClick={handleArtifactClick}
-              />
-            );
-          }
-
-          if (msg.type === "tool_call") {
-            return (
-              <ToolCall
-                key={msg.id}
-                toolName={msg.toolName}
-                args={msg.args}
-                result={msg.result}
-                error={msg.error}
-                status={msg.status}
-              />
-            );
-          }
-
-          return null;
-        })}
-
-        {/* Streaming assistant message */}
-        {currentAssistantMessage && (
-          <AssistantMessage
-            message={currentAssistantMessage}
-            timestamp={Date.now()}
-            isStreaming={true}
-          />
-        )}
-      </ScrollView>
-
-      {/* Input area */}
-      <View
-        style={[
-          styles.inputArea,
-          {
-            paddingBottom: Math.max(insets.bottom, 32),
-          },
-        ]}
-      >
-        {/* Text input */}
-        <TextInput
-          value={userInput}
-          onChangeText={setUserInput}
-          placeholder="Say something..."
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          style={styles.textInput}
-          multiline
-          editable={!isRecording && ws.isConnected}
-        />
-
-        {/* Buttons */}
-        <View style={styles.buttonRow}>
-          {/* Realtime mode button */}
-          <Pressable
-            onPress={handleRealtimeToggle}
-            disabled={!ws.isConnected}
-            style={[
-              styles.realtimeButton,
-              !ws.isConnected && styles.buttonDisabled,
-              isRealtimeMode && styles.realtimeButtonActive,
-            ]}
-          >
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <AudioLines size={20} color="white" />
-            </Animated.View>
-          </Pressable>
-
-          {/* Main action button */}
-          <Pressable
-            onPress={handleButtonClick}
-            disabled={!ws.isConnected}
-            style={[
-              styles.mainButton,
-              !ws.isConnected && styles.buttonDisabled,
-              isRecording && styles.mainButtonRecording,
-              isInProgress && styles.mainButtonInProgress,
-              userInput.trim() &&
-                !isRecording &&
-                !isInProgress &&
-                styles.mainButtonWithText,
-            ]}
-          >
-            {isInProgress ? (
-              <Square size={18} color="white" fill="white" />
-            ) : isRecording ? (
-              <Square size={14} color="white" fill="white" />
-            ) : userInput.trim() ? (
-              <ArrowUp size={20} color="white" />
-            ) : (
-              <Mic size={20} color="white" />
-            )}
-          </Pressable>
-        </View>
-      </View>
+      </ReanimatedAnimated.View>
 
       {/* Artifact drawer */}
       <ArtifactDrawer
         artifact={currentArtifact}
         onClose={handleCloseArtifact}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1168,12 +1184,21 @@ const styles = StyleSheet.create((theme) => ({
   agentNotFoundText: {
     color: theme.colors.foreground,
   },
+  header: {
+    backgroundColor: theme.colors.background,
+  },
+  contentArea: {
+    flex: 1,
+    minHeight: 0,
+  },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
   },
   headerLeft: {
     flex: 1,
@@ -1190,9 +1215,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   scrollView: {
     flex: 1,
+    minHeight: 0,
   },
   scrollContent: {
     paddingBottom: theme.spacing[4],
+    flexGrow: 1,
   },
   inputArea: {
     paddingTop: theme.spacing[4],
@@ -1215,6 +1242,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: theme.spacing[3],
+    marginBottom: theme.spacing[2],
   },
   realtimeButton: {
     width: 48,
