@@ -285,9 +285,9 @@ export function ConversationSelector({
   );
 }
 
-const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   triggerButton: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
@@ -300,7 +300,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     flex: 1,
   },
   modalContent: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderTopLeftRadius: theme.spacing[6],
     borderTopRightRadius: theme.spacing[6],
     height: '80%',
@@ -314,29 +314,29 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     justifyContent: 'space-between',
     padding: theme.spacing[6],
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   headerTitle: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
   },
   newButtonContainer: {
     padding: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   newButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: theme.spacing[2],
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
   newButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
   },
   scrollView: {
@@ -350,14 +350,14 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     alignItems: 'center',
   },
   loadingText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
   },
   emptyContainer: {
     padding: theme.spacing[8],
     alignItems: 'center',
   },
   emptyText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
   },
   conversationItem: {
     flexDirection: 'row',
@@ -365,22 +365,22 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     justifyContent: 'space-between',
     padding: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
     backgroundColor: 'transparent',
   },
   conversationItemActive: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
   },
   conversationContent: {
     flex: 1,
   },
   conversationTitle: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.base,
   },
   conversationDate: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
@@ -399,10 +399,10 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.red[900],
+    borderColor: theme.colors.palette.red[900],
   },
   clearAllText: {
-    color: theme.colors.red[500],
+    color: theme.colors.destructive,
     fontWeight: theme.fontWeight.semibold,
   },
 }));

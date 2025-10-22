@@ -13,7 +13,7 @@ import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { theme as defaultTheme } from "@/styles/theme";
 
 // Simple unique ID generator
 let messageIdCounter = 0;
@@ -1094,7 +1094,7 @@ export default function VoiceAssistantScreen() {
           value={userInput}
           onChangeText={setUserInput}
           placeholder="Say something..."
-          placeholderTextColor="#71717a"
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
           style={styles.textInput}
           multiline
           editable={!isRecording && ws.isConnected}
@@ -1151,19 +1151,19 @@ export default function VoiceAssistantScreen() {
   );
 }
 
-const styles = StyleSheet.create((theme: Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
   },
   agentNotFoundContainer: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
     alignItems: "center",
     justifyContent: "center",
   },
   agentNotFoundText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
   },
   headerRow: {
     flexDirection: "row",
@@ -1181,7 +1181,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
   },
   settingsButton: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
@@ -1195,12 +1195,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     paddingTop: theme.spacing[4],
     paddingHorizontal: theme.spacing[6],
     borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.zinc[800],
-    backgroundColor: theme.colors.black,
+    borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
   },
   textInput: {
-    backgroundColor: theme.colors.zinc[800],
-    color: theme.colors.white,
+    backgroundColor: theme.colors.muted,
+    color: theme.colors.foreground,
     borderRadius: theme.borderRadius["2xl"],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
@@ -1219,10 +1219,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
   },
   realtimeButtonActive: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.palette.blue[600],
   },
   mainButton: {
     width: 48,
@@ -1230,16 +1230,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.zinc[700],
+    backgroundColor: theme.colors.secondary,
   },
   mainButtonRecording: {
-    backgroundColor: theme.colors.red[500],
+    backgroundColor: theme.colors.palette.red[500],
   },
   mainButtonInProgress: {
-    backgroundColor: theme.colors.red[600],
+    backgroundColor: theme.colors.palette.red[600],
   },
   mainButtonWithText: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.palette.blue[600],
   },
   buttonDisabled: {
     opacity: theme.opacity[50],

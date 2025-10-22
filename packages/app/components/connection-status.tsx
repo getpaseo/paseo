@@ -5,12 +5,12 @@ interface ConnectionStatusProps {
   isConnected: boolean;
 }
 
-const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   row: {
     flexDirection: 'row',
@@ -23,19 +23,19 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     marginRight: theme.spacing[2],
   },
   dotConnected: {
-    backgroundColor: theme.colors.green[500],
+    backgroundColor: theme.colors.palette.green[500],
   },
   dotDisconnected: {
-    backgroundColor: theme.colors.red[500],
+    backgroundColor: theme.colors.destructive,
   },
   text: {
     fontSize: theme.fontSize.sm,
   },
   textConnected: {
-    color: theme.colors.green[500],
+    color: theme.colors.palette.green[500],
   },
   textDisconnected: {
-    color: theme.colors.red[500],
+    color: theme.colors.destructive,
   },
 }));
 

@@ -1,19 +1,21 @@
 import { StyleSheet } from "react-native-unistyles";
-import { theme } from "./theme";
+import { lightTheme, darkTheme } from "./theme";
 
-// Configure Unistyles with our theme
+// Configure Unistyles with adaptive themes
 StyleSheet.configure({
   themes: {
-    dark: theme,
+    light: lightTheme,
+    dark: darkTheme,
   },
   settings: {
-    initialTheme: "dark",
+    adaptiveThemes: true,
   },
 });
 
 // Type augmentation for TypeScript
 type AppThemes = {
-  dark: typeof theme;
+  light: typeof lightTheme;
+  dark: typeof darkTheme;
 };
 
 declare module "react-native-unistyles" {

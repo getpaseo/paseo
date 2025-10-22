@@ -8,7 +8,7 @@ interface VoiceButtonProps {
   disabled?: boolean;
 }
 
-const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     alignItems: 'center',
     gap: theme.spacing[4],
@@ -32,26 +32,26 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     elevation: 8,
   },
   buttonIdle: {
-    backgroundColor: theme.colors.zinc[700],
+    backgroundColor: theme.colors.muted,
   },
   buttonRecording: {
-    backgroundColor: theme.colors.red[500],
+    backgroundColor: theme.colors.destructive,
   },
   buttonProcessing: {
-    backgroundColor: theme.colors.blue[500],
+    backgroundColor: theme.colors.primary,
   },
   buttonPlaying: {
-    backgroundColor: theme.colors.green[500],
+    backgroundColor: theme.colors.palette.green[500],
   },
   label: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
   // Recording icon
   recordingIcon: {
     width: 24,
     height: 24,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.foreground,
     borderRadius: theme.borderRadius.md,
   },
   // Processing icon
@@ -62,7 +62,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
   processingDot: {
     width: 6,
     height: 6,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.primaryForeground,
     borderRadius: theme.borderRadius.full,
     position: 'absolute',
   },
@@ -85,7 +85,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     gap: theme.spacing[1],
   },
   playingBar: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.foreground,
     borderRadius: theme.borderRadius.sm,
   },
   playingBar1: {
@@ -112,7 +112,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     left: 4,
     width: 16,
     height: 24,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.foreground,
     borderTopLeftRadius: 999,
     borderTopRightRadius: 999,
   },
@@ -122,7 +122,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     left: 0,
     width: 24,
     height: 6,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.foreground,
     borderRadius: theme.borderRadius.full,
   },
 }));

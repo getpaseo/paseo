@@ -4,15 +4,14 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useAudioRecorder } from '../hooks/use-audio-recorder';
 import { useAudioPlayer } from '../hooks/use-audio-player';
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from 'expo-audio';
-import type { Theme } from '../styles/theme';
 
-const styles = StyleSheet.create((theme: Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   scrollView: {
     flex: 1,
-    backgroundColor: theme.colors.white,
+    backgroundColor: theme.colors.palette.white,
   },
   scrollViewDark: {
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
   },
   container: {
     padding: theme.spacing[6],
@@ -20,19 +19,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
   title: {
     fontSize: theme.fontSize['3xl'],
     fontWeight: theme.fontWeight.bold,
-    color: theme.colors.gray[900],
+    color: theme.colors.palette.gray[900],
     marginBottom: theme.spacing[2],
   },
   titleDark: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
   },
   subtitle: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.gray[600],
+    color: theme.colors.palette.gray[600],
     marginBottom: theme.spacing[8],
   },
   subtitleDark: {
-    color: theme.colors.gray[400],
+    color: theme.colors.mutedForeground,
   },
   section: {
     marginBottom: theme.spacing[8],
@@ -40,67 +39,67 @@ const styles = StyleSheet.create((theme: Theme) => ({
   sectionTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.gray[900],
+    color: theme.colors.palette.gray[900],
     marginBottom: theme.spacing[2],
   },
   sectionTitleDark: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
   },
   permissionCard: {
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
   },
   permissionGranted: {
-    backgroundColor: theme.colors.green[100],
+    backgroundColor: theme.colors.palette.green[100],
   },
   permissionGrantedDark: {
-    backgroundColor: theme.colors.green[900],
+    backgroundColor: theme.colors.palette.green[900],
   },
   permissionDenied: {
-    backgroundColor: theme.colors.red[100],
+    backgroundColor: theme.colors.palette.red[100],
   },
   permissionDeniedDark: {
-    backgroundColor: theme.colors.red[900],
+    backgroundColor: theme.colors.palette.red[900],
   },
   permissionText: {
     fontSize: theme.fontSize.base,
   },
   permissionTextGranted: {
-    color: theme.colors.green[800],
+    color: theme.colors.palette.green[800],
   },
   permissionTextGrantedDark: {
-    color: theme.colors.green[200],
+    color: theme.colors.palette.green[200],
   },
   permissionTextDenied: {
-    color: theme.colors.red[800],
+    color: theme.colors.palette.red[800],
   },
   permissionTextDeniedDark: {
-    color: theme.colors.red[200],
+    color: theme.colors.palette.red[200],
   },
   statusCard: {
     marginBottom: theme.spacing[4],
     padding: theme.spacing[4],
-    backgroundColor: theme.colors.gray[100],
+    backgroundColor: theme.colors.palette.gray[100],
     borderRadius: theme.borderRadius.lg,
   },
   statusCardDark: {
-    backgroundColor: theme.colors.gray[800],
+    backgroundColor: theme.colors.card,
   },
   statusLabel: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.gray[700],
+    color: theme.colors.palette.gray[700],
     marginBottom: theme.spacing[1],
   },
   statusLabelDark: {
-    color: theme.colors.gray[300],
+    color: theme.colors.mutedForeground,
   },
   statusValue: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.gray[900],
+    color: theme.colors.palette.gray[900],
   },
   statusValueDark: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
   },
   controlsRow: {
     flexDirection: 'row',
@@ -114,51 +113,51 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: 'center',
   },
   buttonBlue: {
-    backgroundColor: theme.colors.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
   },
   buttonBlueDark: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.palette.blue[600],
   },
   buttonRed: {
-    backgroundColor: theme.colors.red[500],
+    backgroundColor: theme.colors.palette.red[500],
   },
   buttonRedDark: {
-    backgroundColor: theme.colors.red[600],
+    backgroundColor: theme.colors.palette.red[600],
   },
   buttonGreen: {
-    backgroundColor: theme.colors.green[500],
+    backgroundColor: theme.colors.palette.green[500],
   },
   buttonGreenDark: {
-    backgroundColor: theme.colors.green[600],
+    backgroundColor: theme.colors.palette.green[600],
   },
   buttonPurple: {
-    backgroundColor: theme.colors.purple[500],
+    backgroundColor: theme.colors.palette.purple[500],
   },
   buttonPurpleDark: {
-    backgroundColor: theme.colors.purple[600],
+    backgroundColor: theme.colors.palette.purple[600],
   },
   buttonOrange: {
-    backgroundColor: theme.colors.orange[500],
+    backgroundColor: theme.colors.palette.orange[500],
   },
   buttonOrangeDark: {
-    backgroundColor: theme.colors.orange[600],
+    backgroundColor: theme.colors.palette.orange[600],
   },
   buttonDisabled: {
-    backgroundColor: theme.colors.gray[300],
+    backgroundColor: theme.colors.palette.gray[300],
   },
   buttonDisabledDark: {
-    backgroundColor: theme.colors.gray[700],
+    backgroundColor: theme.colors.muted,
   },
   buttonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.white,
+    color: theme.colors.palette.white,
   },
   buttonTextDisabled: {
-    color: theme.colors.gray[500],
+    color: theme.colors.palette.gray[500],
   },
   buttonTextDisabledDark: {
-    color: theme.colors.gray[400],
+    color: theme.colors.mutedForeground,
   },
   fullWidthButton: {
     padding: theme.spacing[4],
@@ -168,59 +167,59 @@ const styles = StyleSheet.create((theme: Theme) => ({
   infoCard: {
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.blue[50],
+    backgroundColor: theme.colors.palette.blue[50],
   },
   infoCardDark: {
-    backgroundColor: theme.colors.blue[950],
+    backgroundColor: theme.colors.palette.blue[950],
   },
   infoCardLabel: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.blue[700],
+    color: theme.colors.palette.blue[700],
     marginBottom: theme.spacing[1],
   },
   infoCardLabelDark: {
-    color: theme.colors.blue[300],
+    color: theme.colors.palette.blue[300],
   },
   infoCardValue: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.blue[900],
+    color: theme.colors.palette.blue[900],
   },
   infoCardValueDark: {
-    color: theme.colors.blue[100],
+    color: theme.colors.palette.blue[100],
   },
   infoCardSubtext: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.blue[600],
+    color: theme.colors.palette.blue[600],
     marginTop: theme.spacing[1],
   },
   infoCardSubtextDark: {
-    color: theme.colors.blue[400],
+    color: theme.colors.palette.blue[400],
   },
   configCard: {
     padding: theme.spacing[4],
-    backgroundColor: theme.colors.gray[50],
+    backgroundColor: theme.colors.palette.gray[50],
     borderRadius: theme.borderRadius.lg,
   },
   configCardDark: {
-    backgroundColor: theme.colors.gray[900],
+    backgroundColor: theme.colors.card,
   },
   configTitle: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.gray[700],
+    color: theme.colors.palette.gray[700],
     marginBottom: theme.spacing[2],
   },
   configTitleDark: {
-    color: theme.colors.gray[300],
+    color: theme.colors.mutedForeground,
   },
   configText: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.gray[600],
+    color: theme.colors.palette.gray[600],
     marginBottom: theme.spacing[1],
   },
   configTextDark: {
-    color: theme.colors.gray[400],
+    color: theme.colors.mutedForeground,
   },
   gap3: {
     gap: theme.spacing[3],

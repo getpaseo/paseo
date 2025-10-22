@@ -22,17 +22,17 @@ interface ArtifactDrawerProps {
   onClose: () => void;
 }
 
-const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
     flexDirection: "column",
   },
   header: {
     paddingBottom: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.zinc[800],
+    borderBottomColor: theme.colors.border,
   },
   headerRow: {
     flexDirection: "row",
@@ -44,7 +44,7 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     marginRight: theme.spacing[4],
   },
   title: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.bold,
   },
@@ -59,24 +59,24 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   badgeMarkdown: {
-    backgroundColor: theme.colors.blue[600],
+    backgroundColor: theme.colors.primary,
   },
   badgeDiff: {
-    backgroundColor: theme.colors.purple[600],
+    backgroundColor: theme.colors.palette.purple[600],
   },
   badgeImage: {
-    backgroundColor: theme.colors.green[600],
+    backgroundColor: theme.colors.palette.green[600],
   },
   badgeCode: {
-    backgroundColor: theme.colors.orange[600],
+    backgroundColor: theme.colors.palette.orange[600],
   },
   badgeText: {
-    color: theme.colors.white,
+    color: theme.colors.primaryForeground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
   closeButton: {
-    backgroundColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.muted,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -84,13 +84,13 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     justifyContent: "center",
   },
   closeButtonText: {
-    color: theme.colors.white,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.bold,
   },
   contentScroll: {
     flex: 1,
-    backgroundColor: theme.colors.black,
+    backgroundColor: theme.colors.background,
   },
   contentScrollContainer: {
     padding: theme.spacing[4],
@@ -102,35 +102,35 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     justifyContent: "center",
   },
   imagePlaceholderText: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
   imagePlaceholderSubtext: {
-    color: theme.colors.zinc[600],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[2],
   },
   codeContainer: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[4],
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.zinc[800],
+    borderColor: theme.colors.border,
   },
   codeText: {
-    color: theme.colors.zinc[300],
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontFamily: "monospace",
   },
   metadataContainer: {
-    backgroundColor: theme.colors.zinc[900],
+    backgroundColor: theme.colors.card,
     padding: theme.spacing[3],
     borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.zinc[800],
+    borderTopColor: theme.colors.border,
     marginTop: theme.spacing[2],
   },
   metadataTitle: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[2],
@@ -140,12 +140,12 @@ const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
     marginBottom: theme.spacing[1],
   },
   metadataLabel: {
-    color: theme.colors.zinc[500],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     width: 80,
   },
   metadataValue: {
-    color: theme.colors.zinc[400],
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     flex: 1,
     fontFamily: "monospace",
