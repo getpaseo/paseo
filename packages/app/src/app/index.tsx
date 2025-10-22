@@ -9,6 +9,7 @@ import {
   ScrollView,
   Animated,
   Keyboard,
+  Modal,
 } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, {
@@ -47,6 +48,8 @@ import { ActiveProcesses } from "@/components/active-processes";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { ConversationSelector } from "@/components/conversation-selector";
 import { VolumeMeter } from "@/components/volume-meter";
+import { reduceStreamUpdate, type StreamItem } from "@/types/stream";
+import { CreateAgentModal } from "@/components/create-agent-modal";
 import {
   Settings,
   Mic,
@@ -54,6 +57,8 @@ import {
   Square,
   AudioLines,
   MicOff,
+  Plus,
+  ChevronDown,
 } from "lucide-react-native";
 import type {
   ActivityLogPayload,
@@ -62,6 +67,7 @@ import type {
 } from "@server/server/messages";
 import type { AgentStatus } from "@server/server/acp/types";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { parseSessionUpdate } from "@/types/agent-activity";
 
 type MessageEntry =
   | {
@@ -277,12 +283,12 @@ export default function VoiceAssistantScreen() {
     onAudioSegment: (base64Audio: string) => {
       console.log("[App] Sending audio segment, length:", base64Audio.length);
 
-      // Send audio segment to server
+      // Send audio segment to server (realtime always goes to orchestrator)
       try {
         ws.send({
           type: "session",
           message: {
-            type: "audio_chunk",
+            type: "realtime_audio_chunk",
             audio: base64Audio,
             format: "audio/wav",
             isLast: true, // Complete segment
@@ -314,6 +320,9 @@ export default function VoiceAssistantScreen() {
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+
+  // Agent stream state - unified chronological stream using reducer pattern
+  const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [userInput, setUserInput] = useState("");
@@ -325,6 +334,12 @@ export default function VoiceAssistantScreen() {
   // Multi-view navigation state
   const [viewMode, setViewMode] = useState<ViewMode>("orchestrator");
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+
+  // Agent creation modal state
+  const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
+
+  // Mode selector modal state
+  const [showModeSelector, setShowModeSelector] = useState(false);
 
   // Agent and command state
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
@@ -389,8 +404,11 @@ export default function VoiceAssistantScreen() {
         "commands"
       );
 
-      // Update agents
-      setAgents(new Map(agentsList.map((a) => [a.id, a as Agent])));
+      // Update agents (convert createdAt string to Date)
+      setAgents(new Map(agentsList.map((a) => [a.id, {
+        ...a,
+        createdAt: new Date(a.createdAt),
+      } as Agent])));
 
       // Update commands
       setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
@@ -402,7 +420,7 @@ export default function VoiceAssistantScreen() {
       const { agentId, status, type, currentModeId, availableModes } =
         message.payload;
 
-      console.log("[App] Agent created:", agentId);
+      console.log("[App] Agent created:", agentId, "currentModeId:", currentModeId, "availableModes:", availableModes);
 
       const agent: Agent = {
         id: agentId,
@@ -415,6 +433,10 @@ export default function VoiceAssistantScreen() {
 
       setAgents((prev) => new Map(prev).set(agentId, agent));
       setAgentUpdates((prev) => new Map(prev).set(agentId, []));
+
+      // Auto-switch to agent view
+      setActiveAgentId(agentId);
+      setViewMode("agent");
     });
 
     // Agent update handler
@@ -424,6 +446,7 @@ export default function VoiceAssistantScreen() {
 
       console.log("[App] Agent update:", agentId);
 
+      // Store raw update for agent stream view
       setAgentUpdates((prev) => {
         const updated = new Map(prev);
         const updates = updated.get(agentId) || [];
@@ -434,6 +457,15 @@ export default function VoiceAssistantScreen() {
             notification,
           },
         ]);
+        return updated;
+      });
+
+      // Reduce stream update using unified reducer pattern
+      setAgentStreamState((prev) => {
+        const currentStream = prev.get(agentId) || [];
+        const nextStream = reduceStreamUpdate(currentStream, notification, new Date(timestamp));
+        const updated = new Map(prev);
+        updated.set(agentId, nextStream);
         return updated;
       });
     });
@@ -454,6 +486,8 @@ export default function VoiceAssistantScreen() {
             status: status as AgentStatus,
             sessionId: info.sessionId,
             error: info.error,
+            currentModeId: info.currentModeId,
+            availableModes: info.availableModes,
           });
         }
         return updated;
@@ -808,16 +842,44 @@ export default function VoiceAssistantScreen() {
           )
         );
 
-        // Send to server (properly typed)
-        const audioMessage: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "audio_chunk",
-            audio: base64Audio,
-            format: format,
-            isLast: true,
-          },
-        };
+        // Route audio based on view mode
+        let audioMessage: WSInboundMessage;
+        if (isRealtimeMode) {
+          // Send as realtime audio chunk to orchestrator (speech-to-speech with TTS)
+          audioMessage = {
+            type: "session",
+            message: {
+              type: "realtime_audio_chunk",
+              audio: base64Audio,
+              format: format,
+              isLast: true,
+            },
+          };
+        } else if (viewMode === "agent" && activeAgentId) {
+          // Send as agent audio (will be transcribed, no TTS)
+          audioMessage = {
+            type: "session",
+            message: {
+              type: "send_agent_audio",
+              agentId: activeAgentId,
+              audio: base64Audio,
+              format: format,
+              isLast: true,
+            },
+          };
+        } else {
+          // Send as regular audio to orchestrator (will be transcribed, no TTS)
+          audioMessage = {
+            type: "session",
+            message: {
+              type: "realtime_audio_chunk",
+              audio: base64Audio,
+              format: format,
+              isLast: true,
+            },
+          };
+        }
+
         ws.send(audioMessage);
 
         console.log(
@@ -903,6 +965,43 @@ export default function VoiceAssistantScreen() {
     // TODO: Implement cancel agent API call
   }
 
+  // Agent creation handler
+  function handleCreateAgent(workingDir: string, mode: string) {
+    console.log("[App] Creating agent in:", workingDir, "with mode:", mode);
+
+    // Send create agent request to server
+    const message: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "create_agent_request",
+        cwd: workingDir,
+        initialMode: mode,
+      },
+    };
+    ws.send(message);
+
+    // Close modal
+    setShowCreateAgentModal(false);
+
+    // The agent_created event handler will switch to agent view automatically
+  }
+
+  // Mode change handler
+  function handleModeChange(modeId: string) {
+    if (!activeAgentId) return;
+
+    const message: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "set_agent_mode",
+        agentId: activeAgentId,
+        modeId,
+      },
+    };
+    ws.send(message);
+    setShowModeSelector(false);
+  }
+
   // Text message handlers
   function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -911,8 +1010,44 @@ export default function VoiceAssistantScreen() {
     audioPlayer.stop();
     setIsPlayingAudio(false);
 
-    // Send message to server using the hook's method
-    ws.sendUserMessage(userInput);
+    // Route message based on view mode
+    if (isRealtimeMode) {
+      // Realtime mode always routes to orchestrator (handled by realtime audio)
+      ws.sendUserMessage(userInput);
+    } else if (viewMode === "agent" && activeAgentId) {
+      // Optimistically add user message to stream
+      setAgentStreamState((prev) => {
+        const currentStream = prev.get(activeAgentId) || [];
+        const nextStream = reduceStreamUpdate(
+          currentStream,
+          {
+            type: "sessionUpdate",
+            update: {
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: userInput },
+            },
+          },
+          new Date()
+        );
+        const updated = new Map(prev);
+        updated.set(activeAgentId, nextStream);
+        return updated;
+      });
+
+      // Send to agent
+      const message: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "send_agent_message",
+          agentId: activeAgentId,
+          text: userInput,
+        },
+      };
+      ws.send(message);
+    } else {
+      // Send to orchestrator
+      ws.sendUserMessage(userInput);
+    }
 
     // Clear input and reset streaming state
     setUserInput("");
@@ -1022,7 +1157,9 @@ export default function VoiceAssistantScreen() {
   function handleSelectConversation(newConversationId: string | null) {
     // Clear all state
     setMessages([]);
+    setAgentMessages(new Map());
     setCurrentAssistantMessage("");
+    setCurrentAgentMessages(new Map());
     setUserInput("");
     setArtifacts(new Map());
     setCurrentArtifact(null);
@@ -1045,32 +1182,11 @@ export default function VoiceAssistantScreen() {
     setConversationId(newConversationId);
   }
 
-  // Render agent stream view
-  if (viewMode === "agent" && activeAgentId) {
-    const agent = agents.get(activeAgentId);
-    const updates = agentUpdates.get(activeAgentId) || [];
+  // Calculate agent data (used when viewMode === "agent")
+  const agent = activeAgentId ? agents.get(activeAgentId) : null;
+  const streamItems = activeAgentId ? (agentStreamState.get(activeAgentId) || []) : [];
 
-    if (!agent) {
-      return (
-        <View style={styles.agentNotFoundContainer}>
-          <Text style={styles.agentNotFoundText}>Agent not found</Text>
-        </View>
-      );
-    }
-
-    return (
-      <AgentStreamView
-        agentId={activeAgentId}
-        agent={agent}
-        updates={updates}
-        onBack={handleBackToOrchestrator}
-        onKillAgent={handleKillAgent}
-        onCancelAgent={handleCancelAgent}
-      />
-    );
-  }
-
-  // Render orchestrator view (main chat)
+  // Render main view with shared structure
   return (
     <View style={styles.container}>
       {/* Fixed Header */}
@@ -1087,6 +1203,16 @@ export default function VoiceAssistantScreen() {
                 websocket={ws}
               />
               <Pressable
+                onPress={() => setShowCreateAgentModal(true)}
+                disabled={!ws.isConnected}
+                style={[
+                  styles.settingsButton,
+                  !ws.isConnected && styles.buttonDisabled,
+                ]}
+              >
+                <Plus size={20} color="white" />
+              </Pressable>
+              <Pressable
                 onPress={() => router.push("/settings")}
                 style={styles.settingsButton}
               >
@@ -1100,10 +1226,10 @@ export default function VoiceAssistantScreen() {
         <ActiveProcesses
           agents={Array.from(agents.values())}
           commands={Array.from(commands.values())}
-          activeProcessId={activeAgentId}
-          activeProcessType={activeAgentId ? "agent" : null}
+          viewMode={viewMode}
+          activeAgentId={activeAgentId}
           onSelectAgent={handleSelectAgent}
-          onBackToOrchestrator={handleBackToOrchestrator}
+          onSelectOrchestrator={handleBackToOrchestrator}
         />
       </View>
 
@@ -1111,100 +1237,115 @@ export default function VoiceAssistantScreen() {
       <ReanimatedAnimated.View
         style={[styles.contentArea, animatedKeyboardStyle]}
       >
-        {/* Scrollable Messages Area */}
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.scrollView}
-          contentContainerStyle={[
-            styles.scrollContent,
-            messages.length === 0 && styles.emptyStateContainer,
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-        >
-          {messages.length === 0 && !currentAssistantMessage && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateTitle}>OnTheGo</Text>
-              <Text style={styles.emptyStateSubtitle}>
-                What would you like to work on?
-              </Text>
-            </View>
-          )}
+        {/* Conditionally render content based on view mode */}
+        {viewMode === "agent" && activeAgentId && agent ? (
+          // Agent view - render AgentStreamView
+          <AgentStreamView
+            agentId={activeAgentId}
+            agent={agent}
+            streamItems={streamItems}
+          />
+        ) : viewMode === "agent" && activeAgentId && !agent ? (
+          // Agent not found
+          <View style={styles.agentNotFoundContainer}>
+            <Text style={styles.agentNotFoundText}>Agent not found</Text>
+          </View>
+        ) : (
+          // Orchestrator view - render scrollable messages
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.scrollView}
+            contentContainerStyle={[
+              styles.scrollContent,
+              messages.length === 0 && styles.emptyStateContainer,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
+            {messages.length === 0 && !currentAssistantMessage && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateTitle}>OnTheGo</Text>
+                <Text style={styles.emptyStateSubtitle}>
+                  What would you like to work on?
+                </Text>
+              </View>
+            )}
 
-          {messages.map((msg) => {
-            if (msg.type === "user") {
-              return (
-                <UserMessage
-                  key={msg.id}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                />
-              );
-            }
+            {messages.map((msg) => {
+              if (msg.type === "user") {
+                return (
+                  <UserMessage
+                    key={msg.id}
+                    message={msg.message}
+                    timestamp={msg.timestamp}
+                  />
+                );
+              }
 
-            if (msg.type === "assistant") {
-              return (
-                <AssistantMessage
-                  key={msg.id}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                />
-              );
-            }
+              if (msg.type === "assistant") {
+                return (
+                  <AssistantMessage
+                    key={msg.id}
+                    message={msg.message}
+                    timestamp={msg.timestamp}
+                  />
+                );
+              }
 
-            if (msg.type === "activity") {
-              return (
-                <ActivityLog
-                  key={msg.id}
-                  type={msg.activityType}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                  metadata={msg.metadata}
-                  onArtifactClick={handleArtifactClick}
-                />
-              );
-            }
+              if (msg.type === "activity") {
+                return (
+                  <ActivityLog
+                    key={msg.id}
+                    type={msg.activityType}
+                    message={msg.message}
+                    timestamp={msg.timestamp}
+                    metadata={msg.metadata}
+                    onArtifactClick={handleArtifactClick}
+                  />
+                );
+              }
 
-            if (msg.type === "artifact") {
-              return (
-                <ActivityLog
-                  key={msg.id}
-                  type="artifact"
-                  message=""
-                  timestamp={msg.timestamp}
-                  artifactId={msg.artifactId}
-                  artifactType={msg.artifactType}
-                  title={msg.title}
-                  onArtifactClick={handleArtifactClick}
-                />
-              );
-            }
+              if (msg.type === "artifact") {
+                return (
+                  <ActivityLog
+                    key={msg.id}
+                    type="artifact"
+                    message=""
+                    timestamp={msg.timestamp}
+                    artifactId={msg.artifactId}
+                    artifactType={msg.artifactType}
+                    title={msg.title}
+                    onArtifactClick={handleArtifactClick}
+                  />
+                );
+              }
 
-            if (msg.type === "tool_call") {
-              return (
-                <ToolCall
-                  key={msg.id}
-                  toolName={msg.toolName}
-                  args={msg.args}
-                  result={msg.result}
-                  error={msg.error}
-                  status={msg.status}
-                />
-              );
-            }
+              if (msg.type === "tool_call") {
+                return (
+                  <ToolCall
+                    key={msg.id}
+                    toolName={msg.toolName}
+                    args={msg.args}
+                    result={msg.result}
+                    error={msg.error}
+                    status={msg.status}
+                  />
+                );
+              }
 
-            return null;
-          })}
+              return null;
+            })}
 
-          {/* Streaming assistant message */}
-          {currentAssistantMessage && (
-            <AssistantMessage
-              message={currentAssistantMessage}
-              timestamp={Date.now()}
-              isStreaming={true}
-            />
-          )}
-        </ScrollView>
+            {/* Streaming assistant message */}
+            {currentAssistantMessage && (
+              <AssistantMessage
+                message={currentAssistantMessage}
+                timestamp={Date.now()}
+                isStreaming={true}
+              />
+            )}
+          </ScrollView>
+        )}
 
         {/* Fixed Footer */}
         <View
@@ -1282,8 +1423,26 @@ export default function VoiceAssistantScreen() {
                 editable={!isRecording && ws.isConnected}
               />
 
-              {/* Buttons */}
-              <View style={styles.buttonRow}>
+              {/* Mode badge and buttons row */}
+              <View style={styles.controlsRow}>
+                {/* Session mode badge - only show in agent view */}
+                {viewMode === "agent" && activeAgentId && agent && (
+                  <Pressable
+                    onPress={() => setShowModeSelector(true)}
+                    style={({ pressed }) => [
+                      styles.modeBadge,
+                      pressed && styles.modeBadgePressed,
+                    ]}
+                  >
+                    <Text style={styles.modeBadgeText}>
+                      {agent.availableModes?.find(m => m.id === agent.currentModeId)?.name || agent.currentModeId || 'default'}
+                    </Text>
+                    <ChevronDown size={14} color={defaultTheme.colors.palette.blue[400]} />
+                  </Pressable>
+                )}
+
+                {/* Buttons */}
+                <View style={styles.buttonRow}>
                 {userInput.trim().length > 0 ? (
                   // Send button when text is entered
                   <Pressable
@@ -1340,6 +1499,7 @@ export default function VoiceAssistantScreen() {
                     </Pressable>
                   </>
                 )}
+                </View>
               </View>
             </View>
           )}
@@ -1351,6 +1511,53 @@ export default function VoiceAssistantScreen() {
         artifact={currentArtifact}
         onClose={handleCloseArtifact}
       />
+
+      {/* Create agent modal */}
+      <CreateAgentModal
+        isVisible={showCreateAgentModal}
+        onClose={() => setShowCreateAgentModal(false)}
+        onCreateAgent={handleCreateAgent}
+      />
+
+      {/* Mode selector modal */}
+      <Modal
+        visible={showModeSelector}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowModeSelector(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowModeSelector(false)}
+        >
+          <View style={styles.modeSelectorContent}>
+            {agent?.availableModes?.map((mode) => {
+              const isActive = mode.id === agent.currentModeId;
+              return (
+                <Pressable
+                  key={mode.id}
+                  onPress={() => handleModeChange(mode.id)}
+                  style={[
+                    styles.modeItem,
+                    isActive && styles.modeItemActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.modeName,
+                    isActive && styles.modeNameActive,
+                  ]}>{mode.name}</Text>
+                  {mode.description && (
+                    <Text style={[
+                      styles.modeDescription,
+                      isActive && styles.modeDescriptionActive,
+                    ]}>{mode.description}</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1362,12 +1569,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   agentNotFoundContainer: {
     flex: 1,
-    backgroundColor: theme.colors.background,
     alignItems: "center",
     justifyContent: "center",
+    padding: theme.spacing[6],
   },
   agentNotFoundText: {
-    color: theme.colors.foreground,
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.lg,
   },
   header: {
     backgroundColor: theme.colors.background,
@@ -1446,14 +1654,19 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[3],
     maxHeight: 128,
   },
-  buttonRow: {
+  controlsRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
     gap: theme.spacing[2],
     marginBottom: theme.spacing[1],
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
+  },
+  buttonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginLeft: "auto",
   },
   realtimeButton: {
     width: 40,
@@ -1528,5 +1741,65 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     fontFamily: "monospace",
+  },
+  modeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.palette.blue[950],
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.palette.blue[800],
+  },
+  modeBadgePressed: {
+    backgroundColor: theme.colors.palette.blue[900],
+    borderColor: theme.colors.palette.blue[700],
+  },
+  modeBadgeText: {
+    color: theme.colors.palette.blue[400],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: 'capitalize',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modeSelectorContent: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    minWidth: 280,
+    maxWidth: 320,
+  },
+  modeItem: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing[2],
+    backgroundColor: theme.colors.muted,
+  },
+  modeItemActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  modeName: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[1],
+  },
+  modeNameActive: {
+    color: theme.colors.primaryForeground,
+  },
+  modeDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  modeDescriptionActive: {
+    color: theme.colors.primaryForeground,
+    opacity: theme.opacity[80],
   },
 }));

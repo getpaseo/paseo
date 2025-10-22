@@ -267,7 +267,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   thoughtLabel: {
-    color: theme.colors.palette.purple[400],
+    color: theme.colors.palette.purple[500],
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[1],
@@ -319,7 +319,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   statusText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.semibold,
   },
   expandIcon: {
     color: theme.colors.mutedForeground,

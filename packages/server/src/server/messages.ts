@@ -7,11 +7,10 @@ import { z } from "zod";
 export const UserTextMessageSchema = z.object({
   type: z.literal("user_text"),
   text: z.string(),
-  disableTTS: z.boolean().optional(),
 });
 
-export const AudioChunkMessageSchema = z.object({
-  type: z.literal("audio_chunk"),
+export const RealtimeAudioChunkMessageSchema = z.object({
+  type: z.literal("realtime_audio_chunk"),
   audio: z.string(), // base64 encoded
   format: z.string(),
   isLast: z.boolean(),
@@ -45,15 +44,45 @@ export const SetRealtimeModeMessageSchema = z.object({
   enabled: z.boolean(),
 });
 
+export const SendAgentMessageSchema = z.object({
+  type: z.literal("send_agent_message"),
+  agentId: z.string(),
+  text: z.string(),
+});
+
+export const SendAgentAudioSchema = z.object({
+  type: z.literal("send_agent_audio"),
+  agentId: z.string(),
+  audio: z.string(), // base64 encoded
+  format: z.string(),
+  isLast: z.boolean(),
+});
+
+export const CreateAgentRequestMessageSchema = z.object({
+  type: z.literal("create_agent_request"),
+  cwd: z.string(),
+  initialMode: z.string().optional(),
+});
+
+export const SetAgentModeMessageSchema = z.object({
+  type: z.literal("set_agent_mode"),
+  agentId: z.string(),
+  modeId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
-  AudioChunkMessageSchema,
+  RealtimeAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   LoadConversationRequestMessageSchema,
   ListConversationsRequestMessageSchema,
   DeleteConversationRequestMessageSchema,
   SetRealtimeModeMessageSchema,
+  SendAgentMessageSchema,
+  SendAgentAudioSchema,
+  CreateAgentRequestMessageSchema,
+  SetAgentModeMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -273,6 +302,14 @@ export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversatio
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
+
+// Type exports for inbound message types
+export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
+export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessageSchema>;
+export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
+export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
+export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
+export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

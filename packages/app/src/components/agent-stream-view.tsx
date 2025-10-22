@@ -1,11 +1,10 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
-import type { SessionNotification } from '@agentclientprotocol/sdk';
-import { AgentActivityItem } from './agent-activity';
-import { parseSessionUpdate, groupActivities, type AgentActivity } from '@/types/agent-activity';
+import { AssistantMessage } from './message';
+import type { StreamItem } from '@/types/stream';
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -15,13 +14,7 @@ export interface AgentStreamViewProps {
     createdAt: Date;
     type: 'claude';
   };
-  updates: Array<{
-    timestamp: Date;
-    notification: SessionNotification;
-  }>;
-  onBack: () => void;
-  onKillAgent: (agentId: string) => void;
-  onCancelAgent: (agentId: string) => void;
+  streamItems: StreamItem[];
 }
 
 function getStatusColor(status: AgentStatus): string {
@@ -60,6 +53,11 @@ function getStatusIcon(status: AgentStatus): string {
 }
 
 function formatTimestamp(date: Date): string {
+  // Handle invalid dates gracefully
+  if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+    return '--:--:--';
+  }
+
   return new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
     minute: '2-digit',
@@ -68,124 +66,138 @@ function formatTimestamp(date: Date): string {
   }).format(date);
 }
 
+function UserMessageCard({ text, timestamp }: { text: string; timestamp: Date }) {
+  return (
+    <View style={stylesheet.userMessageCard}>
+      <Text style={stylesheet.timestamp}>
+        {formatTimestamp(timestamp)}
+      </Text>
+      <Text style={stylesheet.userMessageLabel}>You</Text>
+      <Text style={stylesheet.userMessageText}>{text}</Text>
+    </View>
+  );
+}
+
+function ThoughtCard({ text, timestamp }: { text: string; timestamp: Date }) {
+  return (
+    <View style={stylesheet.thoughtCard}>
+      <Text style={stylesheet.timestamp}>
+        {formatTimestamp(timestamp)}
+      </Text>
+      <Text style={stylesheet.thoughtLabel}>Thinking</Text>
+      <Text style={stylesheet.thoughtText}>{text}</Text>
+    </View>
+  );
+}
+
+function ToolCallCard({
+  title,
+  status,
+  toolKind,
+  timestamp
+}: {
+  title: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  toolKind?: string;
+  timestamp: Date;
+}) {
+  return (
+    <View style={stylesheet.toolCallCard}>
+      <Text style={stylesheet.timestamp}>
+        {formatTimestamp(timestamp)}
+      </Text>
+      <View style={stylesheet.toolCallHeader}>
+        <Text style={stylesheet.toolCallLabel}>{toolKind || 'Tool'}</Text>
+        <Text style={[stylesheet.toolCallStatus, { color: getStatusColor(status as any) }]}>
+          {status}
+        </Text>
+      </View>
+      <Text style={stylesheet.toolCallTitle}>{title}</Text>
+    </View>
+  );
+}
+
 export function AgentStreamView({
   agentId,
   agent,
-  updates,
-  onBack,
-  onKillAgent,
-  onCancelAgent,
+  streamItems,
 }: AgentStreamViewProps) {
   const scrollViewRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
 
-  // Parse and group activities
-  const groupedActivities = useMemo(() => {
-    // Parse all notifications into typed activities
-    const activities: AgentActivity[] = updates
-      .map((update) => {
-        const parsedUpdate = parseSessionUpdate(update.notification);
-        if (!parsedUpdate) return null;
-
-        return {
-          timestamp: update.timestamp,
-          update: parsedUpdate,
-        };
-      })
-      .filter((activity): activity is AgentActivity => activity !== null);
-
-    // Group consecutive text chunks and merge tool calls
-    return groupActivities(activities);
-  }, [updates]);
-
-  // Auto-scroll to bottom when new updates arrive
+  // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [groupedActivities]);
-
-  const canCancel = agent.status === 'processing';
-  const canKill = agent.status !== 'killed' && agent.status !== 'completed';
+  }, [streamItems]);
 
   return (
     <View style={stylesheet.container}>
-      {/* Header */}
-      <View style={[stylesheet.header, { paddingTop: insets.top + 16 }]}>
-        {/* Back button */}
-        <Pressable
-          onPress={onBack}
-          style={stylesheet.backButton}
-        >
-          <Text style={stylesheet.backButtonText}>
-            ← Back to Chat
-          </Text>
-        </Pressable>
-
-        {/* Agent info */}
-        <View style={stylesheet.agentInfoRow}>
-          <View style={stylesheet.agentIdRow}>
-            <Text style={stylesheet.agentLabel}>Agent:</Text>
-            <Text style={stylesheet.agentId}>
-              {agentId.substring(0, 8)}
-            </Text>
-          </View>
-          <View
-            style={[
-              stylesheet.statusBadge,
-              { backgroundColor: getStatusColor(agent.status) }
-            ]}
-          >
-            <Text style={stylesheet.statusIcon}>{getStatusIcon(agent.status)}</Text>
-            <Text style={stylesheet.statusText}>{agent.status}</Text>
-          </View>
-        </View>
-
-        <Text style={stylesheet.createdText}>
-          Created: {formatTimestamp(agent.createdAt)}
-        </Text>
-
-        {/* Control buttons */}
-        {(canCancel || canKill) && (
-          <View style={stylesheet.controlButtons}>
-            {canCancel && (
-              <Pressable
-                onPress={() => onCancelAgent(agentId)}
-                style={stylesheet.cancelButton}
-              >
-                <Text style={stylesheet.controlButtonText}>
-                  Cancel
-                </Text>
-              </Pressable>
-            )}
-            {canKill && (
-              <Pressable
-                onPress={() => onKillAgent(agentId)}
-                style={stylesheet.killButton}
-              >
-                <Text style={stylesheet.controlButtonText}>
-                  Kill
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        )}
-      </View>
-
-      {/* Updates list */}
+      {/* Content list */}
       <ScrollView
         ref={scrollViewRef}
         style={stylesheet.scrollView}
         contentContainerStyle={{ paddingTop: 16, paddingBottom: Math.max(insets.bottom, 32) }}
       >
-        {groupedActivities.length === 0 ? (
+        {streamItems.length === 0 ? (
           <View style={stylesheet.emptyState}>
             <Text style={stylesheet.emptyStateText}>
-              No updates yet.{'\n'}Waiting for agent activity...
+              Start chatting with this agent...
             </Text>
           </View>
         ) : (
-          groupedActivities.map((item, idx) => (
-            <AgentActivityItem key={idx} item={item} />
-          ))
+          streamItems.map((item) => {
+            switch (item.kind) {
+              case 'user_message':
+                return (
+                  <UserMessageCard
+                    key={item.id}
+                    text={item.text}
+                    timestamp={item.timestamp}
+                  />
+                );
+
+              case 'assistant_message':
+                return (
+                  <AssistantMessage
+                    key={item.id}
+                    message={item.text}
+                    timestamp={item.timestamp.getTime()}
+                  />
+                );
+
+              case 'thought':
+                return (
+                  <ThoughtCard
+                    key={item.id}
+                    text={item.text}
+                    timestamp={item.timestamp}
+                  />
+                );
+
+              case 'tool_call':
+                return (
+                  <ToolCallCard
+                    key={item.id}
+                    title={item.title}
+                    status={item.status}
+                    toolKind={item.toolKind}
+                    timestamp={item.timestamp}
+                  />
+                );
+
+              case 'plan':
+                // TODO: Render plan component
+                return null;
+
+              case 'activity_log':
+              case 'artifact':
+                // These are orchestrator-only, skip for now
+                return null;
+
+              default:
+                return null;
+            }
+          })
         )}
       </ScrollView>
     </View>
@@ -196,6 +208,78 @@ const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  userMessageCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.primary,
+  },
+  userMessageLabel: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[1],
+  },
+  userMessageText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+  },
+  timestamp: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    marginBottom: theme.spacing[1],
+  },
+  thoughtCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.palette.purple[500],
+  },
+  thoughtLabel: {
+    color: theme.colors.palette.purple[500],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[1],
+  },
+  thoughtText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+    fontStyle: 'italic',
+  },
+  toolCallCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.palette.blue[500],
+  },
+  toolCallHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: theme.spacing[1],
+  },
+  toolCallLabel: {
+    color: theme.colors.palette.blue[500],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  toolCallStatus: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
+  toolCallTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
   },
   header: {
     backgroundColor: theme.colors.card,

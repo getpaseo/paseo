@@ -286,7 +286,7 @@ export class Session {
           await this.handleUserText(msg.text);
           break;
 
-        case "audio_chunk":
+        case "realtime_audio_chunk":
           await this.handleAudioChunk(msg);
           break;
 
@@ -312,6 +312,22 @@ export class Session {
 
         case "set_realtime_mode":
           this.handleSetRealtimeMode(msg.enabled);
+          break;
+
+        case "send_agent_message":
+          await this.handleSendAgentMessage(msg.agentId, msg.text);
+          break;
+
+        case "send_agent_audio":
+          await this.handleSendAgentAudio(msg);
+          break;
+
+        case "create_agent_request":
+          await this.handleCreateAgentRequest(msg.cwd, msg.initialMode);
+          break;
+
+        case "set_agent_mode":
+          await this.handleSetAgentMode(msg.agentId, msg.modeId);
           break;
       }
     } catch (error: any) {
@@ -424,12 +440,230 @@ export class Session {
   }
 
   /**
+   * Handle text message to agent
+   */
+  private async handleSendAgentMessage(agentId: string, text: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Sending text to agent ${agentId}: ${text.substring(0, 50)}...`
+    );
+
+    try {
+      // Emit user message notification before sending to agent
+      // (Claude Code ACP doesn't echo user messages, so we do it manually)
+      this.emit({
+        type: "agent_update",
+        payload: {
+          agentId,
+          timestamp: new Date().toISOString(),
+          notification: {
+            type: "sessionUpdate",
+            update: {
+              sessionUpdate: "user_message_chunk",
+              content: {
+                type: "text",
+                text: text,
+              },
+            },
+          } as any,
+        },
+      });
+
+      await this.agentManager.sendPrompt(agentId, text);
+      console.log(`[Session ${this.clientId}] Sent text to agent ${agentId}`);
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to send text to agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to send message to agent: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Handle audio message to agent (transcribe then send)
+   */
+  private async handleSendAgentAudio(
+    msg: Extract<SessionInboundMessage, { type: "send_agent_audio" }>
+  ): Promise<void> {
+    const { agentId, audio, format, isLast } = msg;
+
+    // Decode base64
+    const audioBuffer = Buffer.from(audio, "base64");
+
+    // For now, we'll process each audio segment immediately
+    // In the future, we might want to buffer chunks similar to realtime audio
+    if (!isLast) {
+      console.log(
+        `[Session ${this.clientId}] Buffering agent audio chunk for agent ${agentId}`
+      );
+      // TODO: Implement buffering if needed
+      return;
+    }
+
+    console.log(
+      `[Session ${this.clientId}] Transcribing audio for agent ${agentId}`
+    );
+
+    try {
+      // Transcribe the audio
+      const result = await this.sttManager.transcribe(audioBuffer, format);
+
+      const transcriptText = result.text.trim();
+      if (!transcriptText) {
+        console.log(
+          `[Session ${this.clientId}] Empty transcription for agent ${agentId}, ignoring`
+        );
+        return;
+      }
+
+      console.log(
+        `[Session ${this.clientId}] Transcribed audio for agent ${agentId}: ${transcriptText}`
+      );
+
+      // Send transcribed text to agent
+      await this.agentManager.sendPrompt(agentId, transcriptText);
+      console.log(`[Session ${this.clientId}] Sent transcribed text to agent ${agentId}`);
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to process audio for agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to process audio for agent: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Handle create agent request
+   */
+  private async handleCreateAgentRequest(cwd: string, initialMode?: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${initialMode || "default"}`
+    );
+
+    try {
+      const agentId = await this.agentManager.createAgent({
+        cwd,
+        initialMode,
+      });
+
+      console.log(`[Session ${this.clientId}] Created agent ${agentId}`);
+
+      // Get agent info
+      const agentInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+      console.log(`[Session ${this.clientId}] Agent info:`, {
+        currentModeId: agentInfo?.currentModeId,
+        availableModes: agentInfo?.availableModes
+      });
+
+      // Subscribe to agent updates
+      this.subscribeToAgent(agentId);
+
+      // Emit agent_created message
+      this.emit({
+        type: "agent_created",
+        payload: {
+          agentId,
+          status: agentInfo?.status || "initializing",
+          type: "claude",
+          currentModeId: agentInfo?.currentModeId,
+          availableModes: agentInfo?.availableModes,
+        },
+      });
+      console.log(`[Session ${this.clientId}] Emitted agent_created with currentModeId:`, agentInfo?.currentModeId);
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to create agent:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to create agent: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Handle set agent mode request
+   */
+  private async handleSetAgentMode(agentId: string, modeId: string): Promise<void> {
+    console.log(`[Session ${this.clientId}] Setting agent ${agentId} mode to ${modeId}`);
+
+    try {
+      await this.agentManager.setSessionMode(agentId, modeId);
+      console.log(`[Session ${this.clientId}] Agent ${agentId} mode set to ${modeId}`);
+
+      // Emit agent_status to notify client of mode change
+      const info = this.agentManager.listAgents().find(a => a.id === agentId);
+      if (info) {
+        this.emit({
+          type: "agent_status",
+          payload: {
+            agentId,
+            status: info.status,
+            info: {
+              id: info.id,
+              status: info.status,
+              createdAt: info.createdAt,
+              type: info.type,
+              sessionId: info.sessionId ?? undefined,
+              error: info.error ?? undefined,
+              currentModeId: info.currentModeId ?? undefined,
+              availableModes: info.availableModes ?? undefined,
+            },
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error(`[Session ${this.clientId}] Failed to set agent mode:`, error);
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set agent mode: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Send current session state (live agents and commands) to client
    */
   private async sendSessionState(): Promise<void> {
     try {
       // Get live agents with session modes
       const agents = this.agentManager?.listAgents() || [];
+
+      // Subscribe to all existing agents (in case of reconnection)
+      for (const agent of agents) {
+        this.subscribeToAgent(agent.id);
+      }
 
       // Get live commands from terminal manager
       let commands: any[] = [];
@@ -503,7 +737,7 @@ export class Session {
    * Handle audio chunk for buffering and transcription
    */
   private async handleAudioChunk(
-    msg: Extract<SessionInboundMessage, { type: "audio_chunk" }>
+    msg: Extract<SessionInboundMessage, { type: "realtime_audio_chunk" }>
   ): Promise<void> {
     // Decode base64
     const audioBuffer = Buffer.from(msg.audio, "base64");

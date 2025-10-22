@@ -18,10 +18,10 @@ export interface ActiveProcessesProps {
     isDead: boolean;
     exitCode: number | null;
   }>;
-  activeProcessId: string | null;
-  activeProcessType: 'agent' | null;
+  viewMode: 'orchestrator' | 'agent';
+  activeAgentId: string | null;
   onSelectAgent: (id: string) => void;
-  onBackToOrchestrator: () => void;
+  onSelectOrchestrator: () => void;
 }
 
 function getAgentStatusColor(status: AgentStatus): string {
@@ -122,6 +122,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: '500',
   },
+  processTextActive: {
+    color: theme.colors.primaryForeground,
+  },
   statusDot: {
     width: 8,
     height: 8,
@@ -138,39 +141,43 @@ const styles = StyleSheet.create((theme) => ({
 export function ActiveProcesses({
   agents,
   commands,
-  activeProcessId,
-  activeProcessType,
+  viewMode,
+  activeAgentId,
   onSelectAgent,
-  onBackToOrchestrator,
+  onSelectOrchestrator,
 }: ActiveProcessesProps) {
-  const hasActiveProcess = activeProcessId !== null && activeProcessType !== null;
-
-  if (agents.length === 0 && commands.length === 0) {
+  // Only show if there's at least one agent
+  if (agents.length === 0) {
     return null;
   }
 
   return (
     <View style={styles.container}>
-      {hasActiveProcess && (
-        <View style={styles.header}>
-          <Pressable
-            onPress={onBackToOrchestrator}
-            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonActive]}
-          >
-            <Text style={styles.backButtonText}>Back to Chat</Text>
-          </Pressable>
-        </View>
-      )}
-
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.scrollView}
         contentContainerStyle={{ gap: 8 }}
       >
+        {/* Orchestrator pill */}
+        <Pressable
+          onPress={onSelectOrchestrator}
+          style={({ pressed }) => [
+            styles.processItem,
+            viewMode === 'orchestrator' ? styles.processItemActive : styles.processItemInactive,
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <View style={styles.agentIcon} />
+          <Text style={[
+            styles.processText,
+            viewMode === 'orchestrator' && styles.processTextActive,
+          ]}>Orchestrator</Text>
+        </Pressable>
+
+        {/* Agent pills */}
         {agents.map((agent) => {
-          const modeName = getModeName(agent.currentModeId, agent.availableModes);
-          const isActive = activeProcessType === 'agent' && activeProcessId === agent.id;
+          const isActive = viewMode === 'agent' && activeAgentId === agent.id;
 
           return (
             <Pressable
@@ -184,7 +191,10 @@ export function ActiveProcesses({
             >
               <View style={styles.agentIcon} />
 
-              <Text style={styles.processText}>{agent.id.substring(0, 8)}</Text>
+              <Text style={[
+                styles.processText,
+                isActive && styles.processTextActive,
+              ]}>{agent.id.substring(0, 8)}</Text>
 
               <View style={[styles.statusDot, { backgroundColor: getAgentStatusColor(agent.status) }]} />
 
@@ -192,26 +202,6 @@ export function ActiveProcesses({
                 <View style={[styles.modeIndicator, { backgroundColor: getModeColor(agent.currentModeId) }]} />
               )}
             </Pressable>
-          );
-        })}
-
-        {commands.map((command) => {
-          const statusColor = command.isDead
-            ? command.exitCode === 0
-              ? '#22c55e'
-              : '#ef4444'
-            : '#3b82f6';
-
-          return (
-            <View key={`command-${command.id}`} style={[styles.processItem, styles.processItemInactive]}>
-              <View style={styles.commandIcon} />
-
-              <Text style={styles.processText} numberOfLines={1}>
-                {command.name || command.currentCommand.substring(0, 20)}
-              </Text>
-
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            </View>
           );
         })}
       </ScrollView>

@@ -180,13 +180,15 @@ export class AgentManager {
       });
 
       // Create a new session
-      const sessionResponse = await agent.connection.newSession({
+      const sessionParams = {
         cwd,
         mcpServers: [],
-        ...(options.initialMode ? { initialMode: options.initialMode } : {}),
-      });
+      };
+      console.log(`[Agent ${agentId}] newSession params:`, sessionParams);
+      const sessionResponse = await agent.connection.newSession(sessionParams);
 
       agent.sessionId = sessionResponse.sessionId;
+      console.log(`[Agent ${agentId}] newSession response:`, JSON.stringify(sessionResponse, null, 2));
 
       // Store session modes from response
       if (sessionResponse.modes) {
@@ -198,6 +200,12 @@ export class AgentManager {
         );
       } else {
         console.log(`[Agent ${agentId}] Session created:`, sessionResponse.sessionId);
+      }
+
+      // Set initial mode if requested (must be done after session creation)
+      if (options.initialMode && agent.sessionId) {
+        console.log(`[Agent ${agentId}] Setting initial mode to: ${options.initialMode}`);
+        await this.setSessionMode(agentId, options.initialMode);
       }
 
       agent.status = "ready";
