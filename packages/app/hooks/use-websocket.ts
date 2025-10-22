@@ -3,7 +3,7 @@ import type {
   WSInboundMessage,
   WSOutboundMessage,
   SessionOutboundMessage
-} from '@voice-assistant/server/messages';
+} from '@server/server/messages';
 
 export interface UseWebSocketReturn {
   isConnected: boolean;

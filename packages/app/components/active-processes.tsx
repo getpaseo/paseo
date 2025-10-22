@@ -1,5 +1,5 @@
 import { View, Text, Pressable, ScrollView } from 'react-native';
-import type { AgentStatus } from '@voice-assistant/server/acp/types';
+import type { AgentStatus } from '@server/server/acp/types';
 
 export interface ActiveProcessesProps {
   agents: Array<{

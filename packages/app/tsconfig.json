@@ -6,8 +6,8 @@
       "@/*": [
         "./*"
       ],
-      "@voice-assistant/*": [
-        "../voice-assistant/src/*"
+      "@server/*": [
+        "../server/src/*"
       ]
     }
   },

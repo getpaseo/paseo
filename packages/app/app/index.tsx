@@ -25,8 +25,8 @@ import type {
   ActivityLogPayload,
   SessionInboundMessage,
   WSInboundMessage,
-} from '@voice-assistant/server/messages';
-import type { AgentStatus } from '@voice-assistant/server/acp/types';
+} from '@server/server/messages';
+import type { AgentStatus } from '@server/server/acp/types';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 
 type MessageEntry =
@@ -95,29 +95,26 @@ export default function VoiceAssistantScreen() {
 
   // Realtime mode state (defined early so we can use it in audioRecorder)
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
-  const [isVADActive, setIsVADActive] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const audioRecorder = useAudioRecorder();
   const audioPlayer = useAudioPlayer({ useSpeaker: settings.useSpeaker });
   const insets = useSafeAreaInsets();
 
-  // Realtime audio with VAD
+  // Realtime audio with WebRTC
   const realtimeAudio = useRealtimeAudio({
     onSpeechStart: () => {
-      console.log('[App] Realtime speech started');
-      setIsVADActive(true);
+      console.log('[App] Speech detected');
       // Pause audio playback if playing
       if (isPlayingAudio) {
         audioPlayer.pause();
       }
     },
     onSpeechEnd: () => {
-      console.log('[App] Realtime speech ended');
-      setIsVADActive(false);
+      console.log('[App] Speech ended');
     },
-    onAudioSegment: async (audioData: string, format: string) => {
-      console.log('[App] Received audio segment, length:', audioData.length);
+    onAudioSegment: (base64Audio: string) => {
+      console.log('[App] Sending audio segment, length:', base64Audio.length);
 
       // Send audio segment to server
       try {
@@ -125,12 +122,11 @@ export default function VoiceAssistantScreen() {
           type: 'session',
           message: {
             type: 'audio_chunk',
-            audio: audioData,
-            format: format,
-            isLast: true,
+            audio: base64Audio,
+            format: 'audio/pcm',
+            isLast: true, // Complete segment
           },
         });
-        console.log('[App] Sent audio segment to server');
       } catch (error) {
         console.error('[App] Failed to send audio segment:', error);
       }
@@ -148,7 +144,7 @@ export default function VoiceAssistantScreen() {
         },
       ]);
     },
-    speechThreshold: 0.5,
+    volumeThreshold: 0.02,
     silenceDuration: 1000,
   });
 
@@ -174,9 +170,9 @@ export default function VoiceAssistantScreen() {
 
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Pulse animation for VAD indicator
+  // Pulse animation for speech indicator
   useEffect(() => {
-    if (isVADActive) {
+    if (realtimeAudio.isSpeaking) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -195,7 +191,7 @@ export default function VoiceAssistantScreen() {
       pulseAnim.stopAnimation();
       pulseAnim.setValue(1);
     }
-  }, [isVADActive, pulseAnim]);
+  }, [realtimeAudio.isSpeaking, pulseAnim]);
 
   // Keep screen awake if setting is enabled (mobile only)
   useEffect(() => {
@@ -830,7 +826,6 @@ export default function VoiceAssistantScreen() {
       try {
         await realtimeAudio.stop();
         setIsRealtimeMode(false);
-        setIsVADActive(false);
         console.log('[App] Realtime mode disabled');
 
         setMessages((prev) => [

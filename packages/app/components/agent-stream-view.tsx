@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { AgentStatus } from '@voice-assistant/server/acp/types';
+import type { AgentStatus } from '@server/server/acp/types';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 
 export interface AgentStreamViewProps {

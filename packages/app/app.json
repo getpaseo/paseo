@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "voice-mobile",
-    "slug": "voice-mobile",
+    "name": "Voice Dev",
+    "slug": "voice-dev",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "voicemobile",
+    "scheme": "voicedev",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "runtimeVersion": {
@@ -19,7 +19,7 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to the microphone for voice commands."
       },
-      "bundleIdentifier": "com.moboudra.voicemobile"
+      "bundleIdentifier": "com.moboudra.voicedev"
     },
     "android": {
       "adaptiveIcon": {
@@ -36,7 +36,7 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
-      "package": "com.moboudra.voicemobile"
+      "package": "com.moboudra.voicedev"
     },
     "web": {
       "output": "static",
@@ -61,7 +61,7 @@
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 26
+            "minSdkVersion": 29
           }
         }
       ]

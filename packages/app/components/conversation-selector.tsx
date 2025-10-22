@@ -5,7 +5,7 @@ import { MessageSquare, X, Plus, Trash2 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { UseWebSocketReturn } from '../hooks/use-websocket';
 
-const STORAGE_KEY = '@voice-assistant:conversation-id';
+const STORAGE_KEY = '@voice-dev:conversation-id';
 
 interface Conversation {
   id: string;

@@ -1,5 +1,5 @@
 {
-  "name": "voice-mobile",
+  "name": "@voice-dev/app",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
@@ -47,8 +47,8 @@
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-vad": "^1.0.44",
     "react-native-web": "~0.21.0",
+    "react-native-webrtc": "^124.0.7",
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
@@ -63,9 +63,6 @@
   },
   "overrides": {
     "lightningcss": "1.30.1",
-    "react-native-vad": {
-      "react": "19.1.0"
-    },
     "@siteed/expo-audio-studio": {
       "expo-modules-core": "3.0.22"
     }
