@@ -54,6 +54,9 @@ export class Session {
   private processingPhase: ProcessingPhase = "idle";
   private currentStreamPromise: Promise<void> | null = null;
 
+  // Realtime mode state
+  private isRealtimeMode = false;
+
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
   private bufferTimeout: NodeJS.Timeout | null = null;
@@ -165,12 +168,12 @@ export class Session {
                   info: {
                     id: info.id,
                     status: info.status,
-                    createdAt: info.createdAt.toISOString(),
+                    createdAt: info.createdAt,
                     type: info.type,
-                    sessionId: info.sessionId,
-                    error: info.error,
-                    currentModeId: info.currentModeId,
-                    availableModes: info.availableModes,
+                    sessionId: info.sessionId ?? undefined,
+                    error: info.error ?? undefined,
+                    currentModeId: info.currentModeId ?? undefined,
+                    availableModes: info.availableModes ?? undefined,
                   },
                 },
               });
@@ -300,6 +303,10 @@ export class Session {
         case "delete_conversation_request":
           await this.handleDeleteConversation(msg.conversationId);
           break;
+
+        case "set_realtime_mode":
+          this.handleSetRealtimeMode(msg.enabled);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -401,6 +408,16 @@ export class Session {
   }
 
   /**
+   * Handle realtime mode toggle
+   */
+  private handleSetRealtimeMode(enabled: boolean): void {
+    this.isRealtimeMode = enabled;
+    console.log(
+      `[Session ${this.clientId}] Realtime mode ${enabled ? "enabled" : "disabled"}`
+    );
+  }
+
+  /**
    * Send current session state (live agents and commands) to client
    */
   private async sendSessionState(): Promise<void> {
@@ -471,8 +488,8 @@ export class Session {
     // Add to conversation
     this.messages.push({ role: "user", content: text });
 
-    // Process through LLM (TTS enabled for text input)
-    this.currentStreamPromise = this.processWithLLM(true);
+    // Process through LLM (TTS enabled in realtime mode for voice conversations)
+    this.currentStreamPromise = this.processWithLLM(this.isRealtimeMode);
     await this.currentStreamPromise;
   }
 
@@ -618,9 +635,9 @@ export class Session {
       // Add to conversation
       this.messages.push({ role: "user", content: result.text });
 
-      // Set phase to LLM and process
+      // Set phase to LLM and process (TTS enabled in realtime mode for voice conversations)
       this.setPhase("llm");
-      this.currentStreamPromise = this.processWithLLM(true); // Enable TTS for voice input
+      this.currentStreamPromise = this.processWithLLM(this.isRealtimeMode);
       await this.currentStreamPromise;
       this.setPhase("idle");
     } catch (error: any) {
@@ -648,12 +665,14 @@ export class Session {
 
     const flushTextBuffer = () => {
       if (textBuffer.length > 0) {
-        // TTS handling
+        // TTS handling (capture mode at generation time for drift protection)
         if (enableTTS) {
+          const modeAtGeneration = this.isRealtimeMode;
           pendingTTS = this.ttsManager.generateAndWaitForPlayback(
             textBuffer,
             (msg) => this.emit(msg),
-            this.abortController.signal
+            this.abortController.signal,
+            modeAtGeneration
           );
         }
 

@@ -22,10 +22,13 @@ export interface SpeechmaticsAudioConfig {
 export interface SpeechmaticsAudio {
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  toggleMute: () => void;
   isActive: boolean;
   isSpeaking: boolean;
   isDetecting: boolean;
+  isMuted: boolean;
   volume: number;
+  segmentDuration: number;
 }
 
 /**
@@ -131,6 +134,8 @@ export function useSpeechmaticsAudio(
   const [isDetecting, setIsDetecting] = useState(false);
   const [audioInitialized, setAudioInitialized] = useState(false);
   const [volume, setVolume] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [segmentDuration, setSegmentDuration] = useState(0);
 
   const audioBufferRef = useRef<Uint8Array[]>([]);
   const silenceStartRef = useRef<number | null>(null);
@@ -164,12 +169,28 @@ export function useSpeechmaticsAudio(
     };
   }, []);
 
+  // Update segment duration timer
+  useEffect(() => {
+    if (!isDetecting && !isSpeaking) {
+      setSegmentDuration(0);
+      return;
+    }
+
+    const startTime = speechDetectionStartRef.current || Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      setSegmentDuration(elapsed);
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isDetecting, isSpeaking]);
+
   // Listen to microphone data
   useExpoTwoWayAudioEventListener(
     "onMicrophoneData",
     useCallback<MicrophoneDataCallback>(
       (event) => {
-        if (!isActive) return;
+        if (!isActive || isMuted) return;
 
         const pcmData: Uint8Array = event.data;
 
@@ -179,7 +200,7 @@ export function useSpeechmaticsAudio(
           audioBufferRef.current.push(pcmData);
         }
       },
-      [isActive]
+      [isActive, isMuted]
     )
   );
 
@@ -192,6 +213,9 @@ export function useSpeechmaticsAudio(
 
         const volumeLevel: number = event.data;
         setVolume(volumeLevel);
+
+        if (isMuted) return;
+
         const speechDetected = volumeLevel > VOLUME_THRESHOLD;
 
         // console.log('[SpeechmaticsAudio] Volume:', volumeLevel.toFixed(6), 'Threshold:', VOLUME_THRESHOLD);
@@ -285,7 +309,7 @@ export function useSpeechmaticsAudio(
           }
         }
       },
-      [isActive, VOLUME_THRESHOLD, SILENCE_DURATION_MS, SPEECH_CONFIRMATION_MS, DETECTION_GRACE_PERIOD_MS, config]
+      [isActive, isMuted, VOLUME_THRESHOLD, SILENCE_DURATION_MS, SPEECH_CONFIRMATION_MS, DETECTION_GRACE_PERIOD_MS, config]
     )
   );
 
@@ -333,8 +357,30 @@ export function useSpeechmaticsAudio(
     setIsSpeaking(false);
     setIsDetecting(false);
     setVolume(0);
+    setIsMuted(false);
 
     console.log("[SpeechmaticsAudio] Audio capture stopped");
+  }
+
+  function toggleMute(): void {
+    setIsMuted((prev) => {
+      const newMuted = !prev;
+      console.log("[SpeechmaticsAudio] Mute toggled:", newMuted);
+
+      if (newMuted) {
+        // Clear any ongoing speech detection/speaking state
+        audioBufferRef.current = [];
+        isSpeakingRef.current = false;
+        speechConfirmedRef.current = false;
+        speechDetectionStartRef.current = null;
+        detectionSilenceStartRef.current = null;
+        silenceStartRef.current = null;
+        setIsSpeaking(false);
+        setIsDetecting(false);
+      }
+
+      return newMuted;
+    });
   }
 
   // Cleanup on unmount
@@ -349,9 +395,12 @@ export function useSpeechmaticsAudio(
   return {
     start,
     stop,
+    toggleMute,
     isActive,
     isSpeaking,
     isDetecting,
+    isMuted,
     volume,
+    segmentDuration,
   };
 }

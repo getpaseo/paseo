@@ -7,6 +7,7 @@ import { z } from "zod";
 export const UserTextMessageSchema = z.object({
   type: z.literal("user_text"),
   text: z.string(),
+  disableTTS: z.boolean().optional(),
 });
 
 export const AudioChunkMessageSchema = z.object({
@@ -39,6 +40,11 @@ export const DeleteConversationRequestMessageSchema = z.object({
   conversationId: z.string(),
 });
 
+export const SetRealtimeModeMessageSchema = z.object({
+  type: z.literal("set_realtime_mode"),
+  enabled: z.boolean(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   AudioChunkMessageSchema,
@@ -47,6 +53,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoadConversationRequestMessageSchema,
   ListConversationsRequestMessageSchema,
   DeleteConversationRequestMessageSchema,
+  SetRealtimeModeMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -88,6 +95,7 @@ export const AudioOutputMessageSchema = z.object({
     audio: z.string(), // base64 encoded
     format: z.string(),
     id: z.string(),
+    isRealtimeMode: z.boolean(), // Mode when audio was generated (for drift protection)
   }),
 });
 
@@ -164,6 +172,12 @@ export const AgentStatusMessageSchema = z.object({
       type: z.literal("claude"),
       sessionId: z.string().optional(),
       error: z.string().optional(),
+      currentModeId: z.string().optional(),
+      availableModes: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        description: z.string().nullable().optional(),
+      })).optional(),
     }),
   }),
 });
