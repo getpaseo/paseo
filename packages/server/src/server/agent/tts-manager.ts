@@ -26,7 +26,8 @@ export class TTSManager {
   public async generateAndWaitForPlayback(
     text: string,
     emitMessage: (msg: SessionOutboundMessage) => void,
-    abortSignal: AbortSignal
+    abortSignal: AbortSignal,
+    isRealtimeMode: boolean
   ): Promise<void> {
     if (abortSignal.aborted) {
       console.log(
@@ -78,13 +79,14 @@ export class TTSManager {
       });
     }
 
-    // Emit audio output message
+    // Emit audio output message (include mode for drift protection)
     emitMessage({
       type: "audio_output",
       payload: {
         id: audioId,
         audio: audio.toString("base64"),
         format,
+        isRealtimeMode,
       },
     });
 

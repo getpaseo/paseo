@@ -13,15 +13,18 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 interface VolumeMeterProps {
   volume: number;
+  isMuted?: boolean;
+  isDetecting?: boolean;
+  isSpeaking?: boolean;
 }
 
-export function VolumeMeter({ volume }: VolumeMeterProps) {
+export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSpeaking = false }: VolumeMeterProps) {
   const { theme } = useUnistyles();
 
   // Base dimensions
   const LINE_SPACING = 8;
-  const MAX_HEIGHT = 80;
-  const MIN_HEIGHT = 4;
+  const MAX_HEIGHT = 50;
+  const MIN_HEIGHT = 20;
 
   // Shared values for each line's height
   const line1Height = useSharedValue(MIN_HEIGHT);
@@ -35,6 +38,14 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
 
   // Start idle animations with different phases
   useEffect(() => {
+    if (isMuted) {
+      // When muted, set pulse to 1 (no animation)
+      line1Pulse.value = 1;
+      line2Pulse.value = 1;
+      line3Pulse.value = 1;
+      return;
+    }
+
     // Line 1 - fastest pulse
     line1Pulse.value = withRepeat(
       withSequence(
@@ -66,10 +77,18 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
       -1,
       false
     );
-  }, []);
+  }, [isMuted]);
 
   // Update heights based on volume with different responsiveness per line
   useEffect(() => {
+    if (isMuted) {
+      // When muted, keep lines at minimum height without animation
+      line1Height.value = MIN_HEIGHT;
+      line2Height.value = MIN_HEIGHT;
+      line3Height.value = MIN_HEIGHT;
+      return;
+    }
+
     if (volume > 0.01) {
       // Active volume - animate heights based on volume
       // Line 1 - most responsive, follows volume closely
@@ -107,23 +126,41 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
         stiffness: 150,
       });
     }
-  }, [volume]);
+  }, [volume, isMuted]);
 
   // Animated styles for each line
-  const line1Style = useAnimatedStyle(() => ({
-    height: line1Height.value * (volume > 0.01 ? 1 : line1Pulse.value),
-    opacity: 0.8 + (volume * 0.2),
-  }));
+  const line1Style = useAnimatedStyle(() => {
+    const isActive = isDetecting || isSpeaking;
+    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    const volumeBoost = isMuted ? 0 : volume * 0.3;
+    return {
+      height: line1Height.value * (isMuted || volume > 0.01 ? 1 : line1Pulse.value),
+      opacity: baseOpacity + volumeBoost,
+    };
+  });
 
-  const line2Style = useAnimatedStyle(() => ({
-    height: line2Height.value * (volume > 0.01 ? 1 : line2Pulse.value),
-    opacity: 0.7 + (volume * 0.3),
-  }));
+  const line2Style = useAnimatedStyle(() => {
+    const isActive = isDetecting || isSpeaking;
+    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    const volumeBoost = isMuted ? 0 : volume * 0.3;
+    return {
+      height: line2Height.value * (isMuted || volume > 0.01 ? 1 : line2Pulse.value),
+      opacity: baseOpacity + volumeBoost,
+    };
+  });
 
-  const line3Style = useAnimatedStyle(() => ({
-    height: line3Height.value * (volume > 0.01 ? 1 : line3Pulse.value),
-    opacity: 0.6 + (volume * 0.4),
-  }));
+  const line3Style = useAnimatedStyle(() => {
+    const isActive = isDetecting || isSpeaking;
+    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    const volumeBoost = isMuted ? 0 : volume * 0.3;
+    return {
+      height: line3Height.value * (isMuted || volume > 0.01 ? 1 : line3Pulse.value),
+      opacity: baseOpacity + volumeBoost,
+    };
+  });
+
+  const lineColor = "#FFFFFF";
+  const lineWidth = 8;
 
   return (
     <View style={styles.container}>
@@ -131,8 +168,8 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
         style={[
           styles.line,
           {
-            width: 4,
-            backgroundColor: theme.colors.palette.blue[400],
+            width: lineWidth,
+            backgroundColor: lineColor,
           },
           line1Style,
         ]}
@@ -142,8 +179,8 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
         style={[
           styles.line,
           {
-            width: 6,
-            backgroundColor: theme.colors.palette.blue[500],
+            width: lineWidth,
+            backgroundColor: lineColor,
           },
           line2Style,
         ]}
@@ -153,8 +190,8 @@ export function VolumeMeter({ volume }: VolumeMeterProps) {
         style={[
           styles.line,
           {
-            width: 4,
-            backgroundColor: theme.colors.palette.blue[400],
+            width: lineWidth,
+            backgroundColor: lineColor,
           },
           line3Style,
         ]}

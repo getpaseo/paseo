@@ -53,6 +53,7 @@ import {
   ArrowUp,
   Square,
   AudioLines,
+  MicOff,
 } from "lucide-react-native";
 import type {
   ActivityLogPayload,
@@ -231,7 +232,13 @@ export default function VoiceAssistantScreen() {
 
   // Realtime mode state (defined early so we can use it in audioRecorder)
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
+  const isRealtimeModeRef = useRef(isRealtimeMode);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    isRealtimeModeRef.current = isRealtimeMode;
+  }, [isRealtimeMode]);
 
   const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder();
@@ -293,7 +300,7 @@ export default function VoiceAssistantScreen() {
       ]);
     },
     volumeThreshold: 0.3,
-    silenceDuration: 1000,
+    silenceDuration: 2000,
     speechConfirmationDuration: 300,
     detectionGracePeriod: 200,
   });
@@ -452,6 +459,11 @@ export default function VoiceAssistantScreen() {
       if (message.type !== "activity_log") return;
       const data = message.payload;
 
+      // Filter out transcription activity logs
+      if (data.type === "system" && data.content.includes("Transcribing")) {
+        return;
+      }
+
       // Handle tool calls
       if (data.type === "tool_call" && data.metadata) {
         const {
@@ -593,6 +605,42 @@ export default function VoiceAssistantScreen() {
       if (message.type !== "audio_output") return;
       const data = message.payload;
 
+      const currentIsRealtimeMode = isRealtimeModeRef.current;
+
+      // Drift protection: Don't play audio generated in different mode
+      if (data.isRealtimeMode !== currentIsRealtimeMode) {
+        console.log(
+          `[App] Skipping audio playback due to mode drift (generated in ${data.isRealtimeMode ? "realtime" : "normal"} mode, currently in ${currentIsRealtimeMode ? "realtime" : "normal"} mode)`
+        );
+
+        // Still send confirmation to prevent server from waiting
+        const confirmMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "audio_played",
+            id: data.id,
+          },
+        };
+        ws.send(confirmMessage);
+        return;
+      }
+
+      // Additional check: Don't play if NOT in realtime mode (shouldn't happen with server-side fix, but defense in depth)
+      if (!currentIsRealtimeMode) {
+        console.log("[App] Skipping audio playback - not in realtime mode");
+
+        // Still send confirmation
+        const confirmMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "audio_played",
+            id: data.id,
+          },
+        };
+        ws.send(confirmMessage);
+        return;
+      }
+
       try {
         setIsPlayingAudio(true);
 
@@ -669,18 +717,7 @@ export default function VoiceAssistantScreen() {
     // Conversation loaded handler
     const unsubConversationLoaded = ws.on("conversation_loaded", (message) => {
       if (message.type !== "conversation_loaded") return;
-      const { conversationId, messageCount } = message.payload;
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: "activity",
-          id: generateMessageId(),
-          timestamp: Date.now(),
-          activityType: "success",
-          message: `Loaded conversation with ${messageCount} messages`,
-        },
-      ]);
+      // Don't show message in UI
     });
 
     // Artifact handler
@@ -734,32 +771,6 @@ export default function VoiceAssistantScreen() {
     };
   }, [ws, audioPlayer]);
 
-  // Connection status handler
-  useEffect(() => {
-    if (ws.isConnected) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: "activity",
-          id: generateMessageId(),
-          timestamp: Date.now(),
-          activityType: "success",
-          message: "WebSocket connected",
-        },
-      ]);
-    } else if (messages.length > 0) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: "activity",
-          id: generateMessageId(),
-          timestamp: Date.now(),
-          activityType: "error",
-          message: "WebSocket disconnected",
-        },
-      ]);
-    }
-  }, [ws.isConnected]);
 
   // Voice button handler
   async function handleVoicePress() {
@@ -778,16 +789,6 @@ export default function VoiceAssistantScreen() {
         );
 
         setIsProcessingAudio(true);
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: "activity",
-            id: generateMessageId(),
-            timestamp: Date.now(),
-            activityType: "info",
-            message: "Sending audio to server...",
-          },
-        ]);
 
         // Convert to base64
         const arrayBuffer = await audioBlob.arrayBuffer();
@@ -974,6 +975,16 @@ export default function VoiceAssistantScreen() {
         setIsRealtimeMode(true);
         console.log("[App] Realtime mode enabled");
 
+        // Notify server of mode change
+        const modeMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "set_realtime_mode",
+            enabled: true,
+          },
+        };
+        ws.send(modeMessage);
+
         setMessages((prev) => [
           ...prev,
           {
@@ -1003,6 +1014,16 @@ export default function VoiceAssistantScreen() {
         await realtimeAudio.stop();
         setIsRealtimeMode(false);
         console.log("[App] Realtime mode disabled");
+
+        // Notify server of mode change
+        const modeMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "set_realtime_mode",
+            enabled: false,
+          },
+        };
+        ws.send(modeMessage);
 
         setMessages((prev) => [
           ...prev,
@@ -1204,13 +1225,49 @@ export default function VoiceAssistantScreen() {
           ]}
         >
           {isRealtimeMode ? (
-            // Realtime mode - show volume meter
-            <Pressable
-              onPress={handleRealtimeToggle}
-              style={[styles.inputArea, { minHeight: 200, justifyContent: "center" }]}
-            >
-              <VolumeMeter volume={realtimeAudio.volume} />
-            </Pressable>
+            // Realtime mode - show volume meter and mute button
+            <View style={[styles.inputArea, { minHeight: 200 }]}>
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                <VolumeMeter
+                  volume={realtimeAudio.volume}
+                  isMuted={realtimeAudio.isMuted}
+                  isDetecting={realtimeAudio.isDetecting}
+                  isSpeaking={realtimeAudio.isSpeaking}
+                />
+                {/* Debug timer */}
+                {(realtimeAudio.isDetecting || realtimeAudio.isSpeaking) && (
+                  <Text style={styles.debugTimer}>
+                    {(realtimeAudio.segmentDuration / 1000).toFixed(1)}s
+                  </Text>
+                )}
+              </View>
+              <View style={styles.realtimeModeButtons}>
+                {/* Mute button */}
+                <Pressable
+                  onPress={() => realtimeAudio.toggleMute()}
+                  style={[
+                    styles.realtimeMuteButton,
+                    realtimeAudio.isMuted && styles.realtimeMuteButtonActive,
+                  ]}
+                >
+                  <MicOff
+                    size={20}
+                    color={
+                      realtimeAudio.isMuted
+                        ? defaultTheme.colors.background
+                        : defaultTheme.colors.foreground
+                    }
+                  />
+                </Pressable>
+                {/* Close button */}
+                <Pressable
+                  onPress={handleRealtimeToggle}
+                  style={styles.realtimeCloseButton}
+                >
+                  <Square size={18} color="white" fill="white" />
+                </Pressable>
+              </View>
+            </View>
           ) : (
             // Normal mode - show text input and buttons
             <View style={styles.inputArea}>
@@ -1419,5 +1476,40 @@ const styles = StyleSheet.create((theme) => ({
   },
   buttonDisabled: {
     opacity: theme.opacity[50],
+  },
+  realtimeModeButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[3],
+    paddingTop: theme.spacing[4],
+  },
+  realtimeMuteButton: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.muted,
+    borderWidth: theme.borderWidth[2],
+    borderColor: theme.colors.border,
+  },
+  realtimeMuteButtonActive: {
+    backgroundColor: theme.colors.palette.red[500],
+    borderColor: theme.colors.palette.red[600],
+  },
+  realtimeCloseButton: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.palette.red[600],
+  },
+  debugTimer: {
+    marginTop: theme.spacing[2],
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontFamily: "monospace",
   },
 }));
