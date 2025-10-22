@@ -3,12 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./*"
-      ],
-      "@server/*": [
-        "../server/src/*"
-      ]
+      "@/*": ["./src/*"],
+      "@server/*": ["../server/src/*"]
     }
   },
   "include": [

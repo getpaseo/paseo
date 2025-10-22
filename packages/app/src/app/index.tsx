@@ -13,7 +13,7 @@ import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
-import { theme as defaultTheme } from "@/styles/theme";
+import { theme as defaultTheme } from "../styles/theme";
 
 // Simple unique ID generator
 let messageIdCounter = 0;
@@ -1126,7 +1126,10 @@ export default function VoiceAssistantScreen() {
               !ws.isConnected && styles.buttonDisabled,
               isRecording && styles.mainButtonRecording,
               isInProgress && styles.mainButtonInProgress,
-              userInput.trim() && !isRecording && !isInProgress && styles.mainButtonWithText,
+              userInput.trim() &&
+                !isRecording &&
+                !isInProgress &&
+                styles.mainButtonWithText,
             ]}
           >
             {isInProgress ? (

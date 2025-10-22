@@ -1,6 +1,4 @@
-import '@/styles/unistyles';
 import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
@@ -11,7 +9,6 @@ export default function RootLayout() {
         <Stack.Screen name="settings" />
         <Stack.Screen name="audio-test" />
       </Stack>
-      <StatusBar style="light" />
     </SafeAreaProvider>
   );
 }

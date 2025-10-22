@@ -58,12 +58,6 @@
       ],
       "expo-audio",
       [
-        "@siteed/expo-audio-studio",
-        {
-          "enableBackgroundAudio": true
-        }
-      ],
-      [
         "expo-build-properties",
         {
           "android": {
@@ -75,7 +69,7 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": false
+      "reactCompiler": true
     },
     "extra": {
       "router": {},
