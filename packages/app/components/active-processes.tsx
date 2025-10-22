@@ -1,4 +1,5 @@
 import { View, Text, Pressable, ScrollView } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
 
 export interface ActiveProcessesProps {
@@ -59,6 +60,81 @@ function getModeColor(modeId?: string): string {
   return '#9ca3af'; // gray - unknown
 }
 
+const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    backgroundColor: theme.colors.zinc[900],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  header: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  backButton: {
+    backgroundColor: theme.colors.zinc[800],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
+  backButtonActive: {
+    backgroundColor: theme.colors.zinc[700],
+  },
+  backButtonText: {
+    color: '#fff',
+    fontSize: theme.fontSize.sm,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  scrollView: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+  },
+  processItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
+  processItemActive: {
+    backgroundColor: theme.colors.blue[600],
+  },
+  processItemInactive: {
+    backgroundColor: theme.colors.zinc[800],
+  },
+  agentIcon: {
+    width: 12,
+    height: 12,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.blue[500],
+  },
+  commandIcon: {
+    width: 12,
+    height: 12,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.purple[500],
+  },
+  processText: {
+    color: '#fff',
+    fontSize: theme.fontSize.xs,
+    fontWeight: '500',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+  },
+  modeIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+    opacity: 0.3,
+  },
+}));
+
 export function ActiveProcesses({
   agents,
   commands,
@@ -74,29 +150,24 @@ export function ActiveProcesses({
   }
 
   return (
-    <View className="bg-zinc-900 border-b border-zinc-800">
-      {/* Header with Back button */}
+    <View style={styles.container}>
       {hasActiveProcess && (
-        <View className="px-4 py-3 border-b border-zinc-800">
+        <View style={styles.header}>
           <Pressable
             onPress={onBackToOrchestrator}
-            className="bg-zinc-800 px-4 py-2 rounded-lg active:bg-zinc-700"
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonActive]}
           >
-            <Text className="text-white text-sm font-semibold text-center">
-              Back to Chat
-            </Text>
+            <Text style={styles.backButtonText}>Back to Chat</Text>
           </Pressable>
         </View>
       )}
 
-      {/* Scrollable process list */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        className="px-4 py-3"
+        style={styles.scrollView}
         contentContainerStyle={{ gap: 8 }}
       >
-        {/* Agents */}
         {agents.map((agent) => {
           const modeName = getModeName(agent.currentModeId, agent.availableModes);
           const isActive = activeProcessType === 'agent' && activeProcessId === agent.id;
@@ -105,36 +176,25 @@ export function ActiveProcesses({
             <Pressable
               key={`agent-${agent.id}`}
               onPress={() => onSelectAgent(agent.id)}
-              className={`flex-row items-center gap-2 px-3 py-2 rounded-lg ${
-                isActive ? 'bg-blue-600' : 'bg-zinc-800'
-              } active:opacity-70`}
+              style={({ pressed }) => [
+                styles.processItem,
+                isActive ? styles.processItemActive : styles.processItemInactive,
+                pressed && { opacity: 0.7 },
+              ]}
             >
-              {/* Agent icon */}
-              <View className="w-3 h-3 rounded-full bg-blue-500" />
+              <View style={styles.agentIcon} />
 
-              {/* Agent ID (shortened) */}
-              <Text className="text-white text-xs font-medium">
-                {agent.id.substring(0, 8)}
-              </Text>
+              <Text style={styles.processText}>{agent.id.substring(0, 8)}</Text>
 
-              {/* Status indicator */}
-              <View
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: getAgentStatusColor(agent.status) }}
-              />
+              <View style={[styles.statusDot, { backgroundColor: getAgentStatusColor(agent.status) }]} />
 
-              {/* Mode indicator */}
               {agent.currentModeId && (
-                <View
-                  className="w-1.5 h-1.5 rounded-full opacity-30"
-                  style={{ backgroundColor: getModeColor(agent.currentModeId) }}
-                />
+                <View style={[styles.modeIndicator, { backgroundColor: getModeColor(agent.currentModeId) }]} />
               )}
             </Pressable>
           );
         })}
 
-        {/* Commands */}
         {commands.map((command) => {
           const statusColor = command.isDead
             ? command.exitCode === 0
@@ -143,23 +203,14 @@ export function ActiveProcesses({
             : '#3b82f6';
 
           return (
-            <View
-              key={`command-${command.id}`}
-              className="flex-row items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800"
-            >
-              {/* Command icon */}
-              <View className="w-3 h-3 rounded-sm bg-purple-500" />
+            <View key={`command-${command.id}`} style={[styles.processItem, styles.processItemInactive]}>
+              <View style={styles.commandIcon} />
 
-              {/* Command name */}
-              <Text className="text-white text-xs font-medium" numberOfLines={1}>
+              <Text style={styles.processText} numberOfLines={1}>
                 {command.name || command.currentCommand.substring(0, 20)}
               </Text>
 
-              {/* Status indicator */}
-              <View
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: statusColor }}
-              />
+              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
             </View>
           );
         })}

@@ -1,7 +1,5 @@
-import { useAudioPlayer as useExpoAudioPlayer, setAudioModeAsync } from 'expo-audio';
-import { Paths, File } from 'expo-file-system';
 import { useState, useRef, useEffect } from 'react';
-import { Platform } from 'react-native';
+import { initialize, playPCMData } from '@speechmatics/expo-two-way-audio';
 
 interface QueuedAudio {
   audioData: Blob;
@@ -9,75 +7,57 @@ interface QueuedAudio {
   reject: (error: Error) => void;
 }
 
-interface AudioPlayerOptions {
-  useSpeaker?: boolean;
+/**
+ * Resample PCM16 audio from 24kHz to 16kHz
+ * OpenAI returns 24kHz, Speechmatics expects 16kHz
+ */
+function resamplePcm24kTo16k(pcm24k: Uint8Array): Uint8Array {
+  // PCM16 = 2 bytes per sample
+  const samples24k = pcm24k.length / 2;
+  const samples16k = Math.floor(samples24k * 16000 / 24000);
+
+  const pcm16k = new Uint8Array(samples16k * 2);
+  const ratio = 24000 / 16000; // 1.5
+
+  for (let i = 0; i < samples16k; i++) {
+    const srcIndex = Math.floor(i * ratio) * 2;
+    if (srcIndex + 1 < pcm24k.length) {
+      pcm16k[i * 2] = pcm24k[srcIndex];
+      pcm16k[i * 2 + 1] = pcm24k[srcIndex + 1];
+    }
+  }
+
+  console.log('[AudioPlayer] Resampled PCM:', {
+    input24k: pcm24k.length,
+    output16k: pcm16k.length,
+    durationMs: (samples16k / 16),
+  });
+
+  return pcm16k;
 }
 
 /**
- * Convert Blob to file URI for expo-audio playback
+ * Hook for audio playback using Speechmatics two-way audio with echo cancellation
  */
-async function blobToFile(blob: Blob): Promise<File> {
-  // Read blob as array buffer
-  const arrayBuffer = await blob.arrayBuffer();
-
-  // Create temporary file in cache directory
-  const fileName = `audio_${Date.now()}.mp3`;
-  const file = new File(Paths.cache, fileName);
-
-  // Write array buffer to file
-  const uint8Array = new Uint8Array(arrayBuffer);
-  file.create();
-  const stream = file.writableStream();
-  const writer = stream.getWriter();
-  await writer.write(uint8Array);
-  await writer.close();
-
-  return file;
-}
-
-/**
- * Hook for audio playback with queue system matching web version functionality
- */
-export function useAudioPlayer(options?: AudioPlayerOptions) {
-  const player = useExpoAudioPlayer();
+export function useAudioPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  const [audioInitialized, setAudioInitialized] = useState(false);
   const queueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
-  const currentRejectRef = useRef<((error: Error) => void) | null>(null);
-  const currentFileRef = useRef<File | null>(null);
 
-  // Configure audio mode based on speaker/earpiece preference
+  // Initialize Speechmatics audio on mount
   useEffect(() => {
-    async function configureAudioMode() {
+    const initializeAudio = async () => {
       try {
-        if (Platform.OS === 'android') {
-          // On Android, use shouldRouteThroughEarpiece
-          await setAudioModeAsync({
-            shouldRouteThroughEarpiece: !options?.useSpeaker,
-          });
-        } else if (Platform.OS === 'ios') {
-          // On iOS, the audio routing is controlled by the AVAudioSession category
-          // The default category should work, but we can configure it if needed
-          // For now, we rely on the iOS default behavior which routes to the receiver
-          // unless the user has changed the route (e.g., via speaker button in Control Center)
-        }
+        await initialize();
+        setAudioInitialized(true);
+        console.log('[AudioPlayer] ✅ Initialized (Speechmatics two-way audio)');
       } catch (error) {
-        console.warn('[AudioPlayer] Failed to configure audio mode:', error);
+        console.error('[AudioPlayer] Failed to initialize audio:', error);
       }
-    }
-
-    configureAudioMode();
-  }, [options?.useSpeaker]);
-
-  // Monitor playback status
-  useEffect(() => {
-    if (!player.playing && isPlaying && !isPaused) {
-      // Playback finished
-      setIsPlaying(false);
-      processNextInQueue();
-    }
-  }, [player.playing, isPlaying, isPaused]);
+    };
+    initializeAudio();
+  }, []);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -127,92 +107,55 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
 
   async function playAudio(audioData: Blob): Promise<number> {
     return new Promise(async (resolve, reject) => {
-      currentRejectRef.current = reject;
-
       try {
         console.log(
           `[AudioPlayer] Playing audio (${audioData.size} bytes, type: ${audioData.type})`
         );
 
-        // Convert blob to file
-        const file = await blobToFile(audioData);
-        currentFileRef.current = file;
+        if (!audioInitialized) {
+          throw new Error('Audio not initialized');
+        }
+
+        // Get PCM data from blob (server now sends PCM format)
+        const arrayBuffer = await audioData.arrayBuffer();
+        let pcm24k = new Uint8Array(arrayBuffer);
+
+        // Resample from 24kHz (OpenAI) to 16kHz (Speechmatics)
+        const pcm16k = resamplePcm24kTo16k(pcm24k);
+
+        // Calculate total duration
+        const samples = pcm16k.length / 2; // 16-bit = 2 bytes per sample
+        const durationSec = samples / 16000; // 16kHz sample rate
+
+        const audioSizeKb = (pcm16k.length / 1024).toFixed(2);
+        console.log('[AudioPlayer] 🔊 Playing audio:', audioSizeKb, 'KB, duration:', durationSec.toFixed(2), 's');
 
         setIsPlaying(true);
-        setIsPaused(false);
 
-        // Load and play audio
-        await player.replace({ uri: file.uri });
-        player.play();
+        // Play entire PCM data at once through Speechmatics
+        playPCMData(pcm16k);
 
-        // Wait for playback to finish
-        const checkInterval = setInterval(() => {
-          if (!player.playing && player.duration > 0) {
-            clearInterval(checkInterval);
-
-            const duration = player.duration;
-            console.log(`[AudioPlayer] Playback finished (duration: ${duration}s)`);
-
-            setIsPlaying(false);
-            currentRejectRef.current = null;
-
-            // Clean up temporary file
-            if (currentFileRef.current) {
-              try {
-                currentFileRef.current.delete();
-              } catch (err: any) {
-                console.warn('[AudioPlayer] Failed to delete temp file:', err);
-              }
-              currentFileRef.current = null;
-            }
-
-            resolve(duration);
-          }
-        }, 100);
+        // Wait for playback to finish (estimate based on duration)
+        setTimeout(() => {
+          console.log('[AudioPlayer] ✅ Playback finished');
+          setIsPlaying(false);
+          resolve(durationSec);
+        }, durationSec * 1000);
 
       } catch (error) {
         console.error('[AudioPlayer] Error playing audio:', error);
         setIsPlaying(false);
-        currentRejectRef.current = null;
-
-        // Clean up temporary file
-        if (currentFileRef.current) {
-          try {
-            currentFileRef.current.delete();
-          } catch (err: any) {
-            console.warn('[AudioPlayer] Failed to delete temp file:', err);
-          }
-          currentFileRef.current = null;
-        }
-
         reject(error);
       }
     });
   }
 
   function stop(): void {
-    // Stop currently playing audio
-    if (player) {
-      player.pause();
+    if (isPlaying) {
+      console.log('[AudioPlayer] 🛑 Stopping playback (interrupted)');
     }
+
     setIsPlaying(false);
-    setIsPaused(false);
-
-    // Clean up temporary file
-    if (currentFileRef.current) {
-      try {
-        currentFileRef.current.delete();
-      } catch (err: any) {
-        console.warn('[AudioPlayer] Failed to delete temp file:', err);
-      }
-      currentFileRef.current = null;
-    }
-
-    // Reject the current playing promise if it exists
-    if (currentRejectRef.current) {
-      currentRejectRef.current(new Error('Playback stopped'));
-      currentRejectRef.current = null;
-    }
 
     // Reject all pending promises in the queue
     while (queueRef.current.length > 0) {
@@ -221,22 +164,6 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
     }
 
     isProcessingQueueRef.current = false;
-  }
-
-  function pause(): void {
-    if (player && isPlaying && !isPaused) {
-      player.pause();
-      setIsPaused(true);
-      console.log('[AudioPlayer] Playback paused');
-    }
-  }
-
-  function resume(): void {
-    if (player && isPaused) {
-      player.play();
-      setIsPaused(false);
-      console.log('[AudioPlayer] Playback resumed');
-    }
   }
 
   function clearQueue(): void {
@@ -250,10 +177,7 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
   return {
     play,
     stop,
-    pause,
-    resume,
     isPlaying: () => isPlaying,
-    isPaused: () => isPaused,
     clearQueue,
   };
 }

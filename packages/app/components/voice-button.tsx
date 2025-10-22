@@ -1,11 +1,131 @@
 import { Pressable, View, Text, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 
 interface VoiceButtonProps {
   state: 'idle' | 'recording' | 'processing' | 'playing';
   onPress: () => void;
   disabled?: boolean;
 }
+
+const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    alignItems: 'center',
+    gap: theme.spacing[4],
+  },
+  pressable: {
+    opacity: 1,
+  },
+  pressableDisabled: {
+    opacity: 0.5,
+  },
+  button: {
+    width: 80,
+    height: 80,
+    borderRadius: theme.borderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  buttonIdle: {
+    backgroundColor: theme.colors.zinc[700],
+  },
+  buttonRecording: {
+    backgroundColor: theme.colors.red[500],
+  },
+  buttonProcessing: {
+    backgroundColor: theme.colors.blue[500],
+  },
+  buttonPlaying: {
+    backgroundColor: theme.colors.green[500],
+  },
+  label: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+  },
+  // Recording icon
+  recordingIcon: {
+    width: 24,
+    height: 24,
+    backgroundColor: '#fff',
+    borderRadius: theme.borderRadius.md,
+  },
+  // Processing icon
+  processingIconContainer: {
+    width: 24,
+    height: 24,
+  },
+  processingDot: {
+    width: 6,
+    height: 6,
+    backgroundColor: '#fff',
+    borderRadius: theme.borderRadius.full,
+    position: 'absolute',
+  },
+  processingDotTop: {
+    top: 0,
+    left: 12,
+  },
+  processingDotRight: {
+    top: 12,
+    right: 0,
+  },
+  processingDotBottom: {
+    bottom: 0,
+    left: 12,
+  },
+  // Playing icon
+  playingIconContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing[1],
+  },
+  playingBar: {
+    backgroundColor: '#fff',
+    borderRadius: theme.borderRadius.sm,
+  },
+  playingBar1: {
+    width: 4,
+    height: 16,
+  },
+  playingBar2: {
+    width: 4,
+    height: 24,
+  },
+  playingBar3: {
+    width: 4,
+    height: 12,
+  },
+  // Idle icon (microphone)
+  micContainer: {
+    width: 24,
+    height: 32,
+    position: 'relative',
+  },
+  micCapsule: {
+    position: 'absolute',
+    bottom: 0,
+    left: 4,
+    width: 16,
+    height: 24,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 999,
+    borderTopRightRadius: 999,
+  },
+  micBase: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    width: 24,
+    height: 6,
+    backgroundColor: '#fff',
+    borderRadius: theme.borderRadius.full,
+  },
+}));
 
 export function VoiceButton({ state, onPress, disabled = false }: VoiceButtonProps) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -34,43 +154,41 @@ export function VoiceButton({ state, onPress, disabled = false }: VoiceButtonPro
   const getButtonStyle = () => {
     switch (state) {
       case 'recording':
-        return 'bg-red-500';
+        return styles.buttonRecording;
       case 'processing':
-        return 'bg-blue-500';
+        return styles.buttonProcessing;
       case 'playing':
-        return 'bg-green-500';
+        return styles.buttonPlaying;
       default:
-        return 'bg-zinc-700';
+        return styles.buttonIdle;
     }
   };
 
   const getIcon = () => {
     switch (state) {
       case 'recording':
-        return (
-          <View className="w-6 h-6 bg-white rounded" />
-        );
+        return <View style={styles.recordingIcon} />;
       case 'processing':
         return (
-          <View className="w-6 h-6">
-            <View className="w-1.5 h-1.5 bg-white rounded-full absolute top-0 left-3" />
-            <View className="w-1.5 h-1.5 bg-white rounded-full absolute top-3 right-0" />
-            <View className="w-1.5 h-1.5 bg-white rounded-full absolute bottom-0 left-3" />
+          <View style={styles.processingIconContainer}>
+            <View style={[styles.processingDot, styles.processingDotTop]} />
+            <View style={[styles.processingDot, styles.processingDotRight]} />
+            <View style={[styles.processingDot, styles.processingDotBottom]} />
           </View>
         );
       case 'playing':
         return (
-          <View className="flex-row items-center gap-1">
-            <View className="w-1 h-4 bg-white rounded" />
-            <View className="w-1 h-6 bg-white rounded" />
-            <View className="w-1 h-3 bg-white rounded" />
+          <View style={styles.playingIconContainer}>
+            <View style={[styles.playingBar, styles.playingBar1]} />
+            <View style={[styles.playingBar, styles.playingBar2]} />
+            <View style={[styles.playingBar, styles.playingBar3]} />
           </View>
         );
       default:
         return (
-          <View className="w-6 h-8 relative">
-            <View className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-6 bg-white rounded-t-full" />
-            <View className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-1.5 bg-white rounded-full" />
+          <View style={styles.micContainer}>
+            <View style={styles.micCapsule} />
+            <View style={styles.micBase} />
           </View>
         );
     }
@@ -90,20 +208,17 @@ export function VoiceButton({ state, onPress, disabled = false }: VoiceButtonPro
   };
 
   return (
-    <View className="items-center gap-4">
+    <View style={styles.container}>
       <Pressable
         onPress={onPress}
         disabled={disabled}
-        className={`${disabled ? 'opacity-50' : 'opacity-100'}`}
+        style={disabled ? styles.pressableDisabled : styles.pressable}
       >
-        <Animated.View
-          style={{ transform: [{ scale: pulseAnim }] }}
-          className={`w-20 h-20 rounded-full ${getButtonStyle()} items-center justify-center shadow-lg`}
-        >
+        <Animated.View style={[styles.button, getButtonStyle(), { transform: [{ scale: pulseAnim }] }]}>
           {getIcon()}
         </Animated.View>
       </Pressable>
-      <Text className="text-zinc-400 text-sm">{getLabel()}</Text>
+      <Text style={styles.label}>{getLabel()}</Text>
     </View>
   );
 }

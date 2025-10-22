@@ -13,7 +13,10 @@ import {
 function createServer() {
   const app = express();
 
-  // Basic authentication
+  // Serve static files from public directory (no auth required for APK downloads)
+  app.use("/public", express.static("public"));
+
+  // Basic authentication (skip for /public routes)
   app.use(
     basicAuth({
       users: { mo: "bo" },
@@ -85,7 +88,7 @@ function main() {
       apiKey,
       voice: ttsVoice,
       model: ttsModel,
-      responseFormat: "mp3",
+      responseFormat: "pcm",
     });
   } else {
     console.warn(

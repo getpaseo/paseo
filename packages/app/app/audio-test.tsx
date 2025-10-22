@@ -1,8 +1,231 @@
 import { View, Text, Pressable, ScrollView, Alert } from 'react-native';
 import { useState, useEffect } from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { useAudioRecorder } from '../hooks/use-audio-recorder';
 import { useAudioPlayer } from '../hooks/use-audio-player';
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from 'expo-audio';
+import type { Theme } from '../styles/theme';
+
+const styles = StyleSheet.create((theme: Theme) => ({
+  scrollView: {
+    flex: 1,
+    backgroundColor: theme.colors.white,
+  },
+  scrollViewDark: {
+    backgroundColor: theme.colors.black,
+  },
+  container: {
+    padding: theme.spacing[6],
+  },
+  title: {
+    fontSize: theme.fontSize['3xl'],
+    fontWeight: theme.fontWeight.bold,
+    color: theme.colors.gray[900],
+    marginBottom: theme.spacing[2],
+  },
+  titleDark: {
+    color: theme.colors.white,
+  },
+  subtitle: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.gray[600],
+    marginBottom: theme.spacing[8],
+  },
+  subtitleDark: {
+    color: theme.colors.gray[400],
+  },
+  section: {
+    marginBottom: theme.spacing[8],
+  },
+  sectionTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.gray[900],
+    marginBottom: theme.spacing[2],
+  },
+  sectionTitleDark: {
+    color: theme.colors.white,
+  },
+  permissionCard: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+  },
+  permissionGranted: {
+    backgroundColor: theme.colors.green[100],
+  },
+  permissionGrantedDark: {
+    backgroundColor: theme.colors.green[900],
+  },
+  permissionDenied: {
+    backgroundColor: theme.colors.red[100],
+  },
+  permissionDeniedDark: {
+    backgroundColor: theme.colors.red[900],
+  },
+  permissionText: {
+    fontSize: theme.fontSize.base,
+  },
+  permissionTextGranted: {
+    color: theme.colors.green[800],
+  },
+  permissionTextGrantedDark: {
+    color: theme.colors.green[200],
+  },
+  permissionTextDenied: {
+    color: theme.colors.red[800],
+  },
+  permissionTextDeniedDark: {
+    color: theme.colors.red[200],
+  },
+  statusCard: {
+    marginBottom: theme.spacing[4],
+    padding: theme.spacing[4],
+    backgroundColor: theme.colors.gray[100],
+    borderRadius: theme.borderRadius.lg,
+  },
+  statusCardDark: {
+    backgroundColor: theme.colors.gray[800],
+  },
+  statusLabel: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.gray[700],
+    marginBottom: theme.spacing[1],
+  },
+  statusLabelDark: {
+    color: theme.colors.gray[300],
+  },
+  statusValue: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.gray[900],
+  },
+  statusValueDark: {
+    color: theme.colors.white,
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    gap: theme.spacing[3],
+    marginBottom: theme.spacing[4],
+  },
+  button: {
+    flex: 1,
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    alignItems: 'center',
+  },
+  buttonBlue: {
+    backgroundColor: theme.colors.blue[500],
+  },
+  buttonBlueDark: {
+    backgroundColor: theme.colors.blue[600],
+  },
+  buttonRed: {
+    backgroundColor: theme.colors.red[500],
+  },
+  buttonRedDark: {
+    backgroundColor: theme.colors.red[600],
+  },
+  buttonGreen: {
+    backgroundColor: theme.colors.green[500],
+  },
+  buttonGreenDark: {
+    backgroundColor: theme.colors.green[600],
+  },
+  buttonPurple: {
+    backgroundColor: theme.colors.purple[500],
+  },
+  buttonPurpleDark: {
+    backgroundColor: theme.colors.purple[600],
+  },
+  buttonOrange: {
+    backgroundColor: theme.colors.orange[500],
+  },
+  buttonOrangeDark: {
+    backgroundColor: theme.colors.orange[600],
+  },
+  buttonDisabled: {
+    backgroundColor: theme.colors.gray[300],
+  },
+  buttonDisabledDark: {
+    backgroundColor: theme.colors.gray[700],
+  },
+  buttonText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.white,
+  },
+  buttonTextDisabled: {
+    color: theme.colors.gray[500],
+  },
+  buttonTextDisabledDark: {
+    color: theme.colors.gray[400],
+  },
+  fullWidthButton: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    alignItems: 'center',
+  },
+  infoCard: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.blue[50],
+  },
+  infoCardDark: {
+    backgroundColor: theme.colors.blue[950],
+  },
+  infoCardLabel: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.blue[700],
+    marginBottom: theme.spacing[1],
+  },
+  infoCardLabelDark: {
+    color: theme.colors.blue[300],
+  },
+  infoCardValue: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.blue[900],
+  },
+  infoCardValueDark: {
+    color: theme.colors.blue[100],
+  },
+  infoCardSubtext: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.blue[600],
+    marginTop: theme.spacing[1],
+  },
+  infoCardSubtextDark: {
+    color: theme.colors.blue[400],
+  },
+  configCard: {
+    padding: theme.spacing[4],
+    backgroundColor: theme.colors.gray[50],
+    borderRadius: theme.borderRadius.lg,
+  },
+  configCardDark: {
+    backgroundColor: theme.colors.gray[900],
+  },
+  configTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.gray[700],
+    marginBottom: theme.spacing[2],
+  },
+  configTitleDark: {
+    color: theme.colors.gray[300],
+  },
+  configText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.gray[600],
+    marginBottom: theme.spacing[1],
+  },
+  configTextDark: {
+    color: theme.colors.gray[400],
+  },
+  gap3: {
+    gap: theme.spacing[3],
+  },
+}));
 
 export default function AudioTestScreen() {
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -124,40 +347,46 @@ export default function AudioTestScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 bg-white dark:bg-black">
-      <View className="p-6">
+    <ScrollView style={[styles.scrollView, styles.scrollViewDark]}>
+      <View style={styles.container}>
         {/* Header */}
-        <Text className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+        <Text style={[styles.title, styles.titleDark]}>
           Audio Test
         </Text>
-        <Text className="text-base text-gray-600 dark:text-gray-400 mb-8">
+        <Text style={[styles.subtitle, styles.subtitleDark]}>
           Test audio recording and playback functionality
         </Text>
 
         {/* Permission Status */}
-        <View className="mb-8">
-          <Text className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, styles.sectionTitleDark]}>
             Permission Status
           </Text>
-          <View className={`p-4 rounded-lg ${permissionGranted ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
-            <Text className={`text-base ${permissionGranted ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'}`}>
+          <View style={[
+            styles.permissionCard,
+            permissionGranted ? styles.permissionGrantedDark : styles.permissionDeniedDark
+          ]}>
+            <Text style={[
+              styles.permissionText,
+              permissionGranted ? styles.permissionTextGrantedDark : styles.permissionTextDeniedDark
+            ]}>
               {permissionGranted ? '✓ Microphone permission granted' : '✗ Microphone permission denied'}
             </Text>
           </View>
         </View>
 
         {/* Recording Section */}
-        <View className="mb-8">
-          <Text className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, styles.sectionTitleDark]}>
             Audio Recording
           </Text>
 
           {/* Recording Status */}
-          <View className="mb-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-            <Text className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <View style={[styles.statusCard, styles.statusCardDark]}>
+            <Text style={[styles.statusLabel, styles.statusLabelDark]}>
               Status
             </Text>
-            <Text className="text-base text-gray-900 dark:text-white">
+            <Text style={[styles.statusValue, styles.statusValueDark]}>
               {recordingStatus === 'idle' && 'Ready to record'}
               {recordingStatus === 'recording' && '🔴 Recording...'}
               {recordingStatus === 'processing' && 'Processing...'}
@@ -165,21 +394,21 @@ export default function AudioTestScreen() {
           </View>
 
           {/* Recording Controls */}
-          <View className="flex-row gap-3 mb-4">
+          <View style={styles.controlsRow}>
             <Pressable
               onPress={handleStartRecording}
               disabled={recordingStatus !== 'idle' || !permissionGranted}
-              className={`flex-1 p-4 rounded-lg items-center ${
-                recordingStatus !== 'idle' || !permissionGranted
-                  ? 'bg-gray-300 dark:bg-gray-700'
-                  : 'bg-blue-500 dark:bg-blue-600'
-              }`}
+              style={[
+                styles.button,
+                (recordingStatus !== 'idle' || !permissionGranted)
+                  ? styles.buttonDisabledDark
+                  : styles.buttonBlueDark
+              ]}
             >
-              <Text className={`text-base font-semibold ${
-                recordingStatus !== 'idle' || !permissionGranted
-                  ? 'text-gray-500 dark:text-gray-400'
-                  : 'text-white'
-              }`}>
+              <Text style={[
+                styles.buttonText,
+                (recordingStatus !== 'idle' || !permissionGranted) && styles.buttonTextDisabledDark
+              ]}>
                 Start Recording
               </Text>
             </Pressable>
@@ -187,17 +416,17 @@ export default function AudioTestScreen() {
             <Pressable
               onPress={handleStopRecording}
               disabled={recordingStatus !== 'recording'}
-              className={`flex-1 p-4 rounded-lg items-center ${
+              style={[
+                styles.button,
                 recordingStatus !== 'recording'
-                  ? 'bg-gray-300 dark:bg-gray-700'
-                  : 'bg-red-500 dark:bg-red-600'
-              }`}
+                  ? styles.buttonDisabledDark
+                  : styles.buttonRedDark
+              ]}
             >
-              <Text className={`text-base font-semibold ${
-                recordingStatus !== 'recording'
-                  ? 'text-gray-500 dark:text-gray-400'
-                  : 'text-white'
-              }`}>
+              <Text style={[
+                styles.buttonText,
+                recordingStatus !== 'recording' && styles.buttonTextDisabledDark
+              ]}>
                 Stop Recording
               </Text>
             </Pressable>
@@ -205,14 +434,14 @@ export default function AudioTestScreen() {
 
           {/* Last Recording Info */}
           {lastRecordingSize !== null && (
-            <View className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg">
-              <Text className="text-sm font-medium text-blue-700 dark:text-blue-300 mb-1">
+            <View style={[styles.infoCard, styles.infoCardDark]}>
+              <Text style={[styles.infoCardLabel, styles.infoCardLabelDark]}>
                 Last Recording
               </Text>
-              <Text className="text-base text-blue-900 dark:text-blue-100">
+              <Text style={[styles.infoCardValue, styles.infoCardValueDark]}>
                 Size: {lastRecordingSize} bytes
               </Text>
-              <Text className="text-sm text-blue-600 dark:text-blue-400 mt-1">
+              <Text style={[styles.infoCardSubtext, styles.infoCardSubtextDark]}>
                 Type: audio/m4a
               </Text>
             </View>
@@ -220,55 +449,55 @@ export default function AudioTestScreen() {
         </View>
 
         {/* Playback Section */}
-        <View className="mb-8">
-          <Text className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, styles.sectionTitleDark]}>
             Audio Playback
           </Text>
 
           {/* Playback Status */}
-          <View className="mb-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-            <Text className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <View style={[styles.statusCard, styles.statusCardDark]}>
+            <Text style={[styles.statusLabel, styles.statusLabelDark]}>
               Status
             </Text>
-            <Text className="text-base text-gray-900 dark:text-white">
+            <Text style={[styles.statusValue, styles.statusValueDark]}>
               {playbackStatus}
             </Text>
           </View>
 
           {/* Playback Controls */}
-          <View className="gap-3">
+          <View style={styles.gap3}>
             <Pressable
               onPress={handlePlayLastRecording}
               disabled={!lastRecordedBlob}
-              className={`p-4 rounded-lg items-center ${
+              style={[
+                styles.fullWidthButton,
                 !lastRecordedBlob
-                  ? 'bg-gray-300 dark:bg-gray-700'
-                  : 'bg-green-500 dark:bg-green-600'
-              }`}
+                  ? styles.buttonDisabledDark
+                  : styles.buttonGreenDark
+              ]}
             >
-              <Text className={`text-base font-semibold ${
-                !lastRecordedBlob
-                  ? 'text-gray-500 dark:text-gray-400'
-                  : 'text-white'
-              }`}>
+              <Text style={[
+                styles.buttonText,
+                !lastRecordedBlob && styles.buttonTextDisabledDark
+              ]}>
                 Play Last Recording
               </Text>
             </Pressable>
 
             <Pressable
               onPress={handlePlayTestAudio}
-              className="p-4 rounded-lg items-center bg-purple-500 dark:bg-purple-600"
+              style={[styles.fullWidthButton, styles.buttonPurpleDark]}
             >
-              <Text className="text-base font-semibold text-white">
+              <Text style={styles.buttonText}>
                 Play Test Audio
               </Text>
             </Pressable>
 
             <Pressable
               onPress={handleStopPlayback}
-              className="p-4 rounded-lg items-center bg-orange-500 dark:bg-orange-600"
+              style={[styles.fullWidthButton, styles.buttonOrangeDark]}
             >
-              <Text className="text-base font-semibold text-white">
+              <Text style={styles.buttonText}>
                 Stop Playback
               </Text>
             </Pressable>
@@ -276,20 +505,20 @@ export default function AudioTestScreen() {
         </View>
 
         {/* Audio Settings Info */}
-        <View className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
-          <Text className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+        <View style={[styles.configCard, styles.configCardDark]}>
+          <Text style={[styles.configTitle, styles.configTitleDark]}>
             Audio Configuration
           </Text>
-          <Text className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <Text style={[styles.configText, styles.configTextDark]}>
             • Sample Rate: 16000 Hz
           </Text>
-          <Text className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <Text style={[styles.configText, styles.configTextDark]}>
             • Channels: 1 (Mono)
           </Text>
-          <Text className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <Text style={[styles.configText, styles.configTextDark]}>
             • Format: M4A/AAC
           </Text>
-          <Text className="text-sm text-gray-600 dark:text-gray-400">
+          <Text style={[styles.configText, styles.configTextDark]}>
             • Optimized for voice/speech
           </Text>
         </View>

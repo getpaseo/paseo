@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 
@@ -80,11 +81,11 @@ function AgentUpdate({
     // Handle message chunks
     if (sessionUpdate.kind === 'agent_message_chunk') {
       return (
-        <View className="bg-zinc-800 rounded-lg p-3 mb-2">
-          <Text className="text-zinc-500 text-xs mb-1">
+        <View style={stylesheet.updateCard}>
+          <Text style={stylesheet.timestampText}>
             {formatTimestamp(update.timestamp)}
           </Text>
-          <Text className="text-white text-sm">{sessionUpdate.chunk || ''}</Text>
+          <Text style={stylesheet.messageText}>{sessionUpdate.chunk || ''}</Text>
         </View>
       );
     }
@@ -92,21 +93,21 @@ function AgentUpdate({
     // Handle tool calls
     if (sessionUpdate.kind === 'tool_call') {
       return (
-        <View className="bg-zinc-800 rounded-lg mb-2 overflow-hidden">
+        <View style={stylesheet.collapsibleCard}>
           <Pressable
             onPress={() => setIsExpanded(!isExpanded)}
-            className="px-3 py-2 active:bg-zinc-700"
+            style={stylesheet.collapsibleHeader}
           >
-            <Text className="text-zinc-500 text-xs mb-1">
+            <Text style={stylesheet.timestampText}>
               {formatTimestamp(update.timestamp)}
             </Text>
-            <Text className="text-blue-400 text-sm font-medium">
+            <Text style={stylesheet.toolCallText}>
               Tool Call: {sessionUpdate.toolName || 'unknown'}
             </Text>
           </Pressable>
           {isExpanded && sessionUpdate.arguments && (
-            <View className="px-3 pb-3 border-t border-zinc-700">
-              <Text className="text-zinc-400 text-xs font-mono mt-2">
+            <View style={stylesheet.collapsibleContent}>
+              <Text style={stylesheet.codeText}>
                 {JSON.stringify(sessionUpdate.arguments, null, 2)}
               </Text>
             </View>
@@ -118,11 +119,11 @@ function AgentUpdate({
     // Handle tool call updates
     if (sessionUpdate.kind === 'tool_call_update') {
       return (
-        <View className="bg-zinc-800 rounded-lg p-3 mb-2">
-          <Text className="text-zinc-500 text-xs mb-1">
+        <View style={stylesheet.updateCard}>
+          <Text style={stylesheet.timestampText}>
             {formatTimestamp(update.timestamp)}
           </Text>
-          <Text className="text-yellow-400 text-sm">
+          <Text style={stylesheet.updateStatusText}>
             {sessionUpdate.status || 'updating'}
           </Text>
         </View>
@@ -133,22 +134,22 @@ function AgentUpdate({
     if (sessionUpdate.kind === 'available_commands_update') {
       const commands = sessionUpdate.commands || [];
       return (
-        <View className="bg-zinc-800 rounded-lg mb-2 overflow-hidden">
+        <View style={stylesheet.collapsibleCard}>
           <Pressable
             onPress={() => setIsExpanded(!isExpanded)}
-            className="px-3 py-2 active:bg-zinc-700"
+            style={stylesheet.collapsibleHeader}
           >
-            <Text className="text-zinc-500 text-xs mb-1">
+            <Text style={stylesheet.timestampText}>
               {formatTimestamp(update.timestamp)}
             </Text>
-            <Text className="text-green-400 text-sm font-medium">
+            <Text style={stylesheet.commandsText}>
               Available Commands ({commands.length})
             </Text>
           </Pressable>
           {isExpanded && (
-            <View className="px-3 pb-3 border-t border-zinc-700">
+            <View style={stylesheet.collapsibleContent}>
               {commands.map((cmd: any, idx: number) => (
-                <Text key={idx} className="text-zinc-400 text-xs mt-1">
+                <Text key={idx} style={stylesheet.commandItem}>
                   • {cmd.name || cmd}
                 </Text>
               ))}
@@ -160,11 +161,11 @@ function AgentUpdate({
 
     // Generic session update
     return (
-      <View className="bg-zinc-800 rounded-lg p-3 mb-2">
-        <Text className="text-zinc-500 text-xs mb-1">
+      <View style={stylesheet.updateCard}>
+        <Text style={stylesheet.timestampText}>
           {formatTimestamp(update.timestamp)}
         </Text>
-        <Text className="text-zinc-400 text-xs font-mono">
+        <Text style={stylesheet.codeText}>
           {JSON.stringify(sessionUpdate, null, 2)}
         </Text>
       </View>
@@ -173,11 +174,11 @@ function AgentUpdate({
 
   // Fallback for unknown notification types
   return (
-    <View className="bg-zinc-800 rounded-lg p-3 mb-2">
-      <Text className="text-zinc-500 text-xs mb-1">
+    <View style={stylesheet.updateCard}>
+      <Text style={stylesheet.timestampText}>
         {formatTimestamp(update.timestamp)}
       </Text>
-      <Text className="text-zinc-400 text-xs font-mono">
+      <Text style={stylesheet.codeText}>
         {JSON.stringify(notification, null, 2)}
       </Text>
     </View>
@@ -204,49 +205,51 @@ export function AgentStreamView({
   const canKill = agent.status !== 'killed' && agent.status !== 'completed';
 
   return (
-    <View className="flex-1 bg-black">
+    <View style={stylesheet.container}>
       {/* Header */}
-      <View className="bg-zinc-900 border-b border-zinc-800 px-4 pb-4" style={{ paddingTop: insets.top + 16 }}>
+      <View style={[stylesheet.header, { paddingTop: insets.top + 16 }]}>
         {/* Back button */}
         <Pressable
           onPress={onBack}
-          className="bg-zinc-800 px-4 py-2 rounded-lg mb-4 active:bg-zinc-700"
+          style={stylesheet.backButton}
         >
-          <Text className="text-white text-sm font-semibold text-center">
+          <Text style={stylesheet.backButtonText}>
             ← Back to Chat
           </Text>
         </Pressable>
 
         {/* Agent info */}
-        <View className="flex-row items-center justify-between mb-3">
-          <View className="flex-row items-center gap-2">
-            <Text className="text-zinc-400 text-sm">Agent:</Text>
-            <Text className="text-white text-sm font-mono">
+        <View style={stylesheet.agentInfoRow}>
+          <View style={stylesheet.agentIdRow}>
+            <Text style={stylesheet.agentLabel}>Agent:</Text>
+            <Text style={stylesheet.agentId}>
               {agentId.substring(0, 8)}
             </Text>
           </View>
           <View
-            className="flex-row items-center gap-2 px-3 py-1 rounded-full"
-            style={{ backgroundColor: getStatusColor(agent.status) }}
+            style={[
+              stylesheet.statusBadge,
+              { backgroundColor: getStatusColor(agent.status) }
+            ]}
           >
-            <Text className="text-white text-xs">{getStatusIcon(agent.status)}</Text>
-            <Text className="text-white text-xs font-medium">{agent.status}</Text>
+            <Text style={stylesheet.statusIcon}>{getStatusIcon(agent.status)}</Text>
+            <Text style={stylesheet.statusText}>{agent.status}</Text>
           </View>
         </View>
 
-        <Text className="text-zinc-500 text-xs">
+        <Text style={stylesheet.createdText}>
           Created: {formatTimestamp(agent.createdAt)}
         </Text>
 
         {/* Control buttons */}
         {(canCancel || canKill) && (
-          <View className="flex-row gap-2 mt-4">
+          <View style={stylesheet.controlButtons}>
             {canCancel && (
               <Pressable
                 onPress={() => onCancelAgent(agentId)}
-                className="flex-1 bg-orange-600 px-4 py-2 rounded-lg active:bg-orange-700"
+                style={stylesheet.cancelButton}
               >
-                <Text className="text-white text-sm font-semibold text-center">
+                <Text style={stylesheet.controlButtonText}>
                   Cancel
                 </Text>
               </Pressable>
@@ -254,9 +257,9 @@ export function AgentStreamView({
             {canKill && (
               <Pressable
                 onPress={() => onKillAgent(agentId)}
-                className="flex-1 bg-red-600 px-4 py-2 rounded-lg active:bg-red-700"
+                style={stylesheet.killButton}
               >
-                <Text className="text-white text-sm font-semibold text-center">
+                <Text style={stylesheet.controlButtonText}>
                   Kill
                 </Text>
               </Pressable>
@@ -268,12 +271,12 @@ export function AgentStreamView({
       {/* Updates list */}
       <ScrollView
         ref={scrollViewRef}
-        className="flex-1 px-4"
+        style={stylesheet.scrollView}
         contentContainerStyle={{ paddingTop: 16, paddingBottom: Math.max(insets.bottom, 32) }}
       >
         {updates.length === 0 ? (
-          <View className="flex-1 items-center justify-center py-12">
-            <Text className="text-zinc-500 text-sm text-center">
+          <View style={stylesheet.emptyState}>
+            <Text style={stylesheet.emptyStateText}>
               No updates yet.{'\n'}Waiting for agent activity...
             </Text>
           </View>
@@ -284,3 +287,167 @@ export function AgentStreamView({
     </View>
   );
 }
+
+const stylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+  },
+  header: {
+    backgroundColor: theme.colors.zinc[900],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
+  },
+  backButton: {
+    backgroundColor: theme.colors.zinc[800],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[4],
+  },
+  backButtonText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    textAlign: "center",
+  },
+  agentInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[3],
+  },
+  agentIdRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  agentLabel: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+  },
+  agentId: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.sm,
+    fontFamily: "monospace",
+  },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+  },
+  statusIcon: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.xs,
+  },
+  statusText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  createdText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+  },
+  controlButtons: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[4],
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: theme.colors.orange[600],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
+  killButton: {
+    flex: 1,
+    backgroundColor: theme.colors.red[600],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
+  controlButtonText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    textAlign: "center",
+  },
+  scrollView: {
+    flex: 1,
+    paddingHorizontal: theme.spacing[4],
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing[12],
+  },
+  emptyStateText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  updateCard: {
+    backgroundColor: theme.colors.zinc[800],
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+  },
+  collapsibleCard: {
+    backgroundColor: theme.colors.zinc[800],
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[2],
+    overflow: "hidden",
+  },
+  collapsibleHeader: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  collapsibleContent: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[3],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.zinc[700],
+  },
+  timestampText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+    marginBottom: theme.spacing[1],
+  },
+  messageText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.sm,
+  },
+  toolCallText: {
+    color: "#60a5fa",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  updateStatusText: {
+    color: "#fbbf24",
+    fontSize: theme.fontSize.sm,
+  },
+  commandsText: {
+    color: "#4ade80",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  commandItem: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
+  },
+  codeText: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.xs,
+    fontFamily: "monospace",
+    marginTop: theme.spacing[2],
+  },
+}));

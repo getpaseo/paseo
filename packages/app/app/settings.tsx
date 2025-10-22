@@ -1,8 +1,235 @@
-import { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TextInput, Switch, Pressable, Alert, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSettings } from '@/hooks/use-settings';
+import { useState, useEffect } from "react";
+import {
+  View,
+  Text,
+  ScrollView,
+  TextInput,
+  Switch,
+  Pressable,
+  Alert,
+  ActivityIndicator,
+} from "react-native";
+import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StyleSheet } from "react-native-unistyles";
+import { useSettings } from "@/hooks/use-settings";
+import type { Theme } from "@/styles/theme";
+
+const styles = StyleSheet.create((theme: Theme) => ({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.lg,
+  },
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+  },
+  header: {
+    paddingHorizontal: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerTitle: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize["3xl"],
+    fontWeight: theme.fontWeight.bold,
+  },
+  cancelButton: {
+    color: theme.colors.blue[500],
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  content: {
+    padding: theme.spacing[6],
+  },
+  section: {
+    marginBottom: theme.spacing[8],
+  },
+  sectionTitle: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[4],
+  },
+  label: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[2],
+  },
+  input: {
+    backgroundColor: theme.colors.zinc[900],
+    color: theme.colors.white,
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[2],
+  },
+  helperText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+    marginBottom: theme.spacing[3],
+  },
+  testButton: {
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.blue[600],
+  },
+  testButtonDisabled: {
+    backgroundColor: theme.colors.zinc[800],
+  },
+  testButtonText: {
+    color: theme.colors.white,
+    fontWeight: theme.fontWeight.semibold,
+    marginLeft: theme.spacing[2],
+  },
+  testResultSuccess: {
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: "#14532d",
+    borderWidth: theme.borderWidth[1],
+    borderColor: "#15803d",
+  },
+  testResultError: {
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: "#7f1d1d",
+    borderWidth: theme.borderWidth[1],
+    borderColor: "#b91c1c",
+  },
+  testResultTextSuccess: {
+    color: "#4ade80",
+  },
+  testResultTextError: {
+    color: "#f87171",
+  },
+  settingCard: {
+    backgroundColor: theme.colors.zinc[900],
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+  },
+  settingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  settingContent: {
+    flex: 1,
+  },
+  settingTitle: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.base,
+    marginBottom: theme.spacing[1],
+  },
+  settingDescription: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+  },
+  themeCardDisabled: {
+    backgroundColor: theme.colors.zinc[900],
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    opacity: theme.opacity[50],
+  },
+  themeHelpText: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[3],
+  },
+  themeOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: theme.spacing[2],
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[2],
+    marginRight: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radioOuterSelected: {
+    borderColor: theme.colors.blue[500],
+  },
+  radioOuterUnselected: {
+    borderColor: theme.colors.zinc[600],
+  },
+  radioInner: {
+    width: 12,
+    height: 12,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.blue[500],
+  },
+  themeOptionText: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.base,
+    textTransform: "capitalize",
+  },
+  saveButton: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[3],
+    backgroundColor: theme.colors.blue[500],
+  },
+  saveButtonDisabled: {
+    backgroundColor: "#1e3a8a",
+    opacity: theme.opacity[50],
+  },
+  saveButtonText: {
+    color: theme.colors.white,
+    textAlign: "center",
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  resetButton: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: "#7f1d1d",
+  },
+  resetButtonText: {
+    color: theme.colors.red[500],
+    textAlign: "center",
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  footer: {
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.zinc[800],
+    paddingTop: theme.spacing[6],
+  },
+  footerText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  footerVersion: {
+    color: theme.colors.zinc[600],
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+    marginTop: theme.spacing[1],
+  },
+}));
 
 export default function SettingsScreen() {
   const { settings, isLoading, updateSettings, resetSettings } = useSettings();
@@ -11,10 +238,13 @@ export default function SettingsScreen() {
   const [serverUrl, setServerUrl] = useState(settings.serverUrl);
   const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
   const [keepScreenOn, setKeepScreenOn] = useState(settings.keepScreenOn);
-  const [theme, setTheme] = useState<'dark' | 'light' | 'auto'>(settings.theme);
+  const [theme, setTheme] = useState<"dark" | "light" | "auto">(settings.theme);
   const [hasChanges, setHasChanges] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   // Update local state when settings load
   useEffect(() => {
@@ -37,7 +267,7 @@ export default function SettingsScreen() {
   function validateServerUrl(url: string): boolean {
     try {
       const urlObj = new URL(url);
-      return urlObj.protocol === 'ws:' || urlObj.protocol === 'wss:';
+      return urlObj.protocol === "ws:" || urlObj.protocol === "wss:";
     } catch {
       return false;
     }
@@ -47,9 +277,9 @@ export default function SettingsScreen() {
     // Validate server URL
     if (!validateServerUrl(serverUrl)) {
       Alert.alert(
-        'Invalid URL',
-        'Server URL must be a valid WebSocket URL (ws:// or wss://)',
-        [{ text: 'OK' }]
+        "Invalid URL",
+        "Server URL must be a valid WebSocket URL (ws:// or wss://)",
+        [{ text: "OK" }]
       );
       return;
     }
@@ -63,39 +293,43 @@ export default function SettingsScreen() {
       });
 
       Alert.alert(
-        'Settings Saved',
-        'Your settings have been saved successfully.',
+        "Settings Saved",
+        "Your settings have been saved successfully.",
         [
           {
-            text: 'OK',
+            text: "OK",
             onPress: () => router.back(),
           },
         ]
       );
     } catch (error) {
-      Alert.alert(
-        'Error',
-        'Failed to save settings. Please try again.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert("Error", "Failed to save settings. Please try again.", [
+        { text: "OK" },
+      ]);
     }
   }
 
   async function handleReset() {
     Alert.alert(
-      'Reset Settings',
-      'Are you sure you want to reset all settings to defaults?',
+      "Reset Settings",
+      "Are you sure you want to reset all settings to defaults?",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Reset',
-          style: 'destructive',
+          text: "Reset",
+          style: "destructive",
           onPress: async () => {
             try {
               await resetSettings();
-              Alert.alert('Settings Reset', 'All settings have been reset to defaults.');
+              Alert.alert(
+                "Settings Reset",
+                "All settings have been reset to defaults."
+              );
             } catch (error) {
-              Alert.alert('Error', 'Failed to reset settings. Please try again.');
+              Alert.alert(
+                "Error",
+                "Failed to reset settings. Please try again."
+              );
             }
           },
         },
@@ -106,13 +340,13 @@ export default function SettingsScreen() {
   function handleCancel() {
     if (hasChanges) {
       Alert.alert(
-        'Discard Changes',
-        'You have unsaved changes. Are you sure you want to go back?',
+        "Discard Changes",
+        "You have unsaved changes. Are you sure you want to go back?",
         [
-          { text: 'Stay', style: 'cancel' },
+          { text: "Stay", style: "cancel" },
           {
-            text: 'Discard',
-            style: 'destructive',
+            text: "Discard",
+            style: "destructive",
             onPress: () => router.back(),
           },
         ]
@@ -125,9 +359,9 @@ export default function SettingsScreen() {
   async function handleTestConnection() {
     if (!validateServerUrl(serverUrl)) {
       Alert.alert(
-        'Invalid URL',
-        'Server URL must be a valid WebSocket URL (ws:// or wss://)',
-        [{ text: 'OK' }]
+        "Invalid URL",
+        "Server URL must be a valid WebSocket URL (ws:// or wss://)",
+        [{ text: "OK" }]
       );
       return;
     }
@@ -142,7 +376,7 @@ export default function SettingsScreen() {
         ws.close();
         setTestResult({
           success: false,
-          message: 'Connection timeout - server did not respond',
+          message: "Connection timeout - server did not respond",
         });
         setIsTesting(false);
       }, 5000);
@@ -152,7 +386,7 @@ export default function SettingsScreen() {
         ws.close();
         setTestResult({
           success: true,
-          message: 'Connection successful',
+          message: "Connection successful",
         });
         setIsTesting(false);
       };
@@ -161,14 +395,14 @@ export default function SettingsScreen() {
         clearTimeout(timeout);
         setTestResult({
           success: false,
-          message: 'Connection failed - check URL and network',
+          message: "Connection failed - check URL and network",
         });
         setIsTesting(false);
       };
     } catch (error) {
       setTestResult({
         success: false,
-        message: 'Failed to create connection',
+        message: "Failed to create connection",
       });
       setIsTesting(false);
     }
@@ -176,35 +410,33 @@ export default function SettingsScreen() {
 
   if (isLoading) {
     return (
-      <View className="flex-1 bg-black items-center justify-center">
-        <Text className="text-white text-lg">Loading settings...</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Loading settings...</Text>
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-black">
+    <View style={styles.container}>
       {/* Header */}
-      <View className="px-6 pb-4 border-b border-gray-800" style={{ paddingTop: insets.top + 16 }}>
-        <View className="flex-row items-center justify-between">
-          <Text className="text-white text-3xl font-bold">Settings</Text>
+      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <View style={styles.headerRow}>
+          <Text style={styles.headerTitle}>Settings</Text>
           <Pressable onPress={handleCancel}>
-            <Text className="text-blue-500 text-base font-semibold">Cancel</Text>
+            <Text style={styles.cancelButton}>Cancel</Text>
           </Pressable>
         </View>
       </View>
 
-      <ScrollView className="flex-1">
-        <View className="p-6">
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.content}>
           {/* Server Configuration */}
-          <View className="mb-8">
-            <Text className="text-white text-lg font-semibold mb-4">
-              Server Configuration
-            </Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Server Configuration</Text>
 
-            <Text className="text-gray-400 text-sm mb-2">WebSocket URL</Text>
+            <Text style={styles.label}>WebSocket URL</Text>
             <TextInput
-              className="bg-zinc-900 text-white p-4 rounded-lg mb-2"
+              style={styles.input}
               placeholder="wss://example.com/ws"
               placeholderTextColor="#6b7280"
               value={serverUrl}
@@ -216,7 +448,7 @@ export default function SettingsScreen() {
               autoCorrect={false}
               keyboardType="url"
             />
-            <Text className="text-gray-500 text-xs mb-3">
+            <Text style={styles.helperText}>
               Must be a valid WebSocket URL (ws:// or wss://)
             </Text>
 
@@ -224,30 +456,38 @@ export default function SettingsScreen() {
             <Pressable
               onPress={handleTestConnection}
               disabled={isTesting || !validateServerUrl(serverUrl)}
-              className={`p-3 rounded-lg mb-3 flex-row items-center justify-center ${
-                isTesting || !validateServerUrl(serverUrl) ? 'bg-zinc-800' : 'bg-blue-600 active:bg-blue-700'
-              }`}
+              style={[
+                styles.testButton,
+                (isTesting || !validateServerUrl(serverUrl)) &&
+                  styles.testButtonDisabled,
+              ]}
             >
               {isTesting ? (
                 <>
                   <ActivityIndicator size="small" color="#fff" />
-                  <Text className="text-white font-semibold ml-2">Testing...</Text>
+                  <Text style={styles.testButtonText}>Testing...</Text>
                 </>
               ) : (
-                <Text className="text-white font-semibold">Test Connection</Text>
+                <Text style={styles.testButtonText}>Test Connection</Text>
               )}
             </Pressable>
 
             {/* Test Result */}
             {testResult && (
               <View
-                className={`p-3 rounded-lg ${
+                style={
                   testResult.success
-                    ? 'bg-green-900/30 border border-green-700'
-                    : 'bg-red-900/30 border border-red-700'
-                }`}
+                    ? styles.testResultSuccess
+                    : styles.testResultError
+                }
               >
-                <Text className={testResult.success ? 'text-green-400' : 'text-red-400'}>
+                <Text
+                  style={
+                    testResult.success
+                      ? styles.testResultTextSuccess
+                      : styles.testResultTextError
+                  }
+                >
                   {testResult.message}
                 </Text>
               </View>
@@ -255,110 +495,99 @@ export default function SettingsScreen() {
           </View>
 
           {/* Audio Settings */}
-          <View className="mb-8">
-            <Text className="text-white text-lg font-semibold mb-4">
-              Audio
-            </Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Audio</Text>
 
-            <View className="bg-zinc-900 rounded-lg p-4 mb-3">
-              <View className="flex-row justify-between items-center">
-                <View className="flex-1">
-                  <Text className="text-white text-base mb-1">Use Speaker</Text>
-                  <Text className="text-gray-400 text-sm">
+            <View style={styles.settingCard}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingContent}>
+                  <Text style={styles.settingTitle}>Use Speaker</Text>
+                  <Text style={styles.settingDescription}>
                     Play audio through speaker instead of earpiece
                   </Text>
                 </View>
                 <Switch
                   value={useSpeaker}
                   onValueChange={setUseSpeaker}
-                  trackColor={{ false: '#374151', true: '#3b82f6' }}
-                  thumbColor={useSpeaker ? '#60a5fa' : '#d1d5db'}
+                  trackColor={{ false: "#374151", true: "#3b82f6" }}
+                  thumbColor={useSpeaker ? "#60a5fa" : "#d1d5db"}
                 />
               </View>
             </View>
 
-            <View className="bg-zinc-900 rounded-lg p-4">
-              <View className="flex-row justify-between items-center">
-                <View className="flex-1">
-                  <Text className="text-white text-base mb-1">Keep Screen On</Text>
-                  <Text className="text-gray-400 text-sm">
+            <View style={styles.settingCard}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingContent}>
+                  <Text style={styles.settingTitle}>Keep Screen On</Text>
+                  <Text style={styles.settingDescription}>
                     Prevent screen from sleeping during voice sessions
                   </Text>
                 </View>
                 <Switch
                   value={keepScreenOn}
                   onValueChange={setKeepScreenOn}
-                  trackColor={{ false: '#374151', true: '#3b82f6' }}
-                  thumbColor={keepScreenOn ? '#60a5fa' : '#d1d5db'}
+                  trackColor={{ false: "#374151", true: "#3b82f6" }}
+                  thumbColor={keepScreenOn ? "#60a5fa" : "#d1d5db"}
                 />
               </View>
             </View>
           </View>
 
           {/* Theme Settings */}
-          <View className="mb-8">
-            <Text className="text-white text-lg font-semibold mb-4">
-              Theme
-            </Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Theme</Text>
 
-            <View className="bg-zinc-900 rounded-lg p-4 opacity-50">
-              <Text className="text-gray-400 text-sm mb-3">
+            <View style={styles.themeCardDisabled}>
+              <Text style={styles.themeHelpText}>
                 Theme selection (coming soon)
               </Text>
 
-              {(['dark', 'light', 'auto'] as const).map((themeOption) => (
+              {(["dark", "light", "auto"] as const).map((themeOption) => (
                 <Pressable
                   key={themeOption}
                   disabled
-                  className="flex-row items-center py-2"
+                  style={styles.themeOption}
                 >
-                  <View className={`w-5 h-5 rounded-full border-2 ${
-                    theme === themeOption ? 'border-blue-500' : 'border-gray-600'
-                  } mr-3 items-center justify-center`}>
+                  <View
+                    style={[
+                      styles.radioOuter,
+                      theme === themeOption
+                        ? styles.radioOuterSelected
+                        : styles.radioOuterUnselected,
+                    ]}
+                  >
                     {theme === themeOption && (
-                      <View className="w-3 h-3 rounded-full bg-blue-500" />
+                      <View style={styles.radioInner} />
                     )}
                   </View>
-                  <Text className="text-gray-400 text-base capitalize">
-                    {themeOption}
-                  </Text>
+                  <Text style={styles.themeOptionText}>{themeOption}</Text>
                 </Pressable>
               ))}
             </View>
           </View>
 
           {/* Action Buttons */}
-          <View className="mb-8">
+          <View style={styles.section}>
             <Pressable
-              className={`p-4 rounded-lg mb-3 ${
-                hasChanges ? 'bg-blue-500' : 'bg-blue-500/50'
-              }`}
+              style={[
+                styles.saveButton,
+                !hasChanges && styles.saveButtonDisabled,
+              ]}
               onPress={handleSave}
               disabled={!hasChanges}
             >
-              <Text className="text-white text-center text-base font-semibold">
-                Save Settings
-              </Text>
+              <Text style={styles.saveButtonText}>Save Settings</Text>
             </Pressable>
 
-            <Pressable
-              className="p-4 rounded-lg border border-red-500/30"
-              onPress={handleReset}
-            >
-              <Text className="text-red-500 text-center text-base font-semibold">
-                Reset to Defaults
-              </Text>
+            <Pressable style={styles.resetButton} onPress={handleReset}>
+              <Text style={styles.resetButtonText}>Reset to Defaults</Text>
             </Pressable>
           </View>
 
           {/* App Info */}
-          <View className="border-t border-gray-800 pt-6">
-            <Text className="text-gray-500 text-sm text-center">
-              Voice Assistant Mobile
-            </Text>
-            <Text className="text-gray-600 text-xs text-center mt-1">
-              Version 1.0.0
-            </Text>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Voice Assistant Mobile</Text>
+            <Text style={styles.footerVersion}>Version 1.0.0</Text>
           </View>
         </View>
       </ScrollView>

@@ -3,6 +3,7 @@ import { Modal, View, Text, Pressable, ScrollView, Alert, KeyboardAvoidingView, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MessageSquare, X, Plus, Trash2 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { StyleSheet } from 'react-native-unistyles';
 import type { UseWebSocketReturn } from '../hooks/use-websocket';
 
 const STORAGE_KEY = '@voice-dev:conversation-id';
@@ -177,7 +178,7 @@ export function ConversationSelector({
     <View>
       <Pressable
         onPress={() => setIsOpen(true)}
-        className="bg-zinc-800 px-4 py-2 rounded-lg"
+        style={styles.triggerButton}
       >
         <MessageSquare size={20} color="white" />
       </Pressable>
@@ -188,99 +189,94 @@ export function ConversationSelector({
         transparent={true}
         onRequestClose={() => setIsOpen(false)}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <View style={styles.modalOverlay}>
           <Pressable
-            style={{ flex: 1 }}
+            style={styles.modalBackdrop}
             onPress={() => setIsOpen(false)}
           />
-          <View style={{ backgroundColor: '#18181b', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '80%' }}>
-            <View style={{ flex: 1 }}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalInner}>
               {/* Header */}
-              <View className="flex-row items-center justify-between p-6 border-b border-zinc-800">
-              <Text className="text-white text-lg font-semibold">
-                Conversations {conversations.length > 0 && `(${conversations.length})`}
-              </Text>
-              <Pressable onPress={() => setIsOpen(false)}>
-                <X size={24} color="white" />
-              </Pressable>
-            </View>
+              <View style={styles.header}>
+                <Text style={styles.headerTitle}>
+                  Conversations {conversations.length > 0 && `(${conversations.length})`}
+                </Text>
+                <Pressable onPress={() => setIsOpen(false)}>
+                  <X size={24} color="white" />
+                </Pressable>
+              </View>
 
-            {/* New Conversation Button */}
-            <View className="p-4 border-b border-zinc-800">
-              <Pressable
-                onPress={handleNewConversation}
-                className="flex-row items-center justify-center gap-2 bg-zinc-800 py-3 rounded-lg"
-              >
-                <Plus size={20} color="white" />
-                <Text className="text-white font-semibold">New Conversation</Text>
-              </Pressable>
-            </View>
-
-            {/* Conversations List */}
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 20 }}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-            >
-              {isLoading && (
-                <View className="p-8 items-center">
-                  <Text className="text-zinc-400">Loading...</Text>
-                </View>
-              )}
-
-              {!isLoading && conversations.length === 0 && (
-                <View className="p-8 items-center">
-                  <Text className="text-zinc-400">No saved conversations</Text>
-                </View>
-              )}
-
-              {!isLoading && conversations.map((conversation) => (
-                <View
-                  key={conversation.id}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: 16,
-                    borderBottomWidth: 1,
-                    borderBottomColor: '#27272a',
-                    backgroundColor: conversation.id === currentConversationId ? '#27272a' : 'transparent'
-                  }}
+              {/* New Conversation Button */}
+              <View style={styles.newButtonContainer}>
+                <Pressable
+                  onPress={handleNewConversation}
+                  style={styles.newButton}
                 >
-                  <Pressable
-                    style={{ flex: 1 }}
-                    onPress={() => handleSelectConversation(conversation.id)}
-                  >
-                    <Text style={{ color: 'white', fontWeight: '600', fontSize: 16 }}>
-                      {conversation.messageCount} messages
-                    </Text>
-                    <Text style={{ color: '#a1a1aa', fontSize: 14, marginTop: 4 }}>
-                      {formatDate(conversation.lastUpdated)}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleDeleteConversation(conversation.id)}
-                    style={{ padding: 8 }}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Trash2 size={20} color="#ef4444" />
-                  </Pressable>
-                </View>
-              ))}
+                  <Plus size={20} color="white" />
+                  <Text style={styles.newButtonText}>New Conversation</Text>
+                </Pressable>
+              </View>
 
-              {!isLoading && conversations.length > 0 && (
-                <View className="p-4">
-                  <Pressable
-                    onPress={handleClearAll}
-                    className="flex-row items-center justify-center gap-2 bg-red-900/20 py-3 rounded-lg border border-red-900"
+              {/* Conversations List */}
+              <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+              >
+                {isLoading && (
+                  <View style={styles.loadingContainer}>
+                    <Text style={styles.loadingText}>Loading...</Text>
+                  </View>
+                )}
+
+                {!isLoading && conversations.length === 0 && (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No saved conversations</Text>
+                  </View>
+                )}
+
+                {!isLoading && conversations.map((conversation) => (
+                  <View
+                    key={conversation.id}
+                    style={[
+                      styles.conversationItem,
+                      conversation.id === currentConversationId && styles.conversationItemActive
+                    ]}
                   >
-                    <Trash2 size={18} color="#ef4444" />
-                    <Text className="text-red-500 font-semibold">Clear All</Text>
-                  </Pressable>
-                </View>
-              )}
-            </ScrollView>
+                    <Pressable
+                      style={styles.conversationContent}
+                      onPress={() => handleSelectConversation(conversation.id)}
+                    >
+                      <Text style={styles.conversationTitle}>
+                        {conversation.messageCount} messages
+                      </Text>
+                      <Text style={styles.conversationDate}>
+                        {formatDate(conversation.lastUpdated)}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDeleteConversation(conversation.id)}
+                      style={styles.deleteButton}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Trash2 size={20} color="#ef4444" />
+                    </Pressable>
+                  </View>
+                ))}
+
+                {!isLoading && conversations.length > 0 && (
+                  <View style={styles.clearAllContainer}>
+                    <Pressable
+                      onPress={handleClearAll}
+                      style={styles.clearAllButton}
+                    >
+                      <Trash2 size={18} color="#ef4444" />
+                      <Text style={styles.clearAllText}>Clear All</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </ScrollView>
             </View>
           </View>
         </View>
@@ -288,3 +284,125 @@ export function ConversationSelector({
     </View>
   );
 }
+
+const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  triggerButton: {
+    backgroundColor: theme.colors.zinc[800],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalBackdrop: {
+    flex: 1,
+  },
+  modalContent: {
+    backgroundColor: theme.colors.zinc[900],
+    borderTopLeftRadius: theme.spacing[6],
+    borderTopRightRadius: theme.spacing[6],
+    height: '80%',
+  },
+  modalInner: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: theme.spacing[6],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  headerTitle: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  newButtonContainer: {
+    padding: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  newButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.spacing[2],
+    backgroundColor: theme.colors.zinc[800],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+  },
+  newButtonText: {
+    color: theme.colors.white,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: theme.spacing[4] * 5,
+  },
+  loadingContainer: {
+    padding: theme.spacing[8],
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: theme.colors.zinc[400],
+  },
+  emptyContainer: {
+    padding: theme.spacing[8],
+    alignItems: 'center',
+  },
+  emptyText: {
+    color: theme.colors.zinc[400],
+  },
+  conversationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+    backgroundColor: 'transparent',
+  },
+  conversationItemActive: {
+    backgroundColor: theme.colors.zinc[800],
+  },
+  conversationContent: {
+    flex: 1,
+  },
+  conversationTitle: {
+    color: theme.colors.white,
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
+  },
+  conversationDate: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
+  },
+  deleteButton: {
+    padding: theme.spacing[2],
+  },
+  clearAllContainer: {
+    padding: theme.spacing[4],
+  },
+  clearAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.spacing[2],
+    backgroundColor: 'rgba(127, 29, 29, 0.2)',
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.red[900],
+  },
+  clearAllText: {
+    color: theme.colors.red[500],
+    fontWeight: theme.fontWeight.semibold,
+  },
+}));

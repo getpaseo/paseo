@@ -13,3 +13,11 @@ This is an npm workspace monorepo:
 - **Root**: Workspace configuration and shared TypeScript config
 - **packages/server**: Backend server (Express + WebSocket API)
 - **packages/app**: Cross-platform app (Expo - iOS, Android, Web)
+
+## Running and checking logs
+
+We run the mobile app and server in the tmux session `voice-dev`:
+
+tmux capture-pane -t voice-dev:mobile -p
+
+tmux capture-pane -t voice-dev:server -p

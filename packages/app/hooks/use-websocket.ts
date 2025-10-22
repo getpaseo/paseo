@@ -58,7 +58,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
           // Only session messages trigger handlers
           if (wsMessage.type === 'session') {
             const sessionMessage = wsMessage.message;
-            console.log(`[WS] Received session message type: ${sessionMessage.type}`);
+            // console.log(`[WS] Received session message type: ${sessionMessage.type}`);
 
             // Track conversation ID when loaded
             if (sessionMessage.type === 'conversation_loaded') {

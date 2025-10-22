@@ -1,77 +1,111 @@
-import { useEffect, useState, useRef } from 'react';
-import { View, Pressable, Text, TextInput, Platform, KeyboardAvoidingView, ScrollView, Animated } from 'react-native';
-import { router } from 'expo-router';
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useState, useRef } from "react";
+import {
+  View,
+  Pressable,
+  Text,
+  TextInput,
+  Platform,
+  KeyboardAvoidingView,
+  ScrollView,
+  Animated,
+} from "react-native";
+import { router } from "expo-router";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StyleSheet } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 
 // Simple unique ID generator
 let messageIdCounter = 0;
 function generateMessageId(): string {
   return `msg_${Date.now()}_${messageIdCounter++}`;
 }
-import { useWebSocket } from '@/hooks/use-websocket';
-import { useAudioRecorder } from '@/hooks/use-audio-recorder';
-import { useAudioPlayer } from '@/hooks/use-audio-player';
-import { useRealtimeAudio } from '@/hooks/use-realtime-audio';
-import { useSettings } from '@/hooks/use-settings';
-import { ConnectionStatus } from '@/components/connection-status';
-import { UserMessage, AssistantMessage, ActivityLog, ToolCall } from '@/components/message';
-import { ArtifactDrawer, type Artifact } from '@/components/artifact-drawer';
-import { ActiveProcesses } from '@/components/active-processes';
-import { AgentStreamView } from '@/components/agent-stream-view';
-import { ConversationSelector } from '@/components/conversation-selector';
-import { Settings, Mic, ArrowUp, Square, AudioLines } from 'lucide-react-native';
+import { useWebSocket } from "@/hooks/use-websocket";
+import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
+import { useSettings } from "@/hooks/use-settings";
+import { ConnectionStatus } from "@/components/connection-status";
+import {
+  UserMessage,
+  AssistantMessage,
+  ActivityLog,
+  ToolCall,
+} from "@/components/message";
+import { ArtifactDrawer, type Artifact } from "@/components/artifact-drawer";
+import { ActiveProcesses } from "@/components/active-processes";
+import { AgentStreamView } from "@/components/agent-stream-view";
+import { ConversationSelector } from "@/components/conversation-selector";
+import {
+  Settings,
+  Mic,
+  ArrowUp,
+  Square,
+  AudioLines,
+} from "lucide-react-native";
 import type {
   ActivityLogPayload,
   SessionInboundMessage,
   WSInboundMessage,
-} from '@server/server/messages';
-import type { AgentStatus } from '@server/server/acp/types';
-import type { SessionNotification } from '@agentclientprotocol/sdk';
+} from "@server/server/messages";
+import type { AgentStatus } from "@server/server/acp/types";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 
 type MessageEntry =
   | {
-      type: 'user';
+      type: "user";
       id: string;
       timestamp: number;
       message: string;
     }
   | {
-      type: 'assistant';
+      type: "assistant";
       id: string;
       timestamp: number;
       message: string;
     }
   | {
-      type: 'activity';
+      type: "activity";
       id: string;
       timestamp: number;
-      activityType: 'system' | 'info' | 'success' | 'error';
+      activityType: "system" | "info" | "success" | "error";
       message: string;
       metadata?: Record<string, unknown>;
     }
   | {
-      type: 'tool_call';
+      type: "artifact";
+      id: string;
+      timestamp: number;
+      artifactId: string;
+      artifactType: string;
+      title: string;
+    }
+  | {
+      type: "tool_call";
       id: string;
       timestamp: number;
       toolName: string;
       args: any;
       result?: any;
       error?: any;
-      status: 'executing' | 'completed' | 'failed';
+      status: "executing" | "completed" | "failed";
     };
 
-type ViewMode = 'orchestrator' | 'agent';
+type ViewMode = "orchestrator" | "agent";
 
 interface Agent {
   id: string;
   status: AgentStatus;
   createdAt: Date;
-  type: 'claude';
+  type: "claude";
   sessionId?: string;
   error?: string;
   currentModeId?: string;
-  availableModes?: Array<{ id: string; name: string; description?: string | null }>;
+  availableModes?: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+  }>;
 }
 
 interface Command {
@@ -98,81 +132,85 @@ export default function VoiceAssistantScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const audioRecorder = useAudioRecorder();
-  const audioPlayer = useAudioPlayer({ useSpeaker: settings.useSpeaker });
+  const audioPlayer = useAudioPlayer();
   const insets = useSafeAreaInsets();
 
-  // Realtime audio with WebRTC
-  const realtimeAudio = useRealtimeAudio({
+  // Realtime audio with Speechmatics (echo cancellation)
+  const realtimeAudio = useSpeechmaticsAudio({
     onSpeechStart: () => {
-      console.log('[App] Speech detected');
-      // Pause audio playback if playing
+      console.log("[App] Speech detected");
+      // Stop audio playback if playing
       if (isPlayingAudio) {
-        audioPlayer.pause();
+        audioPlayer.stop();
       }
     },
     onSpeechEnd: () => {
-      console.log('[App] Speech ended');
+      console.log("[App] Speech ended");
     },
     onAudioSegment: (base64Audio: string) => {
-      console.log('[App] Sending audio segment, length:', base64Audio.length);
+      console.log("[App] Sending audio segment, length:", base64Audio.length);
 
       // Send audio segment to server
       try {
         ws.send({
-          type: 'session',
+          type: "session",
           message: {
-            type: 'audio_chunk',
+            type: "audio_chunk",
             audio: base64Audio,
-            format: 'audio/pcm',
+            format: "audio/wav",
             isLast: true, // Complete segment
           },
         });
       } catch (error) {
-        console.error('[App] Failed to send audio segment:', error);
+        console.error("[App] Failed to send audio segment:", error);
       }
     },
     onError: (error) => {
-      console.error('[App] Realtime audio error:', error);
+      console.error("[App] Realtime audio error:", error);
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
-          activityType: 'error',
+          activityType: "error",
           message: `Realtime audio error: ${error.message}`,
         },
       ]);
     },
-    volumeThreshold: 0.02,
+    volumeThreshold: 0.3,
     silenceDuration: 1000,
+    speechConfirmationDuration: 300,
+    detectionGracePeriod: 200,
   });
 
   const [messages, setMessages] = useState<MessageEntry[]>([]);
-  const [currentAssistantMessage, setCurrentAssistantMessage] = useState('');
+  const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [userInput, setUserInput] = useState('');
+  const [userInput, setUserInput] = useState("");
 
   // Artifact state
   const [artifacts, setArtifacts] = useState<Map<string, Artifact>>(new Map());
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
 
   // Multi-view navigation state
-  const [viewMode, setViewMode] = useState<ViewMode>('orchestrator');
+  const [viewMode, setViewMode] = useState<ViewMode>("orchestrator");
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
 
   // Agent and command state
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
-  const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(new Map());
+  const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(
+    new Map()
+  );
 
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Pulse animation for speech indicator
   useEffect(() => {
-    if (realtimeAudio.isSpeaking) {
+    if (realtimeAudio.isSpeaking || realtimeAudio.isDetecting) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -191,16 +229,16 @@ export default function VoiceAssistantScreen() {
       pulseAnim.stopAnimation();
       pulseAnim.setValue(1);
     }
-  }, [realtimeAudio.isSpeaking, pulseAnim]);
+  }, [realtimeAudio.isSpeaking, realtimeAudio.isDetecting, pulseAnim]);
 
   // Keep screen awake if setting is enabled (mobile only)
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (Platform.OS === "web") return;
 
     if (settings.keepScreenOn) {
-      activateKeepAwakeAsync('voice-assistant');
+      activateKeepAwakeAsync("voice-assistant");
     } else {
-      deactivateKeepAwake('voice-assistant');
+      deactivateKeepAwake("voice-assistant");
     }
   }, [settings.keepScreenOn]);
 
@@ -212,11 +250,17 @@ export default function VoiceAssistantScreen() {
   // WebSocket message handlers
   useEffect(() => {
     // Session state handler - initial agents/commands
-    const unsubSessionState = ws.on('session_state', (message) => {
-      if (message.type !== 'session_state') return;
+    const unsubSessionState = ws.on("session_state", (message) => {
+      if (message.type !== "session_state") return;
       const { agents: agentsList, commands: commandsList } = message.payload;
 
-      console.log('[App] Session state received:', agentsList.length, 'agents,', commandsList.length, 'commands');
+      console.log(
+        "[App] Session state received:",
+        agentsList.length,
+        "agents,",
+        commandsList.length,
+        "commands"
+      );
 
       // Update agents
       setAgents(new Map(agentsList.map((a) => [a.id, a as Agent])));
@@ -226,11 +270,12 @@ export default function VoiceAssistantScreen() {
     });
 
     // Agent created handler
-    const unsubAgentCreated = ws.on('agent_created', (message) => {
-      if (message.type !== 'agent_created') return;
-      const { agentId, status, type, currentModeId, availableModes } = message.payload;
+    const unsubAgentCreated = ws.on("agent_created", (message) => {
+      if (message.type !== "agent_created") return;
+      const { agentId, status, type, currentModeId, availableModes } =
+        message.payload;
 
-      console.log('[App] Agent created:', agentId);
+      console.log("[App] Agent created:", agentId);
 
       const agent: Agent = {
         id: agentId,
@@ -246,11 +291,11 @@ export default function VoiceAssistantScreen() {
     });
 
     // Agent update handler
-    const unsubAgentUpdate = ws.on('agent_update', (message) => {
-      if (message.type !== 'agent_update') return;
+    const unsubAgentUpdate = ws.on("agent_update", (message) => {
+      if (message.type !== "agent_update") return;
       const { agentId, timestamp, notification } = message.payload;
 
-      console.log('[App] Agent update:', agentId);
+      console.log("[App] Agent update:", agentId);
 
       setAgentUpdates((prev) => {
         const updated = new Map(prev);
@@ -267,11 +312,11 @@ export default function VoiceAssistantScreen() {
     });
 
     // Agent status handler
-    const unsubAgentStatus = ws.on('agent_status', (message) => {
-      if (message.type !== 'agent_status') return;
+    const unsubAgentStatus = ws.on("agent_status", (message) => {
+      if (message.type !== "agent_status") return;
       const { agentId, status, info } = message.payload;
 
-      console.log('[App] Agent status changed:', agentId, status);
+      console.log("[App] Agent status changed:", agentId, status);
 
       setAgents((prev) => {
         const updated = new Map(prev);
@@ -289,12 +334,12 @@ export default function VoiceAssistantScreen() {
     });
 
     // Activity log handler
-    const unsubActivity = ws.on('activity_log', (message) => {
-      if (message.type !== 'activity_log') return;
+    const unsubActivity = ws.on("activity_log", (message) => {
+      if (message.type !== "activity_log") return;
       const data = message.payload;
 
       // Handle tool calls
-      if (data.type === 'tool_call' && data.metadata) {
+      if (data.type === "tool_call" && data.metadata) {
         const {
           toolCallId,
           toolName,
@@ -308,19 +353,19 @@ export default function VoiceAssistantScreen() {
         setMessages((prev) => [
           ...prev,
           {
-            type: 'tool_call',
+            type: "tool_call",
             id: toolCallId,
             timestamp: Date.now(),
             toolName,
             args,
-            status: 'executing',
+            status: "executing",
           },
         ]);
         return;
       }
 
       // Handle tool results
-      if (data.type === 'tool_result' && data.metadata) {
+      if (data.type === "tool_result" && data.metadata) {
         const { toolCallId, result } = data.metadata as {
           toolCallId: string;
           result: unknown;
@@ -328,8 +373,8 @@ export default function VoiceAssistantScreen() {
 
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.type === 'tool_call' && msg.id === toolCallId
-              ? { ...msg, result, status: 'completed' as const }
+            msg.type === "tool_call" && msg.id === toolCallId
+              ? { ...msg, result, status: "completed" as const }
               : msg
           )
         );
@@ -338,9 +383,9 @@ export default function VoiceAssistantScreen() {
 
       // Handle tool errors
       if (
-        data.type === 'error' &&
+        data.type === "error" &&
         data.metadata &&
-        'toolCallId' in data.metadata
+        "toolCallId" in data.metadata
       ) {
         const { toolCallId, error } = data.metadata as {
           toolCallId: string;
@@ -349,23 +394,23 @@ export default function VoiceAssistantScreen() {
 
         setMessages((prev) =>
           prev.map((msg) =>
-            msg.type === 'tool_call' && msg.id === toolCallId
-              ? { ...msg, error, status: 'failed' as const }
+            msg.type === "tool_call" && msg.id === toolCallId
+              ? { ...msg, error, status: "failed" as const }
               : msg
           )
         );
       }
 
       // Map activity types to message types
-      let activityType: 'system' | 'info' | 'success' | 'error' = 'info';
-      if (data.type === 'error') activityType = 'error';
+      let activityType: "system" | "info" | "success" | "error" = "info";
+      if (data.type === "error") activityType = "error";
 
       // Add user transcripts as user messages
-      if (data.type === 'transcript') {
+      if (data.type === "transcript") {
         setMessages((prev) => [
           ...prev,
           {
-            type: 'user',
+            type: "user",
             id: generateMessageId(),
             timestamp: Date.now(),
             message: data.content,
@@ -375,17 +420,17 @@ export default function VoiceAssistantScreen() {
       }
 
       // Add assistant messages
-      if (data.type === 'assistant') {
+      if (data.type === "assistant") {
         setMessages((prev) => [
           ...prev,
           {
-            type: 'assistant',
+            type: "assistant",
             id: generateMessageId(),
             timestamp: Date.now(),
             message: data.content,
           },
         ]);
-        setCurrentAssistantMessage('');
+        setCurrentAssistantMessage("");
         return;
       }
 
@@ -393,7 +438,7 @@ export default function VoiceAssistantScreen() {
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
           activityType,
@@ -404,35 +449,34 @@ export default function VoiceAssistantScreen() {
     });
 
     // Assistant chunk handler (streaming)
-    const unsubChunk = ws.on('assistant_chunk', (message) => {
-      if (message.type !== 'assistant_chunk') return;
+    const unsubChunk = ws.on("assistant_chunk", (message) => {
+      if (message.type !== "assistant_chunk") return;
       setCurrentAssistantMessage((prev) => prev + message.payload.chunk);
     });
 
     // Transcription result handler
-    const unsubTranscription = ws.on('transcription_result', (message) => {
-      if (message.type !== 'transcription_result') return;
+    const unsubTranscription = ws.on("transcription_result", (message) => {
+      if (message.type !== "transcription_result") return;
 
       setIsProcessingAudio(false);
 
       const transcriptText = message.payload.text.trim();
 
       if (!transcriptText) {
-        // Empty transcription - false positive, resume playback
-        console.log('[App] Empty transcription (false positive) - resuming playback');
-        audioPlayer.resume();
+        // Empty transcription - false positive, let playback continue
+        console.log("[App] Empty transcription (false positive) - ignoring");
       } else {
         // Has content - real speech detected, stop playback
-        console.log('[App] Transcription received - stopping playback');
+        console.log("[App] Transcription received - stopping playback");
         audioPlayer.stop();
         setIsPlayingAudio(false);
-        setCurrentAssistantMessage('');
+        setCurrentAssistantMessage("");
       }
     });
 
     // Audio output handler (TTS)
-    const unsubAudioOutput = ws.on('audio_output', async (message) => {
-      if (message.type !== 'audio_output') return;
+    const unsubAudioOutput = ws.on("audio_output", async (message) => {
+      if (message.type !== "audio_output") return;
       const data = message.payload;
 
       try {
@@ -440,13 +484,13 @@ export default function VoiceAssistantScreen() {
 
         // Create blob-like object with correct mime type (React Native compatible)
         const mimeType =
-          data.format === 'mp3' ? 'audio/mpeg' : `audio/${data.format}`;
+          data.format === "mp3" ? "audio/mpeg" : `audio/${data.format}`;
         const base64Audio = data.audio;
 
         // Create a Blob-like object that works in React Native
         const audioBlob = {
           type: mimeType,
-          size: Math.ceil(base64Audio.length * 3 / 4), // Approximate size from base64
+          size: Math.ceil((base64Audio.length * 3) / 4), // Approximate size from base64
           arrayBuffer: async () => {
             // Convert base64 to ArrayBuffer
             const binaryString = atob(base64Audio);
@@ -463,9 +507,9 @@ export default function VoiceAssistantScreen() {
 
         // Send confirmation back to server (properly typed)
         const confirmMessage: WSInboundMessage = {
-          type: 'session',
+          type: "session",
           message: {
-            type: 'audio_played',
+            type: "audio_played",
             id: data.id,
           },
         };
@@ -473,14 +517,14 @@ export default function VoiceAssistantScreen() {
 
         setIsPlayingAudio(false);
       } catch (error: any) {
-        console.error('[App] Audio playback error:', error);
+        console.error("[App] Audio playback error:", error);
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'error',
+            activityType: "error",
             message: `Audio playback failed: ${error.message}`,
           },
         ]);
@@ -489,48 +533,53 @@ export default function VoiceAssistantScreen() {
     });
 
     // Status handler
-    const unsubStatus = ws.on('status', (message) => {
-      if (message.type !== 'status') return;
+    const unsubStatus = ws.on("status", (message) => {
+      if (message.type !== "status") return;
       const msg =
-        'message' in message.payload
+        "message" in message.payload
           ? String(message.payload.message)
           : `Status: ${message.payload.status}`;
 
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
-          activityType: 'info',
+          activityType: "info",
           message: msg,
         },
       ]);
     });
 
     // Conversation loaded handler
-    const unsubConversationLoaded = ws.on('conversation_loaded', (message) => {
-      if (message.type !== 'conversation_loaded') return;
+    const unsubConversationLoaded = ws.on("conversation_loaded", (message) => {
+      if (message.type !== "conversation_loaded") return;
       const { conversationId, messageCount } = message.payload;
 
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
-          activityType: 'success',
+          activityType: "success",
           message: `Loaded conversation with ${messageCount} messages`,
         },
       ]);
     });
 
     // Artifact handler
-    const unsubArtifact = ws.on('artifact', (message) => {
-      if (message.type !== 'artifact') return;
+    const unsubArtifact = ws.on("artifact", (message) => {
+      if (message.type !== "artifact") return;
       const artifactData = message.payload;
 
-      console.log('[App] Received artifact:', artifactData.id, artifactData.type, artifactData.title);
+      console.log(
+        "[App] Received artifact:",
+        artifactData.id,
+        artifactData.type,
+        artifactData.title
+      );
 
       // Store artifact
       setArtifacts((prev) => {
@@ -538,6 +587,19 @@ export default function VoiceAssistantScreen() {
         updated.set(artifactData.id, artifactData);
         return updated;
       });
+
+      // Add artifact entry to chat history
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: "artifact",
+          id: generateMessageId(),
+          timestamp: Date.now(),
+          artifactId: artifactData.id,
+          artifactType: artifactData.type,
+          title: artifactData.title,
+        },
+      ]);
 
       // Show drawer immediately
       setCurrentArtifact(artifactData);
@@ -564,22 +626,22 @@ export default function VoiceAssistantScreen() {
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
-          activityType: 'success',
-          message: 'WebSocket connected',
+          activityType: "success",
+          message: "WebSocket connected",
         },
       ]);
     } else if (messages.length > 0) {
       setMessages((prev) => [
         ...prev,
         {
-          type: 'activity',
+          type: "activity",
           id: generateMessageId(),
           timestamp: Date.now(),
-          activityType: 'error',
-          message: 'WebSocket disconnected',
+          activityType: "error",
+          message: "WebSocket disconnected",
         },
       ]);
     }
@@ -592,11 +654,11 @@ export default function VoiceAssistantScreen() {
     // If recording, stop and send
     if (isRecording) {
       try {
-        console.log('[App] Stopping recording...');
+        console.log("[App] Stopping recording...");
         const audioBlob = await audioRecorder.stop();
         setIsRecording(false);
 
-        const format = audioBlob.type || 'audio/m4a';
+        const format = audioBlob.type || "audio/m4a";
         console.log(
           `[App] Recording complete: ${audioBlob.size} bytes, format: ${format}`
         );
@@ -605,11 +667,11 @@ export default function VoiceAssistantScreen() {
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'info',
-            message: 'Sending audio to server...',
+            activityType: "info",
+            message: "Sending audio to server...",
           },
         ]);
 
@@ -618,15 +680,15 @@ export default function VoiceAssistantScreen() {
         const base64Audio = btoa(
           new Uint8Array(arrayBuffer).reduce(
             (data, byte) => data + String.fromCharCode(byte),
-            ''
+            ""
           )
         );
 
         // Send to server (properly typed)
         const audioMessage: WSInboundMessage = {
-          type: 'session',
+          type: "session",
           message: {
-            type: 'audio_chunk',
+            type: "audio_chunk",
             audio: base64Audio,
             format: format,
             isLast: true,
@@ -638,14 +700,14 @@ export default function VoiceAssistantScreen() {
           `[App] Sent audio: ${audioBlob.size} bytes, format: ${format}`
         );
       } catch (error: any) {
-        console.error('[App] Recording error:', error);
+        console.error("[App] Recording error:", error);
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'error',
+            activityType: "error",
             message: `Failed to record audio: ${error.message}`,
           },
         ]);
@@ -654,7 +716,7 @@ export default function VoiceAssistantScreen() {
     } else {
       // Start recording
       try {
-        console.log('[App] Starting recording...');
+        console.log("[App] Starting recording...");
 
         // Stop any currently playing audio
         audioPlayer.stop();
@@ -663,14 +725,14 @@ export default function VoiceAssistantScreen() {
         await audioRecorder.start();
         setIsRecording(true);
       } catch (error: any) {
-        console.error('[App] Failed to start recording:', error);
+        console.error("[App] Failed to start recording:", error);
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'error',
+            activityType: "error",
             message: `Failed to start recording: ${error.message}`,
           },
         ]);
@@ -682,10 +744,10 @@ export default function VoiceAssistantScreen() {
   function handleArtifactClick(artifactId: string) {
     const artifact = artifacts.get(artifactId);
     if (artifact) {
-      console.log('[App] Opening artifact:', artifactId);
+      console.log("[App] Opening artifact:", artifactId);
       setCurrentArtifact(artifact);
     } else {
-      console.warn('[App] Artifact not found:', artifactId);
+      console.warn("[App] Artifact not found:", artifactId);
     }
   }
 
@@ -697,23 +759,23 @@ export default function VoiceAssistantScreen() {
   // Handle agent selection
   function handleSelectAgent(agentId: string) {
     setActiveAgentId(agentId);
-    setViewMode('agent');
+    setViewMode("agent");
   }
 
   // Handle back to orchestrator
   function handleBackToOrchestrator() {
     setActiveAgentId(null);
-    setViewMode('orchestrator');
+    setViewMode("orchestrator");
   }
 
   // Agent control handlers
   function handleKillAgent(agentId: string) {
-    console.log('[App] Kill agent:', agentId);
+    console.log("[App] Kill agent:", agentId);
     // TODO: Implement kill agent API call
   }
 
   function handleCancelAgent(agentId: string) {
-    console.log('[App] Cancel agent:', agentId);
+    console.log("[App] Cancel agent:", agentId);
     // TODO: Implement cancel agent API call
   }
 
@@ -729,28 +791,28 @@ export default function VoiceAssistantScreen() {
     ws.sendUserMessage(userInput);
 
     // Clear input and reset streaming state
-    setUserInput('');
-    setCurrentAssistantMessage('');
+    setUserInput("");
+    setCurrentAssistantMessage("");
   }
 
   function handleCancel() {
-    console.log('[App] Cancelling operations...');
+    console.log("[App] Cancelling operations...");
 
     // Stop audio playback
     audioPlayer.stop();
     setIsPlayingAudio(false);
 
     // Clear streaming state
-    setCurrentAssistantMessage('');
+    setCurrentAssistantMessage("");
 
     // Reset processing state
     setIsProcessingAudio(false);
 
     // Send abort request to server (properly typed)
     const abortMessage: WSInboundMessage = {
-      type: 'session',
+      type: "session",
       message: {
-        type: 'abort_request',
+        type: "abort_request",
       },
     };
     ws.send(abortMessage);
@@ -758,11 +820,11 @@ export default function VoiceAssistantScreen() {
     setMessages((prev) => [
       ...prev,
       {
-        type: 'activity',
+        type: "activity",
         id: generateMessageId(),
         timestamp: Date.now(),
-        activityType: 'info',
-        message: 'Operations cancelled',
+        activityType: "info",
+        message: "Operations cancelled",
       },
     ]);
   }
@@ -796,27 +858,27 @@ export default function VoiceAssistantScreen() {
       try {
         await realtimeAudio.start();
         setIsRealtimeMode(true);
-        console.log('[App] Realtime mode enabled');
+        console.log("[App] Realtime mode enabled");
 
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'success',
-            message: 'Realtime mode started - speak anytime!',
+            activityType: "success",
+            message: "Realtime mode started - speak anytime!",
           },
         ]);
       } catch (error: any) {
-        console.error('[App] Failed to start realtime mode:', error);
+        console.error("[App] Failed to start realtime mode:", error);
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'error',
+            activityType: "error",
             message: `Failed to start realtime mode: ${error.message}`,
           },
         ]);
@@ -826,20 +888,20 @@ export default function VoiceAssistantScreen() {
       try {
         await realtimeAudio.stop();
         setIsRealtimeMode(false);
-        console.log('[App] Realtime mode disabled');
+        console.log("[App] Realtime mode disabled");
 
         setMessages((prev) => [
           ...prev,
           {
-            type: 'activity',
+            type: "activity",
             id: generateMessageId(),
             timestamp: Date.now(),
-            activityType: 'info',
-            message: 'Realtime mode stopped',
+            activityType: "info",
+            message: "Realtime mode stopped",
           },
         ]);
       } catch (error: any) {
-        console.error('[App] Failed to stop realtime mode:', error);
+        console.error("[App] Failed to stop realtime mode:", error);
       }
     }
   }
@@ -848,14 +910,14 @@ export default function VoiceAssistantScreen() {
   function handleSelectConversation(newConversationId: string | null) {
     // Clear all state
     setMessages([]);
-    setCurrentAssistantMessage('');
-    setUserInput('');
+    setCurrentAssistantMessage("");
+    setUserInput("");
     setArtifacts(new Map());
     setCurrentArtifact(null);
     setAgents(new Map());
     setCommands(new Map());
     setAgentUpdates(new Map());
-    setViewMode('orchestrator');
+    setViewMode("orchestrator");
     setActiveAgentId(null);
 
     // Stop any ongoing operations
@@ -872,14 +934,14 @@ export default function VoiceAssistantScreen() {
   }
 
   // Render agent stream view
-  if (viewMode === 'agent' && activeAgentId) {
+  if (viewMode === "agent" && activeAgentId) {
     const agent = agents.get(activeAgentId);
     const updates = agentUpdates.get(activeAgentId) || [];
 
     if (!agent) {
       return (
-        <View className="flex-1 bg-black items-center justify-center">
-          <Text className="text-white">Agent not found</Text>
+        <View style={styles.agentNotFoundContainer}>
+          <Text style={styles.agentNotFoundText}>Agent not found</Text>
         </View>
       );
     }
@@ -900,24 +962,24 @@ export default function VoiceAssistantScreen() {
   return (
     <KeyboardAvoidingView
       behavior="padding"
-      className="flex-1 bg-black"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      style={styles.container}
+      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
     >
       {/* Connection status header with buttons */}
       <View style={{ paddingTop: insets.top + 16 }}>
-        <View className="flex-row items-center justify-between px-6 pb-4">
-          <View className="flex-1">
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
             <ConnectionStatus isConnected={ws.isConnected} />
           </View>
-          <View className="flex-row items-center gap-2">
+          <View style={styles.headerRight}>
             <ConversationSelector
               currentConversationId={conversationId}
               onSelectConversation={handleSelectConversation}
               websocket={ws}
             />
             <Pressable
-              onPress={() => router.push('/settings')}
-              className="bg-zinc-800 p-3 rounded-lg"
+              onPress={() => router.push("/settings")}
+              style={styles.settingsButton}
             >
               <Settings size={20} color="white" />
             </Pressable>
@@ -930,7 +992,7 @@ export default function VoiceAssistantScreen() {
         agents={Array.from(agents.values())}
         commands={Array.from(commands.values())}
         activeProcessId={activeAgentId}
-        activeProcessType={activeAgentId ? 'agent' : null}
+        activeProcessType={activeAgentId ? "agent" : null}
         onSelectAgent={handleSelectAgent}
         onBackToOrchestrator={handleBackToOrchestrator}
       />
@@ -938,131 +1000,146 @@ export default function VoiceAssistantScreen() {
       {/* Messages */}
       <ScrollView
         ref={scrollViewRef}
-        className="flex-1"
-        contentContainerClassName="pb-4"
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-          {messages.map((msg) => {
-            if (msg.type === 'user') {
-              return (
-                <UserMessage
-                  key={msg.id}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                />
-              );
-            }
+        {messages.map((msg) => {
+          if (msg.type === "user") {
+            return (
+              <UserMessage
+                key={msg.id}
+                message={msg.message}
+                timestamp={msg.timestamp}
+              />
+            );
+          }
 
-            if (msg.type === 'assistant') {
-              return (
-                <AssistantMessage
-                  key={msg.id}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                />
-              );
-            }
+          if (msg.type === "assistant") {
+            return (
+              <AssistantMessage
+                key={msg.id}
+                message={msg.message}
+                timestamp={msg.timestamp}
+              />
+            );
+          }
 
-            if (msg.type === 'activity') {
-              return (
-                <ActivityLog
-                  key={msg.id}
-                  type={msg.activityType}
-                  message={msg.message}
-                  timestamp={msg.timestamp}
-                  metadata={msg.metadata}
-                  onArtifactClick={handleArtifactClick}
-                />
-              );
-            }
+          if (msg.type === "activity") {
+            return (
+              <ActivityLog
+                key={msg.id}
+                type={msg.activityType}
+                message={msg.message}
+                timestamp={msg.timestamp}
+                metadata={msg.metadata}
+                onArtifactClick={handleArtifactClick}
+              />
+            );
+          }
 
-            if (msg.type === 'tool_call') {
-              return (
-                <ToolCall
-                  key={msg.id}
-                  toolName={msg.toolName}
-                  args={msg.args}
-                  result={msg.result}
-                  error={msg.error}
-                  status={msg.status}
-                />
-              );
-            }
+          if (msg.type === "artifact") {
+            return (
+              <ActivityLog
+                key={msg.id}
+                type="artifact"
+                message=""
+                timestamp={msg.timestamp}
+                artifactId={msg.artifactId}
+                artifactType={msg.artifactType}
+                title={msg.title}
+                onArtifactClick={handleArtifactClick}
+              />
+            );
+          }
 
-            return null;
-          })}
+          if (msg.type === "tool_call") {
+            return (
+              <ToolCall
+                key={msg.id}
+                toolName={msg.toolName}
+                args={msg.args}
+                result={msg.result}
+                error={msg.error}
+                status={msg.status}
+              />
+            );
+          }
 
-          {/* Streaming assistant message */}
-          {currentAssistantMessage && (
-            <AssistantMessage
-              message={currentAssistantMessage}
-              timestamp={Date.now()}
-              isStreaming={true}
-            />
-          )}
+          return null;
+        })}
+
+        {/* Streaming assistant message */}
+        {currentAssistantMessage && (
+          <AssistantMessage
+            message={currentAssistantMessage}
+            timestamp={Date.now()}
+            isStreaming={true}
+          />
+        )}
       </ScrollView>
 
       {/* Input area */}
       <View
-        className="pt-4 px-6 border-t border-zinc-800 bg-black"
-        style={{
-          paddingBottom: Math.max(insets.bottom, 32)
-        }}
+        style={[
+          styles.inputArea,
+          {
+            paddingBottom: Math.max(insets.bottom, 32),
+          },
+        ]}
       >
-          {/* Text input */}
-          <TextInput
-            value={userInput}
-            onChangeText={setUserInput}
-            placeholder="Say something..."
-            placeholderTextColor="#71717a"
-            className="bg-zinc-800 text-white rounded-2xl px-4 py-3 mb-4 max-h-32"
-            multiline
-            editable={!isRecording && ws.isConnected}
-          />
+        {/* Text input */}
+        <TextInput
+          value={userInput}
+          onChangeText={setUserInput}
+          placeholder="Say something..."
+          placeholderTextColor="#71717a"
+          style={styles.textInput}
+          multiline
+          editable={!isRecording && ws.isConnected}
+        />
 
-          {/* Buttons */}
-          <View className="flex-row items-center justify-end gap-3">
-            {/* Realtime mode button */}
-            <Pressable
-              onPress={handleRealtimeToggle}
-              disabled={!ws.isConnected}
-              className={`w-12 h-12 rounded-full items-center justify-center ${
-                !ws.isConnected ? 'opacity-50' : 'opacity-100'
-              } ${isRealtimeMode ? 'bg-blue-600' : 'bg-zinc-800'}`}
-            >
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <AudioLines size={20} color="white" />
-              </Animated.View>
-            </Pressable>
+        {/* Buttons */}
+        <View style={styles.buttonRow}>
+          {/* Realtime mode button */}
+          <Pressable
+            onPress={handleRealtimeToggle}
+            disabled={!ws.isConnected}
+            style={[
+              styles.realtimeButton,
+              !ws.isConnected && styles.buttonDisabled,
+              isRealtimeMode && styles.realtimeButtonActive,
+            ]}
+          >
+            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <AudioLines size={20} color="white" />
+            </Animated.View>
+          </Pressable>
 
-            {/* Main action button */}
-            <Pressable
-              onPress={handleButtonClick}
-              disabled={!ws.isConnected}
-              className={`w-12 h-12 rounded-full items-center justify-center ${
-                !ws.isConnected ? 'opacity-50' : 'opacity-100'
-              } ${
-                isRecording
-                  ? 'bg-red-500'
-                  : isInProgress
-                  ? 'bg-red-600'
-                  : userInput.trim()
-                  ? 'bg-blue-600'
-                  : 'bg-zinc-700'
-              }`}
-            >
-              {isInProgress ? (
-                <Square size={18} color="white" fill="white" />
-              ) : isRecording ? (
-                <Square size={14} color="white" fill="white" />
-              ) : userInput.trim() ? (
-                <ArrowUp size={20} color="white" />
-              ) : (
-                <Mic size={20} color="white" />
-              )}
-            </Pressable>
-          </View>
+          {/* Main action button */}
+          <Pressable
+            onPress={handleButtonClick}
+            disabled={!ws.isConnected}
+            style={[
+              styles.mainButton,
+              !ws.isConnected && styles.buttonDisabled,
+              isRecording && styles.mainButtonRecording,
+              isInProgress && styles.mainButtonInProgress,
+              userInput.trim() && !isRecording && !isInProgress && styles.mainButtonWithText,
+            ]}
+          >
+            {isInProgress ? (
+              <Square size={18} color="white" fill="white" />
+            ) : isRecording ? (
+              <Square size={14} color="white" fill="white" />
+            ) : userInput.trim() ? (
+              <ArrowUp size={20} color="white" />
+            ) : (
+              <Mic size={20} color="white" />
+            )}
+          </Pressable>
+        </View>
       </View>
 
       {/* Artifact drawer */}
@@ -1073,3 +1150,98 @@ export default function VoiceAssistantScreen() {
     </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create((theme: Theme) => ({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+  },
+  agentNotFoundContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  agentNotFoundText: {
+    color: theme.colors.white,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
+  },
+  headerLeft: {
+    flex: 1,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  settingsButton: {
+    backgroundColor: theme.colors.zinc[800],
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: theme.spacing[4],
+  },
+  inputArea: {
+    paddingTop: theme.spacing[4],
+    paddingHorizontal: theme.spacing[6],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.zinc[800],
+    backgroundColor: theme.colors.black,
+  },
+  textInput: {
+    backgroundColor: theme.colors.zinc[800],
+    color: theme.colors.white,
+    borderRadius: theme.borderRadius["2xl"],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    marginBottom: theme.spacing[4],
+    maxHeight: 128,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: theme.spacing[3],
+  },
+  realtimeButton: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.zinc[800],
+  },
+  realtimeButtonActive: {
+    backgroundColor: theme.colors.blue[600],
+  },
+  mainButton: {
+    width: 48,
+    height: 48,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.zinc[700],
+  },
+  mainButtonRecording: {
+    backgroundColor: theme.colors.red[500],
+  },
+  mainButtonInProgress: {
+    backgroundColor: theme.colors.red[600],
+  },
+  mainButtonWithText: {
+    backgroundColor: theme.colors.blue[600],
+  },
+  buttonDisabled: {
+    opacity: theme.opacity[50],
+  },
+}));

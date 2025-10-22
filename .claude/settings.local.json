@@ -6,7 +6,8 @@
       "WebFetch(domain:docs.vad.ricky0123.com)",
       "mcp__playwright__browser_close",
       "Bash(cat:*)",
-      "mcp__playwright__browser_snapshot"
+      "mcp__playwright__browser_snapshot",
+      "WebFetch(domain:www.npmjs.com)"
     ],
     "deny": [],
     "ask": []

@@ -2,17 +2,40 @@ import { View, Text, Pressable, Animated } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import Markdown from 'react-native-markdown-display';
 import { Circle, Info, CheckCircle, XCircle, FileText, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 interface UserMessageProps {
   message: string;
   timestamp: number;
 }
 
+const userMessageStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  bubble: {
+    backgroundColor: theme.colors.blue[600],
+    borderRadius: theme.borderRadius['2xl'],
+    borderTopRightRadius: theme.borderRadius.sm,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    maxWidth: '80%',
+  },
+  text: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.lg,
+    lineHeight: 24,
+  },
+}));
+
 export function UserMessage({ message, timestamp }: UserMessageProps) {
   return (
-    <View className="flex-row justify-end mb-3 px-4">
-      <View className="bg-blue-600 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%]">
-        <Text className="text-white text-base leading-6">{message}</Text>
+    <View style={userMessageStylesheet.container}>
+      <View style={userMessageStylesheet.bubble}>
+        <Text style={userMessageStylesheet.text}>{message}</Text>
       </View>
     </View>
   );
@@ -23,6 +46,22 @@ interface AssistantMessageProps {
   timestamp: number;
   isStreaming?: boolean;
 }
+
+const assistantMessageStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    marginBottom: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+  },
+  streamingIndicator: {
+    marginTop: theme.spacing[1],
+  },
+  streamingText: {
+    color: theme.colors.teal[200],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.bold,
+  },
+}));
 
 export function AssistantMessage({ message, timestamp, isStreaming = false }: AssistantMessageProps) {
   const fadeAnim = useRef(new Animated.Value(0.3)).current;
@@ -60,10 +99,10 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
       marginBottom: 8,
     },
     strong: {
-      fontWeight: '700',
+      fontWeight: '700' as const,
     },
     em: {
-      fontStyle: 'italic',
+      fontStyle: 'italic' as const,
     },
     code_inline: {
       backgroundColor: '#134e4a',
@@ -91,7 +130,7 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
     },
     link: {
       color: '#5eead4',
-      textDecorationLine: 'underline',
+      textDecorationLine: 'underline' as const,
     },
     bullet_list: {
       marginBottom: 8,
@@ -105,11 +144,11 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
   };
 
   return (
-    <View className="mb-3 px-4 py-3">
+    <View style={assistantMessageStylesheet.container}>
       <Markdown style={markdownStyles}>{message}</Markdown>
       {isStreaming && (
-        <Animated.View style={{ opacity: fadeAnim }} className="mt-1">
-          <Text className="text-teal-200 text-xs font-bold">...</Text>
+        <Animated.View style={[assistantMessageStylesheet.streamingIndicator, { opacity: fadeAnim }]}>
+          <Text style={assistantMessageStylesheet.streamingText}>...</Text>
         </Animated.View>
       )}
     </View>
@@ -127,6 +166,76 @@ interface ActivityLogProps {
   onArtifactClick?: (artifactId: string) => void;
 }
 
+const activityLogStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  pressable: {
+    marginHorizontal: theme.spacing[2],
+    marginBottom: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    overflow: 'hidden',
+  },
+  pressableActive: {
+    opacity: 0.7,
+  },
+  systemBg: {
+    backgroundColor: 'rgba(39, 39, 42, 0.5)', // zinc-800/50
+  },
+  infoBg: {
+    backgroundColor: 'rgba(30, 58, 138, 0.3)', // blue-900/30
+  },
+  successBg: {
+    backgroundColor: 'rgba(20, 83, 45, 0.3)', // green-900/30
+  },
+  errorBg: {
+    backgroundColor: 'rgba(127, 29, 29, 0.3)', // red-900/30
+  },
+  artifactBg: {
+    backgroundColor: 'rgba(30, 58, 138, 0.4)', // blue-900/40
+  },
+  content: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: 10,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.spacing[2],
+  },
+  iconContainer: {
+    flexShrink: 0,
+  },
+  textContainer: {
+    flex: 1,
+  },
+  messageText: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+  },
+  detailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: theme.spacing[1],
+  },
+  detailsText: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+    marginRight: theme.spacing[1],
+  },
+  metadataContainer: {
+    marginTop: theme.spacing[2],
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: theme.borderRadius.base,
+    padding: theme.spacing[2],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.zinc[700],
+  },
+  metadataText: {
+    color: theme.colors.zinc[300],
+    fontSize: theme.fontSize.xs,
+    fontFamily: 'monospace',
+    lineHeight: 16,
+  },
+}));
+
 export function ActivityLog({
   type,
   message,
@@ -140,11 +249,11 @@ export function ActivityLog({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const typeConfig = {
-    system: { bg: 'bg-zinc-800/50', color: '#a1a1aa', Icon: Circle },
-    info: { bg: 'bg-blue-900/30', color: '#60a5fa', Icon: Info },
-    success: { bg: 'bg-green-900/30', color: '#4ade80', Icon: CheckCircle },
-    error: { bg: 'bg-red-900/30', color: '#f87171', Icon: XCircle },
-    artifact: { bg: 'bg-blue-900/40', color: '#93c5fd', Icon: FileText },
+    system: { bg: activityLogStylesheet.systemBg, color: '#a1a1aa', Icon: Circle },
+    info: { bg: activityLogStylesheet.infoBg, color: '#60a5fa', Icon: Info },
+    success: { bg: activityLogStylesheet.successBg, color: '#4ade80', Icon: CheckCircle },
+    error: { bg: activityLogStylesheet.errorBg, color: '#f87171', Icon: XCircle },
+    artifact: { bg: activityLogStylesheet.artifactBg, color: '#93c5fd', Icon: FileText },
   };
 
   const config = typeConfig[type];
@@ -162,24 +271,30 @@ export function ActivityLog({
     ? `${artifactType}: ${title}`
     : message;
 
+  const isInteractive = type === 'artifact' || metadata;
+
   return (
     <Pressable
       onPress={handlePress}
-      disabled={type !== 'artifact' && !metadata}
-      className={`mx-2 mb-1 rounded-md overflow-hidden ${config.bg} ${
-        (type === 'artifact' || metadata) ? 'active:opacity-70' : ''
-      }`}
+      disabled={!isInteractive}
+      style={[
+        activityLogStylesheet.pressable,
+        config.bg,
+        isInteractive && activityLogStylesheet.pressableActive,
+      ]}
     >
-      <View className="px-3 py-2.5">
-        <View className="flex-row items-start gap-2">
-          <IconComponent size={16} color={config.color} />
-          <View className="flex-1">
-            <Text style={{ color: config.color }} className="text-sm leading-5">
+      <View style={activityLogStylesheet.content}>
+        <View style={activityLogStylesheet.row}>
+          <View style={activityLogStylesheet.iconContainer}>
+            <IconComponent size={16} color={config.color} />
+          </View>
+          <View style={activityLogStylesheet.textContainer}>
+            <Text style={[activityLogStylesheet.messageText, { color: config.color }]}>
               {displayMessage}
             </Text>
             {metadata && (
-              <View className="flex-row items-center mt-1">
-                <Text className="text-zinc-500 text-xs mr-1">Details</Text>
+              <View style={activityLogStylesheet.detailsRow}>
+                <Text style={activityLogStylesheet.detailsText}>Details</Text>
                 {isExpanded ? (
                   <ChevronDown size={12} color="#71717a" />
                 ) : (
@@ -190,8 +305,8 @@ export function ActivityLog({
           </View>
         </View>
         {isExpanded && metadata && (
-          <View className="mt-2 bg-black/50 rounded p-2 border border-zinc-700">
-            <Text className="text-zinc-300 text-xs font-mono leading-4">
+          <View style={activityLogStylesheet.metadataContainer}>
+            <Text style={activityLogStylesheet.metadataText}>
               {JSON.stringify(metadata, null, 2)}
             </Text>
           </View>
@@ -208,6 +323,102 @@ interface ToolCallProps {
   error?: any;
   status: 'executing' | 'completed' | 'failed';
 }
+
+const toolCallStylesheet = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  pressable: {
+    marginHorizontal: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+    backgroundColor: theme.colors.zinc[900],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    overflow: 'hidden',
+  },
+  pressableActive: {
+    opacity: 0.8,
+  },
+  executingBorder: {
+    borderColor: theme.colors.amber[500],
+  },
+  completedBorder: {
+    borderColor: theme.colors.green[500],
+  },
+  failedBorder: {
+    borderColor: theme.colors.red[500],
+  },
+  content: {
+    padding: theme.spacing[3],
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chevronContainer: {
+    marginRight: theme.spacing[2],
+  },
+  toolName: {
+    color: theme.colors.slate[200],
+    fontFamily: 'monospace',
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.sm,
+    flex: 1,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+  },
+  executingBadgeBg: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)', // amber-500/20
+  },
+  completedBadgeBg: {
+    backgroundColor: 'rgba(34, 197, 94, 0.2)', // green-500/20
+  },
+  failedBadgeBg: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)', // red-500/20
+  },
+  statusText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: 'uppercase',
+  },
+  expandedContent: {
+    marginTop: theme.spacing[3],
+    gap: theme.spacing[2],
+  },
+  section: {
+    // empty - just for grouping
+  },
+  sectionTitle: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  errorSectionTitle: {
+    color: '#fca5a5', // red-300
+  },
+  sectionContent: {
+    backgroundColor: theme.colors.black,
+    borderRadius: theme.borderRadius.base,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.zinc[700],
+    padding: theme.spacing[2],
+  },
+  errorSectionContent: {
+    borderColor: '#991b1b', // red-800
+  },
+  sectionText: {
+    color: theme.colors.slate[200],
+    fontSize: theme.fontSize.xs,
+    fontFamily: 'monospace',
+    lineHeight: 16,
+  },
+}));
 
 export function ToolCall({ toolName, args, result, error, status }: ToolCallProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -235,20 +446,20 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
 
   const statusConfig = {
     executing: {
-      border: 'border-amber-500',
-      bg: 'bg-amber-500/20',
+      border: toolCallStylesheet.executingBorder,
+      badgeBg: toolCallStylesheet.executingBadgeBg,
       color: '#fcd34d',
       label: 'executing',
     },
     completed: {
-      border: 'border-green-500',
-      bg: 'bg-green-500/20',
+      border: toolCallStylesheet.completedBorder,
+      badgeBg: toolCallStylesheet.completedBadgeBg,
       color: '#86efac',
       label: 'completed',
     },
     failed: {
-      border: 'border-red-500',
-      bg: 'bg-red-500/20',
+      border: toolCallStylesheet.failedBorder,
+      badgeBg: toolCallStylesheet.failedBadgeBg,
       color: '#fca5a5',
       label: 'failed',
     },
@@ -259,19 +470,21 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
   return (
     <Pressable
       onPress={() => setIsExpanded(!isExpanded)}
-      className={`mx-2 mb-2 bg-zinc-900 rounded-lg border ${config.border} overflow-hidden active:opacity-80`}
+      style={[toolCallStylesheet.pressable, toolCallStylesheet.pressableActive, config.border]}
     >
-      <View className="p-3">
-        <View className="flex-row items-center">
-          {isExpanded ? (
-            <ChevronDown size={16} color="#9ca3af" className="mr-2" />
-          ) : (
-            <ChevronRight size={16} color="#9ca3af" className="mr-2" />
-          )}
-          <Text className="text-slate-200 font-mono font-medium text-sm flex-1">
+      <View style={toolCallStylesheet.content}>
+        <View style={toolCallStylesheet.headerRow}>
+          <View style={toolCallStylesheet.chevronContainer}>
+            {isExpanded ? (
+              <ChevronDown size={16} color="#9ca3af" />
+            ) : (
+              <ChevronRight size={16} color="#9ca3af" />
+            )}
+          </View>
+          <Text style={toolCallStylesheet.toolName}>
             {toolName}
           </Text>
-          <View className={`flex-row items-center gap-1.5 px-2 py-1 rounded ${config.bg}`}>
+          <View style={[toolCallStylesheet.statusBadge, config.badgeBg]}>
             {status === 'executing' ? (
               <Animated.View style={{ transform: [{ rotate: spin }] }}>
                 <RefreshCw size={14} color={config.color} />
@@ -281,32 +494,32 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
             ) : (
               <XCircle size={14} color={config.color} />
             )}
-            <Text style={{ color: config.color }} className="text-xs font-medium uppercase">
+            <Text style={[toolCallStylesheet.statusText, { color: config.color }]}>
               {config.label}
             </Text>
           </View>
         </View>
 
         {isExpanded && (
-          <View className="mt-3 gap-2">
-            <View>
-              <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wide mb-1.5">
+          <View style={toolCallStylesheet.expandedContent}>
+            <View style={toolCallStylesheet.section}>
+              <Text style={toolCallStylesheet.sectionTitle}>
                 Arguments
               </Text>
-              <View className="bg-black rounded border border-zinc-700 p-2">
-                <Text className="text-slate-200 text-xs font-mono leading-4">
+              <View style={toolCallStylesheet.sectionContent}>
+                <Text style={toolCallStylesheet.sectionText}>
                   {JSON.stringify(args, null, 2)}
                 </Text>
               </View>
             </View>
 
             {result !== undefined && (
-              <View>
-                <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wide mb-1.5">
+              <View style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>
                   Result
                 </Text>
-                <View className="bg-black rounded border border-zinc-700 p-2">
-                  <Text className="text-slate-200 text-xs font-mono leading-4">
+                <View style={toolCallStylesheet.sectionContent}>
+                  <Text style={toolCallStylesheet.sectionText}>
                     {JSON.stringify(result, null, 2)}
                   </Text>
                 </View>
@@ -314,12 +527,12 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
             )}
 
             {error !== undefined && (
-              <View>
-                <Text className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-1.5">
+              <View style={toolCallStylesheet.section}>
+                <Text style={[toolCallStylesheet.sectionTitle, toolCallStylesheet.errorSectionTitle]}>
                   Error
                 </Text>
-                <View className="bg-black rounded border border-red-800 p-2">
-                  <Text className="text-slate-200 text-xs font-mono leading-4">
+                <View style={[toolCallStylesheet.sectionContent, toolCallStylesheet.errorSectionContent]}>
+                  <Text style={toolCallStylesheet.sectionText}>
                     {JSON.stringify(error, null, 2)}
                   </Text>
                 </View>

@@ -20,14 +20,14 @@ export function initializeTTS(ttsConfig: TTSConfig): void {
   config = {
     model: "tts-1",
     voice: "alloy",
-    responseFormat: "mp3",
+    responseFormat: "pcm",
     ...ttsConfig,
   };
   openaiClient = new OpenAI({
     apiKey: ttsConfig.apiKey,
   });
   console.log(
-    `✓ TTS (OpenAI) initialized with voice: ${config.voice}, model: ${config.model}`
+    `✓ TTS (OpenAI) initialized with voice: ${config.voice}, model: ${config.model}, format: ${config.responseFormat}`
   );
 }
 
@@ -55,7 +55,7 @@ export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
       voice: config.voice!,
       input: text,
       // speed: 1.2,
-      response_format: config.responseFormat as "mp3" | "opus" | "aac" | "flac",
+      response_format: config.responseFormat as "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm",
     });
 
     // Response is a stream, convert to buffer

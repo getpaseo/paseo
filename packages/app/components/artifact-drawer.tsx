@@ -1,10 +1,17 @@
-import { View, Text, ScrollView, Pressable, Modal } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useEffect } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Modal,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useEffect } from "react";
+import { StyleSheet } from "react-native-unistyles";
 
 export interface Artifact {
   id: string;
-  type: 'markdown' | 'diff' | 'image' | 'code';
+  type: "markdown" | "diff" | "image" | "code";
   title: string;
   content: string;
   isBase64: boolean;
@@ -15,10 +22,145 @@ interface ArtifactDrawerProps {
   onClose: () => void;
 }
 
+const styles = StyleSheet.create((theme: import('../styles/theme').Theme) => ({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+    flexDirection: "column",
+  },
+  header: {
+    paddingBottom: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.zinc[800],
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  titleContainer: {
+    flex: 1,
+    marginRight: theme.spacing[4],
+  },
+  title: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize["2xl"],
+    fontWeight: theme.fontWeight.bold,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  badge: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+  },
+  badgeMarkdown: {
+    backgroundColor: theme.colors.blue[600],
+  },
+  badgeDiff: {
+    backgroundColor: theme.colors.purple[600],
+  },
+  badgeImage: {
+    backgroundColor: theme.colors.green[600],
+  },
+  badgeCode: {
+    backgroundColor: theme.colors.orange[600],
+  },
+  badgeText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  closeButton: {
+    backgroundColor: theme.colors.zinc[800],
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeButtonText: {
+    color: theme.colors.white,
+    fontSize: theme.fontSize["2xl"],
+    fontWeight: theme.fontWeight.bold,
+  },
+  contentScroll: {
+    flex: 1,
+    backgroundColor: theme.colors.black,
+  },
+  contentScrollContainer: {
+    padding: theme.spacing[4],
+    flexGrow: 1,
+  },
+  imagePlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imagePlaceholderText: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.sm,
+  },
+  imagePlaceholderSubtext: {
+    color: theme.colors.zinc[600],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[2],
+  },
+  codeContainer: {
+    backgroundColor: theme.colors.zinc[900],
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.zinc[800],
+  },
+  codeText: {
+    color: theme.colors.zinc[300],
+    fontSize: theme.fontSize.sm,
+    fontFamily: "monospace",
+  },
+  metadataContainer: {
+    backgroundColor: theme.colors.zinc[900],
+    padding: theme.spacing[3],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.zinc[800],
+    marginTop: theme.spacing[2],
+  },
+  metadataTitle: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[2],
+  },
+  metadataRow: {
+    flexDirection: "row",
+    marginBottom: theme.spacing[1],
+  },
+  metadataLabel: {
+    color: theme.colors.zinc[500],
+    fontSize: theme.fontSize.xs,
+    width: 80,
+  },
+  metadataValue: {
+    color: theme.colors.zinc[400],
+    fontSize: theme.fontSize.xs,
+    flex: 1,
+    fontFamily: "monospace",
+  },
+}));
+
 export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
   useEffect(() => {
     if (!artifact) return;
-    console.log('[ArtifactDrawer] Showing artifact:', artifact.id, artifact.type, artifact.title);
+    console.log(
+      "[ArtifactDrawer] Showing artifact:",
+      artifact.id,
+      artifact.type,
+      artifact.title
+    );
   }, [artifact]);
 
   if (!artifact) {
@@ -28,12 +170,12 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
   // Decode content if base64
   const content = artifact.isBase64 ? atob(artifact.content) : artifact.content;
 
-  // Type badge colors
-  const typeColors = {
-    markdown: 'bg-blue-600',
-    diff: 'bg-purple-600',
-    image: 'bg-green-600',
-    code: 'bg-orange-600',
+  // Type badge style mapping
+  const typeBadgeStyles = {
+    markdown: styles.badgeMarkdown,
+    diff: styles.badgeDiff,
+    image: styles.badgeImage,
+    code: styles.badgeCode,
   };
 
   return (
@@ -43,84 +185,81 @@ export function ArtifactDrawer({ artifact, onClose }: ArtifactDrawerProps) {
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView edges={['top', 'bottom']} className="flex-1 bg-black">
+      <SafeAreaView edges={["top", "bottom"]} style={styles.container}>
         {/* Header */}
-        <View className="pb-4 px-4 border-b border-zinc-800">
-          <View className="flex-row items-center justify-between">
-            <View className="flex-1 mr-4">
-              <Text className="text-white text-xl font-bold" numberOfLines={2}>
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <View style={styles.titleContainer}>
+              <Text style={styles.title} numberOfLines={2}>
                 {artifact.title}
               </Text>
             </View>
-            <View className="flex-row items-center gap-2">
-              <View className={`${typeColors[artifact.type]} px-3 py-1 rounded-full`}>
-                <Text className="text-white text-xs font-semibold uppercase">
-                  {artifact.type}
+            <View style={styles.headerActions}>
+              <View
+                style={[
+                  styles.badge,
+                  typeBadgeStyles[artifact.type],
+                ]}
+              >
+                <Text style={styles.badgeText}>
+                  {artifact.type.toUpperCase()}
                 </Text>
               </View>
-              <Pressable
-                onPress={onClose}
-                className="bg-zinc-800 w-10 h-10 rounded-full items-center justify-center"
-              >
-                <Text className="text-white text-xl font-bold">×</Text>
+              <Pressable onPress={onClose} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>×</Text>
               </Pressable>
             </View>
           </View>
         </View>
-
         {/* Content */}
-        <ScrollView className="flex-1" contentContainerClassName="p-4">
-          {artifact.type === 'image' ? (
-            <View className="items-center justify-center">
-              <Text className="text-zinc-400 text-sm">
+        <ScrollView
+          style={styles.contentScroll}
+          contentContainerStyle={styles.contentScrollContainer}
+        >
+          {artifact.type === "image" ? (
+            <View style={styles.imagePlaceholder}>
+              <Text style={styles.imagePlaceholderText}>
                 Image viewing not yet implemented
               </Text>
-              <Text className="text-zinc-600 text-xs mt-2">
+              <Text style={styles.imagePlaceholderSubtext}>
                 Base64 image data received
               </Text>
             </View>
           ) : (
-            <View className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
+            <View style={styles.codeContainer}>
               <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-                <Text
-                  className="text-zinc-300 text-sm font-mono"
-                  style={{ fontFamily: 'monospace' }}
-                >
-                  {content}
-                </Text>
+                <Text style={styles.codeText}>{content}</Text>
               </ScrollView>
             </View>
           )}
+        </ScrollView>
 
-          {/* Metadata */}
-          <View className="mt-4 bg-zinc-900 rounded-lg p-3 border border-zinc-800">
-            <Text className="text-zinc-500 text-xs font-semibold mb-2">METADATA</Text>
-            <View className="space-y-1">
-              <View className="flex-row">
-                <Text className="text-zinc-500 text-xs w-20">ID:</Text>
-                <Text className="text-zinc-400 text-xs flex-1 font-mono">
-                  {artifact.id}
-                </Text>
-              </View>
-              <View className="flex-row">
-                <Text className="text-zinc-500 text-xs w-20">Type:</Text>
-                <Text className="text-zinc-400 text-xs">{artifact.type}</Text>
-              </View>
-              <View className="flex-row">
-                <Text className="text-zinc-500 text-xs w-20">Encoding:</Text>
-                <Text className="text-zinc-400 text-xs">
-                  {artifact.isBase64 ? 'Base64' : 'Plain text'}
-                </Text>
-              </View>
-              <View className="flex-row">
-                <Text className="text-zinc-500 text-xs w-20">Size:</Text>
-                <Text className="text-zinc-400 text-xs">
-                  {content.length.toLocaleString()} characters
-                </Text>
-              </View>
+        {/* Metadata - Fixed at bottom */}
+        <View style={styles.metadataContainer}>
+          <Text style={styles.metadataTitle}>METADATA</Text>
+          <View>
+            <View style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>ID:</Text>
+              <Text style={styles.metadataValue}>{artifact.id}</Text>
+            </View>
+            <View style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Type:</Text>
+              <Text style={styles.metadataValue}>{artifact.type}</Text>
+            </View>
+            <View style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Encoding:</Text>
+              <Text style={styles.metadataValue}>
+                {artifact.isBase64 ? "Base64" : "Plain text"}
+              </Text>
+            </View>
+            <View style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Size:</Text>
+              <Text style={styles.metadataValue}>
+                {content.length.toLocaleString()} characters
+              </Text>
             </View>
           </View>
-        </ScrollView>
+        </View>
       </SafeAreaView>
     </Modal>
   );
