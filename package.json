@@ -30,11 +30,7 @@
   ],
   "author": "moboudra",
   "license": "MIT",
-  "dependencies": {
-    "@tailwindcss/oxide": "^4.1.14",
-    "expo-build-properties": "^1.0.9",
-    "expo": "~54.0.17",
-    "react": "19.1.0",
-    "react-native": "0.81.4"
+  "overrides": {
+    "lightningcss": "1.30.1"
   }
 }

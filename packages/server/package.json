@@ -42,5 +42,8 @@
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
     "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "lightningcss": "1.30.1"
   }
 }
