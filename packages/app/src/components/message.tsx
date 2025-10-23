@@ -322,6 +322,7 @@ interface ToolCallProps {
   result?: any;
   error?: any;
   status: 'executing' | 'completed' | 'failed';
+  onOpenDetails?: () => void;
 }
 
 const toolCallStylesheet = StyleSheet.create((theme) => ({
@@ -420,8 +421,7 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export function ToolCall({ toolName, args, result, error, status }: ToolCallProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+export function ToolCall({ toolName, args, result, error, status, onOpenDetails }: ToolCallProps) {
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -469,18 +469,11 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
 
   return (
     <Pressable
-      onPress={() => setIsExpanded(!isExpanded)}
+      onPress={onOpenDetails}
       style={[toolCallStylesheet.pressable, toolCallStylesheet.pressableActive, config.border]}
     >
       <View style={toolCallStylesheet.content}>
         <View style={toolCallStylesheet.headerRow}>
-          <View style={toolCallStylesheet.chevronContainer}>
-            {isExpanded ? (
-              <ChevronDown size={16} color="#9ca3af" />
-            ) : (
-              <ChevronRight size={16} color="#9ca3af" />
-            )}
-          </View>
           <Text style={toolCallStylesheet.toolName}>
             {toolName}
           </Text>
@@ -499,47 +492,6 @@ export function ToolCall({ toolName, args, result, error, status }: ToolCallProp
             </Text>
           </View>
         </View>
-
-        {isExpanded && (
-          <View style={toolCallStylesheet.expandedContent}>
-            <View style={toolCallStylesheet.section}>
-              <Text style={toolCallStylesheet.sectionTitle}>
-                Arguments
-              </Text>
-              <View style={toolCallStylesheet.sectionContent}>
-                <Text style={toolCallStylesheet.sectionText}>
-                  {JSON.stringify(args, null, 2)}
-                </Text>
-              </View>
-            </View>
-
-            {result !== undefined && (
-              <View style={toolCallStylesheet.section}>
-                <Text style={toolCallStylesheet.sectionTitle}>
-                  Result
-                </Text>
-                <View style={toolCallStylesheet.sectionContent}>
-                  <Text style={toolCallStylesheet.sectionText}>
-                    {JSON.stringify(result, null, 2)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {error !== undefined && (
-              <View style={toolCallStylesheet.section}>
-                <Text style={[toolCallStylesheet.sectionTitle, toolCallStylesheet.errorSectionTitle]}>
-                  Error
-                </Text>
-                <View style={[toolCallStylesheet.sectionContent, toolCallStylesheet.errorSectionContent]}>
-                  <Text style={toolCallStylesheet.sectionText}>
-                    {JSON.stringify(error, null, 2)}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
       </View>
     </Pressable>
   );

@@ -6,7 +6,7 @@ import {
   useExpoTwoWayAudioEventListener,
   type MicrophoneDataCallback,
   type VolumeLevelCallback,
-} from "@speechmatics/expo-two-way-audio";
+} from "@boudra/expo-two-way-audio";
 
 export interface SpeechmaticsAudioConfig {
   onAudioSegment?: (audioData: string) => void;
@@ -200,7 +200,11 @@ export function useSpeechmaticsAudio(
 
         // console.log('[SpeechmaticsAudio] Volume:', volumeLevel.toFixed(6), 'Threshold:', VOLUME_THRESHOLD);
 
-        if (speechDetected && !isSpeakingRef.current && !speechConfirmedRef.current) {
+        if (
+          speechDetected &&
+          !isSpeakingRef.current &&
+          !speechConfirmedRef.current
+        ) {
           // Initial speech detection - start tracking
           if (speechDetectionStartRef.current === null) {
             console.log(
@@ -233,10 +237,18 @@ export function useSpeechmaticsAudio(
               config.onSpeechStart?.();
             }
           }
-        } else if (speechDetected && isSpeakingRef.current && speechConfirmedRef.current) {
+        } else if (
+          speechDetected &&
+          isSpeakingRef.current &&
+          speechConfirmedRef.current
+        ) {
           // Continuing confirmed speech
           silenceStartRef.current = null;
-        } else if (!speechDetected && !speechConfirmedRef.current && speechDetectionStartRef.current !== null) {
+        } else if (
+          !speechDetected &&
+          !speechConfirmedRef.current &&
+          speechDetectionStartRef.current !== null
+        ) {
           // Volume dropped during detection phase - apply grace period
           if (detectionSilenceStartRef.current === null) {
             detectionSilenceStartRef.current = Date.now();
@@ -255,7 +267,11 @@ export function useSpeechmaticsAudio(
               setIsDetecting(false);
             }
           }
-        } else if (!speechDetected && isSpeakingRef.current && speechConfirmedRef.current) {
+        } else if (
+          !speechDetected &&
+          isSpeakingRef.current &&
+          speechConfirmedRef.current
+        ) {
           // Potential speech END
           if (silenceStartRef.current === null) {
             silenceStartRef.current = Date.now();
@@ -289,7 +305,15 @@ export function useSpeechmaticsAudio(
           }
         }
       },
-      [isActive, isMuted, VOLUME_THRESHOLD, SILENCE_DURATION_MS, SPEECH_CONFIRMATION_MS, DETECTION_GRACE_PERIOD_MS, config]
+      [
+        isActive,
+        isMuted,
+        VOLUME_THRESHOLD,
+        SILENCE_DURATION_MS,
+        SPEECH_CONFIRMATION_MS,
+        DETECTION_GRACE_PERIOD_MS,
+        config,
+      ]
     )
   );
 

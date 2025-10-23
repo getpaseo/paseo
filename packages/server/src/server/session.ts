@@ -259,7 +259,7 @@ export class Session {
 
   /**
    * Maybe trigger title generation for an agent
-   * Only generates title once after first meaningful activity
+   * Only generates title once after first user message chunk and some initial agent activity
    */
   private maybeTriggerTitleGeneration(agentId: string): void {
     // Skip if title generator not initialized
@@ -275,8 +275,15 @@ export class Session {
     // Get agent updates
     const updates = this.agentManager.getAgentUpdates(agentId);
 
-    // Need at least 15 updates before generating title
-    if (updates.length < 15) {
+    // Find first user message chunk
+    const hasUserMessage = updates.some(
+      (update) =>
+        update.notification.type === "session" &&
+        update.notification.notification.update.sessionUpdate === "user_message_chunk"
+    );
+
+    // Need at least one user message and some additional updates (3-5) for context
+    if (!hasUserMessage || updates.length < 5) {
       return;
     }
 

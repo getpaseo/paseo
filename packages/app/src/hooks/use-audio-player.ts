@@ -1,5 +1,11 @@
-import { useState, useRef } from 'react';
-import { initialize, playPCMData } from '@speechmatics/expo-two-way-audio';
+import { useState, useRef } from "react";
+import {
+  initialize,
+  playPCMData,
+  stopPlayback,
+  pausePlayback,
+  resumePlayback,
+} from "@boudra/expo-two-way-audio";
 
 interface QueuedAudio {
   audioData: Blob;
@@ -14,7 +20,7 @@ interface QueuedAudio {
 function resamplePcm24kTo16k(pcm24k: Uint8Array): Uint8Array {
   // PCM16 = 2 bytes per sample
   const samples24k = pcm24k.length / 2;
-  const samples16k = Math.floor(samples24k * 16000 / 24000);
+  const samples16k = Math.floor((samples24k * 16000) / 24000);
 
   const pcm16k = new Uint8Array(samples16k * 2);
   const ratio = 24000 / 16000; // 1.5
@@ -27,10 +33,10 @@ function resamplePcm24kTo16k(pcm24k: Uint8Array): Uint8Array {
     }
   }
 
-  console.log('[AudioPlayer] Resampled PCM:', {
+  console.log("[AudioPlayer] Resampled PCM:", {
     input24k: pcm24k.length,
     output16k: pcm16k.length,
-    durationMs: (samples16k / 16),
+    durationMs: samples16k / 16,
   });
 
   return pcm16k;
@@ -44,6 +50,7 @@ export function useAudioPlayer() {
   const [audioInitialized, setAudioInitialized] = useState(false);
   const queueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
+  const playbackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -100,11 +107,18 @@ export function useAudioPlayer() {
 
         // Initialize audio if not already initialized
         if (!audioInitialized) {
-          console.log('[AudioPlayer] Initializing audio...');
+          console.log("[AudioPlayer] Initializing audio...");
           await initialize();
           setAudioInitialized(true);
-          console.log('[AudioPlayer] ✅ Initialized (Speechmatics two-way audio)');
+          console.log(
+            "[AudioPlayer] ✅ Initialized (Speechmatics two-way audio)"
+          );
         }
+
+        // Workaround: Resume playback before playing new audio to ensure the audio engine is ready
+        // This fixes the issue where playback doesn't work after calling stopPlayback()
+        console.log("[AudioPlayer] Resuming playback engine...");
+        resumePlayback();
 
         // Get PCM data from blob (server now sends PCM format)
         const arrayBuffer = await audioData.arrayBuffer();
@@ -118,22 +132,40 @@ export function useAudioPlayer() {
         const durationSec = samples / 16000; // 16kHz sample rate
 
         const audioSizeKb = (pcm16k.length / 1024).toFixed(2);
-        console.log('[AudioPlayer] 🔊 Playing audio:', audioSizeKb, 'KB, duration:', durationSec.toFixed(2), 's');
+        console.log(
+          "[AudioPlayer] 🔊 Playing audio:",
+          audioSizeKb,
+          "KB, duration:",
+          durationSec.toFixed(2),
+          "s"
+        );
 
         setIsPlaying(true);
 
         // Play entire PCM data at once through Speechmatics
         playPCMData(pcm16k);
 
+        // Clear any existing timeout
+        if (playbackTimeoutRef.current) {
+          clearTimeout(playbackTimeoutRef.current);
+        }
+
         // Wait for playback to finish (estimate based on duration)
-        setTimeout(() => {
-          console.log('[AudioPlayer] ✅ Playback finished');
+        playbackTimeoutRef.current = setTimeout(() => {
+          console.log("[AudioPlayer] ✅ Playback finished");
           setIsPlaying(false);
+          playbackTimeoutRef.current = null;
           resolve(durationSec);
         }, durationSec * 1000);
-
       } catch (error) {
-        console.error('[AudioPlayer] Error playing audio:', error);
+        console.error("[AudioPlayer] Error playing audio:", error);
+
+        // Clear timeout on error
+        if (playbackTimeoutRef.current) {
+          clearTimeout(playbackTimeoutRef.current);
+          playbackTimeoutRef.current = null;
+        }
+
         setIsPlaying(false);
         reject(error);
       }
@@ -142,7 +174,16 @@ export function useAudioPlayer() {
 
   function stop(): void {
     if (isPlaying) {
-      console.log('[AudioPlayer] 🛑 Stopping playback (interrupted)');
+      console.log("[AudioPlayer] 🛑 Stopping playback (interrupted)");
+
+      // Stop native playback
+      stopPlayback();
+
+      // Clear playback timeout
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
     }
 
     setIsPlaying(false);
@@ -150,7 +191,7 @@ export function useAudioPlayer() {
     // Reject all pending promises in the queue
     while (queueRef.current.length > 0) {
       const item = queueRef.current.shift()!;
-      item.reject(new Error('Playback stopped'));
+      item.reject(new Error("Playback stopped"));
     }
 
     isProcessingQueueRef.current = false;
@@ -160,7 +201,7 @@ export function useAudioPlayer() {
     // Reject all pending promises in the queue
     while (queueRef.current.length > 0) {
       const item = queueRef.current.shift()!;
-      item.reject(new Error('Queue cleared'));
+      item.reject(new Error("Queue cleared"));
     }
   }
 

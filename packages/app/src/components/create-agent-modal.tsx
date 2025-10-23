@@ -1,5 +1,12 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  InteractionManager,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
@@ -56,6 +63,9 @@ export function CreateAgentModal({
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+
+  // Use ref instead of state to survive state resets in onDismiss
+  const pendingNavigationAgentIdRef = useRef<string | null>(null);
 
   const snapPoints = useMemo(() => ["90%"], []);
 
@@ -132,12 +142,11 @@ export function CreateAgentModal({
         setIsLoading(false);
         setPendingRequestId(null);
 
-        // Navigate to the agent page BEFORE closing modal
-        // This prevents race condition on Android where router.push() happens
-        // while the modal is unmounting, causing NullPointerException
-        router.push(`/agent/${agentId}`);
+        // Store the agent ID in ref for navigation after modal dismisses
+        // Using ref instead of state because state gets reset in onDismiss
+        pendingNavigationAgentIdRef.current = agentId;
 
-        // Close modal after navigation starts
+        // Close modal - navigation will happen in handleDismiss
         handleClose();
       }
     });
@@ -145,7 +154,7 @@ export function CreateAgentModal({
     return () => {
       unsubscribe();
     };
-  }, [pendingRequestId, ws, router]);
+  }, [pendingRequestId, ws]);
 
   async function handleCreate() {
     if (!workingDir.trim()) {
@@ -194,6 +203,8 @@ export function CreateAgentModal({
   }
 
   function handleDismiss() {
+    const agentId = pendingNavigationAgentIdRef.current;
+
     // Reset all state
     setWorkingDir("");
     setSelectedMode("plan");
@@ -201,6 +212,14 @@ export function CreateAgentModal({
     setIsLoading(false);
     setPendingRequestId(null);
     onClose();
+
+    // Navigate after interactions complete to avoid race with dismiss animation
+    if (agentId) {
+      InteractionManager.runAfterInteractions(() => {
+        router.push(`/agent/${agentId}`);
+        pendingNavigationAgentIdRef.current = null;
+      });
+    }
   }
 
   return (

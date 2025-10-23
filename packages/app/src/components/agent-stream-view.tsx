@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import type { AgentStatus } from '@server/server/acp/types';
 import { AssistantMessage, UserMessage, ActivityLog, ToolCall } from './message';
+import { ToolCallBottomSheet } from './tool-call-bottom-sheet';
 import type { StreamItem } from '@/types/stream';
 
 export interface AgentStreamViewProps {
@@ -40,12 +42,31 @@ export function AgentStreamView({
   onPermissionResponse,
 }: AgentStreamViewProps) {
   const scrollViewRef = useRef<ScrollView>(null);
+  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
+  const [selectedToolCall, setSelectedToolCall] = useState<{
+    toolName: string;
+    status: 'executing' | 'completed' | 'failed';
+    args: any;
+    result?: any;
+    error?: any;
+  } | null>(null);
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [streamItems]);
+
+  function handleOpenToolCallDetails(toolCall: {
+    toolName: string;
+    status: 'executing' | 'completed' | 'failed';
+    args: any;
+    result?: any;
+    error?: any;
+  }) {
+    setSelectedToolCall(toolCall);
+    bottomSheetRef.current?.present();
+  }
 
   return (
     <View style={stylesheet.container}>
@@ -107,6 +128,12 @@ export function AgentStreamView({
                     args={item.rawInput}
                     result={item.rawOutput}
                     status={toolStatus}
+                    onOpenDetails={() => handleOpenToolCallDetails({
+                      toolName: item.title,
+                      status: toolStatus,
+                      args: item.rawInput,
+                      result: item.rawOutput,
+                    })}
                   />
                 );
               }
@@ -137,6 +164,15 @@ export function AgentStreamView({
             />
           ))}
       </ScrollView>
+
+      <ToolCallBottomSheet
+        bottomSheetRef={bottomSheetRef}
+        toolName={selectedToolCall?.toolName}
+        status={selectedToolCall?.status}
+        args={selectedToolCall?.args}
+        result={selectedToolCall?.result}
+        error={selectedToolCall?.error}
+      />
     </View>
   );
 }
