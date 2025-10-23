@@ -30,11 +30,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { theme as defaultTheme, theme } from "../styles/theme";
 
-// Simple unique ID generator
-let messageIdCounter = 0;
-function generateMessageId(): string {
-  return `msg_${Date.now()}_${messageIdCounter++}`;
-}
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
@@ -1247,9 +1242,8 @@ export default function VoiceAssistantScreen() {
   function handleSelectConversation(newConversationId: string | null) {
     // Clear all state
     setMessages([]);
-    setAgentMessages(new Map());
+    setAgentStreamState(new Map());
     setCurrentAssistantMessage("");
-    setCurrentAgentMessages(new Map());
     setUserInput("");
     setArtifacts(new Map());
     setCurrentArtifact(null);
@@ -1402,7 +1396,7 @@ export default function VoiceAssistantScreen() {
           >
             {messages.length === 0 && !currentAssistantMessage && (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateTitle}>OnTheGo</Text>
+                <Text style={styles.emptyStateTitle}>Hammock</Text>
                 <Text style={styles.emptyStateSubtitle}>
                   What would you like to work on?
                 </Text>

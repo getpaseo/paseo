@@ -6,9 +6,10 @@ import {
   Pressable,
   TextInput,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { theme as defaultTheme } from "@/styles/theme";
@@ -37,9 +38,23 @@ export function CreateAgentModal({
   onClose,
   onCreateAgent,
 }: CreateAgentModalProps) {
+  const insets = useSafeAreaInsets();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+
   const [workingDir, setWorkingDir] = useState("");
   const [selectedMode, setSelectedMode] = useState("plan");
   const [errorMessage, setErrorMessage] = useState("");
+
+  // Keyboard animation
+  const bottomInset = insets.bottom;
+  const animatedKeyboardStyle = useAnimatedStyle(() => {
+    "worklet";
+    const absoluteHeight = Math.abs(keyboardHeight.value);
+    const padding = Math.max(0, absoluteHeight - bottomInset);
+    return {
+      paddingBottom: padding,
+    };
+  });
 
   function handleCreate() {
     if (!workingDir.trim()) {
@@ -65,12 +80,11 @@ export function CreateAgentModal({
       transparent={true}
       onRequestClose={handleClose}
     >
-      <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
+      <View style={styles.modalOverlay}>
         <Pressable style={styles.modalBackdrop} onPress={handleClose} />
-        <View style={styles.modalContent}>
+        <ReanimatedAnimated.View
+          style={[styles.modalContent, animatedKeyboardStyle]}
+        >
           <View style={styles.modalInner}>
             {/* Header */}
             <View style={styles.header}>
@@ -149,25 +163,29 @@ export function CreateAgentModal({
                   ))}
                 </View>
               </View>
-
-              {/* Action Buttons */}
-              <View style={styles.buttonContainer}>
-                <Pressable
-                  style={[styles.createButton, !workingDir.trim() && styles.createButtonDisabled]}
-                  onPress={handleCreate}
-                  disabled={!workingDir.trim()}
-                >
-                  <Text style={styles.createButtonText}>Create Agent</Text>
-                </Pressable>
-
-                <Pressable style={styles.cancelButton} onPress={handleClose}>
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </Pressable>
-              </View>
             </ScrollView>
+
+            {/* Fixed Footer with Create Button */}
+            <View
+              style={[
+                styles.footer,
+                { paddingBottom: Math.max(insets.bottom, 16) },
+              ]}
+            >
+              <Pressable
+                style={[
+                  styles.createButton,
+                  !workingDir.trim() && styles.createButtonDisabled,
+                ]}
+                onPress={handleCreate}
+                disabled={!workingDir.trim()}
+              >
+                <Text style={styles.createButtonText}>Create Agent</Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </ReanimatedAnimated.View>
+      </View>
     </Modal>
   );
 }
@@ -175,19 +193,28 @@ export function CreateAgentModal({
 const styles = StyleSheet.create((theme) => ({
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
   },
   modalBackdrop: {
-    flex: 1,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    zIndex: 1,
   },
   modalContent: {
     backgroundColor: theme.colors.card,
     borderTopLeftRadius: theme.spacing[6],
     borderTopRightRadius: theme.spacing[6],
-    height: "75%",
+    minHeight: "80%",
+    zIndex: 2,
+    elevation: 5,
   },
   modalInner: {
     flex: 1,
+    minHeight: 0,
   },
   header: {
     flexDirection: "row",
@@ -207,7 +234,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   scrollContent: {
     padding: theme.spacing[6],
-    paddingBottom: theme.spacing[4] * 5,
+    paddingBottom: theme.spacing[4],
   },
   formSection: {
     marginBottom: theme.spacing[6],
@@ -289,14 +316,18 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
-  buttonContainer: {
-    gap: theme.spacing[3],
-    marginTop: theme.spacing[4],
+  footer: {
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[6],
+    paddingTop: theme.spacing[4],
+    backgroundColor: theme.colors.card,
   },
   createButton: {
     backgroundColor: theme.colors.palette.blue[500],
     paddingVertical: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
+    marginBottom: theme.spacing[4],
     alignItems: "center",
   },
   createButtonDisabled: {
@@ -305,19 +336,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   createButtonText: {
     color: theme.colors.palette.white,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  cancelButton: {
-    backgroundColor: "transparent",
-    paddingVertical: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  cancelButtonText: {
-    color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },

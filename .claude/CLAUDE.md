@@ -26,3 +26,13 @@ Don't run them anywhere else. Check logs there.
 ## Andriod
 
 Take screensots like this: `adb exec-out screencap -p > screenshot.png`
+
+## Asking Codex for a second opinion
+
+You can ask Codex for a second opinion on a problem you're working on.
+
+Set a high timeout, like 2 minutes.
+
+Try not to bias it, state the problem clearly and let it work it out.
+
+`codex exec "prompt"`
