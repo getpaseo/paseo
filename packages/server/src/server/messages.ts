@@ -286,14 +286,9 @@ export const AgentPermissionRequestMessageSchema = z.object({
     agentId: z.string(),
     requestId: z.string(),
     sessionId: z.string(),
-    toolCall: z.object({
-      toolCallId: z.string(),
-      rawInput: z.object({
-        plan: z.string(),
-      }),
-    }),
+    toolCall: z.any(), // ToolCallUpdate from ACP SDK - complex type with flexible rawInput
     options: z.array(z.object({
-      kind: z.enum(["allow_always", "allow_once", "reject_once"]),
+      kind: z.enum(["allow_always", "allow_once", "reject_once", "reject_always"]),
       name: z.string(),
       optionId: z.string(),
     })),

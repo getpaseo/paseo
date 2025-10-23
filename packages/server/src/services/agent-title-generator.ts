@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { AgentUpdate } from "../server/acp/types.js";
+import { curateAgentActivity } from "../server/acp/activity-curator.js";
 
 let openai: ReturnType<typeof createOpenAI> | null = null;
 
@@ -12,48 +13,6 @@ export function initializeTitleGenerator(apiKey: string): void {
 
 export function isTitleGeneratorInitialized(): boolean {
   return openai !== null;
-}
-
-/**
- * Extract text context from agent updates for title generation
- */
-function extractActivityContext(updates: AgentUpdate[]): string {
-  const lines: string[] = [];
-
-  for (const update of updates.slice(0, 10)) { // Only use first 10 updates for context
-    const notification = update.notification as any;
-
-    if (notification?.update?.sessionUpdate) {
-      const sessionUpdate = notification.update.sessionUpdate;
-
-      // Extract user messages
-      if (sessionUpdate.userMessage?.text) {
-        lines.push(`User: ${sessionUpdate.userMessage.text}`);
-      }
-
-      // Extract assistant messages
-      if (sessionUpdate.assistantMessage?.text) {
-        lines.push(`Assistant: ${sessionUpdate.assistantMessage.text}`);
-      }
-
-      // Extract tool calls (showing what actions were taken)
-      if (sessionUpdate.toolCall) {
-        const toolCall = sessionUpdate.toolCall;
-        lines.push(`Tool: ${toolCall.toolName || 'unknown'}`);
-      }
-
-      // Extract plan entries
-      if (sessionUpdate.plan?.entries) {
-        for (const entry of sessionUpdate.plan.entries.slice(0, 3)) {
-          if (entry.content) {
-            lines.push(`Plan: ${entry.content}`);
-          }
-        }
-      }
-    }
-  }
-
-  return lines.join('\n');
 }
 
 /**
@@ -72,9 +31,9 @@ export async function generateAgentTitle(
     return "New Agent";
   }
 
-  const activityContext = extractActivityContext(agentUpdates);
+  const activityContext = curateAgentActivity(agentUpdates);
 
-  if (!activityContext.trim()) {
+  if (!activityContext.trim() || activityContext === "No activity to display.") {
     return "New Agent";
   }
 

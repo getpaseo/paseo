@@ -48,7 +48,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
       };
 
       ws.onerror = (error) => {
-        console.error('[WS] Error:', error);
+        console.warn('[WS] Error:', error);
       };
 
       ws.onmessage = (event) => {
@@ -87,7 +87,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
 
       wsRef.current = ws;
     } catch (err) {
-      console.error('[WS] Failed to create WebSocket:', err);
+      console.warn('[WS] Failed to create WebSocket:', err);
     }
   }, [url, conversationId]);
 

@@ -1785,6 +1785,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   scrollContent: {
+    paddingTop: theme.spacing[6],
     paddingBottom: theme.spacing[4],
     flexGrow: 1,
   },
