@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { theme as defaultTheme } from "@/styles/theme";
+import { useRecentPaths } from "@/hooks/use-recent-paths";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
@@ -40,6 +41,7 @@ export function CreateAgentModal({
 }: CreateAgentModalProps) {
   const insets = useSafeAreaInsets();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const { recentPaths, addRecentPath } = useRecentPaths();
 
   const [workingDir, setWorkingDir] = useState("");
   const [selectedMode, setSelectedMode] = useState("plan");
@@ -56,13 +58,23 @@ export function CreateAgentModal({
     };
   });
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!workingDir.trim()) {
       setErrorMessage("Working directory is required");
       return;
     }
 
-    onCreateAgent(workingDir.trim(), selectedMode);
+    const path = workingDir.trim();
+
+    // Save to recent paths
+    try {
+      await addRecentPath(path);
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to save recent path:", error);
+      // Continue anyway - don't block agent creation
+    }
+
+    onCreateAgent(path, selectedMode);
     handleClose();
   }
 
@@ -122,6 +134,28 @@ export function CreateAgentModal({
                   <Text style={styles.helperText}>
                     Absolute path to the project directory
                   </Text>
+                )}
+
+                {/* Recent Paths Chips */}
+                {recentPaths.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.recentPathsContainer}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {recentPaths.map((path) => (
+                      <Pressable
+                        key={path}
+                        style={styles.recentPathChip}
+                        onPress={() => setWorkingDir(path)}
+                      >
+                        <Text style={styles.recentPathChipText} numberOfLines={1}>
+                          {path}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
                 )}
               </View>
 
@@ -338,5 +372,24 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.palette.white,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
+  },
+  recentPathsContainer: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+  },
+  recentPathChip: {
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    maxWidth: 200,
+  },
+  recentPathChipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
 }));

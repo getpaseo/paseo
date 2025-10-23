@@ -12,11 +12,9 @@ export function EmptyState({ onCreateAgent }: EmptyStateProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Hammock</Text>
-      <Text style={styles.subtitle}>
-        What would you like to work on?
-      </Text>
+      <Text style={styles.subtitle}>What would you like to work on?</Text>
       <Pressable onPress={onCreateAgent} style={styles.button}>
-        <Plus size={20} color={theme.colors.foreground} />
+        <Plus size={20} color={styles.buttonText.color} />
         <Text style={styles.buttonText}>New agent</Text>
       </Pressable>
     </View>

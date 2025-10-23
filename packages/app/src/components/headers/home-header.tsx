@@ -34,10 +34,7 @@ export function HomeHeader({ onCreateAgent }: HomeHeaderProps) {
             >
               <MessageSquare size={20} color={theme.colors.foreground} />
             </Pressable>
-            <Pressable
-              onPress={onCreateAgent}
-              style={styles.iconButton}
-            >
+            <Pressable onPress={onCreateAgent} style={styles.iconButton}>
               <Plus size={20} color={theme.colors.foreground} />
             </Pressable>
           </View>
@@ -74,6 +71,5 @@ const styles = StyleSheet.create((theme) => ({
   iconButton: {
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.muted,
   },
 }));
