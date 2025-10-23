@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { AgentStatus } from '@server/server/acp/types';
 import { AssistantMessage, UserMessage, ActivityLog, ToolCall } from './message';
 import type { StreamItem } from '@/types/stream';
@@ -15,12 +15,29 @@ export interface AgentStreamViewProps {
     type: 'claude';
   };
   streamItems: StreamItem[];
+  pendingPermissions: Map<
+    string,
+    {
+      agentId: string;
+      requestId: string;
+      sessionId: string;
+      toolCall: any;
+      options: Array<{
+        kind: string;
+        name: string;
+        optionId: string;
+      }>;
+    }
+  >;
+  onPermissionResponse: (requestId: string, optionId: string) => void;
 }
 
 export function AgentStreamView({
   agentId,
   agent,
   streamItems,
+  pendingPermissions,
+  onPermissionResponse,
 }: AgentStreamViewProps) {
   const scrollViewRef = useRef<ScrollView>(null);
   const insets = useSafeAreaInsets();
@@ -108,7 +125,137 @@ export function AgentStreamView({
             }
           })
         )}
+
+        {/* Render pending permissions for this agent */}
+        {Array.from(pendingPermissions.values())
+          .filter((perm) => perm.agentId === agentId)
+          .map((permission) => (
+            <PermissionRequestCard
+              key={permission.requestId}
+              permission={permission}
+              onResponse={onPermissionResponse}
+            />
+          ))}
       </ScrollView>
+    </View>
+  );
+}
+
+// Permission Request Card Component
+function PermissionRequestCard({
+  permission,
+  onResponse,
+}: {
+  permission: {
+    requestId: string;
+    toolCall: any;
+    options: Array<{
+      kind: string;
+      name: string;
+      optionId: string;
+    }>;
+  };
+  onResponse: (requestId: string, optionId: string) => void;
+}) {
+  const { theme } = useUnistyles();
+
+  // Determine permission type and content based on toolCall
+  const getPermissionInfo = () => {
+    const rawInput = permission.toolCall?.rawInput || {};
+    const toolCallId = permission.toolCall?.toolCallId || '';
+
+    console.log('[PermissionCard] Tool call details:', {
+      toolCallId,
+      rawInputKeys: Object.keys(rawInput),
+      rawInput,
+    });
+
+    // Check if this is a plan (ExitPlanMode)
+    if (rawInput.plan) {
+      return {
+        title: 'Plan Ready for Review',
+        content: rawInput.plan,
+        type: 'plan' as const,
+      };
+    }
+
+    // Check if this is a file operation (Write, Edit, etc.)
+    if (rawInput.file_path) {
+      const operation = toolCallId.includes('Write') ? 'Create' : 'Edit';
+      const fileContent = rawInput.content || rawInput.new_string || '';
+      const preview = fileContent.length > 500
+        ? fileContent.slice(0, 500) + '\n\n... (truncated)'
+        : fileContent;
+
+      return {
+        title: `${operation} File Permission`,
+        content: `File: ${rawInput.file_path}\n\n${preview || '(empty file)'}`,
+        type: 'file' as const,
+      };
+    }
+
+    // Check if this is a command (Bash)
+    if (rawInput.command) {
+      return {
+        title: 'Run Command Permission',
+        content: `Command: ${rawInput.command}\n\nDescription: ${rawInput.description || 'No description'}`,
+        type: 'command' as const,
+      };
+    }
+
+    // Fallback - show whatever is in rawInput
+    return {
+      title: 'Permission Required',
+      content: JSON.stringify(rawInput, null, 2),
+      type: 'unknown' as const,
+    };
+  };
+
+  const permissionInfo = getPermissionInfo();
+
+  return (
+    <View
+      style={[
+        permissionStyles.container,
+        { backgroundColor: theme.colors.secondary, borderColor: theme.colors.border },
+      ]}
+    >
+      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>
+        {permissionInfo.title}
+      </Text>
+
+      {permissionInfo.content && (
+        <View style={[permissionStyles.planContainer, { backgroundColor: theme.colors.background }]}>
+          <Text style={[permissionStyles.planText, { color: theme.colors.foreground }]}>
+            {permissionInfo.content}
+          </Text>
+        </View>
+      )}
+
+      <Text style={[permissionStyles.question, { color: theme.colors.mutedForeground }]}>
+        How would you like to proceed?
+      </Text>
+
+      <View style={permissionStyles.optionsContainer}>
+        {permission.options.map((option) => (
+          <Pressable
+            key={option.optionId}
+            style={[
+              permissionStyles.optionButton,
+              {
+                backgroundColor: option.kind.includes('reject')
+                  ? theme.colors.destructive
+                  : theme.colors.primary,
+              },
+            ]}
+            onPress={() => onResponse(permission.requestId, option.optionId)}
+          >
+            <Text style={[permissionStyles.optionText, { color: theme.colors.primaryForeground }]}>
+              {option.name}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
     </View>
   );
 }
@@ -132,5 +279,44 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
+  },
+}));
+
+const permissionStyles = StyleSheet.create((theme) => ({
+  container: {
+    marginVertical: theme.spacing[3],
+    padding: theme.spacing[4],
+    borderRadius: theme.spacing[2],
+    borderWidth: 1,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: theme.spacing[3],
+  },
+  planContainer: {
+    padding: theme.spacing[3],
+    borderRadius: theme.spacing[1],
+    marginBottom: theme.spacing[3],
+  },
+  planText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  question: {
+    fontSize: 14,
+    marginBottom: theme.spacing[3],
+  },
+  optionsContainer: {
+    gap: theme.spacing[2],
+  },
+  optionButton: {
+    padding: theme.spacing[3],
+    borderRadius: theme.spacing[1],
+    alignItems: "center",
+  },
+  optionText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
 }));

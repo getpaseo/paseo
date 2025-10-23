@@ -33,19 +33,27 @@ function deriveUserMessageId(text: string, timestamp: Date, messageId?: string):
 }
 
 /**
- * Derive deterministic ID for assistant message based on index in state
+ * Derive deterministic ID for assistant message
+ * Now uses stable messageId from server if available
  */
-function deriveAssistantMessageId(state: StreamItem[]): string {
-  const count = state.filter(s => s.kind === 'assistant_message').length;
-  return `assistant_${count}`;
+function deriveAssistantMessageId(messageId: string | undefined, timestamp: Date): string {
+  if (messageId) {
+    return `assistant_${messageId}`;
+  }
+  // Fallback for messages without messageId (shouldn't happen with enriched updates)
+  return `assistant_${timestamp.getTime()}`;
 }
 
 /**
- * Derive deterministic ID for thought based on index in state
+ * Derive deterministic ID for thought
+ * Now uses stable messageId from server if available
  */
-function deriveThoughtId(state: StreamItem[]): string {
-  const count = state.filter(s => s.kind === 'thought').length;
-  return `thought_${count}`;
+function deriveThoughtId(messageId: string | undefined, timestamp: Date): string {
+  if (messageId) {
+    return `thought_${messageId}`;
+  }
+  // Fallback for thoughts without messageId (shouldn't happen with enriched updates)
+  return `thought_${timestamp.getTime()}`;
 }
 
 /**
@@ -129,8 +137,8 @@ export interface ArtifactItem {
  */
 type ParsedNotification =
   | { kind: 'user_message_chunk'; text: string; messageId?: string }
-  | { kind: 'agent_message_chunk'; text: string }
-  | { kind: 'agent_thought_chunk'; text: string }
+  | { kind: 'agent_message_chunk'; text: string; messageId?: string }
+  | { kind: 'agent_thought_chunk'; text: string; messageId?: string }
   | { kind: 'tool_call'; toolCallId: string; title: string; status?: string; toolKind?: string; rawInput?: any; rawOutput?: any; content?: any[]; locations?: any[] }
   | { kind: 'tool_call_update'; toolCallId: string; title?: string | null; status?: string | null; toolKind?: string | null; rawInput?: any; rawOutput?: any; content?: any[] | null; locations?: any[] | null }
   | { kind: 'plan'; entries: Array<{ content: string; status: string; priority: string }> }
@@ -162,12 +170,14 @@ function parseNotification(notification: SessionNotification | any): ParsedNotif
       return {
         kind: 'agent_message_chunk',
         text: update.content?.text || '',
+        messageId: update.messageId,
       };
 
     case 'agent_thought_chunk':
       return {
         kind: 'agent_thought_chunk',
         text: update.content?.text || '',
+        messageId: update.messageId,
       };
 
     case 'tool_call':
@@ -259,21 +269,26 @@ export function reduceStreamUpdate(
     }];
   }
 
-  // Agent message chunks - accumulate into last assistant message or create new
+  // Agent message chunks - accumulate into message with matching ID or create new
   if (parsed.kind === 'agent_message_chunk') {
-    const last = state[state.length - 1];
-    if (last?.kind === 'assistant_message') {
+    const id = deriveAssistantMessageId(parsed.messageId, timestamp);
+
+    // Find existing message with this ID
+    const existingIndex = state.findIndex(
+      item => item.kind === 'assistant_message' && item.id === id
+    );
+
+    if (existingIndex >= 0) {
       // Append to existing message
-      return [
-        ...state.slice(0, -1),
-        {
-          ...last,
-          text: last.text + parsed.text,
-        },
-      ];
+      const existing = state[existingIndex] as AssistantMessageItem;
+      return state.map((item, idx) =>
+        idx === existingIndex
+          ? { ...existing, text: existing.text + parsed.text }
+          : item
+      );
     }
-    // Create new message with deterministic ID
-    const id = deriveAssistantMessageId(state);
+
+    // Create new message with stable ID
     return [...state, {
       kind: 'assistant_message',
       id,
@@ -282,21 +297,26 @@ export function reduceStreamUpdate(
     }];
   }
 
-  // Thought chunks - accumulate into last thought or create new
+  // Thought chunks - accumulate into thought with matching ID or create new
   if (parsed.kind === 'agent_thought_chunk') {
-    const last = state[state.length - 1];
-    if (last?.kind === 'thought') {
+    const id = deriveThoughtId(parsed.messageId, timestamp);
+
+    // Find existing thought with this ID
+    const existingIndex = state.findIndex(
+      item => item.kind === 'thought' && item.id === id
+    );
+
+    if (existingIndex >= 0) {
       // Append to existing thought
-      return [
-        ...state.slice(0, -1),
-        {
-          ...last,
-          text: last.text + parsed.text,
-        },
-      ];
+      const existing = state[existingIndex] as ThoughtItem;
+      return state.map((item, idx) =>
+        idx === existingIndex
+          ? { ...existing, text: existing.text + parsed.text }
+          : item
+      );
     }
-    // Create new thought with deterministic ID
-    const id = deriveThoughtId(state);
+
+    // Create new thought with stable ID
     return [...state, {
       kind: 'thought',
       id,

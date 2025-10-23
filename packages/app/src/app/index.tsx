@@ -12,6 +12,7 @@ import {
   Modal,
 } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -19,6 +20,9 @@ import ReanimatedAnimated, {
   withRepeat,
   withSequence,
   withTiming,
+  cancelAnimation,
+  runOnJS,
+  Easing,
 } from "react-native-reanimated";
 import { router } from "expo-router";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
@@ -44,7 +48,7 @@ import {
   ToolCall,
 } from "@/components/message";
 import { ArtifactDrawer, type Artifact } from "@/components/artifact-drawer";
-import { ActiveProcesses } from "@/components/active-processes";
+import { AgentSidebar } from "@/components/agent-sidebar";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { ConversationSelector } from "@/components/conversation-selector";
 import { VolumeMeter } from "@/components/volume-meter";
@@ -59,6 +63,8 @@ import {
   MicOff,
   Plus,
   ChevronDown,
+  Menu,
+  Home,
 } from "lucide-react-native";
 import type {
   ActivityLogPayload,
@@ -124,6 +130,8 @@ interface Agent {
     name: string;
     description?: string | null;
   }>;
+  title?: string;
+  cwd: string;
 }
 
 interface Command {
@@ -338,6 +346,9 @@ export default function VoiceAssistantScreen() {
   // Agent creation modal state
   const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
 
+  // Agent sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   // Mode selector modal state
   const [showModeSelector, setShowModeSelector] = useState(false);
 
@@ -347,6 +358,22 @@ export default function VoiceAssistantScreen() {
   const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(
     new Map()
   );
+  const [pendingPermissions, setPendingPermissions] = useState<
+    Map<
+      string,
+      {
+        agentId: string;
+        requestId: string;
+        sessionId: string;
+        toolCall: any;
+        options: Array<{
+          kind: string;
+          name: string;
+          optionId: string;
+        }>;
+      }
+    >
+  >(new Map());
 
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -417,7 +444,7 @@ export default function VoiceAssistantScreen() {
     // Agent created handler
     const unsubAgentCreated = ws.on("agent_created", (message) => {
       if (message.type !== "agent_created") return;
-      const { agentId, status, type, currentModeId, availableModes } =
+      const { agentId, status, type, currentModeId, availableModes, title, cwd } =
         message.payload;
 
       console.log("[App] Agent created:", agentId, "currentModeId:", currentModeId, "availableModes:", availableModes);
@@ -427,6 +454,8 @@ export default function VoiceAssistantScreen() {
         status: status as AgentStatus,
         type,
         createdAt: new Date(),
+        title,
+        cwd,
         currentModeId,
         availableModes,
       };
@@ -440,6 +469,29 @@ export default function VoiceAssistantScreen() {
     });
 
     // Agent update handler
+    // Agent permission request handler
+    const unsubAgentPermissionRequest = ws.on("agent_permission_request", (message) => {
+      console.log("[App] agent_permission_request message received:", message.type);
+      if (message.type !== "agent_permission_request") return;
+      const { agentId, requestId, sessionId, toolCall, options } = message.payload;
+
+      console.log("[App] Permission request received:", requestId, "for agent:", agentId);
+      console.log("[App] Permission details:", { agentId, requestId, toolCall, options });
+
+      // Store pending permission
+      setPendingPermissions((prev) => {
+        const updated = new Map(prev);
+        updated.set(requestId, {
+          agentId,
+          requestId,
+          sessionId,
+          toolCall,
+          options,
+        });
+        return updated;
+      });
+    });
+
     const unsubAgentUpdate = ws.on("agent_update", (message) => {
       if (message.type !== "agent_update") return;
       const { agentId, timestamp, notification } = message.payload;
@@ -488,6 +540,8 @@ export default function VoiceAssistantScreen() {
             error: info.error,
             currentModeId: info.currentModeId,
             availableModes: info.availableModes,
+            title: info.title,
+            cwd: info.cwd,
           });
         }
         return updated;
@@ -803,6 +857,7 @@ export default function VoiceAssistantScreen() {
     return () => {
       unsubSessionState();
       unsubAgentCreated();
+      unsubAgentPermissionRequest();
       unsubAgentUpdate();
       unsubAgentStatus();
       unsubActivity();
@@ -1002,6 +1057,36 @@ export default function VoiceAssistantScreen() {
     setShowModeSelector(false);
   }
 
+  // Permission response handler
+  function handlePermissionResponse(requestId: string, optionId: string) {
+    const permission = pendingPermissions.get(requestId);
+    if (!permission) {
+      console.error("[App] Permission not found:", requestId);
+      return;
+    }
+
+    console.log("[App] Responding to permission:", requestId, "with option:", optionId);
+
+    const message: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "agent_permission_response",
+        agentId: permission.agentId,
+        requestId,
+        optionId,
+      },
+    };
+
+    ws.send(message);
+
+    // Remove from pending permissions
+    setPendingPermissions((prev) => {
+      const updated = new Map(prev);
+      updated.delete(requestId);
+      return updated;
+    });
+  }
+
   // Text message handlers
   function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -1171,6 +1256,7 @@ export default function VoiceAssistantScreen() {
     setAgents(new Map());
     setCommands(new Map());
     setAgentUpdates(new Map());
+    setPendingPermissions(new Map());
     setViewMode("orchestrator");
     setActiveAgentId(null);
 
@@ -1191,6 +1277,48 @@ export default function VoiceAssistantScreen() {
   const agent = activeAgentId ? agents.get(activeAgentId) : null;
   const streamItems = activeAgentId ? (agentStreamState.get(activeAgentId) || []) : [];
 
+  // Edge swipe state
+  const edgeSwipeTranslateX = useSharedValue(-300);
+  const isEdgeSwiping = useSharedValue(false);
+
+  // Edge swipe gesture to open sidebar
+  const edgeSwipeGesture = Gesture.Pan()
+    .enabled(!sidebarOpen)
+    .activeOffsetX(10) // require a rightward intent
+    .failOffsetY([-15, 15]) // ignore primarily vertical swipes
+    .onStart(() => {
+      isEdgeSwiping.value = true;
+      cancelAnimation(edgeSwipeTranslateX);
+      edgeSwipeTranslateX.value = -300;
+    })
+    .onChange((event) => {
+      if (!isEdgeSwiping.value) {
+        return;
+      }
+      // Move sidebar from -300 (closed) to 0 (open) as the finger moves
+      const newX = -300 + event.translationX;
+      edgeSwipeTranslateX.value = Math.max(-300, Math.min(0, newX));
+    })
+    .onEnd((event) => {
+      if (!isEdgeSwiping.value) {
+        edgeSwipeTranslateX.value = -300;
+        return;
+      }
+
+      const shouldOpen = edgeSwipeTranslateX.value > -150 || event.velocityX > 500;
+
+      edgeSwipeTranslateX.value = withTiming(shouldOpen ? 0 : -300, {
+        duration: 150,
+        easing: Easing.out(Easing.ease),
+      });
+
+      if (shouldOpen) {
+        runOnJS(setSidebarOpen)(true);
+      }
+
+      isEdgeSwiping.value = false;
+    });
+
   // Render main view with shared structure
   return (
     <View style={styles.container}>
@@ -1199,6 +1327,28 @@ export default function VoiceAssistantScreen() {
         <View style={{ paddingTop: insets.top + 16 }}>
           <View style={styles.headerRow}>
             <View style={styles.headerLeft}>
+              {/* Menu button to open sidebar */}
+              <Pressable
+                onPress={() => {
+                  edgeSwipeTranslateX.value = -300;
+                  setSidebarOpen(true);
+                }}
+                style={styles.menuButton}
+              >
+                <Menu size={24} color="white" />
+              </Pressable>
+
+              {/* Orchestrator button (only show in agent view) */}
+              {viewMode === "agent" && (
+                <Pressable
+                  onPress={handleBackToOrchestrator}
+                  style={styles.orchestratorButton}
+                >
+                  <Home size={20} color="white" />
+                  <Text style={styles.orchestratorButtonText}>Orchestrator</Text>
+                </Pressable>
+              )}
+
               <ConnectionStatus isConnected={ws.isConnected} />
             </View>
             <View style={styles.headerRight}>
@@ -1208,16 +1358,6 @@ export default function VoiceAssistantScreen() {
                 websocket={ws}
               />
               <Pressable
-                onPress={() => setShowCreateAgentModal(true)}
-                disabled={!ws.isConnected}
-                style={[
-                  styles.settingsButton,
-                  !ws.isConnected && styles.buttonDisabled,
-                ]}
-              >
-                <Plus size={20} color="white" />
-              </Pressable>
-              <Pressable
                 onPress={() => router.push("/settings")}
                 style={styles.settingsButton}
               >
@@ -1226,22 +1366,13 @@ export default function VoiceAssistantScreen() {
             </View>
           </View>
         </View>
-
-        {/* Active processes bar */}
-        <ActiveProcesses
-          agents={Array.from(agents.values())}
-          commands={Array.from(commands.values())}
-          viewMode={viewMode}
-          activeAgentId={activeAgentId}
-          onSelectAgent={handleSelectAgent}
-          onSelectOrchestrator={handleBackToOrchestrator}
-        />
       </View>
 
       {/* Content Area with Keyboard Handling */}
-      <ReanimatedAnimated.View
-        style={[styles.contentArea, animatedKeyboardStyle]}
-      >
+      <GestureDetector gesture={edgeSwipeGesture}>
+        <ReanimatedAnimated.View
+          style={[styles.contentArea, animatedKeyboardStyle]}
+        >
         {/* Conditionally render content based on view mode */}
         {viewMode === "agent" && activeAgentId && agent ? (
           // Agent view - render AgentStreamView
@@ -1249,6 +1380,8 @@ export default function VoiceAssistantScreen() {
             agentId={activeAgentId}
             agent={agent}
             streamItems={streamItems}
+            pendingPermissions={pendingPermissions}
+            onPermissionResponse={handlePermissionResponse}
           />
         ) : viewMode === "agent" && activeAgentId && !agent ? (
           // Agent not found
@@ -1509,7 +1642,8 @@ export default function VoiceAssistantScreen() {
             </View>
           )}
         </View>
-      </ReanimatedAnimated.View>
+        </ReanimatedAnimated.View>
+      </GestureDetector>
 
       {/* Artifact drawer */}
       <ArtifactDrawer
@@ -1563,6 +1697,21 @@ export default function VoiceAssistantScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      {/* Agent sidebar */}
+      <AgentSidebar
+        isOpen={sidebarOpen}
+        agents={Array.from(agents.values())}
+        activeAgentId={activeAgentId}
+        onClose={() => {
+          setSidebarOpen(false);
+          // Reset edge swipe position when closing
+          edgeSwipeTranslateX.value = -300;
+        }}
+        onSelectAgent={handleSelectAgent}
+        onNewAgent={() => setShowCreateAgentModal(true)}
+        edgeSwipeTranslateX={edgeSwipeTranslateX}
+      />
     </View>
   );
 }
@@ -1600,6 +1749,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerLeft: {
     flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  menuButton: {
+    padding: theme.spacing[2],
+  },
+  orchestratorButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.md,
+  },
+  orchestratorButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   headerRight: {
     flexDirection: "row",
