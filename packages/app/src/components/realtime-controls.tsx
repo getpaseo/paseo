@@ -3,9 +3,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { MicOff, Square } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
 import { useRealtime } from "@/contexts/realtime-context";
+import { useSession } from "@/contexts/session-context";
 
 export function RealtimeControls() {
   const { theme } = useUnistyles();
+  const { audioPlayer } = useSession();
   const {
     volume,
     isMuted,
@@ -15,6 +17,11 @@ export function RealtimeControls() {
     stopRealtime,
     toggleMute,
   } = useRealtime();
+
+  function handleStop() {
+    audioPlayer.stop();
+    stopRealtime();
+  }
 
   return (
     <View style={styles.container}>
@@ -52,7 +59,7 @@ export function RealtimeControls() {
         </Pressable>
         {/* Stop button */}
         <Pressable
-          onPress={stopRealtime}
+          onPress={handleStop}
           style={styles.stopButton}
         >
           <Square size={18} color="white" fill="white" />
