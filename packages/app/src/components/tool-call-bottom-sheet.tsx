@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScrollView } from "react-native-gesture-handler";
+import { StyleSheet } from "react-native-unistyles";
 import {
   BottomSheetModal,
   BottomSheetView,
@@ -156,64 +157,64 @@ export function ToolCallBottomSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   handleIndicator: {
-    backgroundColor: "#4b5563",
+    backgroundColor: theme.colors.border,
   },
   background: {
-    backgroundColor: "#1f2937",
+    backgroundColor: theme.colors.popover,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#374151",
-    backgroundColor: "#1f2937",
+    paddingHorizontal: theme.spacing[6],
+    paddingTop: theme.spacing[1],
+    paddingBottom: theme.spacing[4],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.popover,
   },
   toolName: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#f9fafb",
+    fontSize: theme.fontSize.xl,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.popoverForeground,
   },
   sheetContent: {
-    paddingTop: 20,
-    paddingBottom: 20,
+    paddingTop: theme.spacing[6],
+    paddingBottom: theme.spacing[6],
   },
   section: {
-    marginBottom: 20,
-    paddingHorizontal: 20,
+    marginBottom: theme.spacing[6],
+    paddingHorizontal: theme.spacing[6],
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#9ca3af",
-    marginBottom: 8,
-    textTransform: "uppercase",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.mutedForeground,
+    marginBottom: theme.spacing[2],
+    textTransform: "uppercase" as const,
     letterSpacing: 0.5,
   },
   jsonContainer: {
-    backgroundColor: "#111827",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#374151",
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
     // Natural height based on content
   },
   jsonContent: {
-    padding: 12,
+    padding: theme.spacing[3],
   },
   jsonText: {
     fontFamily: "monospace",
-    fontSize: 12,
-    color: "#e5e7eb",
-    lineHeight: 18,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    lineHeight: 20,
     // Text maintains whitespace and formatting
   },
   errorContainer: {
-    borderColor: "#ef4444",
-    backgroundColor: "#1f1416",
+    borderColor: theme.colors.destructive,
+    backgroundColor: theme.colors.background,
   },
   errorText: {
-    color: "#fca5a5",
+    color: theme.colors.destructive,
   },
-});
+}));

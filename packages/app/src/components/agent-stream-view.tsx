@@ -1,12 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { BottomSheetModal } from '@gorhom/bottom-sheet';
-import { AssistantMessage, UserMessage, ActivityLog, ToolCall } from './message';
-import { ToolCallBottomSheet } from './tool-call-bottom-sheet';
-import type { StreamItem } from '@/types/stream';
-import type { SelectedToolCall, PendingPermission, AgentInfo } from '@/types/shared';
+import { useEffect, useRef, useState } from "react";
+import { View, Text, ScrollView, Pressable } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import {
+  AssistantMessage,
+  UserMessage,
+  ActivityLog,
+  ToolCall,
+} from "./message";
+import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
+import type { StreamItem } from "@/types/stream";
+import type {
+  SelectedToolCall,
+  PendingPermission,
+  AgentInfo,
+} from "@/types/shared";
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -26,7 +35,8 @@ export function AgentStreamView({
   const scrollViewRef = useRef<ScrollView>(null);
   const bottomSheetRef = useRef<BottomSheetModal | null>(null);
   const insets = useSafeAreaInsets();
-  const [selectedToolCall, setSelectedToolCall] = useState<SelectedToolCall | null>(null);
+  const [selectedToolCall, setSelectedToolCall] =
+    useState<SelectedToolCall | null>(null);
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
@@ -44,7 +54,10 @@ export function AgentStreamView({
       <ScrollView
         ref={scrollViewRef}
         style={stylesheet.scrollView}
-        contentContainerStyle={{ paddingTop: 24, paddingBottom: Math.max(insets.bottom, 32) }}
+        contentContainerStyle={{
+          paddingTop: 24,
+          paddingBottom: Math.max(insets.bottom, 32),
+        }}
       >
         {streamItems.length === 0 ? (
           <View style={stylesheet.emptyState}>
@@ -55,7 +68,7 @@ export function AgentStreamView({
         ) : (
           streamItems.map((item) => {
             switch (item.kind) {
-              case 'user_message':
+              case "user_message":
                 return (
                   <UserMessage
                     key={item.id}
@@ -64,7 +77,7 @@ export function AgentStreamView({
                   />
                 );
 
-              case 'assistant_message':
+              case "assistant_message":
                 return (
                   <AssistantMessage
                     key={item.id}
@@ -73,7 +86,7 @@ export function AgentStreamView({
                   />
                 );
 
-              case 'thought':
+              case "thought":
                 return (
                   <ActivityLog
                     key={item.id}
@@ -83,27 +96,31 @@ export function AgentStreamView({
                   />
                 );
 
-              case 'tool_call': {
+              case "tool_call": {
                 const { payload } = item;
 
                 // Extract data based on source
-                if (payload.source === 'acp') {
+                if (payload.source === "acp") {
                   const data = payload.data;
                   // Map ACP status to display status
-                  const toolStatus = data.status === 'pending' || data.status === 'in_progress'
-                    ? 'executing' as const
-                    : data.status === 'completed'
-                    ? 'completed' as const
-                    : 'failed' as const;
+                  const toolStatus =
+                    data.status === "pending" || data.status === "in_progress"
+                      ? ("executing" as const)
+                      : data.status === "completed"
+                      ? ("completed" as const)
+                      : ("failed" as const);
 
                   return (
                     <ToolCall
                       key={item.id}
-                      toolName={data.title ?? 'Unknown Tool'}
+                      toolName={data.title ?? "Unknown Tool"}
+                      kind={data.kind}
                       args={data.rawInput}
                       result={data.rawOutput}
                       status={toolStatus}
-                      onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+                      onOpenDetails={() =>
+                        handleOpenToolCallDetails({ payload })
+                      }
                     />
                   );
                 } else {
@@ -116,18 +133,20 @@ export function AgentStreamView({
                       args={data.arguments}
                       result={data.result}
                       status={data.status}
-                      onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+                      onOpenDetails={() =>
+                        handleOpenToolCallDetails({ payload })
+                      }
                     />
                   );
                 }
               }
 
-              case 'plan':
+              case "plan":
                 // TODO: Render plan component
                 return null;
 
-              case 'activity_log':
-              case 'artifact':
+              case "activity_log":
+              case "artifact":
                 // These are orchestrator-only, skip for now
                 return null;
 
@@ -178,9 +197,9 @@ function PermissionRequestCard({
   // Determine permission type and content based on toolCall
   const getPermissionInfo = () => {
     const rawInput = permission.toolCall?.rawInput || {};
-    const toolCallId = permission.toolCall?.toolCallId || '';
+    const toolCallId = permission.toolCall?.toolCallId || "";
 
-    console.log('[PermissionCard] Tool call details:', {
+    console.log("[PermissionCard] Tool call details:", {
       toolCallId,
       rawInputKeys: Object.keys(rawInput),
       rawInput,
@@ -189,41 +208,44 @@ function PermissionRequestCard({
     // Check if this is a plan (ExitPlanMode)
     if (rawInput.plan) {
       return {
-        title: 'Plan Ready for Review',
+        title: "Plan Ready for Review",
         content: rawInput.plan,
-        type: 'plan' as const,
+        type: "plan" as const,
       };
     }
 
     // Check if this is a file operation (Write, Edit, etc.)
     if (rawInput.file_path) {
-      const operation = toolCallId.includes('Write') ? 'Create' : 'Edit';
-      const fileContent = rawInput.content || rawInput.new_string || '';
-      const preview = fileContent.length > 500
-        ? fileContent.slice(0, 500) + '\n\n... (truncated)'
-        : fileContent;
+      const operation = toolCallId.includes("Write") ? "Create" : "Edit";
+      const fileContent = rawInput.content || rawInput.new_string || "";
+      const preview =
+        fileContent.length > 500
+          ? fileContent.slice(0, 500) + "\n\n... (truncated)"
+          : fileContent;
 
       return {
         title: `${operation} File Permission`,
-        content: `File: ${rawInput.file_path}\n\n${preview || '(empty file)'}`,
-        type: 'file' as const,
+        content: `File: ${rawInput.file_path}\n\n${preview || "(empty file)"}`,
+        type: "file" as const,
       };
     }
 
     // Check if this is a command (Bash)
     if (rawInput.command) {
       return {
-        title: 'Run Command Permission',
-        content: `Command: ${rawInput.command}\n\nDescription: ${rawInput.description || 'No description'}`,
-        type: 'command' as const,
+        title: "Run Command Permission",
+        content: `Command: ${rawInput.command}\n\nDescription: ${
+          rawInput.description || "No description"
+        }`,
+        type: "command" as const,
       };
     }
 
     // Fallback - show whatever is in rawInput
     return {
-      title: 'Permission Required',
+      title: "Permission Required",
       content: JSON.stringify(rawInput, null, 2),
-      type: 'unknown' as const,
+      type: "unknown" as const,
     };
   };
 
@@ -233,22 +255,42 @@ function PermissionRequestCard({
     <View
       style={[
         permissionStyles.container,
-        { backgroundColor: theme.colors.secondary, borderColor: theme.colors.border },
+        {
+          backgroundColor: theme.colors.secondary,
+          borderColor: theme.colors.border,
+        },
       ]}
     >
-      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>
+      <Text
+        style={[permissionStyles.title, { color: theme.colors.foreground }]}
+      >
         {permissionInfo.title}
       </Text>
 
       {permissionInfo.content && (
-        <View style={[permissionStyles.planContainer, { backgroundColor: theme.colors.background }]}>
-          <Text style={[permissionStyles.planText, { color: theme.colors.foreground }]}>
+        <View
+          style={[
+            permissionStyles.planContainer,
+            { backgroundColor: theme.colors.background },
+          ]}
+        >
+          <Text
+            style={[
+              permissionStyles.planText,
+              { color: theme.colors.foreground },
+            ]}
+          >
             {permissionInfo.content}
           </Text>
         </View>
       )}
 
-      <Text style={[permissionStyles.question, { color: theme.colors.mutedForeground }]}>
+      <Text
+        style={[
+          permissionStyles.question,
+          { color: theme.colors.mutedForeground },
+        ]}
+      >
         How would you like to proceed?
       </Text>
 
@@ -259,14 +301,19 @@ function PermissionRequestCard({
             style={[
               permissionStyles.optionButton,
               {
-                backgroundColor: option.kind.includes('reject')
+                backgroundColor: option.kind.includes("reject")
                   ? theme.colors.destructive
                   : theme.colors.primary,
               },
             ]}
             onPress={() => onResponse(permission.requestId, option.optionId)}
           >
-            <Text style={[permissionStyles.optionText, { color: theme.colors.primaryForeground }]}>
+            <Text
+              style={[
+                permissionStyles.optionText,
+                { color: theme.colors.primaryForeground },
+              ]}
+            >
               {option.name}
             </Text>
           </Pressable>
@@ -283,7 +330,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: theme.spacing[4],
+    paddingHorizontal: theme.spacing[2],
   },
   emptyState: {
     flex: 1,
