@@ -63,6 +63,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   cwd: z.string(),
   initialMode: z.string().optional(),
+  requestId: z.string().optional(),
 });
 
 export const SetAgentModeMessageSchema = z.object({
@@ -188,6 +189,7 @@ export const AgentCreatedMessageSchema = z.object({
     })).optional(),
     title: z.string().optional(),
     cwd: z.string(),
+    requestId: z.string().optional(),
   }),
 });
 

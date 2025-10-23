@@ -466,7 +466,7 @@ export class Session {
           break;
 
         case "create_agent_request":
-          await this.handleCreateAgentRequest(msg.cwd, msg.initialMode);
+          await this.handleCreateAgentRequest(msg.cwd, msg.initialMode, msg.requestId);
           break;
 
         case "set_agent_mode":
@@ -697,7 +697,8 @@ export class Session {
    */
   private async handleCreateAgentRequest(
     cwd: string,
-    initialMode?: string
+    initialMode?: string,
+    requestId?: string
   ): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${
@@ -736,6 +737,7 @@ export class Session {
           availableModes: agentInfo?.availableModes ?? undefined,
           title: agentInfo?.title ?? undefined,
           cwd: agentInfo?.cwd || cwd,
+          requestId,
         },
       });
       console.log(

@@ -120,7 +120,7 @@ interface SessionContextValue {
 
   // Helpers
   sendAgentMessage: (agentId: string, message: string) => void;
-  createAgent: (options: { cwd: string; autoStart?: boolean }) => void;
+  createAgent: (options: { cwd: string; initialMode?: string; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (requestId: string, agentId: string, sessionId: string, selectedOptionIds: string[]) => void;
 }
@@ -259,14 +259,61 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       }));
     });
 
+    // Audio output
+    const unsubAudioOutput = ws.on("audio_output", (message) => {
+      if (message.type !== "audio_output") return;
+      const { audio, format, id } = message.payload;
+
+      console.log("[Session] Received audio output:", id, "format:", format);
+
+      // Create Blob-like object for React Native
+      // React Native doesn't support creating Blobs from binary data
+      const audioBlob = {
+        type: format,
+        size: audio.length,
+        arrayBuffer: async () => {
+          // Convert base64 to ArrayBuffer
+          const binaryString = atob(audio);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          return bytes.buffer;
+        },
+      } as Blob;
+
+      // Play audio
+      setIsPlayingAudio(true);
+      audioPlayer.play(audioBlob)
+        .then(() => {
+          console.log("[Session] Audio playback complete:", id);
+          setIsPlayingAudio(false);
+
+          // Send confirmation to server
+          const msg: WSInboundMessage = {
+            type: "session",
+            message: {
+              type: "audio_played",
+              id,
+            },
+          };
+          ws.send(msg);
+        })
+        .catch((error) => {
+          console.error("[Session] Audio playback failed:", error);
+          setIsPlayingAudio(false);
+        });
+    });
+
     return () => {
       unsubSessionState();
       unsubAgentCreated();
       unsubAgentStatus();
       unsubAgentUpdate();
       unsubPermissionRequest();
+      unsubAudioOutput();
     };
-  }, [ws]);
+  }, [ws, audioPlayer, setIsPlayingAudio]);
 
   const sendAgentMessage = useCallback((agentId: string, message: string) => {
     // Generate unique message ID for deduplication
@@ -310,7 +357,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const createAgent = useCallback((options: { cwd: string; autoStart?: boolean }) => {
+  const createAgent = useCallback((options: { cwd: string; initialMode?: string; requestId?: string }) => {
     const msg: WSInboundMessage = {
       type: "session",
       message: {

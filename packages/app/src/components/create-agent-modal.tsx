@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { View, Text, Pressable, ScrollView } from "react-native";
+import { View, Text, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
@@ -18,11 +18,12 @@ import type {
 import { StyleSheet } from "react-native-unistyles";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
+import { useSession } from "@/contexts/session-context";
+import { useRouter } from "expo-router";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
   onClose: () => void;
-  onCreateAgent: (workingDir: string, mode: string) => void;
 }
 
 const MODES = [
@@ -41,16 +42,19 @@ const MODES = [
 export function CreateAgentModal({
   isVisible,
   onClose,
-  onCreateAgent,
 }: CreateAgentModalProps) {
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
   const { recentPaths, addRecentPath } = useRecentPaths();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const { ws, createAgent } = useSession();
+  const router = useRouter();
 
   const [workingDir, setWorkingDir] = useState("");
   const [selectedMode, setSelectedMode] = useState("plan");
   const [errorMessage, setErrorMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
 
   const snapPoints = useMemo(() => ["90%"], []);
 
@@ -86,17 +90,24 @@ export function CreateAgentModal({
           <Pressable
             style={[
               styles.createButton,
-              !workingDir.trim() && styles.createButtonDisabled,
+              (!workingDir.trim() || isLoading) && styles.createButtonDisabled,
             ]}
             onPress={handleCreate}
-            disabled={!workingDir.trim()}
+            disabled={!workingDir.trim() || isLoading}
           >
-            <Text style={styles.createButtonText}>Create Agent</Text>
+            {isLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator color={defaultTheme.colors.palette.white} />
+                <Text style={styles.createButtonText}>Creating...</Text>
+              </View>
+            ) : (
+              <Text style={styles.createButtonText}>Create Agent</Text>
+            )}
           </Pressable>
         </Animated.View>
       </BottomSheetFooter>
     ),
-    [insets.bottom, workingDir, animatedFooterStyle]
+    [insets.bottom, workingDir, animatedFooterStyle, isLoading]
   );
 
   useEffect(() => {
@@ -105,9 +116,39 @@ export function CreateAgentModal({
     }
   }, [isVisible]);
 
+  // Listen for agent_created events
+  useEffect(() => {
+    if (!pendingRequestId) return;
+
+    const unsubscribe = ws.on("agent_created", (message) => {
+      if (message.type !== "agent_created") return;
+
+      const { agentId, requestId } = message.payload;
+
+      // Check if this is the response to our request
+      if (requestId === pendingRequestId) {
+        console.log("[CreateAgentModal] Agent created:", agentId);
+        setIsLoading(false);
+        setPendingRequestId(null);
+        handleClose();
+
+        // Navigate to the agent page
+        router.push(`/agent/${agentId}`);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [pendingRequestId, ws, router]);
+
   async function handleCreate() {
     if (!workingDir.trim()) {
       setErrorMessage("Working directory is required");
+      return;
+    }
+
+    if (isLoading) {
       return;
     }
 
@@ -121,8 +162,26 @@ export function CreateAgentModal({
       // Continue anyway - don't block agent creation
     }
 
-    onCreateAgent(path, selectedMode);
-    handleClose();
+    // Generate request ID
+    const requestId = crypto.randomUUID();
+
+    setIsLoading(true);
+    setPendingRequestId(requestId);
+    setErrorMessage("");
+
+    // Create the agent
+    try {
+      createAgent({
+        cwd: path,
+        initialMode: selectedMode,
+        requestId,
+      });
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to create agent:", error);
+      setErrorMessage("Failed to create agent. Please try again.");
+      setIsLoading(false);
+      setPendingRequestId(null);
+    }
   }
 
   function handleClose() {
@@ -130,9 +189,12 @@ export function CreateAgentModal({
   }
 
   function handleDismiss() {
+    // Reset all state
     setWorkingDir("");
     setSelectedMode("plan");
     setErrorMessage("");
+    setIsLoading(false);
+    setPendingRequestId(null);
     onClose();
   }
 
@@ -168,7 +230,7 @@ export function CreateAgentModal({
           <View style={styles.formSection}>
             <Text style={styles.label}>Working Directory</Text>
             <BottomSheetTextInput
-              style={styles.input}
+              style={[styles.input, isLoading && styles.inputDisabled]}
               placeholder="/path/to/project"
               placeholderTextColor={defaultTheme.colors.mutedForeground}
               value={workingDir}
@@ -178,6 +240,7 @@ export function CreateAgentModal({
               }}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isLoading}
             />
             {errorMessage && (
               <Text style={styles.errorText}>{errorMessage}</Text>
@@ -214,9 +277,11 @@ export function CreateAgentModal({
                 <Pressable
                   key={mode.value}
                   onPress={() => setSelectedMode(mode.value)}
+                  disabled={isLoading}
                   style={[
                     styles.modeOption,
                     selectedMode === mode.value && styles.modeOptionSelected,
+                    isLoading && styles.modeOptionDisabled,
                   ]}
                 >
                   <View style={styles.modeOptionContent}>
@@ -296,6 +361,9 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.base,
   },
+  inputDisabled: {
+    opacity: theme.opacity[50],
+  },
   helperText: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
@@ -319,6 +387,9 @@ const styles = StyleSheet.create((theme) => ({
   modeOptionSelected: {
     borderColor: theme.colors.palette.blue[500],
     backgroundColor: theme.colors.muted,
+  },
+  modeOptionDisabled: {
+    opacity: theme.opacity[50],
   },
   modeOptionContent: {
     flexDirection: "row",
@@ -381,6 +452,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
+  loadingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
   recentPathsContainer: {
     flexDirection: "row",
     gap: theme.spacing[2],
@@ -398,6 +474,6 @@ const styles = StyleSheet.create((theme) => ({
   recentPathChipText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.semibold,
   },
 }));
