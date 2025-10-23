@@ -42,7 +42,7 @@ export function AgentStreamView({
   onPermissionResponse,
 }: AgentStreamViewProps) {
   const scrollViewRef = useRef<ScrollView>(null);
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
+  const bottomSheetRef = useRef<BottomSheetModal | null>(null);
   const insets = useSafeAreaInsets();
   const [selectedToolCall, setSelectedToolCall] = useState<{
     toolName: string;

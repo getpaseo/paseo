@@ -20,7 +20,7 @@ interface OrchestratorMessagesViewProps {
 export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessagesViewProps>(
   function OrchestratorMessagesView({ messages, currentAssistantMessage, onArtifactClick }, ref) {
     const { theme } = useUnistyles();
-    const bottomSheetRef = useRef<BottomSheetModal>(null);
+    const bottomSheetRef = useRef<BottomSheetModal | null>(null);
     const [selectedToolCall, setSelectedToolCall] = useState<{
       toolName: string;
       status: 'executing' | 'completed' | 'failed';

@@ -9,7 +9,7 @@ import {
 } from "@gorhom/bottom-sheet";
 
 interface ToolCallBottomSheetProps {
-  bottomSheetRef: React.RefObject<BottomSheetModal>;
+  bottomSheetRef: React.RefObject<BottomSheetModal | null>;
   toolName?: string;
   status?: "pending" | "in_progress" | "executing" | "completed" | "failed";
   args?: any;

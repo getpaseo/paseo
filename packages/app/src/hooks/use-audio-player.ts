@@ -50,7 +50,7 @@ export function useAudioPlayer() {
   const [audioInitialized, setAudioInitialized] = useState(false);
   const queueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
-  const playbackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const playbackTimeoutRef = useRef<number | null>(null);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
