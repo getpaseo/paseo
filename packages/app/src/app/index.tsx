@@ -14,7 +14,7 @@ import { useSession } from "@/contexts/session-context";
 export default function HomeScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { agents, createAgent } = useSession();
+  const { agents } = useSession();
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   // Keyboard animation
@@ -32,11 +32,6 @@ export default function HomeScreen() {
 
   function handleCreateAgent() {
     setShowCreateModal(true);
-  }
-
-  function handleCreateAgentConfirm(workingDir: string, mode: string) {
-    createAgent({ cwd: workingDir, autoStart: true });
-    setShowCreateModal(false);
   }
 
   return (
@@ -60,7 +55,6 @@ export default function HomeScreen() {
       <CreateAgentModal
         isVisible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onCreateAgent={handleCreateAgentConfirm}
       />
     </View>
   );
