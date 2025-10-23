@@ -2,14 +2,17 @@ import type { SessionNotification, RequestPermissionRequest } from "@agentclient
 
 /**
  * Extended update types with messageId for proper deduplication
+ * messageId is optional since some sources may not provide it
  */
-type AgentMessageChunkWithId = Extract<SessionNotification['update'], { sessionUpdate: 'agent_message_chunk' }> & { messageId: string };
-type AgentThoughtChunkWithId = Extract<SessionNotification['update'], { sessionUpdate: 'agent_thought_chunk' }> & { messageId: string };
+type UserMessageChunkWithId = Extract<SessionNotification['update'], { sessionUpdate: 'user_message_chunk' }> & { messageId?: string };
+type AgentMessageChunkWithId = Extract<SessionNotification['update'], { sessionUpdate: 'agent_message_chunk' }> & { messageId?: string };
+type AgentThoughtChunkWithId = Extract<SessionNotification['update'], { sessionUpdate: 'agent_thought_chunk' }> & { messageId?: string };
 
 export type EnrichedSessionUpdate =
+  | UserMessageChunkWithId
   | AgentMessageChunkWithId
   | AgentThoughtChunkWithId
-  | Exclude<SessionNotification['update'], { sessionUpdate: 'agent_message_chunk' | 'agent_thought_chunk' }>;
+  | Exclude<SessionNotification['update'], { sessionUpdate: 'user_message_chunk' | 'agent_message_chunk' | 'agent_thought_chunk' }>;
 
 export interface EnrichedSessionNotification extends Omit<SessionNotification, 'update'> {
   update: EnrichedSessionUpdate;

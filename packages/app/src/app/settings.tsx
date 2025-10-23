@@ -10,10 +10,10 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { useSettings } from "@/hooks/use-settings";
 import { theme as defaultTheme } from "@/styles/theme";
+import { BackHeader } from "@/components/headers/back-header";
 
 const styles = StyleSheet.create((theme) => ({
   loadingContainer: {
@@ -29,27 +29,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  header: {
-    paddingHorizontal: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize["3xl"],
-    fontWeight: theme.fontWeight.bold,
-  },
-  cancelButton: {
-    color: theme.colors.palette.blue[500],
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
   },
   scrollView: {
     flex: 1,
@@ -233,7 +212,6 @@ const styles = StyleSheet.create((theme) => ({
 
 export default function SettingsScreen() {
   const { settings, isLoading, updateSettings, resetSettings } = useSettings();
-  const insets = useSafeAreaInsets();
 
   const [serverUrl, setServerUrl] = useState(settings.serverUrl);
   const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
@@ -337,24 +315,6 @@ export default function SettingsScreen() {
     );
   }
 
-  function handleCancel() {
-    if (hasChanges) {
-      Alert.alert(
-        "Discard Changes",
-        "You have unsaved changes. Are you sure you want to go back?",
-        [
-          { text: "Stay", style: "cancel" },
-          {
-            text: "Discard",
-            style: "destructive",
-            onPress: () => router.back(),
-          },
-        ]
-      );
-    } else {
-      router.back();
-    }
-  }
 
   async function handleTestConnection() {
     if (!validateServerUrl(serverUrl)) {
@@ -418,15 +378,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>Settings</Text>
-          <Pressable onPress={handleCancel}>
-            <Text style={styles.cancelButton}>Cancel</Text>
-          </Pressable>
-        </View>
-      </View>
+      <BackHeader title="Settings" />
 
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>

@@ -196,7 +196,8 @@ export const AgentUpdateMessageSchema = z.object({
   payload: z.object({
     agentId: z.string(),
     timestamp: z.date(),
-    notification: z.any(), // SessionNotification from ACP - complex type, using any for simplicity
+    // Runtime validation with z.any(), TypeScript enforces AgentNotification type
+    notification: z.any(),
   }),
 });
 

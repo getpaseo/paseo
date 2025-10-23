@@ -36,3 +36,5 @@ Set a high timeout, like 2 minutes.
 Try not to bias it, state the problem clearly and let it work it out.
 
 `codex exec "prompt"`
+
+**CRITICAL: ALWAYS RUN TYPECHECK AFTER EVERY CHANGE.**

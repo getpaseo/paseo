@@ -1,4 +1,4 @@
-import type { SessionNotification } from '@agentclientprotocol/sdk';
+import type { AgentNotification } from '@server/server/acp/types';
 
 /**
  * Simple hash function for deterministic ID generation
@@ -147,10 +147,16 @@ type ParsedNotification =
   | null;
 
 /**
- * Parse SessionNotification into typed ParsedNotification
+ * Parse AgentNotification into typed ParsedNotification
+ * Only processes session notifications, ignoring permission and status notifications
  */
-function parseNotification(notification: SessionNotification | any): ParsedNotification {
-  const update = (notification as any).update;
+function parseNotification(notification: AgentNotification): ParsedNotification {
+  // Only process session notifications (discriminated union)
+  if (notification.type !== 'session') {
+    return null;
+  }
+
+  const update = notification.notification.update;
 
   if (!update || !update.sessionUpdate) {
     return null;
@@ -159,26 +165,38 @@ function parseNotification(notification: SessionNotification | any): ParsedNotif
   const kind = update.sessionUpdate;
 
   switch (kind) {
-    case 'user_message_chunk':
+    case 'user_message_chunk': {
+      const content = update.content;
+      const text = content && content.type === 'text' ? content.text : '';
+      const messageId = 'messageId' in update ? update.messageId : undefined;
       return {
         kind: 'user_message_chunk',
-        text: update.content?.text || '',
-        messageId: update.messageId,
+        text,
+        messageId,
       };
+    }
 
-    case 'agent_message_chunk':
+    case 'agent_message_chunk': {
+      const content = update.content;
+      const text = content && content.type === 'text' ? content.text : '';
+      const messageId = 'messageId' in update ? update.messageId : undefined;
       return {
         kind: 'agent_message_chunk',
-        text: update.content?.text || '',
-        messageId: update.messageId,
+        text,
+        messageId,
       };
+    }
 
-    case 'agent_thought_chunk':
+    case 'agent_thought_chunk': {
+      const content = update.content;
+      const text = content && content.type === 'text' ? content.text : '';
+      const messageId = 'messageId' in update ? update.messageId : undefined;
       return {
         kind: 'agent_thought_chunk',
-        text: update.content?.text || '',
-        messageId: update.messageId,
+        text,
+        messageId,
       };
+    }
 
     case 'tool_call':
       return {
@@ -243,7 +261,7 @@ function parseNotification(notification: SessionNotification | any): ParsedNotif
  */
 export function reduceStreamUpdate(
   state: StreamItem[],
-  notification: SessionNotification | any,
+  notification: AgentNotification,
   timestamp: Date
 ): StreamItem[] {
   const parsed = parseNotification(notification);
@@ -407,7 +425,7 @@ export function reduceStreamUpdate(
  * Hydrate stream state from batch of notifications
  */
 export function hydrateStreamState(
-  notifications: Array<{ timestamp: Date; notification: SessionNotification }>
+  notifications: Array<{ timestamp: Date; notification: AgentNotification }>
 ): StreamItem[] {
   return notifications.reduce(
     (state, { notification, timestamp }) => reduceStreamUpdate(state, notification, timestamp),
