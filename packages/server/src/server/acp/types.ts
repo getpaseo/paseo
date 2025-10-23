@@ -23,7 +23,7 @@ export interface EnrichedSessionNotification extends Omit<SessionNotification, '
  */
 export type AgentNotification =
   | { type: 'session'; notification: EnrichedSessionNotification }
-  | { type: 'permission'; request: RequestPermissionRequest }
+  | { type: 'permission'; requestId: string; request: RequestPermissionRequest }
   | { type: 'status'; status: AgentStatus; error?: string };
 
 /**

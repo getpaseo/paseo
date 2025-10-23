@@ -120,6 +120,7 @@ interface SessionContextValue {
 
   // Helpers
   sendAgentMessage: (agentId: string, message: string) => void;
+  sendAgentAudio: (agentId: string, audioBlob: Blob) => Promise<void>;
   createAgent: (options: { cwd: string; initialMode?: string; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (requestId: string, agentId: string, sessionId: string, selectedOptionIds: string[]) => void;
@@ -516,6 +517,40 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
+  const sendAgentAudio = useCallback(async (agentId: string, audioBlob: Blob) => {
+    try {
+      // Convert blob to base64
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Audio = btoa(binary);
+
+      // Determine format from MIME type
+      const format = audioBlob.type.split('/')[1] || 'm4a';
+
+      // Send audio message
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "send_agent_audio",
+          agentId,
+          audio: base64Audio,
+          format,
+          isLast: true,
+        },
+      };
+      ws.send(msg);
+
+      console.log("[Session] Sent audio to agent:", agentId, format, audioBlob.size, "bytes");
+    } catch (error) {
+      console.error("[Session] Failed to send audio:", error);
+      throw error;
+    }
+  }, [ws]);
+
   const createAgent = useCallback((options: { cwd: string; initialMode?: string; requestId?: string }) => {
     const msg: WSInboundMessage = {
       type: "session",
@@ -584,6 +619,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     pendingPermissions,
     setPendingPermissions,
     sendAgentMessage,
+    sendAgentAudio,
     createAgent,
     setAgentMode,
     respondToPermission,

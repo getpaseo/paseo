@@ -149,26 +149,6 @@ export function useSpeechmaticsAudio(
   const SPEECH_CONFIRMATION_MS = config.speechConfirmationDuration;
   const DETECTION_GRACE_PERIOD_MS = config.detectionGracePeriod;
 
-  // Initialize audio on mount
-  useEffect(() => {
-    const initializeAudio = async () => {
-      try {
-        await initialize();
-        setAudioInitialized(true);
-        console.log("[SpeechmaticsAudio] Audio initialized");
-      } catch (error) {
-        console.error("[SpeechmaticsAudio] Initialization error:", error);
-        const err = error instanceof Error ? error : new Error(String(error));
-        config.onError?.(err);
-      }
-    };
-    initializeAudio();
-
-    return () => {
-      tearDown();
-    };
-  }, []);
-
   // Update segment duration timer
   useEffect(() => {
     if (!isDetecting && !isSpeaking) {
@@ -314,16 +294,20 @@ export function useSpeechmaticsAudio(
   );
 
   async function start(): Promise<void> {
-    if (!audioInitialized) {
-      throw new Error("Audio not initialized");
-    }
-
     if (isActive) {
       console.log("[SpeechmaticsAudio] Already active");
       return;
     }
 
     try {
+      // Initialize audio if not already initialized
+      if (!audioInitialized) {
+        console.log("[SpeechmaticsAudio] Initializing audio...");
+        await initialize();
+        setAudioInitialized(true);
+        console.log("[SpeechmaticsAudio] Audio initialized");
+      }
+
       console.log("[SpeechmaticsAudio] Starting audio capture...");
 
       // Start recording
@@ -344,7 +328,16 @@ export function useSpeechmaticsAudio(
     console.log("[SpeechmaticsAudio] Stopping audio capture...");
 
     // Stop recording
-    toggleRecording(false);
+    if (isActive) {
+      toggleRecording(false);
+    }
+
+    // Tear down audio session
+    if (audioInitialized) {
+      tearDown();
+      setAudioInitialized(false);
+      console.log("[SpeechmaticsAudio] Audio torn down");
+    }
 
     // Reset state
     audioBufferRef.current = [];
@@ -382,15 +375,6 @@ export function useSpeechmaticsAudio(
       return newMuted;
     });
   }
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (isActive) {
-        stop();
-      }
-    };
-  }, [isActive]);
 
   return {
     start,

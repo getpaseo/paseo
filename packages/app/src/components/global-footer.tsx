@@ -1,42 +1,55 @@
 import { View, Pressable } from "react-native";
-import { usePathname, useLocalSearchParams } from "expo-router";
+import { usePathname } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AudioLines } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
 import { RealtimeControls } from "./realtime-controls";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 
 export function GlobalFooter() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
-  const params = useLocalSearchParams();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { ws } = useSession();
 
   // Determine current screen type
   const isAgentScreen = pathname?.startsWith("/agent/");
-  const isOrchestratorScreen = pathname === "/orchestrator";
-  const isHomeScreen = pathname === "/";
 
-  // If realtime is active, always show realtime controls
+  // Determine if footer should be visible
+  // Hidden when: on agent screen AND realtime is off
+  const shouldHide = isAgentScreen && !isRealtimeMode;
+
+  // If realtime is active, show realtime controls
   if (isRealtimeMode) {
     return (
-      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+      <Animated.View
+        entering={FadeIn.duration(400)}
+        exiting={FadeOut.duration(250)}
+        style={[styles.container, { paddingBottom: insets.bottom }]}
+      >
         <RealtimeControls />
-      </View>
+      </Animated.View>
     );
   }
 
-  // If on agent screen and realtime is off, hide footer (agent has its own controls)
-  if (isAgentScreen) {
+  // For home and orchestrator screens, show centered realtime button
+  // On agent screens, don't render at all
+  if (shouldHide) {
     return null;
   }
 
-  // For home and orchestrator screens, show centered realtime button
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+    <Animated.View
+      entering={FadeIn.duration(250)}
+      exiting={FadeOut.duration(250)}
+      style={[
+        styles.container,
+        { paddingBottom: insets.bottom }
+      ]}
+    >
       <View style={styles.centeredButtonContainer}>
         <Pressable
           onPress={startRealtime}
@@ -49,7 +62,7 @@ export function GlobalFooter() {
           <AudioLines size={24} color="white" />
         </Pressable>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

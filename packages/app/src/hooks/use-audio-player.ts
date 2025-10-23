@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { initialize, playPCMData } from '@speechmatics/expo-two-way-audio';
 
 interface QueuedAudio {
@@ -44,20 +44,6 @@ export function useAudioPlayer() {
   const [audioInitialized, setAudioInitialized] = useState(false);
   const queueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
-
-  // Initialize Speechmatics audio on mount
-  useEffect(() => {
-    const initializeAudio = async () => {
-      try {
-        await initialize();
-        setAudioInitialized(true);
-        console.log('[AudioPlayer] ✅ Initialized (Speechmatics two-way audio)');
-      } catch (error) {
-        console.error('[AudioPlayer] Failed to initialize audio:', error);
-      }
-    };
-    initializeAudio();
-  }, []);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -112,8 +98,12 @@ export function useAudioPlayer() {
           `[AudioPlayer] Playing audio (${audioData.size} bytes, type: ${audioData.type})`
         );
 
+        // Initialize audio if not already initialized
         if (!audioInitialized) {
-          throw new Error('Audio not initialized');
+          console.log('[AudioPlayer] Initializing audio...');
+          await initialize();
+          setAudioInitialized(true);
+          console.log('[AudioPlayer] ✅ Initialized (Speechmatics two-way audio)');
         }
 
         // Get PCM data from blob (server now sends PCM format)

@@ -2,7 +2,7 @@ import { View, Text } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
+import ReanimatedAnimated, { useAnimatedStyle, FadeIn } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
@@ -61,9 +61,12 @@ export default function AgentScreen() {
         />
 
         {/* Agent Input - will hide itself when realtime is active */}
-        <View style={[styles.inputContainer, { paddingBottom: insets.bottom }]}>
+        <ReanimatedAnimated.View
+          entering={FadeIn.duration(250).delay(100)}
+          style={[styles.inputContainer, { paddingBottom: insets.bottom }]}
+        >
           <AgentInputArea agentId={id!} />
-        </View>
+        </ReanimatedAnimated.View>
       </ReanimatedAnimated.View>
     </View>
   );

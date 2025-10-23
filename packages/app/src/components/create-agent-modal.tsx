@@ -131,10 +131,14 @@ export function CreateAgentModal({
         console.log("[CreateAgentModal] Agent created:", agentId);
         setIsLoading(false);
         setPendingRequestId(null);
-        handleClose();
 
-        // Navigate to the agent page
+        // Navigate to the agent page BEFORE closing modal
+        // This prevents race condition on Android where router.push() happens
+        // while the modal is unmounting, causing NullPointerException
         router.push(`/agent/${agentId}`);
+
+        // Close modal after navigation starts
+        handleClose();
       }
     });
 

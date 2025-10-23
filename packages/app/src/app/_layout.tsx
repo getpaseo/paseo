@@ -8,6 +8,17 @@ import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator } from "react-native";
 import { GlobalFooter } from "@/components/global-footer";
+import { useUnistyles } from "react-native-unistyles";
+
+function AppContainer({ children }: { children: React.ReactNode }) {
+  const { theme } = useUnistyles();
+
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      {children}
+    </View>
+  );
+}
 
 function ProvidersWrapper({ children }: { children: React.ReactNode }) {
   const { settings, isLoading } = useSettings();
@@ -41,7 +52,7 @@ export default function RootLayout() {
         <KeyboardProvider>
           <BottomSheetModalProvider>
             <ProvidersWrapper>
-              <View style={{ flex: 1 }}>
+              <AppContainer>
                 <Stack
                   screenOptions={{
                     headerShown: false,
@@ -60,7 +71,7 @@ export default function RootLayout() {
                   <Stack.Screen name="audio-test" />
                 </Stack>
                 <GlobalFooter />
-              </View>
+              </AppContainer>
             </ProvidersWrapper>
           </BottomSheetModalProvider>
         </KeyboardProvider>

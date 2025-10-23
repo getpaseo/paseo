@@ -178,14 +178,14 @@ export class Session {
             type: "agent_permission_request",
             payload: {
               agentId,
-              requestId: uuidv4(), // Generate request ID
+              requestId: notification.requestId, // Use the requestId from AgentManager
               sessionId: permissionRequest.sessionId,
               toolCall: permissionRequest.toolCall,
               options: permissionRequest.options,
             },
           });
           console.log(
-            `[Session ${this.clientId}] Forwarded permission request for agent ${agentId}`
+            `[Session ${this.clientId}] Forwarded permission request for agent ${agentId} with requestId ${notification.requestId}`
           );
           return;
         }

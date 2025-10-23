@@ -268,6 +268,20 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} is ${agent.status}`);
     }
 
+    // Auto-cancel if agent is currently processing
+    // This allows users to interrupt stuck agents by sending a new message
+    if (agent.status === "processing") {
+      console.log(`[Agent ${agentId}] Auto-cancelling current task before new prompt`);
+      try {
+        await this.cancelAgent(agentId);
+        // Small delay to allow cancellation to propagate
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.warn(`[Agent ${agentId}] Cancel failed, continuing with new prompt:`, error);
+        // Continue anyway - the new prompt might still work
+      }
+    }
+
     // Reset message IDs for new turn - ensures each prompt gets fresh responses
     agent.currentAssistantMessageId = null;
     agent.currentThoughtId = null;
@@ -784,6 +798,7 @@ export class AgentManager {
         timestamp: new Date(),
         notification: {
           type: 'permission',
+          requestId,  // Pass the requestId that we stored in pendingPermissions
           request: params,
         },
       };

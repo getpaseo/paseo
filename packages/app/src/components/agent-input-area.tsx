@@ -13,7 +13,7 @@ interface AgentInputAreaProps {
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const { agents, ws, sendAgentMessage, setAgentMode } = useSession();
+  const { agents, ws, sendAgentMessage, sendAgentAudio, setAgentMode } = useSession();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const audioRecorder = useAudioRecorder();
 
@@ -54,10 +54,17 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
         if (audioData) {
           setIsProcessing(true);
-          // TODO: Send audio to agent
-          // For now, just log it
           console.log("[AgentInput] Audio recorded:", audioData.size, "bytes");
-          setIsProcessing(false);
+
+          try {
+            // Send audio to agent for transcription and processing
+            await sendAgentAudio(agentId, audioData);
+            console.log("[AgentInput] Audio sent to agent");
+          } catch (error) {
+            console.error("[AgentInput] Failed to send audio:", error);
+          } finally {
+            setIsProcessing(false);
+          }
         }
       } catch (error) {
         console.error("[AgentInput] Failed to stop recording:", error);
