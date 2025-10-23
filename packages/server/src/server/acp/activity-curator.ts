@@ -9,6 +9,9 @@ export function curateAgentActivity(updates: AgentUpdate[]): string {
   let thoughtBuffer = "";
 
   for (const update of updates) {
+    if (!update.notification.update) {
+      continue;
+    }
     const updateType = update.notification.update.sessionUpdate;
     const content = (update.notification.update as any).content;
 

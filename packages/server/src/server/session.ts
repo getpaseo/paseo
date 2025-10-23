@@ -22,6 +22,7 @@ import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { AgentManager } from "./acp/agent-manager.js";
 import { createAgentMcpServer } from "./acp/mcp-server.js";
 import type { AgentUpdate } from "./acp/types.js";
+import { generateAgentTitle, isTitleGeneratorInitialized } from "../services/agent-title-generator.js";
 
 const execAsync = promisify(exec);
 
@@ -148,6 +149,27 @@ export class Session {
     const unsubscribe = this.agentManager.subscribeToUpdates(
       agentId,
       (update: AgentUpdate) => {
+        // Check if this is a permission request
+        const notification = update.notification as any;
+        console.log(`[Session ${this.clientId}] Agent update notification type:`, notification.type);
+
+        if (notification.type === "permissionRequest" && notification.permissionRequest) {
+          // Forward permission request as a dedicated message type
+          const permissionRequest = notification.permissionRequest;
+          this.emit({
+            type: "agent_permission_request",
+            payload: {
+              agentId: permissionRequest.agentId,
+              requestId: permissionRequest.requestId,
+              sessionId: permissionRequest.sessionId,
+              toolCall: permissionRequest.toolCall,
+              options: permissionRequest.options,
+            },
+          });
+          console.log(`[Session ${this.clientId}] Forwarded permission request ${permissionRequest.requestId} for agent ${agentId}`);
+          return;
+        }
+
         // Forward agent updates to WebSocket
         this.emit({
           type: "agent_update",
@@ -158,9 +180,11 @@ export class Session {
           },
         });
 
+        // Trigger title generation after first meaningful update
+        this.maybeTriggerTitleGeneration(agentId);
+
         // Check if this is a status change notification
         // The agent manager sends custom notifications with status field
-        const notification = update.notification as any;
         if (notification && notification.sessionUpdate && notification.sessionUpdate.status) {
           const status = notification.sessionUpdate.status;
 
@@ -183,6 +207,8 @@ export class Session {
                     error: info.error ?? undefined,
                     currentModeId: info.currentModeId ?? undefined,
                     availableModes: info.availableModes ?? undefined,
+                    title: info.title ?? undefined,
+                    cwd: info.cwd,
                   },
                 },
               });
@@ -197,6 +223,74 @@ export class Session {
 
     this.agentUpdateUnsubscribers.set(agentId, unsubscribe);
     console.log(`[Session ${this.clientId}] Subscribed to agent ${agentId} updates`);
+  }
+
+  /**
+   * Maybe trigger title generation for an agent
+   * Only generates title once after first meaningful activity
+   */
+  private maybeTriggerTitleGeneration(agentId: string): void {
+    // Skip if title generator not initialized
+    if (!isTitleGeneratorInitialized()) {
+      return;
+    }
+
+    // Skip if already triggered
+    if (this.agentManager.isTitleGenerationTriggered(agentId)) {
+      return;
+    }
+
+    // Get agent updates
+    const updates = this.agentManager.getAgentUpdates(agentId);
+
+    // Need at least a few updates before generating title
+    if (updates.length < 2) {
+      return;
+    }
+
+    // Mark as triggered to prevent duplicate generation
+    this.agentManager.markTitleGenerationTriggered(agentId);
+
+    // Generate title in background
+    const info = this.agentManager.listAgents().find(a => a.id === agentId);
+    if (!info) {
+      return;
+    }
+
+    console.log(`[Session ${this.clientId}] Triggering title generation for agent ${agentId}`);
+
+    generateAgentTitle(updates, info.cwd)
+      .then((title) => {
+        // Set the title
+        this.agentManager.setAgentTitle(agentId, title);
+
+        // Emit agent_status to sync the new title to client
+        const updatedInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+        if (updatedInfo) {
+          this.emit({
+            type: "agent_status",
+            payload: {
+              agentId,
+              status: updatedInfo.status,
+              info: {
+                id: updatedInfo.id,
+                status: updatedInfo.status,
+                createdAt: updatedInfo.createdAt,
+                type: updatedInfo.type,
+                sessionId: updatedInfo.sessionId ?? undefined,
+                error: updatedInfo.error ?? undefined,
+                currentModeId: updatedInfo.currentModeId ?? undefined,
+                availableModes: updatedInfo.availableModes ?? undefined,
+                title: updatedInfo.title ?? undefined,
+                cwd: updatedInfo.cwd,
+              },
+            },
+          });
+        }
+      })
+      .catch((error) => {
+        console.error(`[Session ${this.clientId}] Failed to generate title for agent ${agentId}:`, error);
+      });
   }
 
   /**
@@ -329,6 +423,10 @@ export class Session {
         case "set_agent_mode":
           await this.handleSetAgentMode(msg.agentId, msg.modeId);
           break;
+
+        case "agent_permission_response":
+          await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.optionId);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -454,7 +552,7 @@ export class Session {
         type: "agent_update",
         payload: {
           agentId,
-          timestamp: new Date().toISOString(),
+          timestamp: new Date(),
           notification: {
             type: "sessionUpdate",
             update: {
@@ -584,8 +682,10 @@ export class Session {
           agentId,
           status: agentInfo?.status || "initializing",
           type: "claude",
-          currentModeId: agentInfo?.currentModeId,
-          availableModes: agentInfo?.availableModes,
+          currentModeId: agentInfo?.currentModeId ?? undefined,
+          availableModes: agentInfo?.availableModes ?? undefined,
+          title: agentInfo?.title ?? undefined,
+          cwd: agentInfo?.cwd || cwd,
         },
       });
       console.log(`[Session ${this.clientId}] Emitted agent_created with currentModeId:`, agentInfo?.currentModeId);
@@ -630,6 +730,8 @@ export class Session {
               status: info.status,
               createdAt: info.createdAt,
               type: info.type,
+              title: info.title ?? undefined,
+              cwd: info.cwd,
               sessionId: info.sessionId ?? undefined,
               error: info.error ?? undefined,
               currentModeId: info.currentModeId ?? undefined,
@@ -647,6 +749,30 @@ export class Session {
           timestamp: new Date(),
           type: "error",
           content: `Failed to set agent mode: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Handle agent permission response from user
+   */
+  private async handleAgentPermissionResponse(agentId: string, requestId: string, optionId: string): Promise<void> {
+    console.log(`[Session ${this.clientId}] Handling permission response for agent ${agentId}, request ${requestId}, option ${optionId}`);
+
+    try {
+      this.agentManager.respondToPermission(agentId, requestId, optionId);
+      console.log(`[Session ${this.clientId}] Permission response forwarded to agent ${agentId}`);
+    } catch (error: any) {
+      console.error(`[Session ${this.clientId}] Failed to respond to permission:`, error);
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to respond to permission: ${error.message}`,
         },
       });
       throw error;
@@ -677,7 +803,7 @@ export class Session {
             type: "agent_update",
             payload: {
               agentId: update.agentId,
-              timestamp: update.timestamp.toISOString(),
+              timestamp: update.timestamp instanceof Date ? update.timestamp : new Date(update.timestamp),
               notification: update.notification,
             },
           });
@@ -1072,24 +1198,26 @@ export class Session {
               const result = chunk.output as any;
               if (result.structuredContent?.agentId) {
                 const agentId = result.structuredContent.agentId;
-                const status = result.structuredContent.status;
-                const currentModeId = result.structuredContent.currentModeId;
-                const availableModes = result.structuredContent.availableModes;
 
                 // Subscribe to agent updates
                 this.subscribeToAgent(agentId);
 
-                // Emit agent_created message
-                this.emit({
-                  type: "agent_created",
-                  payload: {
-                    agentId,
-                    status,
-                    type: "claude",
-                    currentModeId,
-                    availableModes,
-                  },
-                });
+                // Get full agent info and emit agent_created message
+                const agentInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+                if (agentInfo) {
+                  this.emit({
+                    type: "agent_created",
+                    payload: {
+                      agentId,
+                      status: agentInfo.status,
+                      type: "claude",
+                      currentModeId: agentInfo.currentModeId ?? undefined,
+                      availableModes: agentInfo.availableModes ?? undefined,
+                      title: agentInfo.title || undefined,
+                      cwd: agentInfo.cwd,
+                    },
+                  });
+                }
               }
             }
 

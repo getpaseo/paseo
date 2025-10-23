@@ -22,7 +22,16 @@ import type {
   CreateAgentOptions,
   AgentUpdateCallback,
   SessionMode,
+  EnrichedSessionNotification,
 } from "./types.js";
+
+interface PendingPermission {
+  requestId: string;
+  sessionId: string;
+  params: RequestPermissionRequest;
+  resolve: (response: RequestPermissionResponse) => void;
+  reject: (error: Error) => void;
+}
 
 interface ManagedAgent {
   id: string;
@@ -36,6 +45,13 @@ interface ManagedAgent {
   availableModes?: SessionMode[];
   subscribers: Set<AgentUpdateCallback>;
   updates: AgentUpdate[];
+  title?: string;
+  cwd: string;
+  titleGenerationTriggered: boolean;
+  pendingPermissions: Map<string, PendingPermission>;
+  // Message ID tracking for stable deduplication
+  currentAssistantMessageId: string | null;
+  currentThoughtId: string | null;
 }
 
 /**
@@ -44,20 +60,15 @@ interface ManagedAgent {
 class ACPClient implements Client {
   constructor(
     private agentId: string,
-    private onUpdate: (agentId: string, update: SessionNotification) => void
+    private onUpdate: (agentId: string, update: SessionNotification) => void,
+    private onPermissionRequest: (agentId: string, params: RequestPermissionRequest) => Promise<RequestPermissionResponse>
   ) {}
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    // TODO: Forward permission requests to the UI for user approval
-    // For now, auto-approve all permissions
-    console.log(`[Agent ${this.agentId}] Permission requested (auto-approving):`, params);
+    console.log(`[Agent ${this.agentId}] Permission requested:`, params);
 
-    return {
-      outcome: {
-        outcome: "selected" as const,
-        optionId: params.options[0]?.optionId || "",
-      },
-    };
+    // Forward to agent manager which will handle the permission flow
+    return this.onPermissionRequest(this.agentId, params);
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
@@ -128,6 +139,9 @@ export class AgentManager {
       agentId,
       (id, update) => {
         this.handleSessionNotification(id, update);
+      },
+      (id, params) => {
+        return this.handlePermissionRequest(id, params);
       }
     );
     const connection = new ClientSideConnection(() => client, stream);
@@ -141,6 +155,11 @@ export class AgentManager {
       connection,
       subscribers: new Set(),
       updates: [],
+      cwd,
+      titleGenerationTriggered: false,
+      pendingPermissions: new Map(),
+      currentAssistantMessageId: null,
+      currentThoughtId: null,
     };
 
     this.agents.set(agentId, agent);
@@ -397,12 +416,14 @@ export class AgentManager {
     return Array.from(this.agents.values()).map((agent) => ({
       id: agent.id,
       status: agent.status,
-      createdAt: agent.createdAt,
+      createdAt: agent.createdAt.toISOString(),
       type: "claude" as const,
       sessionId: agent.sessionId ?? null,
       error: agent.error ?? null,
       currentModeId: agent.currentModeId ?? null,
       availableModes: agent.availableModes ?? null,
+      title: agent.title ?? null,
+      cwd: agent.cwd,
     }));
   }
 
@@ -499,15 +520,54 @@ export class AgentManager {
 
   /**
    * Handle session notifications from the ACP connection
+   * Augments agent message and thought chunks with stable message IDs
    */
   private handleSessionNotification(agentId: string, update: SessionNotification): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
+    // Augment update with stable message IDs for deduplication
+    let enrichedUpdate: EnrichedSessionNotification = update;
+
+    const updateType = update.update.sessionUpdate;
+
+    // Agent message chunks - add stable message ID
+    if (updateType === 'agent_message_chunk') {
+      if (!agent.currentAssistantMessageId) {
+        agent.currentAssistantMessageId = uuidv4();
+      }
+      enrichedUpdate = {
+        ...update,
+        update: {
+          ...update.update,
+          messageId: agent.currentAssistantMessageId,
+        },
+      };
+    }
+    // Agent thought chunks - add stable message ID
+    else if (updateType === 'agent_thought_chunk') {
+      if (!agent.currentThoughtId) {
+        agent.currentThoughtId = uuidv4();
+      }
+      enrichedUpdate = {
+        ...update,
+        update: {
+          ...update.update,
+          messageId: agent.currentThoughtId,
+        },
+      };
+    }
+    // Reset message IDs on new turn (user message or tool call starts new turn)
+    else if (updateType === 'tool_call' || updateType === 'user_message_chunk') {
+      agent.currentAssistantMessageId = null;
+      agent.currentThoughtId = null;
+    }
+
+    // Create agent update with enriched notification
     const agentUpdate: AgentUpdate = {
       agentId,
       timestamp: new Date(),
-      notification: update as any,
+      notification: enrichedUpdate,
     };
 
     // Store the update in history
@@ -520,7 +580,6 @@ export class AgentManager {
     }
 
     // Log update for debugging
-    const updateType = update.update.sessionUpdate;
     console.log(
       `[Agent ${agentId}] Session update:`,
       updateType
@@ -605,5 +664,205 @@ export class AgentManager {
         console.error(`[Agent ${agentId}] Subscriber error:`, error);
       }
     }
+  }
+
+  /**
+   * Set the title for an agent
+   */
+  setAgentTitle(agentId: string, title: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    agent.title = title;
+    console.log(`[Agent ${agentId}] Title set to: "${title}"`);
+  }
+
+  /**
+   * Get the title for an agent
+   */
+  getAgentTitle(agentId: string): string | null {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    return agent.title ?? null;
+  }
+
+  /**
+   * Mark that title generation has been triggered for this agent
+   */
+  markTitleGenerationTriggered(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    agent.titleGenerationTriggered = true;
+  }
+
+  /**
+   * Check if title generation has been triggered for this agent
+   */
+  isTitleGenerationTriggered(agentId: string): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    return agent.titleGenerationTriggered;
+  }
+
+  /**
+   * Handle permission request from ACP
+   * Creates a pending permission and emits it via session notifications
+   */
+  private handlePermissionRequest(
+    agentId: string,
+    params: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    // Generate unique request ID
+    const requestId = uuidv4();
+
+    console.log(`[Agent ${agentId}] Creating pending permission request: ${requestId}`);
+
+    // Create a promise that will be resolved when user responds
+    return new Promise<RequestPermissionResponse>((resolve, reject) => {
+      // Store the pending permission
+      const pendingPermission: PendingPermission = {
+        requestId,
+        sessionId: params.sessionId,
+        params,
+        resolve,
+        reject,
+      };
+
+      agent.pendingPermissions.set(requestId, pendingPermission);
+
+      // Emit permission request via session notification
+      // This will be picked up by subscribers (Session) and forwarded to UI
+      const permissionNotification: any = {
+        type: "permissionRequest",
+        permissionRequest: {
+          agentId,
+          requestId,
+          sessionId: params.sessionId,
+          toolCall: params.toolCall,
+          options: params.options,
+        },
+      };
+
+      const agentUpdate: AgentUpdate = {
+        agentId,
+        timestamp: new Date(),
+        notification: permissionNotification,
+      };
+
+      // Store the update in history
+      agent.updates.push(agentUpdate);
+
+      // Notify all subscribers
+      for (const subscriber of agent.subscribers) {
+        try {
+          subscriber(agentUpdate);
+        } catch (error) {
+          console.error(`[Agent ${agentId}] Subscriber error:`, error);
+        }
+      }
+
+      console.log(`[Agent ${agentId}] Permission request emitted: ${requestId}`);
+
+      // Set a timeout to auto-reject after 5 minutes if no response
+      setTimeout(() => {
+        if (agent.pendingPermissions.has(requestId)) {
+          console.warn(`[Agent ${agentId}] Permission request ${requestId} timed out`);
+          agent.pendingPermissions.delete(requestId);
+          reject(new Error("Permission request timed out"));
+        }
+      }, 5 * 60 * 1000); // 5 minutes
+    });
+  }
+
+  /**
+   * Respond to a pending permission request
+   * Called when user makes a choice in the UI
+   */
+  respondToPermission(
+    agentId: string,
+    requestId: string,
+    optionId: string
+  ): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const pendingPermission = agent.pendingPermissions.get(requestId);
+    if (!pendingPermission) {
+      throw new Error(
+        `Permission request ${requestId} not found for agent ${agentId}`
+      );
+    }
+
+    console.log(
+      `[Agent ${agentId}] Resolving permission ${requestId} with option: ${optionId}`
+    );
+
+    // Resolve the promise with the user's choice
+    pendingPermission.resolve({
+      outcome: {
+        outcome: "selected" as const,
+        optionId,
+      },
+    });
+
+    // Remove from pending
+    agent.pendingPermissions.delete(requestId);
+  }
+
+  /**
+   * Get all pending permission requests across all agents
+   * Used by orchestrator to see what permissions are waiting
+   */
+  getPendingPermissions(): Array<{
+    agentId: string;
+    requestId: string;
+    sessionId: string;
+    toolCall: any;
+    options: Array<{
+      kind: string;
+      name: string;
+      optionId: string;
+    }>;
+  }> {
+    const allPermissions: Array<{
+      agentId: string;
+      requestId: string;
+      sessionId: string;
+      toolCall: any;
+      options: Array<{
+        kind: string;
+        name: string;
+        optionId: string;
+      }>;
+    }> = [];
+
+    for (const [agentId, agent] of this.agents) {
+      for (const [requestId, permission] of agent.pendingPermissions) {
+        allPermissions.push({
+          agentId,
+          requestId,
+          sessionId: permission.sessionId,
+          toolCall: permission.params.toolCall,
+          options: permission.params.options,
+        });
+      }
+    }
+
+    return allPermissions;
   }
 }

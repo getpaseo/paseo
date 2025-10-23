@@ -180,7 +180,7 @@ export async function createAgentMcpServer(
           .object({
             id: z.string(),
             status: z.string(),
-            createdAt: z.date(),
+            createdAt: z.string(),
             type: z.literal("claude"),
             sessionId: z.string().nullable(),
             error: z.string().nullable(),
@@ -228,7 +228,7 @@ export async function createAgentMcpServer(
           z.object({
             id: z.string(),
             status: z.string(),
-            createdAt: z.date(),
+            createdAt: z.string(),
             type: z.literal("claude"),
             sessionId: z.string().nullable(),
             error: z.string().nullable(),
@@ -423,6 +423,76 @@ export async function createAgentMcpServer(
         success: true,
         previousMode: previousMode ?? null,
         newMode: modeId,
+      };
+
+      return {
+        content: [],
+        structuredContent: result,
+      };
+    }
+  );
+
+  // Tool: list_pending_permissions
+  server.registerTool(
+    "list_pending_permissions",
+    {
+      title: "List Pending Permission Requests",
+      description:
+        "Get all pending permission requests from agents. When an agent in plan mode calls ExitPlanMode, or when an agent needs permission for file operations or commands, it creates a permission request. This tool shows all requests waiting for approval across all agents. Use respond_to_permission to approve or reject them.",
+      inputSchema: {},
+      outputSchema: {
+        permissions: z.array(
+          z.object({
+            agentId: z.string().describe("Agent that requested permission"),
+            requestId: z.string().describe("Unique identifier for this permission request"),
+            sessionId: z.string().describe("Agent's session ID"),
+            toolCall: z.any().describe("The tool call that triggered the permission request (contains details like plan, file_path, command, etc.)"),
+            options: z.array(
+              z.object({
+                kind: z.string().describe("Option kind: 'allow_always', 'allow_once', 'reject_once'"),
+                name: z.string().describe("Human-readable option name"),
+                optionId: z.string().describe("Option ID to use when responding"),
+              })
+            ).describe("Available response options"),
+          })
+        ).describe("List of all pending permission requests"),
+      },
+    },
+    async () => {
+      const permissions = agentManager.getPendingPermissions();
+
+      const result = {
+        permissions,
+      };
+
+      return {
+        content: [],
+        structuredContent: result,
+      };
+    }
+  );
+
+  // Tool: respond_to_permission
+  server.registerTool(
+    "respond_to_permission",
+    {
+      title: "Respond to Permission Request",
+      description:
+        "Approve or reject a pending permission request from an agent. When an agent requests permission (e.g., to exit plan mode, create a file, or run a command), you can use this tool to respond with your decision. The agent will proceed based on your response.",
+      inputSchema: {
+        agentId: z.string().describe("Agent ID (from list_pending_permissions)"),
+        requestId: z.string().describe("Permission request ID (from list_pending_permissions)"),
+        optionId: z.string().describe("Option ID to select (e.g., 'allow', 'reject', 'plan'). Get available options from list_pending_permissions."),
+      },
+      outputSchema: {
+        success: z.boolean().describe("Whether the response was successfully sent to the agent"),
+      },
+    },
+    async ({ agentId, requestId, optionId }) => {
+      agentManager.respondToPermission(agentId, requestId, optionId);
+
+      const result = {
+        success: true,
       };
 
       return {

@@ -10,6 +10,7 @@ import {
   deleteConversation,
 } from "./persistence.js";
 import { AgentManager } from "./acp/agent-manager.js";
+import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 
 function createServer() {
   const app = express();
@@ -95,6 +96,9 @@ function main() {
       model: ttsModel,
       responseFormat: "pcm",
     });
+
+    // Initialize agent title generator
+    initializeTitleGenerator(apiKey);
   } else {
     console.warn(
       "⚠ OPENAI_API_KEY not set - LLM, STT, and TTS features will not work"
