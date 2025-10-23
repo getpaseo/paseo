@@ -10,6 +10,7 @@ import {
 } from "@/components/message";
 import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import type { MessageEntry } from "@/contexts/session-context";
+import type { SelectedToolCall } from "@/types/shared";
 
 interface OrchestratorMessagesViewProps {
   messages: MessageEntry[];
@@ -21,13 +22,7 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
   function OrchestratorMessagesView({ messages, currentAssistantMessage, onArtifactClick }, ref) {
     const { theme } = useUnistyles();
     const bottomSheetRef = useRef<BottomSheetModal | null>(null);
-    const [selectedToolCall, setSelectedToolCall] = useState<{
-      toolName: string;
-      status: 'executing' | 'completed' | 'failed';
-      args: any;
-      result?: any;
-      error?: any;
-    } | null>(null);
+    const [selectedToolCall, setSelectedToolCall] = useState<SelectedToolCall | null>(null);
 
     function handleOpenToolCallDetails(toolCall: {
       toolName: string;
@@ -36,7 +31,20 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
       result?: any;
       error?: any;
     }) {
-      setSelectedToolCall(toolCall);
+      // Wrap orchestrator tool call in payload structure
+      setSelectedToolCall({
+        payload: {
+          source: 'orchestrator',
+          data: {
+            toolCallId: `orchestrator_${Date.now()}`, // Generate a simple ID
+            toolName: toolCall.toolName,
+            arguments: toolCall.args,
+            result: toolCall.result,
+            error: toolCall.error,
+            status: toolCall.status,
+          },
+        },
+      });
       bottomSheetRef.current?.present();
     }
 
@@ -133,11 +141,7 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
 
       <ToolCallBottomSheet
         bottomSheetRef={bottomSheetRef}
-        toolName={selectedToolCall?.toolName}
-        status={selectedToolCall?.status}
-        args={selectedToolCall?.args}
-        result={selectedToolCall?.result}
-        error={selectedToolCall?.error}
+        selectedToolCall={selectedToolCall}
       />
     </>
     );

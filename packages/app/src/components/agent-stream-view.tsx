@@ -3,34 +3,16 @@ import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BottomSheetModal } from '@gorhom/bottom-sheet';
-import type { AgentStatus } from '@server/server/acp/types';
 import { AssistantMessage, UserMessage, ActivityLog, ToolCall } from './message';
 import { ToolCallBottomSheet } from './tool-call-bottom-sheet';
 import type { StreamItem } from '@/types/stream';
+import type { SelectedToolCall, PendingPermission, AgentInfo } from '@/types/shared';
 
 export interface AgentStreamViewProps {
   agentId: string;
-  agent: {
-    id: string;
-    status: AgentStatus;
-    createdAt: Date;
-    type: 'claude';
-  };
+  agent: AgentInfo;
   streamItems: StreamItem[];
-  pendingPermissions: Map<
-    string,
-    {
-      agentId: string;
-      requestId: string;
-      sessionId: string;
-      toolCall: any;
-      options: Array<{
-        kind: string;
-        name: string;
-        optionId: string;
-      }>;
-    }
-  >;
+  pendingPermissions: Map<string, PendingPermission>;
   onPermissionResponse: (requestId: string, optionId: string) => void;
 }
 
@@ -44,26 +26,14 @@ export function AgentStreamView({
   const scrollViewRef = useRef<ScrollView>(null);
   const bottomSheetRef = useRef<BottomSheetModal | null>(null);
   const insets = useSafeAreaInsets();
-  const [selectedToolCall, setSelectedToolCall] = useState<{
-    toolName: string;
-    status: 'executing' | 'completed' | 'failed';
-    args: any;
-    result?: any;
-    error?: any;
-  } | null>(null);
+  const [selectedToolCall, setSelectedToolCall] = useState<SelectedToolCall | null>(null);
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [streamItems]);
 
-  function handleOpenToolCallDetails(toolCall: {
-    toolName: string;
-    status: 'executing' | 'completed' | 'failed';
-    args: any;
-    result?: any;
-    error?: any;
-  }) {
+  function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
     setSelectedToolCall(toolCall);
     bottomSheetRef.current?.present();
   }
@@ -114,28 +84,42 @@ export function AgentStreamView({
                 );
 
               case 'tool_call': {
-                // Map status: pending/in_progress -> executing, completed -> completed, failed -> failed
-                const toolStatus = item.status === 'pending' || item.status === 'in_progress'
-                  ? 'executing' as const
-                  : item.status === 'completed'
-                  ? 'completed' as const
-                  : 'failed' as const;
+                const { payload } = item;
 
-                return (
-                  <ToolCall
-                    key={item.id}
-                    toolName={item.title}
-                    args={item.rawInput}
-                    result={item.rawOutput}
-                    status={toolStatus}
-                    onOpenDetails={() => handleOpenToolCallDetails({
-                      toolName: item.title,
-                      status: toolStatus,
-                      args: item.rawInput,
-                      result: item.rawOutput,
-                    })}
-                  />
-                );
+                // Extract data based on source
+                if (payload.source === 'acp') {
+                  const data = payload.data;
+                  // Map ACP status to display status
+                  const toolStatus = data.status === 'pending' || data.status === 'in_progress'
+                    ? 'executing' as const
+                    : data.status === 'completed'
+                    ? 'completed' as const
+                    : 'failed' as const;
+
+                  return (
+                    <ToolCall
+                      key={item.id}
+                      toolName={data.title ?? 'Unknown Tool'}
+                      args={data.rawInput}
+                      result={data.rawOutput}
+                      status={toolStatus}
+                      onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+                    />
+                  );
+                } else {
+                  // Orchestrator tool call
+                  const data = payload.data;
+                  return (
+                    <ToolCall
+                      key={item.id}
+                      toolName={data.toolName}
+                      args={data.arguments}
+                      result={data.result}
+                      status={data.status}
+                      onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+                    />
+                  );
+                }
               }
 
               case 'plan':
@@ -167,11 +151,7 @@ export function AgentStreamView({
 
       <ToolCallBottomSheet
         bottomSheetRef={bottomSheetRef}
-        toolName={selectedToolCall?.toolName}
-        status={selectedToolCall?.status}
-        args={selectedToolCall?.args}
-        result={selectedToolCall?.result}
-        error={selectedToolCall?.error}
+        selectedToolCall={selectedToolCall}
       />
     </View>
   );

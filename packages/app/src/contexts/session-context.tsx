@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useRef, ReactNode, useCallback, us
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { reduceStreamUpdate, generateMessageId, type StreamItem } from "@/types/stream";
+import type { PendingPermission } from "@/types/shared";
 import type {
   ActivityLogPayload,
   SessionInboundMessage,
@@ -77,17 +78,6 @@ export interface Command {
   exitCode: number | null;
 }
 
-export interface PendingPermission {
-  agentId: string;
-  requestId: string;
-  sessionId: string;
-  toolCall: any;
-  options: Array<{
-    kind: string;
-    name: string;
-    optionId: string;
-  }>;
-}
 
 interface SessionContextValue {
   // WebSocket

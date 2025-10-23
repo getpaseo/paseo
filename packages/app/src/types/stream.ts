@@ -1,4 +1,5 @@
 import type { AgentNotification } from '@server/server/acp/types';
+import type { SessionNotification } from '@agentclientprotocol/sdk';
 
 /**
  * Simple hash function for deterministic ID generation
@@ -89,18 +90,30 @@ export interface ThoughtItem {
   timestamp: Date;
 }
 
+// Extract the actual ACP tool_call type from SDK
+type ACPToolCall = Extract<SessionNotification['update'], { sessionUpdate: 'tool_call' }>;
+
+// Orchestrator tool call data (from activity_log messages)
+interface OrchestratorToolCallData {
+  toolCallId: string;
+  toolName: string;
+  arguments: unknown;
+  result?: unknown;
+  error?: unknown;
+  status: 'executing' | 'completed' | 'failed';
+}
+
+// Tagged union for tool call sources
+export type ToolCallPayload =
+  | { source: 'acp'; data: ACPToolCall }
+  | { source: 'orchestrator'; data: OrchestratorToolCallData };
+
+// Simplified ToolCallItem with payload
 export interface ToolCallItem {
   kind: 'tool_call';
   id: string;
-  toolCallId: string;
-  title: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  toolKind?: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
-  rawInput?: Record<string, unknown>;
-  rawOutput?: Record<string, unknown>;
-  content?: unknown[];
-  locations?: unknown[];
   timestamp: Date;
+  payload: ToolCallPayload;
 }
 
 export interface PlanItem {
@@ -132,6 +145,9 @@ export interface ArtifactItem {
   timestamp: Date;
 }
 
+// Extract ACP types for tool calls
+type ACPToolCallUpdate = Extract<SessionNotification['update'], { sessionUpdate: 'tool_call_update' }>;
+
 /**
  * Parsed notification types (internal representation before converting to StreamItem)
  */
@@ -139,8 +155,8 @@ type ParsedNotification =
   | { kind: 'user_message_chunk'; text: string; messageId?: string }
   | { kind: 'agent_message_chunk'; text: string; messageId?: string }
   | { kind: 'agent_thought_chunk'; text: string; messageId?: string }
-  | { kind: 'tool_call'; toolCallId: string; title: string; status?: string; toolKind?: string; rawInput?: any; rawOutput?: any; content?: any[]; locations?: any[] }
-  | { kind: 'tool_call_update'; toolCallId: string; title?: string | null; status?: string | null; toolKind?: string | null; rawInput?: any; rawOutput?: any; content?: any[] | null; locations?: any[] | null }
+  | { kind: 'tool_call'; data: ACPToolCall }
+  | { kind: 'tool_call_update'; data: ACPToolCallUpdate }
   | { kind: 'plan'; entries: Array<{ content: string; status: string; priority: string }> }
   | { kind: 'current_mode_update'; currentModeId: string }
   | { kind: 'available_commands_update'; availableCommands: Array<{ name: string; description: string }> }
@@ -198,31 +214,19 @@ function parseNotification(notification: AgentNotification): ParsedNotification 
       };
     }
 
-    case 'tool_call':
+    case 'tool_call': {
       return {
-        kind: 'tool_call',
-        toolCallId: update.toolCallId,
-        title: update.title,
-        status: update.status,
-        toolKind: update.kind,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-        content: update.content,
-        locations: update.locations,
+        kind: 'tool_call' as const,
+        data: update as ACPToolCall,
       };
+    }
 
-    case 'tool_call_update':
+    case 'tool_call_update': {
       return {
-        kind: 'tool_call_update',
-        toolCallId: update.toolCallId,
-        title: update.title,
-        status: update.status,
-        toolKind: update.kind,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-        content: update.content,
-        locations: update.locations,
+        kind: 'tool_call_update' as const,
+        data: update as ACPToolCallUpdate,
       };
+    }
 
     case 'plan':
       return {
@@ -346,16 +350,22 @@ export function reduceStreamUpdate(
   // Tool call updates - find existing and merge
   if (parsed.kind === 'tool_call_update') {
     return state.map(item => {
-      if (item.kind === 'tool_call' && item.toolCallId === parsed.toolCallId) {
+      if (item.kind === 'tool_call' &&
+          item.payload.source === 'acp' &&
+          item.payload.data.toolCallId === parsed.data.toolCallId) {
+        // Merge the update data with existing ACP data
+        const updatedData = { ...item.payload.data };
+
+        // Apply non-null updates from parsed.data
+        Object.entries(parsed.data).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            (updatedData as any)[key] = value;
+          }
+        });
+
         return {
           ...item,
-          ...(parsed.title !== undefined && parsed.title !== null ? { title: parsed.title } : {}),
-          ...(parsed.status !== undefined && parsed.status !== null ? { status: parsed.status as any } : {}),
-          ...(parsed.toolKind !== undefined && parsed.toolKind !== null ? { toolKind: parsed.toolKind as any } : {}),
-          ...(parsed.rawInput ? { rawInput: { ...item.rawInput, ...parsed.rawInput } } : {}),
-          ...(parsed.rawOutput ? { rawOutput: { ...item.rawOutput, ...parsed.rawOutput } } : {}),
-          ...(parsed.content !== undefined && parsed.content !== null ? { content: parsed.content } : {}),
-          ...(parsed.locations !== undefined && parsed.locations !== null ? { locations: parsed.locations } : {}),
+          payload: { source: 'acp' as const, data: updatedData },
           timestamp,
         };
       }
@@ -366,7 +376,9 @@ export function reduceStreamUpdate(
   // New tool call - check if exists first (server may send multiple notifications for same tool)
   if (parsed.kind === 'tool_call') {
     const existingIndex = state.findIndex(
-      item => item.kind === 'tool_call' && item.toolCallId === parsed.toolCallId
+      item => item.kind === 'tool_call' &&
+              item.payload.source === 'acp' &&
+              item.payload.data.toolCallId === parsed.data.toolCallId
     );
 
     if (existingIndex >= 0) {
@@ -375,13 +387,7 @@ export function reduceStreamUpdate(
         if (idx === existingIndex && item.kind === 'tool_call') {
           return {
             ...item,
-            title: parsed.title,
-            status: (parsed.status as any) || item.status,
-            toolKind: (parsed.toolKind as any) || item.toolKind,
-            rawInput: parsed.rawInput ? { ...item.rawInput, ...parsed.rawInput } : item.rawInput,
-            rawOutput: parsed.rawOutput ? { ...item.rawOutput, ...parsed.rawOutput } : item.rawOutput,
-            content: parsed.content || item.content,
-            locations: parsed.locations || item.locations,
+            payload: { source: 'acp' as const, data: parsed.data },
             timestamp,
           };
         }
@@ -390,19 +396,14 @@ export function reduceStreamUpdate(
     }
 
     // Create new tool call
-    return [...state, {
+    const newToolCall: ToolCallItem = {
       kind: 'tool_call',
-      id: parsed.toolCallId,
-      toolCallId: parsed.toolCallId,
-      title: parsed.title,
-      status: (parsed.status as any) || 'pending',
-      toolKind: parsed.toolKind as any,
-      rawInput: parsed.rawInput,
-      rawOutput: parsed.rawOutput,
-      content: parsed.content,
-      locations: parsed.locations,
+      id: parsed.data.toolCallId,
       timestamp,
-    }];
+      payload: { source: 'acp', data: parsed.data },
+    };
+
+    return [...state, newToolCall];
   }
 
   // Plan - replace existing or create new (uses constant ID since only one plan exists)

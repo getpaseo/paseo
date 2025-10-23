@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/moboudra/dev/voice-dev/packages/server/**)",
+      "Read(//Users/moboudra/dev/voice-dev/node_modules/@agentclientprotocol/sdk/dist/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
