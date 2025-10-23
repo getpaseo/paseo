@@ -3,7 +3,7 @@ import { z } from "zod";
 import { homedir } from "os";
 import { resolve } from "path";
 import { AgentManager } from "./agent-manager.js";
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import type { AgentNotification } from "./types.js";
 import { curateAgentActivity } from "./activity-curator.js";
 
 export interface AgentMcpServerOptions {
@@ -21,10 +21,23 @@ function expandPath(path: string): string {
 }
 
 /**
- * Extract the update type from a SessionNotification
+ * Extract the update type from an AgentNotification
  */
-function getUpdateType(notification: SessionNotification): string {
-  return notification.update.sessionUpdate;
+function getUpdateType(notification: AgentNotification): string {
+  if (notification.type === 'session') {
+    return notification.notification.update.sessionUpdate;
+  }
+  return notification.type;
+}
+
+/**
+ * Serialize AgentInfo for MCP output (convert Date to string for JSON compatibility)
+ */
+function serializeAgentInfo(info: any): any {
+  return {
+    ...info,
+    createdAt: info.createdAt.toISOString(),
+  };
 }
 
 /**
@@ -205,7 +218,7 @@ export async function createAgentMcpServer(
 
       const result = {
         status,
-        info: agentInfo,
+        info: serializeAgentInfo(agentInfo),
       };
 
       return {
@@ -246,7 +259,7 @@ export async function createAgentMcpServer(
       const agents = agentManager.listAgents();
 
       const result = {
-        agents,
+        agents: agents.map(serializeAgentInfo),
       };
 
       return {

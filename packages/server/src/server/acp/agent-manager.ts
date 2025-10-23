@@ -23,6 +23,7 @@ import type {
   AgentUpdateCallback,
   SessionMode,
   EnrichedSessionNotification,
+  EnrichedSessionUpdate,
 } from "./types.js";
 
 interface PendingPermission {
@@ -249,13 +250,13 @@ export class AgentManager {
    * Send a prompt to an agent
    * @param agentId - Agent ID
    * @param prompt - The prompt text
-   * @param options - Optional settings: maxWait (ms), sessionMode to set before sending
+   * @param options - Optional settings: maxWait (ms), sessionMode to set before sending, messageId for deduplication
    * @returns Object with didComplete boolean indicating if agent finished within maxWait time
    */
   async sendPrompt(
     agentId: string,
     prompt: string,
-    options?: { maxWait?: number; sessionMode?: string }
+    options?: { maxWait?: number; sessionMode?: string; messageId?: string }
   ): Promise<{ didComplete: boolean; stopReason?: string }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -269,6 +270,38 @@ export class AgentManager {
     // Set session mode if specified
     if (options?.sessionMode) {
       await this.setSessionMode(agentId, options.sessionMode);
+    }
+
+    // Emit user message notification
+    const userMessageUpdate: AgentUpdate = {
+      agentId,
+      timestamp: new Date(),
+      notification: {
+        type: 'session',
+        notification: {
+          sessionId: agent.sessionId!,
+          update: {
+            sessionUpdate: 'user_message_chunk',
+            content: {
+              type: 'text',
+              text: prompt,
+            },
+            ...(options?.messageId ? { messageId: options.messageId } : {}),
+          },
+        },
+      },
+    };
+
+    // Store in history
+    agent.updates.push(userMessageUpdate);
+
+    // Notify subscribers
+    for (const subscriber of agent.subscribers) {
+      try {
+        subscriber(userMessageUpdate);
+      } catch (error) {
+        console.error(`[Agent ${agentId}] Subscriber error:`, error);
+      }
     }
 
     agent.status = "processing";
@@ -416,7 +449,7 @@ export class AgentManager {
     return Array.from(this.agents.values()).map((agent) => ({
       id: agent.id,
       status: agent.status,
-      createdAt: agent.createdAt.toISOString(),
+      createdAt: agent.createdAt,
       type: "claude" as const,
       sessionId: agent.sessionId ?? null,
       error: agent.error ?? null,
@@ -527,7 +560,7 @@ export class AgentManager {
     if (!agent) return;
 
     // Augment update with stable message IDs for deduplication
-    let enrichedUpdate: EnrichedSessionNotification = update;
+    let enrichedUpdate: EnrichedSessionNotification;
 
     const updateType = update.update.sessionUpdate;
 
@@ -541,7 +574,7 @@ export class AgentManager {
         update: {
           ...update.update,
           messageId: agent.currentAssistantMessageId,
-        },
+        } as EnrichedSessionUpdate,
       };
     }
     // Agent thought chunks - add stable message ID
@@ -554,30 +587,32 @@ export class AgentManager {
         update: {
           ...update.update,
           messageId: agent.currentThoughtId,
-        },
+        } as EnrichedSessionUpdate,
       };
     }
-    // Reset message IDs on new turn (user message or tool call starts new turn)
-    else if (updateType === 'tool_call' || updateType === 'user_message_chunk') {
-      agent.currentAssistantMessageId = null;
-      agent.currentThoughtId = null;
+    // For other update types, use update as-is
+    else {
+      enrichedUpdate = update as EnrichedSessionNotification;
+
+      // Reset message IDs on new turn (user message or tool call starts new turn)
+      if (updateType === 'tool_call' || updateType === 'user_message_chunk') {
+        agent.currentAssistantMessageId = null;
+        agent.currentThoughtId = null;
+      }
     }
 
-    // Create agent update with enriched notification
+    // Create agent update with enriched notification wrapped in discriminated union
     const agentUpdate: AgentUpdate = {
       agentId,
       timestamp: new Date(),
-      notification: enrichedUpdate,
+      notification: {
+        type: 'session',
+        notification: enrichedUpdate,
+      },
     };
 
     // Store the update in history
     agent.updates.push(agentUpdate);
-
-    // Handle mode change notifications
-    if ((update as any).type === "currentModeUpdate" && (update as any).currentModeId) {
-      agent.currentModeId = (update as any).currentModeId;
-      console.log(`[Agent ${agentId}] Mode changed to: ${agent.currentModeId}`);
-    }
 
     // Log update for debugging
     console.log(
@@ -606,13 +641,10 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: "sessionUpdate",
-        sessionUpdate: {
-          sessionId: agent.sessionId || "",
-          sessionUpdate: "status_change",
-          status: agent.status,
-        },
-      } as any,
+        type: 'status',
+        status: agent.status,
+        error: agent.error,
+      },
     };
 
     for (const subscriber of agent.subscribers) {
@@ -648,13 +680,10 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: "sessionUpdate",
-        sessionUpdate: {
-          sessionId: agent.sessionId || "",
-          status: agent.status,
-          state: agent.error ? { kind: "error", error: agent.error } : undefined,
-        },
-      } as any,
+        type: 'status',
+        status: agent.status,
+        error: agent.error,
+      },
     };
 
     for (const subscriber of agent.subscribers) {
@@ -743,23 +772,15 @@ export class AgentManager {
 
       agent.pendingPermissions.set(requestId, pendingPermission);
 
-      // Emit permission request via session notification
+      // Emit permission request via discriminated union
       // This will be picked up by subscribers (Session) and forwarded to UI
-      const permissionNotification: any = {
-        type: "permissionRequest",
-        permissionRequest: {
-          agentId,
-          requestId,
-          sessionId: params.sessionId,
-          toolCall: params.toolCall,
-          options: params.options,
-        },
-      };
-
       const agentUpdate: AgentUpdate = {
         agentId,
         timestamp: new Date(),
-        notification: permissionNotification,
+        notification: {
+          type: 'permission',
+          request: params,
+        },
       };
 
       // Store the update in history

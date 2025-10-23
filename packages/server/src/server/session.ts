@@ -6,7 +6,10 @@ import { join } from "path";
 import invariant from "tiny-invariant";
 import { streamText, stepCountIs } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import {
+  createOpenRouter,
+  OpenRouterProviderOptions,
+} from "@openrouter/ai-sdk-provider";
 import type {
   SessionInboundMessage,
   SessionOutboundMessage,
@@ -15,14 +18,21 @@ import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
-import { saveConversation, listConversations, deleteConversation } from "./persistence.js";
+import {
+  saveConversation,
+  listConversations,
+  deleteConversation,
+} from "./persistence.js";
 import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { AgentManager } from "./acp/agent-manager.js";
 import { createAgentMcpServer } from "./acp/mcp-server.js";
 import type { AgentUpdate } from "./acp/types.js";
-import { generateAgentTitle, isTitleGeneratorInitialized } from "../services/agent-title-generator.js";
+import {
+  generateAgentTitle,
+  isTitleGeneratorInitialized,
+} from "../services/agent-title-generator.js";
 
 const execAsync = promisify(exec);
 
@@ -72,10 +82,14 @@ export class Session {
   private readonly sttManager: STTManager;
 
   // Per-session MCP client and tools
-  private terminalMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
+  private terminalMcpClient: Awaited<
+    ReturnType<typeof experimental_createMCPClient>
+  > | null = null;
   private terminalTools: Record<string, any> | null = null;
   private terminalManager: any | null = null;
-  private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
+  private agentMcpClient: Awaited<
+    ReturnType<typeof experimental_createMCPClient>
+  > | null = null;
   private agentTools: Record<string, any> | null = null;
   private agentManager: AgentManager;
   private agentUpdateUnsubscribers: Map<string, () => void> = new Map();
@@ -137,7 +151,9 @@ export class Session {
    */
   private subscribeToAgent(agentId: string): void {
     if (!this.agentManager) {
-      console.error(`[Session ${this.clientId}] Cannot subscribe to agent: AgentManager not initialized`);
+      console.error(
+        `[Session ${this.clientId}] Cannot subscribe to agent: AgentManager not initialized`
+      );
       return;
     }
 
@@ -149,48 +165,40 @@ export class Session {
     const unsubscribe = this.agentManager.subscribeToUpdates(
       agentId,
       (update: AgentUpdate) => {
-        // Check if this is a permission request
-        const notification = update.notification as any;
-        console.log(`[Session ${this.clientId}] Agent update notification type:`, notification.type);
+        const notification = update.notification;
+        console.log(
+          `[Session ${this.clientId}] Agent update notification type:`,
+          notification.type
+        );
 
-        if (notification.type === "permissionRequest" && notification.permissionRequest) {
-          // Forward permission request as a dedicated message type
-          const permissionRequest = notification.permissionRequest;
+        // Handle permission requests
+        if (notification.type === "permission") {
+          const permissionRequest = notification.request;
           this.emit({
             type: "agent_permission_request",
             payload: {
-              agentId: permissionRequest.agentId,
-              requestId: permissionRequest.requestId,
+              agentId,
+              requestId: uuidv4(), // Generate request ID
               sessionId: permissionRequest.sessionId,
               toolCall: permissionRequest.toolCall,
               options: permissionRequest.options,
             },
           });
-          console.log(`[Session ${this.clientId}] Forwarded permission request ${permissionRequest.requestId} for agent ${agentId}`);
+          console.log(
+            `[Session ${this.clientId}] Forwarded permission request for agent ${agentId}`
+          );
           return;
         }
 
-        // Forward agent updates to WebSocket
-        this.emit({
-          type: "agent_update",
-          payload: {
-            agentId: update.agentId,
-            timestamp: update.timestamp,
-            notification: update.notification,
-          },
-        });
-
-        // Trigger title generation after first meaningful update
-        this.maybeTriggerTitleGeneration(agentId);
-
-        // Check if this is a status change notification
-        // The agent manager sends custom notifications with status field
-        if (notification && notification.sessionUpdate && notification.sessionUpdate.status) {
-          const status = notification.sessionUpdate.status;
+        // Handle status updates
+        if (notification.type === "status") {
+          const status = notification.status;
 
           // Get current agent info
           try {
-            const info = this.agentManager!.listAgents().find(a => a.id === agentId);
+            const info = this.agentManager!.listAgents().find(
+              (a) => a.id === agentId
+            );
             if (info) {
               // Emit agent_status message
               this.emit({
@@ -212,17 +220,41 @@ export class Session {
                   },
                 },
               });
-              console.log(`[Session ${this.clientId}] Agent ${agentId} status changed to: ${status}`);
+              console.log(
+                `[Session ${this.clientId}] Agent ${agentId} status changed to: ${status}`
+              );
             }
           } catch (error) {
-            console.error(`[Session ${this.clientId}] Failed to get agent info for status update:`, error);
+            console.error(
+              `[Session ${this.clientId}] Failed to get agent info for status update:`,
+              error
+            );
           }
+          return;
+        }
+
+        // Handle session notifications
+        if (notification.type === "session") {
+          // Forward agent updates to WebSocket
+          this.emit({
+            type: "agent_update",
+            payload: {
+              agentId: update.agentId,
+              timestamp: update.timestamp,
+              notification: update.notification,
+            },
+          });
+
+          // Trigger title generation after first meaningful update
+          this.maybeTriggerTitleGeneration(agentId);
         }
       }
     );
 
     this.agentUpdateUnsubscribers.set(agentId, unsubscribe);
-    console.log(`[Session ${this.clientId}] Subscribed to agent ${agentId} updates`);
+    console.log(
+      `[Session ${this.clientId}] Subscribed to agent ${agentId} updates`
+    );
   }
 
   /**
@@ -243,8 +275,8 @@ export class Session {
     // Get agent updates
     const updates = this.agentManager.getAgentUpdates(agentId);
 
-    // Need at least a few updates before generating title
-    if (updates.length < 2) {
+    // Need at least 15 updates before generating title
+    if (updates.length < 15) {
       return;
     }
 
@@ -252,12 +284,14 @@ export class Session {
     this.agentManager.markTitleGenerationTriggered(agentId);
 
     // Generate title in background
-    const info = this.agentManager.listAgents().find(a => a.id === agentId);
+    const info = this.agentManager.listAgents().find((a) => a.id === agentId);
     if (!info) {
       return;
     }
 
-    console.log(`[Session ${this.clientId}] Triggering title generation for agent ${agentId}`);
+    console.log(
+      `[Session ${this.clientId}] Triggering title generation for agent ${agentId}`
+    );
 
     generateAgentTitle(updates, info.cwd)
       .then((title) => {
@@ -265,7 +299,9 @@ export class Session {
         this.agentManager.setAgentTitle(agentId, title);
 
         // Emit agent_status to sync the new title to client
-        const updatedInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+        const updatedInfo = this.agentManager
+          .listAgents()
+          .find((a) => a.id === agentId);
         if (updatedInfo) {
           this.emit({
             type: "agent_status",
@@ -289,7 +325,10 @@ export class Session {
         }
       })
       .catch((error) => {
-        console.error(`[Session ${this.clientId}] Failed to generate title for agent ${agentId}:`, error);
+        console.error(
+          `[Session ${this.clientId}] Failed to generate title for agent ${agentId}:`,
+          error
+        );
       });
   }
 
@@ -299,17 +338,20 @@ export class Session {
   private async initializeTerminalMcp(): Promise<void> {
     try {
       // Create Terminal Manager directly
-      const { TerminalManager } = await import("./terminal-mcp/terminal-manager.js");
+      const { TerminalManager } = await import(
+        "./terminal-mcp/terminal-manager.js"
+      );
       this.terminalManager = new TerminalManager(this.conversationId);
       await this.terminalManager.initialize();
 
       // Create Terminal MCP server with conversation-specific session
       const server = await createTerminalMcpServer({
-        sessionName: this.conversationId
+        sessionName: this.conversationId,
       });
 
       // Create linked transport pair
-      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
 
       // Connect server to its transport
       await server.connect(serverTransport);
@@ -345,7 +387,8 @@ export class Session {
       });
 
       // Create linked transport pair
-      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
 
       // Connect server to its transport
       await server.connect(serverTransport);
@@ -359,7 +402,9 @@ export class Session {
       this.agentTools = await this.agentMcpClient.tools();
 
       console.log(
-        `[Session ${this.clientId}] Agent MCP initialized with ${Object.keys(this.agentTools).length} tools`
+        `[Session ${this.clientId}] Agent MCP initialized with ${
+          Object.keys(this.agentTools).length
+        } tools`
       );
     } catch (error) {
       console.error(
@@ -409,7 +454,11 @@ export class Session {
           break;
 
         case "send_agent_message":
-          await this.handleSendAgentMessage(msg.agentId, msg.text, msg.messageId);
+          await this.handleSendAgentMessage(
+            msg.agentId,
+            msg.text,
+            msg.messageId
+          );
           break;
 
         case "send_agent_audio":
@@ -425,7 +474,11 @@ export class Session {
           break;
 
         case "agent_permission_response":
-          await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.optionId);
+          await this.handleAgentPermissionResponse(
+            msg.agentId,
+            msg.requestId,
+            msg.optionId
+          );
           break;
       }
     } catch (error: any) {
@@ -471,7 +524,7 @@ export class Session {
       this.emit({
         type: "list_conversations_response",
         payload: {
-          conversations: conversations.map(conv => ({
+          conversations: conversations.map((conv) => ({
             id: conv.id,
             lastUpdated: conv.lastUpdated.toISOString(),
             messageCount: conv.messageCount,
@@ -533,41 +586,29 @@ export class Session {
   private handleSetRealtimeMode(enabled: boolean): void {
     this.isRealtimeMode = enabled;
     console.log(
-      `[Session ${this.clientId}] Realtime mode ${enabled ? "enabled" : "disabled"}`
+      `[Session ${this.clientId}] Realtime mode ${
+        enabled ? "enabled" : "disabled"
+      }`
     );
   }
 
   /**
    * Handle text message to agent
    */
-  private async handleSendAgentMessage(agentId: string, text: string, messageId?: string): Promise<void> {
+  private async handleSendAgentMessage(
+    agentId: string,
+    text: string,
+    messageId?: string
+  ): Promise<void> {
     console.log(
-      `[Session ${this.clientId}] Sending text to agent ${agentId}: ${text.substring(0, 50)}...`
+      `[Session ${
+        this.clientId
+      }] Sending text to agent ${agentId}: ${text.substring(0, 50)}...`
     );
 
     try {
-      // Emit user message notification before sending to agent
-      // (Claude Code ACP doesn't echo user messages, so we do it manually)
-      this.emit({
-        type: "agent_update",
-        payload: {
-          agentId,
-          timestamp: new Date(),
-          notification: {
-            type: "sessionUpdate",
-            update: {
-              sessionUpdate: "user_message_chunk",
-              content: {
-                type: "text",
-                text: text,
-              },
-              ...(messageId ? { messageId } : {}),
-            },
-          } as any,
-        },
-      });
-
-      await this.agentManager.sendPrompt(agentId, text);
+      // sendPrompt will emit the user message notification
+      await this.agentManager.sendPrompt(agentId, text, { messageId });
       console.log(`[Session ${this.clientId}] Sent text to agent ${agentId}`);
     } catch (error: any) {
       console.error(
@@ -630,7 +671,9 @@ export class Session {
 
       // Send transcribed text to agent
       await this.agentManager.sendPrompt(agentId, transcriptText);
-      console.log(`[Session ${this.clientId}] Sent transcribed text to agent ${agentId}`);
+      console.log(
+        `[Session ${this.clientId}] Sent transcribed text to agent ${agentId}`
+      );
     } catch (error: any) {
       console.error(
         `[Session ${this.clientId}] Failed to process audio for agent ${agentId}:`,
@@ -652,9 +695,14 @@ export class Session {
   /**
    * Handle create agent request
    */
-  private async handleCreateAgentRequest(cwd: string, initialMode?: string): Promise<void> {
+  private async handleCreateAgentRequest(
+    cwd: string,
+    initialMode?: string
+  ): Promise<void> {
     console.log(
-      `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${initialMode || "default"}`
+      `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${
+        initialMode || "default"
+      }`
     );
 
     try {
@@ -666,10 +714,12 @@ export class Session {
       console.log(`[Session ${this.clientId}] Created agent ${agentId}`);
 
       // Get agent info
-      const agentInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+      const agentInfo = this.agentManager
+        .listAgents()
+        .find((a) => a.id === agentId);
       console.log(`[Session ${this.clientId}] Agent info:`, {
         currentModeId: agentInfo?.currentModeId,
-        availableModes: agentInfo?.availableModes
+        availableModes: agentInfo?.availableModes,
       });
 
       // Subscribe to agent updates
@@ -688,7 +738,10 @@ export class Session {
           cwd: agentInfo?.cwd || cwd,
         },
       });
-      console.log(`[Session ${this.clientId}] Emitted agent_created with currentModeId:`, agentInfo?.currentModeId);
+      console.log(
+        `[Session ${this.clientId}] Emitted agent_created with currentModeId:`,
+        agentInfo?.currentModeId
+      );
     } catch (error: any) {
       console.error(
         `[Session ${this.clientId}] Failed to create agent:`,
@@ -710,15 +763,22 @@ export class Session {
   /**
    * Handle set agent mode request
    */
-  private async handleSetAgentMode(agentId: string, modeId: string): Promise<void> {
-    console.log(`[Session ${this.clientId}] Setting agent ${agentId} mode to ${modeId}`);
+  private async handleSetAgentMode(
+    agentId: string,
+    modeId: string
+  ): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Setting agent ${agentId} mode to ${modeId}`
+    );
 
     try {
       await this.agentManager.setSessionMode(agentId, modeId);
-      console.log(`[Session ${this.clientId}] Agent ${agentId} mode set to ${modeId}`);
+      console.log(
+        `[Session ${this.clientId}] Agent ${agentId} mode set to ${modeId}`
+      );
 
       // Emit agent_status to notify client of mode change
-      const info = this.agentManager.listAgents().find(a => a.id === agentId);
+      const info = this.agentManager.listAgents().find((a) => a.id === agentId);
       if (info) {
         this.emit({
           type: "agent_status",
@@ -741,7 +801,10 @@ export class Session {
         });
       }
     } catch (error: any) {
-      console.error(`[Session ${this.clientId}] Failed to set agent mode:`, error);
+      console.error(
+        `[Session ${this.clientId}] Failed to set agent mode:`,
+        error
+      );
       this.emit({
         type: "activity_log",
         payload: {
@@ -758,14 +821,25 @@ export class Session {
   /**
    * Handle agent permission response from user
    */
-  private async handleAgentPermissionResponse(agentId: string, requestId: string, optionId: string): Promise<void> {
-    console.log(`[Session ${this.clientId}] Handling permission response for agent ${agentId}, request ${requestId}, option ${optionId}`);
+  private async handleAgentPermissionResponse(
+    agentId: string,
+    requestId: string,
+    optionId: string
+  ): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Handling permission response for agent ${agentId}, request ${requestId}, option ${optionId}`
+    );
 
     try {
       this.agentManager.respondToPermission(agentId, requestId, optionId);
-      console.log(`[Session ${this.clientId}] Permission response forwarded to agent ${agentId}`);
+      console.log(
+        `[Session ${this.clientId}] Permission response forwarded to agent ${agentId}`
+      );
     } catch (error: any) {
-      console.error(`[Session ${this.clientId}] Failed to respond to permission:`, error);
+      console.error(
+        `[Session ${this.clientId}] Failed to respond to permission:`,
+        error
+      );
       this.emit({
         type: "activity_log",
         payload: {
@@ -803,7 +877,10 @@ export class Session {
             type: "agent_update",
             payload: {
               agentId: update.agentId,
-              timestamp: update.timestamp instanceof Date ? update.timestamp : new Date(update.timestamp),
+              timestamp:
+                update.timestamp instanceof Date
+                  ? update.timestamp
+                  : new Date(update.timestamp),
               notification: update.notification,
             },
           });
@@ -1123,6 +1200,11 @@ export class Session {
       const result = await streamText({
         model: openrouter("anthropic/claude-haiku-4.5"),
         system: getSystemPrompt(),
+        providerOptions: {
+          openrouter: {
+            transforms: ["middle-out"], // Compress prompts that are > context size.
+          } as OpenRouterProviderOptions,
+        },
         messages: this.messages,
         tools: allTools,
         abortSignal: this.abortController.signal,
@@ -1203,7 +1285,9 @@ export class Session {
                 this.subscribeToAgent(agentId);
 
                 // Get full agent info and emit agent_created message
-                const agentInfo = this.agentManager.listAgents().find(a => a.id === agentId);
+                const agentInfo = this.agentManager
+                  .listAgents()
+                  .find((a) => a.id === agentId);
                 if (agentInfo) {
                   this.emit({
                     type: "agent_created",
@@ -1558,7 +1642,9 @@ export class Session {
     for (const [agentId, unsubscribe] of this.agentUpdateUnsubscribers) {
       try {
         unsubscribe();
-        console.log(`[Session ${this.clientId}] Unsubscribed from agent ${agentId}`);
+        console.log(
+          `[Session ${this.clientId}] Unsubscribed from agent ${agentId}`
+        );
       } catch (error) {
         console.error(
           `[Session ${this.clientId}] Failed to unsubscribe from agent ${agentId}:`,

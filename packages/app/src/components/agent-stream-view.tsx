@@ -53,7 +53,7 @@ export function AgentStreamView({
       <ScrollView
         ref={scrollViewRef}
         style={stylesheet.scrollView}
-        contentContainerStyle={{ paddingTop: 16, paddingBottom: Math.max(insets.bottom, 32) }}
+        contentContainerStyle={{ paddingTop: 24, paddingBottom: Math.max(insets.bottom, 32) }}
       >
         {streamItems.length === 0 ? (
           <View style={stylesheet.emptyState}>

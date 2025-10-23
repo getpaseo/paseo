@@ -1,4 +1,4 @@
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import type { SessionNotification, RequestPermissionRequest } from "@agentclientprotocol/sdk";
 
 /**
  * Extended update types with messageId for proper deduplication
@@ -14,6 +14,14 @@ export type EnrichedSessionUpdate =
 export interface EnrichedSessionNotification extends Omit<SessionNotification, 'update'> {
   update: EnrichedSessionUpdate;
 }
+
+/**
+ * Discriminated union for all notification types in the agent update stream
+ */
+export type AgentNotification =
+  | { type: 'session'; notification: EnrichedSessionNotification }
+  | { type: 'permission'; request: RequestPermissionRequest }
+  | { type: 'status'; status: AgentStatus; error?: string };
 
 /**
  * Status of an agent
@@ -32,7 +40,7 @@ export type AgentStatus =
 export interface AgentInfo {
   id: string;
   status: AgentStatus;
-  createdAt: string;
+  createdAt: Date;
   type: "claude";
   sessionId: string | null;
   error: string | null;
@@ -44,12 +52,12 @@ export interface AgentInfo {
 
 /**
  * Update from an agent session
- * Wraps enriched SessionNotification with additional metadata
+ * Wraps all notification types with additional metadata
  */
 export interface AgentUpdate {
   agentId: string;
   timestamp: Date;
-  notification: EnrichedSessionNotification;
+  notification: AgentNotification;
 }
 
 /**

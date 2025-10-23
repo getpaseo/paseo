@@ -14,11 +14,11 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "outDir": "./dist/server",
-    "rootDir": "./src/server",
+    "rootDir": "./src",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/server/**/*"],
+  "include": ["src/server/**/*", "src/services/**/*"],
   "exclude": ["node_modules", "dist"]
 }
