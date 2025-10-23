@@ -14,7 +14,7 @@ interface AgentInputAreaProps {
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const { agents, ws, sendAgentMessage, setAgentMode } = useSession();
-  const { startRealtime } = useRealtime();
+  const { isRealtimeMode, startRealtime } = useRealtime();
   const audioRecorder = useAudioRecorder();
 
   const [userInput, setUserInput] = useState("");
@@ -23,6 +23,11 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const [showModeSelector, setShowModeSelector] = useState(false);
 
   const agent = agents.get(agentId);
+
+  // Hide when realtime is active - global footer takes over
+  if (isRealtimeMode) {
+    return null;
+  }
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;

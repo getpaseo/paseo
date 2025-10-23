@@ -6,7 +6,6 @@ import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { OrchestratorMessagesView } from "@/components/orchestrator-messages-view";
-import { GlobalFooter } from "@/components/global-footer";
 import { useSession } from "@/contexts/session-context";
 import type { ScrollView } from "react-native";
 import type { Artifact } from "@/components/artifact-drawer";
@@ -47,9 +46,6 @@ export default function OrchestratorScreen() {
           currentAssistantMessage={currentAssistantMessage}
           onArtifactClick={handleArtifactClick}
         />
-
-        {/* Footer */}
-        <GlobalFooter />
       </ReanimatedAnimated.View>
     </View>
   );

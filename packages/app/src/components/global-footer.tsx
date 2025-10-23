@@ -1,21 +1,17 @@
 import { View, Pressable } from "react-native";
-import { usePathname } from "expo-router";
+import { usePathname, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AudioLines } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
 import { RealtimeControls } from "./realtime-controls";
-import { AgentInputArea } from "./agent-input-area";
 
-interface GlobalFooterProps {
-  agentId?: string;
-}
-
-export function GlobalFooter({ agentId }: GlobalFooterProps) {
+export function GlobalFooter() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
+  const params = useLocalSearchParams();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { ws } = useSession();
 
@@ -33,13 +29,9 @@ export function GlobalFooter({ agentId }: GlobalFooterProps) {
     );
   }
 
-  // If on agent screen, show full input area
-  if (isAgentScreen && agentId) {
-    return (
-      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-        <AgentInputArea agentId={agentId} />
-      </View>
-    );
+  // If on agent screen and realtime is off, hide footer (agent has its own controls)
+  if (isAgentScreen) {
+    return null;
   }
 
   // For home and orchestrator screens, show centered realtime button

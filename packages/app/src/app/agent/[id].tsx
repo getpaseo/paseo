@@ -6,7 +6,7 @@ import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
-import { GlobalFooter } from "@/components/global-footer";
+import { AgentInputArea } from "@/components/agent-input-area";
 import { useSession } from "@/contexts/session-context";
 
 export default function AgentScreen() {
@@ -60,8 +60,10 @@ export default function AgentScreen() {
           }
         />
 
-        {/* Footer */}
-        <GlobalFooter agentId={id} />
+        {/* Agent Input - will hide itself when realtime is active */}
+        <View style={[styles.inputContainer, { paddingBottom: insets.bottom }]}>
+          <AgentInputArea agentId={id!} />
+        </View>
       </ReanimatedAnimated.View>
     </View>
   );
@@ -74,6 +76,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     flex: 1,
+  },
+  inputContainer: {
+    backgroundColor: theme.colors.background,
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
   },
   errorContainer: {
     flex: 1,

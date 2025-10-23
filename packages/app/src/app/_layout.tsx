@@ -7,6 +7,7 @@ import { SessionProvider } from "@/contexts/session-context";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator } from "react-native";
+import { GlobalFooter } from "@/components/global-footer";
 
 function ProvidersWrapper({ children }: { children: React.ReactNode }) {
   const { settings, isLoading } = useSettings();
@@ -40,23 +41,26 @@ export default function RootLayout() {
         <KeyboardProvider>
           <BottomSheetModalProvider>
             <ProvidersWrapper>
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  animation: "slide_from_right",
-                  animationDuration: 250,
-                  gestureEnabled: true,
-                  gestureDirection: "horizontal",
-                  fullScreenGestureEnabled: true,
-                  animationMatchesGesture: true,
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="orchestrator" />
-                <Stack.Screen name="agent/[id]" />
-                <Stack.Screen name="settings" />
-                <Stack.Screen name="audio-test" />
-              </Stack>
+              <View style={{ flex: 1 }}>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    animation: "slide_from_right",
+                    animationDuration: 250,
+                    gestureEnabled: true,
+                    gestureDirection: "horizontal",
+                    fullScreenGestureEnabled: true,
+                    animationMatchesGesture: true,
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="orchestrator" />
+                  <Stack.Screen name="agent/[id]" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="audio-test" />
+                </Stack>
+                <GlobalFooter />
+              </View>
             </ProvidersWrapper>
           </BottomSheetModalProvider>
         </KeyboardProvider>

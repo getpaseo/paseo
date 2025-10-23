@@ -7,7 +7,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HomeHeader } from "@/components/headers/home-header";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
-import { GlobalFooter } from "@/components/global-footer";
 import { CreateAgentModal } from "@/components/create-agent-modal";
 import { useSession } from "@/contexts/session-context";
 
@@ -46,9 +45,6 @@ export default function HomeScreen() {
         ) : (
           <EmptyState onCreateAgent={handleCreateAgent} />
         )}
-
-        {/* Footer */}
-        <GlobalFooter />
       </ReanimatedAnimated.View>
 
       {/* Create Agent Modal */}
