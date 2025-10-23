@@ -260,49 +260,205 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     });
 
     // Audio output
-    const unsubAudioOutput = ws.on("audio_output", (message) => {
+    const unsubAudioOutput = ws.on("audio_output", async (message) => {
       if (message.type !== "audio_output") return;
-      const { audio, format, id } = message.payload;
+      const data = message.payload;
 
-      console.log("[Session] Received audio output:", id, "format:", format);
+      try {
+        setIsPlayingAudio(true);
 
-      // Create Blob-like object for React Native
-      // React Native doesn't support creating Blobs from binary data
-      const audioBlob = {
-        type: format,
-        size: audio.length,
-        arrayBuffer: async () => {
-          // Convert base64 to ArrayBuffer
-          const binaryString = atob(audio);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          return bytes.buffer;
+        // Create blob-like object with correct mime type (React Native compatible)
+        const mimeType =
+          data.format === "mp3" ? "audio/mpeg" : `audio/${data.format}`;
+        const base64Audio = data.audio;
+
+        // Create a Blob-like object that works in React Native
+        const audioBlob = {
+          type: mimeType,
+          size: Math.ceil((base64Audio.length * 3) / 4), // Approximate size from base64
+          arrayBuffer: async () => {
+            // Convert base64 to ArrayBuffer
+            const binaryString = atob(base64Audio);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+          },
+        } as Blob;
+
+        // Play audio
+        await audioPlayer.play(audioBlob);
+
+        // Send confirmation back to server
+        const confirmMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "audio_played",
+            id: data.id,
+          },
+        };
+        ws.send(confirmMessage);
+
+        setIsPlayingAudio(false);
+      } catch (error: any) {
+        console.error("[Session] Audio playback error:", error);
+        setIsPlayingAudio(false);
+
+        // Still send confirmation even on error to prevent server from waiting
+        const confirmMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "audio_played",
+            id: data.id,
+          },
+        };
+        ws.send(confirmMessage);
+      }
+    });
+
+    // Activity log handler
+    const unsubActivity = ws.on("activity_log", (message) => {
+      if (message.type !== "activity_log") return;
+      const data = message.payload;
+
+      // Filter out transcription activity logs
+      if (data.type === "system" && data.content.includes("Transcribing")) {
+        return;
+      }
+
+      // Handle tool calls
+      if (data.type === "tool_call" && data.metadata) {
+        const {
+          toolCallId,
+          toolName,
+          arguments: args,
+        } = data.metadata as {
+          toolCallId: string;
+          toolName: string;
+          arguments: unknown;
+        };
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "tool_call",
+            id: toolCallId,
+            timestamp: Date.now(),
+            toolName,
+            args,
+            status: "executing",
+          },
+        ]);
+        return;
+      }
+
+      // Handle tool results
+      if (data.type === "tool_result" && data.metadata) {
+        const { toolCallId, result } = data.metadata as {
+          toolCallId: string;
+          result: unknown;
+        };
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === "tool_call" && msg.id === toolCallId
+              ? { ...msg, result, status: "completed" as const }
+              : msg
+          )
+        );
+        return;
+      }
+
+      // Handle tool errors
+      if (
+        data.type === "error" &&
+        data.metadata &&
+        "toolCallId" in data.metadata
+      ) {
+        const { toolCallId, error } = data.metadata as {
+          toolCallId: string;
+          error: unknown;
+        };
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === "tool_call" && msg.id === toolCallId
+              ? { ...msg, error, status: "failed" as const }
+              : msg
+          )
+        );
+      }
+
+      // Map activity types to message types
+      let activityType: "system" | "info" | "success" | "error" = "info";
+      if (data.type === "error") activityType = "error";
+
+      // Add user transcripts as user messages
+      if (data.type === "transcript") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "user",
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            message: data.content,
+          },
+        ]);
+        return;
+      }
+
+      // Add assistant messages
+      if (data.type === "assistant") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "assistant",
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            message: data.content,
+          },
+        ]);
+        setCurrentAssistantMessage("");
+        return;
+      }
+
+      // Add activity log for other types
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: "activity",
+          id: generateMessageId(),
+          timestamp: Date.now(),
+          activityType,
+          message: data.content,
+          metadata: data.metadata,
         },
-      } as Blob;
+      ]);
+    });
 
-      // Play audio
-      setIsPlayingAudio(true);
-      audioPlayer.play(audioBlob)
-        .then(() => {
-          console.log("[Session] Audio playback complete:", id);
-          setIsPlayingAudio(false);
+    // Assistant chunk handler (streaming)
+    const unsubChunk = ws.on("assistant_chunk", (message) => {
+      if (message.type !== "assistant_chunk") return;
+      setCurrentAssistantMessage((prev) => prev + message.payload.chunk);
+    });
 
-          // Send confirmation to server
-          const msg: WSInboundMessage = {
-            type: "session",
-            message: {
-              type: "audio_played",
-              id,
-            },
-          };
-          ws.send(msg);
-        })
-        .catch((error) => {
-          console.error("[Session] Audio playback failed:", error);
-          setIsPlayingAudio(false);
-        });
+    // Transcription result handler
+    const unsubTranscription = ws.on("transcription_result", (message) => {
+      if (message.type !== "transcription_result") return;
+
+      const transcriptText = message.payload.text.trim();
+
+      if (!transcriptText) {
+        // Empty transcription - false positive, let playback continue
+        console.log("[Session] Empty transcription (false positive) - ignoring");
+      } else {
+        // Has content - real speech detected, stop playback
+        console.log("[Session] Transcription received - stopping playback");
+        audioPlayer.stop();
+        setIsPlayingAudio(false);
+        setCurrentAssistantMessage("");
+      }
     });
 
     return () => {
@@ -312,6 +468,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubAgentUpdate();
       unsubPermissionRequest();
       unsubAudioOutput();
+      unsubActivity();
+      unsubChunk();
+      unsubTranscription();
     };
   }, [ws, audioPlayer, setIsPlayingAudio]);
 
