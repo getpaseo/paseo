@@ -1,8 +1,25 @@
-import { View, Text, Pressable, Animated } from 'react-native';
-import { useState, useEffect, useRef } from 'react';
-import Markdown from 'react-native-markdown-display';
-import { Circle, Info, CheckCircle, XCircle, FileText, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, Text, Pressable, Animated } from "react-native";
+import { useState, useEffect, useRef } from "react";
+import Markdown from "react-native-markdown-display";
+import {
+  Circle,
+  Info,
+  CheckCircle,
+  XCircle,
+  FileText,
+  ChevronRight,
+  ChevronDown,
+  Loader2,
+  Check,
+  X,
+  Wrench,
+  Pencil,
+  Eye,
+  SquareTerminal,
+} from "lucide-react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { baseColors, theme } from "@/styles/theme";
+import { Colors } from "@/constants/theme";
 
 interface UserMessageProps {
   message: string;
@@ -11,18 +28,18 @@ interface UserMessageProps {
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     marginBottom: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
   },
   bubble: {
     backgroundColor: theme.colors.primary,
-    borderRadius: theme.borderRadius['2xl'],
+    borderRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
-    maxWidth: '80%',
+    maxWidth: "80%",
   },
   text: {
     color: theme.colors.primaryForeground,
@@ -61,9 +78,66 @@ const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.bold,
   },
+  // Markdown styles
+  markdownBody: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    lineHeight: 24,
+  },
+  markdownParagraph: {
+    marginTop: 0,
+    marginBottom: theme.spacing[2],
+  },
+  markdownStrong: {
+    fontWeight: theme.fontWeight.bold,
+  },
+  markdownEm: {
+    fontStyle: "italic" as const,
+  },
+  markdownCodeInline: {
+    backgroundColor: theme.colors.secondary,
+    color: theme.colors.secondaryForeground,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.sm,
+    fontFamily: "monospace",
+    fontSize: 13,
+  },
+  markdownCodeBlock: {
+    backgroundColor: theme.colors.secondary,
+    color: theme.colors.secondaryForeground,
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    fontFamily: "monospace",
+    fontSize: 13,
+  },
+  markdownFence: {
+    backgroundColor: theme.colors.secondary,
+    borderColor: theme.colors.border,
+    color: theme.colors.secondaryForeground,
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    marginVertical: theme.spacing[2],
+    fontFamily: "monospace",
+    fontSize: 13,
+  },
+  markdownLink: {
+    color: theme.colors.primary,
+    textDecorationLine: "underline" as const,
+  },
+  markdownList: {
+    marginBottom: theme.spacing[2],
+  },
+  markdownListItem: {
+    marginBottom: theme.spacing[1],
+  },
 }));
 
-export function AssistantMessage({ message, timestamp, isStreaming = false }: AssistantMessageProps) {
+export function AssistantMessage({
+  message,
+  timestamp,
+  isStreaming = false,
+}: AssistantMessageProps) {
   const fadeAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -89,65 +163,29 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
   }, [isStreaming, fadeAnim]);
 
   const markdownStyles = {
-    body: {
-      color: '#f0fdfa',
-      fontSize: 16,
-      lineHeight: 24,
-    },
-    paragraph: {
-      marginTop: 0,
-      marginBottom: 8,
-    },
-    strong: {
-      fontWeight: '700' as const,
-    },
-    em: {
-      fontStyle: 'italic' as const,
-    },
-    code_inline: {
-      backgroundColor: '#134e4a',
-      color: '#ccfbf1',
-      paddingHorizontal: 4,
-      paddingVertical: 2,
-      borderRadius: 3,
-      fontFamily: 'monospace',
-    },
-    code_block: {
-      backgroundColor: '#134e4a',
-      color: '#ccfbf1',
-      padding: 12,
-      borderRadius: 6,
-      fontFamily: 'monospace',
-      fontSize: 14,
-    },
-    fence: {
-      backgroundColor: '#134e4a',
-      color: '#ccfbf1',
-      padding: 12,
-      borderRadius: 6,
-      fontFamily: 'monospace',
-      fontSize: 14,
-    },
-    link: {
-      color: '#5eead4',
-      textDecorationLine: 'underline' as const,
-    },
-    bullet_list: {
-      marginBottom: 8,
-    },
-    ordered_list: {
-      marginBottom: 8,
-    },
-    list_item: {
-      marginBottom: 4,
-    },
+    body: assistantMessageStylesheet.markdownBody,
+    paragraph: assistantMessageStylesheet.markdownParagraph,
+    strong: assistantMessageStylesheet.markdownStrong,
+    em: assistantMessageStylesheet.markdownEm,
+    code_inline: assistantMessageStylesheet.markdownCodeInline,
+    code_block: assistantMessageStylesheet.markdownCodeBlock,
+    fence: assistantMessageStylesheet.markdownFence,
+    link: assistantMessageStylesheet.markdownLink,
+    bullet_list: assistantMessageStylesheet.markdownList,
+    ordered_list: assistantMessageStylesheet.markdownList,
+    list_item: assistantMessageStylesheet.markdownListItem,
   };
 
   return (
     <View style={assistantMessageStylesheet.container}>
       <Markdown style={markdownStyles}>{message}</Markdown>
       {isStreaming && (
-        <Animated.View style={[assistantMessageStylesheet.streamingIndicator, { opacity: fadeAnim }]}>
+        <Animated.View
+          style={[
+            assistantMessageStylesheet.streamingIndicator,
+            { opacity: fadeAnim },
+          ]}
+        >
           <Text style={assistantMessageStylesheet.streamingText}>...</Text>
         </Animated.View>
       )}
@@ -156,7 +194,7 @@ export function AssistantMessage({ message, timestamp, isStreaming = false }: As
 }
 
 interface ActivityLogProps {
-  type: 'system' | 'info' | 'success' | 'error' | 'artifact';
+  type: "system" | "info" | "success" | "error" | "artifact";
   message: string;
   timestamp: number;
   metadata?: Record<string, unknown>;
@@ -171,33 +209,33 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
     marginHorizontal: theme.spacing[2],
     marginBottom: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   pressableActive: {
     opacity: 0.7,
   },
   systemBg: {
-    backgroundColor: 'rgba(39, 39, 42, 0.5)',
+    backgroundColor: "rgba(39, 39, 42, 0.5)",
   },
   infoBg: {
-    backgroundColor: 'rgba(30, 58, 138, 0.3)',
+    backgroundColor: "rgba(30, 58, 138, 0.3)",
   },
   successBg: {
-    backgroundColor: 'rgba(20, 83, 45, 0.3)',
+    backgroundColor: "rgba(20, 83, 45, 0.3)",
   },
   errorBg: {
-    backgroundColor: 'rgba(127, 29, 29, 0.3)',
+    backgroundColor: "rgba(127, 29, 29, 0.3)",
   },
   artifactBg: {
-    backgroundColor: 'rgba(30, 58, 138, 0.4)',
+    backgroundColor: "rgba(30, 58, 138, 0.4)",
   },
   content: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: 10,
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: theme.spacing[2],
   },
   iconContainer: {
@@ -211,8 +249,8 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
     lineHeight: 20,
   },
   detailsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: theme.spacing[1],
   },
   detailsText: {
@@ -222,7 +260,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
   },
   metadataContainer: {
     marginTop: theme.spacing[2],
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     borderRadius: theme.borderRadius.base,
     padding: theme.spacing[2],
     borderWidth: theme.borderWidth[1],
@@ -231,7 +269,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
   metadataText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
-    fontFamily: 'monospace',
+    fontFamily: "monospace",
     lineHeight: 16,
   },
 }));
@@ -244,34 +282,51 @@ export function ActivityLog({
   artifactId,
   artifactType,
   title,
-  onArtifactClick
+  onArtifactClick,
 }: ActivityLogProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const typeConfig = {
-    system: { bg: activityLogStylesheet.systemBg, color: '#a1a1aa', Icon: Circle },
-    info: { bg: activityLogStylesheet.infoBg, color: '#60a5fa', Icon: Info },
-    success: { bg: activityLogStylesheet.successBg, color: '#4ade80', Icon: CheckCircle },
-    error: { bg: activityLogStylesheet.errorBg, color: '#f87171', Icon: XCircle },
-    artifact: { bg: activityLogStylesheet.artifactBg, color: '#93c5fd', Icon: FileText },
+    system: {
+      bg: activityLogStylesheet.systemBg,
+      color: "#a1a1aa",
+      Icon: Circle,
+    },
+    info: { bg: activityLogStylesheet.infoBg, color: "#60a5fa", Icon: Info },
+    success: {
+      bg: activityLogStylesheet.successBg,
+      color: "#4ade80",
+      Icon: CheckCircle,
+    },
+    error: {
+      bg: activityLogStylesheet.errorBg,
+      color: "#f87171",
+      Icon: XCircle,
+    },
+    artifact: {
+      bg: activityLogStylesheet.artifactBg,
+      color: "#93c5fd",
+      Icon: FileText,
+    },
   };
 
   const config = typeConfig[type];
   const IconComponent = config.Icon;
 
   const handlePress = () => {
-    if (type === 'artifact' && artifactId && onArtifactClick) {
+    if (type === "artifact" && artifactId && onArtifactClick) {
       onArtifactClick(artifactId);
     } else if (metadata) {
       setIsExpanded(!isExpanded);
     }
   };
 
-  const displayMessage = type === 'artifact' && artifactType && title
-    ? `${artifactType}: ${title}`
-    : message;
+  const displayMessage =
+    type === "artifact" && artifactType && title
+      ? `${artifactType}: ${title}`
+      : message;
 
-  const isInteractive = type === 'artifact' || metadata;
+  const isInteractive = type === "artifact" || metadata;
 
   return (
     <Pressable
@@ -289,7 +344,12 @@ export function ActivityLog({
             <IconComponent size={16} color={config.color} />
           </View>
           <View style={activityLogStylesheet.textContainer}>
-            <Text style={[activityLogStylesheet.messageText, { color: config.color }]}>
+            <Text
+              style={[
+                activityLogStylesheet.messageText,
+                { color: config.color },
+              ]}
+            >
               {displayMessage}
             </Text>
             {metadata && (
@@ -318,10 +378,11 @@ export function ActivityLog({
 
 interface ToolCallProps {
   toolName: string;
+  kind?: string; // Optional kind for ACP tool calls
   args: any;
   result?: any;
   error?: any;
-  status: 'executing' | 'completed' | 'failed';
+  status: "executing" | "completed" | "failed";
   onOpenDetails?: () => void;
 }
 
@@ -332,16 +393,16 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   pressableActive: {
     opacity: 0.8,
   },
   executingBorder: {
-    borderColor: theme.colors.palette.amber[500],
+    borderColor: theme.colors.primary,
   },
   completedBorder: {
-    borderColor: theme.colors.palette.green[500],
+    borderColor: theme.colors.border,
   },
   failedBorder: {
     borderColor: theme.colors.destructive,
@@ -350,40 +411,36 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
   },
   headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   chevronContainer: {
     marginRight: theme.spacing[2],
   },
   toolName: {
     color: theme.colors.foreground,
-    fontFamily: 'monospace',
+    fontFamily: "monospace",
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.sm,
     flex: 1,
   },
   statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
+    width: 28,
+    height: 28,
   },
   executingBadgeBg: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    backgroundColor: theme.colors.accent,
   },
   completedBadgeBg: {
-    backgroundColor: 'rgba(34, 197, 94, 0.2)',
+    backgroundColor: "transparent",
   },
   failedBadgeBg: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: 'uppercase',
+    backgroundColor: "rgba(239, 68, 68, 0.2)",
   },
   expandedContent: {
     marginTop: theme.spacing[3],
@@ -396,7 +453,7 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: 6,
   },
@@ -416,81 +473,113 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
   sectionText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
-    fontFamily: 'monospace',
+    fontFamily: "monospace",
     lineHeight: 16,
   },
 }));
 
-export function ToolCall({ toolName, args, result, error, status, onOpenDetails }: ToolCallProps) {
+// Icon mapping for tool kinds
+const toolKindIcons: Record<string, any> = {
+  edit: Pencil,
+  read: Eye,
+  execute: SquareTerminal,
+  // Add more mappings as needed
+};
+
+export function ToolCall({
+  toolName,
+  kind,
+  args,
+  result,
+  error,
+  status,
+  onOpenDetails,
+}: ToolCallProps) {
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (status === 'executing') {
+    if (status === "executing") {
+      // Reset to 0 before starting
+      spinAnim.setValue(0);
       Animated.loop(
         Animated.timing(spinAnim, {
           toValue: 1,
-          duration: 1000,
+          duration: 1500,
           useNativeDriver: true,
+          easing: (t) => t, // Linear easing for smooth continuous rotation
         })
       ).start();
     } else {
       spinAnim.stopAnimation();
-      spinAnim.setValue(0);
     }
   }, [status, spinAnim]);
 
   const spin = spinAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
+    outputRange: ["0deg", "360deg"],
   });
 
   const statusConfig = {
     executing: {
       border: toolCallStylesheet.executingBorder,
       badgeBg: toolCallStylesheet.executingBadgeBg,
-      color: '#fcd34d',
-      label: 'executing',
+      color: "#fff",
     },
     completed: {
       border: toolCallStylesheet.completedBorder,
       badgeBg: toolCallStylesheet.completedBadgeBg,
-      color: '#86efac',
-      label: 'completed',
+      color: "#71717a",
     },
     failed: {
       border: toolCallStylesheet.failedBorder,
       badgeBg: toolCallStylesheet.failedBadgeBg,
-      color: '#fca5a5',
-      label: 'failed',
+      color: "#fca5a5",
     },
   };
 
   const config = statusConfig[status];
 
+  // Get the appropriate icon for the tool kind
+  const getToolIcon = () => {
+    if (kind) {
+      const IconComponent = toolKindIcons[kind.toLowerCase()] || Wrench;
+      return IconComponent;
+    }
+    return Wrench; // Default icon
+  };
+
   return (
     <Pressable
       onPress={onOpenDetails}
-      style={[toolCallStylesheet.pressable, toolCallStylesheet.pressableActive, config.border]}
+      style={[
+        toolCallStylesheet.pressable,
+        toolCallStylesheet.pressableActive,
+        config.border,
+      ]}
     >
       <View style={toolCallStylesheet.content}>
         <View style={toolCallStylesheet.headerRow}>
-          <Text style={toolCallStylesheet.toolName}>
+          <View style={[toolCallStylesheet.statusBadge, config.badgeBg]}>
+            {status === "executing" ? (
+              <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                <Loader2 size={16} color={config.color} />
+              </Animated.View>
+            ) : status === "completed" ? (
+              (() => {
+                const IconComponent = getToolIcon();
+                return <IconComponent size={16} color={config.color} />;
+              })()
+            ) : (
+              <X size={16} color={config.color} />
+            )}
+          </View>
+          <Text
+            style={toolCallStylesheet.toolName}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {toolName}
           </Text>
-          <View style={[toolCallStylesheet.statusBadge, config.badgeBg]}>
-            {status === 'executing' ? (
-              <Animated.View style={{ transform: [{ rotate: spin }] }}>
-                <RefreshCw size={14} color={config.color} />
-              </Animated.View>
-            ) : status === 'completed' ? (
-              <CheckCircle size={14} color={config.color} />
-            ) : (
-              <XCircle size={14} color={config.color} />
-            )}
-            <Text style={[toolCallStylesheet.statusText, { color: config.color }]}>
-              {config.label}
-            </Text>
-          </View>
         </View>
       </View>
     </Pressable>
