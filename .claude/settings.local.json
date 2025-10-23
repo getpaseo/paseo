@@ -8,7 +8,10 @@
       "Bash(cat:*)",
       "mcp__playwright__browser_snapshot",
       "WebFetch(domain:www.npmjs.com)",
-      "Bash(tmux capture-pane:*)"
+      "Bash(tmux capture-pane:*)",
+      "Read(//tmp/claude-code-acp/**)",
+      "Read(//private/tmp/claude-code-acp/node_modules/@anthropic-ai/claude-agent-sdk/**)",
+      "Bash(identify:*)"
     ],
     "deny": [],
     "ask": []

@@ -1,21 +1,22 @@
 import { View } from "react-native";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { HomeHeader } from "@/components/headers/home-header";
-import { EmptyState } from "@/components/empty-state";
-import { AgentList } from "@/components/agent-list";
+import { BackHeader } from "@/components/headers/back-header";
+import { OrchestratorMessagesView } from "@/components/orchestrator-messages-view";
 import { GlobalFooter } from "@/components/global-footer";
-import { CreateAgentModal } from "@/components/create-agent-modal";
 import { useSession } from "@/contexts/session-context";
+import type { ScrollView } from "react-native";
+import type { Artifact } from "@/components/artifact-drawer";
 
-export default function HomeScreen() {
+export default function OrchestratorScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { agents, createAgent } = useSession();
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const { messages, currentAssistantMessage } = useSession();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -28,40 +29,28 @@ export default function HomeScreen() {
     };
   });
 
-  const hasAgents = agents.size > 0;
-
-  function handleCreateAgent() {
-    setShowCreateModal(true);
-  }
-
-  function handleCreateAgentConfirm(workingDir: string, mode: string) {
-    createAgent({ cwd: workingDir, autoStart: true });
-    setShowCreateModal(false);
+  function handleArtifactClick(artifactId: string) {
+    // TODO: Implement artifact drawer
+    console.log("[Orchestrator] Artifact clicked:", artifactId);
   }
 
   return (
     <View style={styles.container}>
       {/* Header */}
-      <HomeHeader onCreateAgent={handleCreateAgent} />
+      <BackHeader title="Activity" />
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        {hasAgents ? (
-          <AgentList agents={agents} />
-        ) : (
-          <EmptyState onCreateAgent={handleCreateAgent} />
-        )}
+        <OrchestratorMessagesView
+          ref={scrollViewRef}
+          messages={messages}
+          currentAssistantMessage={currentAssistantMessage}
+          onArtifactClick={handleArtifactClick}
+        />
 
         {/* Footer */}
         <GlobalFooter />
       </ReanimatedAnimated.View>
-
-      {/* Create Agent Modal */}
-      <CreateAgentModal
-        isVisible={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onCreateAgent={handleCreateAgentConfirm}
-      />
     </View>
   );
 }

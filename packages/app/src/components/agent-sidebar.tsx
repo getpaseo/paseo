@@ -11,6 +11,7 @@ import Animated, {
   cancelAnimation,
   runOnJS,
   Easing,
+  type SharedValue,
 } from "react-native-reanimated";
 import type { AgentStatus } from "@server/server/acp/types";
 
@@ -28,7 +29,7 @@ interface AgentSidebarProps {
   onClose: () => void;
   onSelectAgent: (agentId: string) => void;
   onNewAgent: () => void;
-  edgeSwipeTranslateX?: Animated.SharedValue<number> | null;
+  edgeSwipeTranslateX?: SharedValue<number> | null;
 }
 
 function getStatusColor(status: AgentStatus): string {
@@ -47,6 +48,25 @@ function getStatusColor(status: AgentStatus): string {
       return "#6B7280";
     default:
       return "#6B7280";
+  }
+}
+
+function getStatusLabel(status: AgentStatus): string {
+  switch (status) {
+    case "initializing":
+      return "Initializing";
+    case "ready":
+      return "Ready";
+    case "processing":
+      return "Processing";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "killed":
+      return "Killed";
+    default:
+      return "Unknown";
   }
 }
 
@@ -202,6 +222,7 @@ export function AgentSidebar({
             {agents.map((agent) => {
               const isActive = agent.id === activeAgentId;
               const statusColor = getStatusColor(agent.status);
+              const statusLabel = getStatusLabel(agent.status);
 
               return (
                 <Pressable
@@ -212,31 +233,33 @@ export function AgentSidebar({
                   ]}
                   onPress={() => handleAgentSelect(agent.id)}
                 >
-                  <View style={styles.agentInfo}>
-                    {/* Status Indicator */}
-                    <View
-                      style={[styles.statusDot, { backgroundColor: statusColor }]}
-                    />
+                  <View style={styles.agentContent}>
+                    <Text
+                      style={[
+                        styles.agentTitle,
+                        { color: theme.colors.foreground },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {agent.title || "New Agent"}
+                    </Text>
 
-                    {/* Agent Title */}
-                    <View style={styles.agentContent}>
-                      <Text
-                        style={[
-                          styles.agentTitle,
-                          { color: theme.colors.foreground },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {agent.title || "New Agent"}
-                      </Text>
-
-                      {/* Agent Directory */}
+                    <View style={styles.directoryRow}>
                       <Text
                         style={[styles.agentDirectory, { color: theme.colors.mutedForeground }]}
                         numberOfLines={1}
                       >
                         {agent.cwd}
                       </Text>
+
+                      <View style={styles.statusBadge}>
+                        <View
+                          style={[styles.statusDot, { backgroundColor: statusColor }]}
+                        />
+                        <Text style={[styles.statusText, { color: statusColor }]}>
+                          {statusLabel}
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </Pressable>
@@ -308,16 +331,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 4,
   },
-  agentInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
   agentContent: {
     flex: 1,
   },
@@ -326,8 +339,28 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginBottom: 2,
   },
+  directoryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   agentDirectory: {
+    flex: 1,
     fontSize: 12,
+  },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: "500",
   },
   emptyState: {
     paddingVertical: 32,
