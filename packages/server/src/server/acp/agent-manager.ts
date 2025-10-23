@@ -15,6 +15,7 @@ import {
   type WriteTextFileResponse,
 } from "@agentclientprotocol/sdk";
 import { v4 as uuidv4 } from "uuid";
+import { expandTilde } from "../terminal-mcp/tmux.js";
 import type {
   AgentStatus,
   AgentInfo,
@@ -113,7 +114,7 @@ export class AgentManager {
    */
   async createAgent(options: CreateAgentOptions): Promise<string> {
     const agentId = uuidv4();
-    const cwd = options.cwd;
+    const cwd = expandTilde(options.cwd);
 
     // Validate that the working directory exists
     try {

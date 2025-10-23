@@ -380,7 +380,7 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
 /**
  * Expand tilde in path to home directory
  */
-function expandTilde(path: string): string {
+export function expandTilde(path: string): string {
   if (path.startsWith("~/")) {
     const homeDir = process.env.HOME || os.homedir();
     return path.replace("~", homeDir);
