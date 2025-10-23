@@ -268,6 +268,10 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} is ${agent.status}`);
     }
 
+    // Reset message IDs for new turn - ensures each prompt gets fresh responses
+    agent.currentAssistantMessageId = null;
+    agent.currentThoughtId = null;
+
     // Set session mode if specified
     if (options?.sessionMode) {
       await this.setSessionMode(agentId, options.sessionMode);

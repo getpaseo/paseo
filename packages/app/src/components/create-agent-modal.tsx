@@ -20,6 +20,7 @@ import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useSession } from "@/contexts/session-context";
 import { useRouter } from "expo-router";
+import { generateMessageId } from "@/types/stream";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
@@ -163,7 +164,7 @@ export function CreateAgentModal({
     }
 
     // Generate request ID
-    const requestId = crypto.randomUUID();
+    const requestId = generateMessageId();
 
     setIsLoading(true);
     setPendingRequestId(requestId);
