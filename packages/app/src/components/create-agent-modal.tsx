@@ -1,16 +1,20 @@
-import { useState } from "react";
-import {
-  Modal,
-  View,
-  Text,
-  Pressable,
-  TextInput,
-  ScrollView,
-} from "react-native";
-import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { X } from "lucide-react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import {
+  BottomSheetModal,
+  BottomSheetBackdrop,
+  BottomSheetView,
+  BottomSheetScrollView,
+  BottomSheetTextInput,
+  BottomSheetFooter,
+} from "@gorhom/bottom-sheet";
+import type {
+  BottomSheetBackdropProps,
+  BottomSheetFooterProps,
+} from "@gorhom/bottom-sheet";
 import { StyleSheet } from "react-native-unistyles";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
@@ -39,24 +43,67 @@ export function CreateAgentModal({
   onClose,
   onCreateAgent,
 }: CreateAgentModalProps) {
+  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
-  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const { recentPaths, addRecentPath } = useRecentPaths();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   const [workingDir, setWorkingDir] = useState("");
   const [selectedMode, setSelectedMode] = useState("plan");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Keyboard animation
-  const bottomInset = insets.bottom;
-  const animatedKeyboardStyle = useAnimatedStyle(() => {
+  const snapPoints = useMemo(() => ["90%"], []);
+
+  // Keyboard animation for footer
+  const animatedFooterStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
-    const padding = Math.max(0, absoluteHeight - bottomInset);
+    const padding = Math.max(0, absoluteHeight - insets.bottom);
     return {
       paddingBottom: padding,
     };
   });
+
+  const renderBackdrop = useMemo(
+    () => (props: BottomSheetBackdropProps) =>
+      (
+        <BottomSheetBackdrop
+          {...props}
+          disappearsOnIndex={-1}
+          appearsOnIndex={0}
+          opacity={0.5}
+        />
+      ),
+    []
+  );
+
+  const renderFooter = useCallback(
+    (props: BottomSheetFooterProps) => (
+      <BottomSheetFooter {...props} style={animatedFooterStyle}>
+        <Animated.View
+          style={[styles.footer, { paddingBottom: insets.bottom }]}
+        >
+          <Pressable
+            style={[
+              styles.createButton,
+              !workingDir.trim() && styles.createButtonDisabled,
+            ]}
+            onPress={handleCreate}
+            disabled={!workingDir.trim()}
+          >
+            <Text style={styles.createButtonText}>Create Agent</Text>
+          </Pressable>
+        </Animated.View>
+      </BottomSheetFooter>
+    ),
+    [insets.bottom, workingDir, animatedFooterStyle]
+  );
+
+  useEffect(() => {
+    if (isVisible) {
+      bottomSheetRef.current?.present();
+    }
+  }, [isVisible]);
 
   async function handleCreate() {
     if (!workingDir.trim()) {
@@ -79,6 +126,10 @@ export function CreateAgentModal({
   }
 
   function handleClose() {
+    bottomSheetRef.current?.dismiss();
+  }
+
+  function handleDismiss() {
     setWorkingDir("");
     setSelectedMode("plan");
     setErrorMessage("");
@@ -86,174 +137,131 @@ export function CreateAgentModal({
   }
 
   return (
-    <Modal
-      visible={isVisible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={handleClose}
+    <BottomSheetModal
+      ref={bottomSheetRef}
+      snapPoints={snapPoints}
+      enableDynamicSizing={false}
+      enablePanDownToClose={true}
+      onDismiss={handleDismiss}
+      backgroundStyle={styles.sheetBackground}
+      handleIndicatorStyle={styles.handleIndicator}
+      backdropComponent={renderBackdrop}
+      footerComponent={renderFooter}
+      keyboardBehavior="interactive"
+      keyboardBlurBehavior="restore"
+      android_keyboardInputMode="adjustResize"
+      topInset={insets.top}
     >
-      <View style={styles.modalOverlay}>
-        <Pressable style={styles.modalBackdrop} onPress={handleClose} />
-        <ReanimatedAnimated.View
-          style={[styles.modalContent, animatedKeyboardStyle]}
+      <BottomSheetView style={styles.sheetContent}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Create New Agent</Text>
+        </View>
+
+        {/* Form */}
+        <BottomSheetScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.modalInner}>
-            {/* Header */}
-            <View style={styles.header}>
-              <Text style={styles.headerTitle}>Create New Agent</Text>
-              <Pressable onPress={handleClose}>
-                <X size={24} color="white" />
-              </Pressable>
-            </View>
+          {/* Working Directory Input */}
+          <View style={styles.formSection}>
+            <Text style={styles.label}>Working Directory</Text>
+            <BottomSheetTextInput
+              style={styles.input}
+              placeholder="/path/to/project"
+              placeholderTextColor={defaultTheme.colors.mutedForeground}
+              value={workingDir}
+              onChangeText={(text) => {
+                setWorkingDir(text);
+                setErrorMessage("");
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {errorMessage && (
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            )}
 
-            {/* Form */}
-            <ScrollView
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-            >
-              {/* Working Directory Input */}
-              <View style={styles.formSection}>
-                <Text style={styles.label}>Working Directory</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="/path/to/project"
-                  placeholderTextColor={defaultTheme.colors.mutedForeground}
-                  value={workingDir}
-                  onChangeText={(text) => {
-                    setWorkingDir(text);
-                    setErrorMessage("");
-                  }}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {errorMessage ? (
-                  <Text style={styles.errorText}>{errorMessage}</Text>
-                ) : (
-                  <Text style={styles.helperText}>
-                    Absolute path to the project directory
-                  </Text>
-                )}
-
-                {/* Recent Paths Chips */}
-                {recentPaths.length > 0 && (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.recentPathsContainer}
-                    keyboardShouldPersistTaps="handled"
+            {/* Recent Paths Chips */}
+            {recentPaths.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.recentPathsContainer}
+                keyboardShouldPersistTaps="handled"
+              >
+                {recentPaths.map((path) => (
+                  <Pressable
+                    key={path}
+                    style={styles.recentPathChip}
+                    onPress={() => setWorkingDir(path)}
                   >
-                    {recentPaths.map((path) => (
-                      <Pressable
-                        key={path}
-                        style={styles.recentPathChip}
-                        onPress={() => setWorkingDir(path)}
-                      >
-                        <Text style={styles.recentPathChipText} numberOfLines={1}>
-                          {path}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                )}
-              </View>
+                    <Text style={styles.recentPathChipText} numberOfLines={1}>
+                      {path}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+          </View>
 
-              {/* Mode Selector */}
-              <View style={styles.formSection}>
-                <Text style={styles.label}>Mode</Text>
-                <View style={styles.modeContainer}>
-                  {MODES.map((mode) => (
-                    <Pressable
-                      key={mode.value}
-                      onPress={() => setSelectedMode(mode.value)}
+          {/* Mode Selector */}
+          <View style={styles.formSection}>
+            <Text style={styles.label}>Mode</Text>
+            <View style={styles.modeContainer}>
+              {MODES.map((mode) => (
+                <Pressable
+                  key={mode.value}
+                  onPress={() => setSelectedMode(mode.value)}
+                  style={[
+                    styles.modeOption,
+                    selectedMode === mode.value && styles.modeOptionSelected,
+                  ]}
+                >
+                  <View style={styles.modeOptionContent}>
+                    <View
                       style={[
-                        styles.modeOption,
-                        selectedMode === mode.value &&
-                          styles.modeOptionSelected,
+                        styles.radioOuter,
+                        selectedMode === mode.value
+                          ? styles.radioOuterSelected
+                          : styles.radioOuterUnselected,
                       ]}
                     >
-                      <View style={styles.modeOptionContent}>
-                        <View
-                          style={[
-                            styles.radioOuter,
-                            selectedMode === mode.value
-                              ? styles.radioOuterSelected
-                              : styles.radioOuterUnselected,
-                          ]}
-                        >
-                          {selectedMode === mode.value && (
-                            <View style={styles.radioInner} />
-                          )}
-                        </View>
-                        <View style={styles.modeTextContainer}>
-                          <Text style={styles.modeLabel}>{mode.label}</Text>
-                          <Text style={styles.modeDescription}>
-                            {mode.description}
-                          </Text>
-                        </View>
-                      </View>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            </ScrollView>
-
-            {/* Fixed Footer with Create Button */}
-            <View
-              style={[
-                styles.footer,
-                { paddingBottom: Math.max(insets.bottom, 16) },
-              ]}
-            >
-              <Pressable
-                style={[
-                  styles.createButton,
-                  !workingDir.trim() && styles.createButtonDisabled,
-                ]}
-                onPress={handleCreate}
-                disabled={!workingDir.trim()}
-              >
-                <Text style={styles.createButtonText}>Create Agent</Text>
-              </Pressable>
+                      {selectedMode === mode.value && (
+                        <View style={styles.radioInner} />
+                      )}
+                    </View>
+                    <View style={styles.modeTextContainer}>
+                      <Text style={styles.modeLabel}>{mode.label}</Text>
+                      <Text style={styles.modeDescription}>
+                        {mode.description}
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
             </View>
           </View>
-        </ReanimatedAnimated.View>
-      </View>
-    </Modal>
+        </BottomSheetScrollView>
+      </BottomSheetView>
+    </BottomSheetModal>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    zIndex: 1,
-  },
-  modalContent: {
+  sheetBackground: {
     backgroundColor: theme.colors.card,
-    borderTopLeftRadius: theme.spacing[6],
-    borderTopRightRadius: theme.spacing[6],
-    minHeight: "80%",
-    zIndex: 2,
-    elevation: 5,
   },
-  modalInner: {
+  handleIndicator: {
+    backgroundColor: theme.colors.border,
+  },
+  sheetContent: {
     flex: 1,
-    minHeight: 0,
   },
   header: {
-    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
     padding: theme.spacing[6],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
@@ -268,7 +276,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   scrollContent: {
     padding: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
+    paddingBottom: theme.spacing[6],
   },
   formSection: {
     marginBottom: theme.spacing[6],
