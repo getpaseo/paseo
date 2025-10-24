@@ -45,7 +45,14 @@ export function AgentStreamView({
 
   function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
     setSelectedToolCall(toolCall);
-    bottomSheetRef.current?.present();
+    // Delay present to next frame to ensure component is mounted
+    setTimeout(() => {
+      bottomSheetRef.current?.present();
+    }, 0);
+  }
+
+  function handleBottomSheetDismiss() {
+    setSelectedToolCall(null);
   }
 
   return (
@@ -171,6 +178,7 @@ export function AgentStreamView({
       <ToolCallBottomSheet
         bottomSheetRef={bottomSheetRef}
         selectedToolCall={selectedToolCall}
+        onDismiss={handleBottomSheetDismiss}
       />
     </View>
   );

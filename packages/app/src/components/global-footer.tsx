@@ -72,6 +72,9 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
+  realtimeContainer: {
+    backgroundColor: theme.colors.background,
+  },
   centeredButtonContainer: {
     padding: theme.spacing[6],
     alignItems: "center",

@@ -60,7 +60,7 @@ function createServer() {
   return app;
 }
 
-function main() {
+async function main() {
   const port = parseInt(process.env.PORT || "6767", 10);
 
   const app = createServer();
@@ -68,7 +68,8 @@ function main() {
 
   // Initialize global agent manager
   const agentManager = new AgentManager();
-  console.log("✓ Global agent manager initialized");
+  await agentManager.initialize(); // Load persisted agents
+  console.log("✓ Global agent manager initialized with persisted agents");
 
   // Initialize WebSocket server
   const wsServer = new VoiceAssistantWebSocketServer(httpServer, agentManager);

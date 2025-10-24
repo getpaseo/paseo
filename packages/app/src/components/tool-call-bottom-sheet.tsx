@@ -15,11 +15,13 @@ import type { SelectedToolCall } from "@/types/shared";
 interface ToolCallBottomSheetProps {
   bottomSheetRef: React.RefObject<BottomSheetModal | null>;
   selectedToolCall: SelectedToolCall | null;
+  onDismiss: () => void;
 }
 
 export function ToolCallBottomSheet({
   bottomSheetRef,
   selectedToolCall,
+  onDismiss,
 }: ToolCallBottomSheetProps) {
   const insets = useSafeAreaInsets();
   const snapPoints = useMemo(() => ["80%"], []);
@@ -88,6 +90,7 @@ export function ToolCallBottomSheet({
       handleIndicatorStyle={styles.handleIndicator}
       backgroundStyle={styles.background}
       topInset={insets.top}
+      onDismiss={onDismiss}
     >
       {/* Header */}
       <View style={styles.header}>

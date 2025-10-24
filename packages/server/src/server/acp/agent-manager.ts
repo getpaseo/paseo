@@ -26,6 +26,7 @@ import type {
   EnrichedSessionNotification,
   EnrichedSessionUpdate,
 } from "./types.js";
+import { AgentPersistence, type PersistedAgent } from "./agent-persistence.js";
 
 interface PendingPermission {
   requestId: string;
@@ -107,6 +108,153 @@ class ACPClient implements Client {
  */
 export class AgentManager {
   private agents = new Map<string, ManagedAgent>();
+  private persistence = new AgentPersistence();
+
+  /**
+   * Initialize the agent manager and load persisted agents
+   */
+  async initialize(): Promise<void> {
+    console.log("[AgentManager] Initializing and loading persisted agents...");
+    const persistedAgents = await this.persistence.load();
+
+    for (const persistedAgent of persistedAgents) {
+      try {
+        console.log(`[AgentManager] Resuming agent ${persistedAgent.id} with session ${persistedAgent.sessionId}`);
+        await this.resumeAgent(persistedAgent);
+      } catch (error) {
+        console.error(`[AgentManager] Failed to resume agent ${persistedAgent.id}:`, error);
+        // Remove failed agent from persistence
+        await this.persistence.remove(persistedAgent.id);
+      }
+    }
+
+    console.log(`[AgentManager] Loaded ${this.agents.size} agents`);
+  }
+
+  /**
+   * Resume an existing agent from persisted data
+   */
+  async resumeAgent(persisted: PersistedAgent): Promise<string> {
+    const agentId = persisted.id;
+    const cwd = expandTilde(persisted.cwd);
+
+    // Validate that the working directory exists
+    try {
+      await access(cwd, constants.R_OK | constants.X_OK);
+    } catch (error) {
+      throw new Error(
+        `Working directory does not exist or is not accessible: ${cwd}`
+      );
+    }
+
+    // Spawn the ACP process without any special flags
+    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd,
+    });
+
+    // Create streams for ACP communication
+    const input = Writable.toWeb(agentProcess.stdin);
+    const output = Readable.toWeb(agentProcess.stdout);
+    const stream = ndJsonStream(input, output);
+
+    // Create the ACP client and connection
+    const client = new ACPClient(
+      agentId,
+      (id, update) => {
+        this.handleSessionNotification(id, update);
+      },
+      (id, params) => {
+        return this.handlePermissionRequest(id, params);
+      }
+    );
+    const connection = new ClientSideConnection(() => client, stream);
+
+    // Create the managed agent record
+    const agent: ManagedAgent = {
+      id: agentId,
+      status: "initializing",
+      createdAt: new Date(persisted.createdAt),
+      process: agentProcess,
+      connection,
+      subscribers: new Set(),
+      updates: [],
+      cwd,
+      title: persisted.title,
+      titleGenerationTriggered: true, // Already has a title
+      pendingPermissions: new Map(),
+      currentAssistantMessageId: null,
+      currentThoughtId: null,
+      sessionId: persisted.sessionId,
+    };
+
+    this.agents.set(agentId, agent);
+
+    // Handle process errors
+    agentProcess.on("error", (error) => {
+      this.handleAgentError(agentId, `Process error: ${error.message}`);
+    });
+
+    agentProcess.on("exit", (code, signal) => {
+      const agent = this.agents.get(agentId);
+      if (!agent) return;
+
+      if (agent.status !== "completed" && agent.status !== "killed") {
+        this.handleAgentError(
+          agentId,
+          `Process exited unexpectedly: code=${code}, signal=${signal}`
+        );
+      }
+    });
+
+    // Capture stderr for debugging
+    agentProcess.stderr.on("data", (data) => {
+      console.error(`[Agent ${agentId}] stderr:`, data.toString());
+    });
+
+    try {
+      // Initialize the connection
+      await agent.connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+        },
+      });
+
+      // Use the loadSession API to resume the existing session
+      console.log(`[Agent ${agentId}] Loading session ${persisted.sessionId} via loadSession API`);
+      const sessionResponse = await agent.connection.loadSession({
+        sessionId: persisted.sessionId,
+        cwd,
+        mcpServers: [],
+      });
+
+      console.log(`[Agent ${agentId}] Session loaded:`, JSON.stringify(sessionResponse, null, 2));
+
+      // Store session modes from response
+      if (sessionResponse.modes) {
+        agent.currentModeId = sessionResponse.modes.currentModeId;
+        agent.availableModes = sessionResponse.modes.availableModes;
+        console.log(
+          `[Agent ${agentId}] Session loaded with mode: ${agent.currentModeId}`,
+          `Available modes:`, agent.availableModes?.map(m => m.id).join(', ')
+        );
+      }
+
+      agent.status = "ready";
+
+      return agentId;
+    } catch (error) {
+      this.handleAgentError(
+        agentId,
+        `Resume failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      throw error;
+    }
+  }
 
   /**
    * Create a new agent
@@ -126,7 +274,7 @@ export class AgentManager {
     }
 
     // Spawn the ACP process
-    const agentProcess = spawn("npx", ["@zed-industries/claude-code-acp"], {
+    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd,
     });
@@ -230,6 +378,17 @@ export class AgentManager {
       }
 
       agent.status = "ready";
+
+      // Persist the new agent
+      if (agent.sessionId) {
+        await this.persistence.upsert({
+          id: agentId,
+          title: agent.title || `Agent ${agentId.slice(0, 8)}`,
+          sessionId: agent.sessionId,
+          createdAt: agent.createdAt.toISOString(),
+          cwd: agent.cwd,
+        });
+      }
 
       // If an initial prompt was provided, send it
       if (options.initialPrompt) {
@@ -432,6 +591,9 @@ export class AgentManager {
     // Notify subscribers BEFORE removing from manager
     // This ensures subscribers can still query agent info
     this.notifySubscribers(agentId);
+
+    // Remove from persistence
+    await this.persistence.remove(agentId);
 
     // Kill the process
     agent.process.kill("SIGTERM");
@@ -717,7 +879,7 @@ export class AgentManager {
   /**
    * Set the title for an agent
    */
-  setAgentTitle(agentId: string, title: string): void {
+  async setAgentTitle(agentId: string, title: string): Promise<void> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
@@ -725,6 +887,11 @@ export class AgentManager {
 
     agent.title = title;
     console.log(`[Agent ${agentId}] Title set to: "${title}"`);
+
+    // Persist the title update
+    if (agent.sessionId) {
+      await this.persistence.updateTitle(agentId, title);
+    }
   }
 
   /**
