@@ -1,22 +1,16 @@
 import { View, TextInput, Pressable } from "react-native";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, AudioLines, Square } from "lucide-react-native";
 import { useSession } from "@/contexts/session-context";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
-import Animated, {
-  useAnimatedStyle,
-  withTiming,
-  useSharedValue,
-} from "react-native-reanimated";
 
 interface AgentInputAreaProps {
   agentId: string;
-  isRealtimeMode: boolean;
 }
 
-export function AgentInputArea({ agentId, isRealtimeMode }: AgentInputAreaProps) {
+export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const { ws, sendAgentMessage, sendAgentAudio } = useSession();
   const { startRealtime } = useRealtime();
@@ -25,23 +19,6 @@ export function AgentInputArea({ agentId, isRealtimeMode }: AgentInputAreaProps)
   const [userInput, setUserInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // Animated opacity for smooth transitions
-  const opacity = useSharedValue(isRealtimeMode ? 0 : 1);
-
-  useEffect(() => {
-    opacity.value = withTiming(isRealtimeMode ? 0 : 1, { duration: 250 });
-  }, [isRealtimeMode]);
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: opacity.value,
-      // When hidden, use absolute positioning to remove from layout flow
-      position: opacity.value < 0.5 ? ("absolute" as const) : ("relative" as const),
-      // When hidden, disable pointer events so GlobalFooter's controls are interactive
-      pointerEvents: opacity.value < 0.5 ? ("none" as const) : ("auto" as const),
-    };
-  });
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -99,7 +76,7 @@ export function AgentInputArea({ agentId, isRealtimeMode }: AgentInputAreaProps)
   const hasText = userInput.trim().length > 0;
 
   return (
-    <Animated.View style={[styles.container, animatedStyle]}>
+    <View style={styles.container}>
       {/* Text input */}
       <TextInput
         value={userInput}
@@ -159,7 +136,7 @@ export function AgentInputArea({ agentId, isRealtimeMode }: AgentInputAreaProps)
             </>
           )}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 

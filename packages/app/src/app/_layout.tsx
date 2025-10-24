@@ -9,6 +9,7 @@ import { useSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator } from "react-native";
 import { GlobalFooter } from "@/components/global-footer";
 import { useUnistyles } from "react-native-unistyles";
+import { FooterControlsProvider } from "@/contexts/footer-controls-context";
 
 function AppContainer({ children }: { children: React.ReactNode }) {
   const { theme } = useUnistyles();
@@ -52,26 +53,28 @@ export default function RootLayout() {
         <KeyboardProvider>
           <BottomSheetModalProvider>
             <ProvidersWrapper>
-              <AppContainer>
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    animation: "slide_from_right",
-                    animationDuration: 250,
-                    gestureEnabled: true,
-                    gestureDirection: "horizontal",
-                    fullScreenGestureEnabled: true,
-                    animationMatchesGesture: true,
-                  }}
-                >
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="orchestrator" />
-                  <Stack.Screen name="agent/[id]" />
-                  <Stack.Screen name="settings" />
-                  <Stack.Screen name="audio-test" />
-                </Stack>
-                <GlobalFooter />
-              </AppContainer>
+              <FooterControlsProvider>
+                <AppContainer>
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      animation: "slide_from_right",
+                      animationDuration: 250,
+                      gestureEnabled: true,
+                      gestureDirection: "horizontal",
+                      fullScreenGestureEnabled: true,
+                      animationMatchesGesture: true,
+                    }}
+                  >
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="orchestrator" />
+                    <Stack.Screen name="agent/[id]" />
+                    <Stack.Screen name="settings" />
+                    <Stack.Screen name="audio-test" />
+                  </Stack>
+                  <GlobalFooter />
+                </AppContainer>
+              </FooterControlsProvider>
             </ProvidersWrapper>
           </BottomSheetModalProvider>
         </KeyboardProvider>
