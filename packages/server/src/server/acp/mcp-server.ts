@@ -364,7 +364,7 @@ export async function createAgentMcpServer(
       },
     },
     async ({ agentId, format = "curated", limit }) => {
-      const updates = agentManager.getAgentUpdates(agentId);
+      const updates = await agentManager.getAgentUpdates(agentId);
       const currentModeId = agentManager.getCurrentMode(agentId);
 
       if (format === "curated") {

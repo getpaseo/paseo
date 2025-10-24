@@ -1,4 +1,5 @@
-import type { SessionNotification, RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { SessionNotification, RequestPermissionRequest, ClientSideConnection } from "@agentclientprotocol/sdk";
+import type { ChildProcess } from "child_process";
 
 /**
  * Extended update types with messageId for proper deduplication
@@ -31,12 +32,45 @@ export type AgentNotification =
  * Status of an agent
  */
 export type AgentStatus =
+  | "uninitialized"
   | "initializing"
   | "ready"
   | "processing"
   | "completed"
   | "failed"
   | "killed";
+
+/**
+ * Session mode definition from ACP
+ */
+export interface SessionMode {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+/**
+ * Runtime state for an initialized agent
+ */
+export interface AgentRuntime {
+  process: ChildProcess;
+  connection: ClientSideConnection;
+  sessionId: string;
+  currentModeId: string | null;
+  availableModes: SessionMode[] | null;
+}
+
+/**
+ * Discriminated union for agent state
+ */
+export type ManagedAgentState =
+  | { type: "uninitialized"; persistedSessionId: string | null; lastError?: string }
+  | { type: "initializing"; persistedSessionId: string | null; initPromise: Promise<void>; initStartedAt: Date }
+  | { type: "ready"; runtime: AgentRuntime }
+  | { type: "processing"; runtime: AgentRuntime }
+  | { type: "completed"; runtime: AgentRuntime; stopReason?: string }
+  | { type: "failed"; lastError: string; runtime?: AgentRuntime }
+  | { type: "killed" };
 
 /**
  * Information about an agent
@@ -62,15 +96,6 @@ export interface AgentUpdate {
   agentId: string;
   timestamp: Date;
   notification: AgentNotification;
-}
-
-/**
- * Session mode definition from ACP
- */
-export interface SessionMode {
-  id: string;
-  name: string;
-  description?: string | null;
 }
 
 /**

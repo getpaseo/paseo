@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn } from "child_process";
 import { Writable, Readable } from "stream";
 import { access, constants } from "fs/promises";
 import {
@@ -25,8 +25,10 @@ import type {
   SessionMode,
   EnrichedSessionNotification,
   EnrichedSessionUpdate,
+  AgentRuntime,
+  ManagedAgentState,
 } from "./types.js";
-import { AgentPersistence, type PersistedAgent } from "./agent-persistence.js";
+import { AgentPersistence, type AgentOptions } from "./agent-persistence.js";
 
 interface PendingPermission {
   requestId: string;
@@ -38,23 +40,38 @@ interface PendingPermission {
 
 interface ManagedAgent {
   id: string;
-  status: AgentStatus;
+  cwd: string;
   createdAt: Date;
-  process: ChildProcess;
-  connection: ClientSideConnection;
-  sessionId?: string;
-  error?: string;
-  currentModeId?: string;
-  availableModes?: SessionMode[];
+  title: string;
+  options: AgentOptions;
   subscribers: Set<AgentUpdateCallback>;
   updates: AgentUpdate[];
-  title?: string;
-  cwd: string;
-  titleGenerationTriggered: boolean;
   pendingPermissions: Map<string, PendingPermission>;
-  // Message ID tracking for stable deduplication
   currentAssistantMessageId: string | null;
   currentThoughtId: string | null;
+  titleGenerationTriggered: boolean;
+  pendingSessionMode: string | null;
+  state: ManagedAgentState;
+}
+
+/**
+ * Get the status from an agent's state
+ */
+function getAgentStatusFromState(state: ManagedAgentState): AgentStatus {
+  return state.type;
+}
+
+/**
+ * Get the error message from an agent's state
+ */
+function getAgentError(state: ManagedAgentState): string | undefined {
+  if (state.type === "failed") {
+    return state.lastError;
+  }
+  if (state.type === "uninitialized" && state.lastError) {
+    return state.lastError;
+  }
+  return undefined;
 }
 
 /**
@@ -126,6 +143,7 @@ export class AgentManager {
 
   /**
    * Initialize the agent manager and load persisted agents
+   * Agents are loaded as uninitialized and will be started lazily on first use
    */
   async initialize(): Promise<void> {
     console.log("[AgentManager] Initializing and loading persisted agents...");
@@ -133,167 +151,37 @@ export class AgentManager {
 
     for (const persistedAgent of persistedAgents) {
       try {
-        console.log(`[AgentManager] Resuming agent ${persistedAgent.id} with session ${persistedAgent.sessionId}`);
-        await this.resumeAgent(persistedAgent);
-      } catch (error) {
-        console.error(`[AgentManager] Failed to resume agent ${persistedAgent.id}:`, error);
-        // Remove failed agent from persistence
-        await this.persistence.remove(persistedAgent.id);
-      }
-    }
-
-    console.log(`[AgentManager] Loaded ${this.agents.size} agents`);
-  }
-
-  /**
-   * Resume an existing agent from persisted data
-   */
-  async resumeAgent(persisted: PersistedAgent): Promise<string> {
-    const agentId = persisted.id;
-    const cwd = expandTilde(persisted.cwd);
-
-    // Check if Claude agent has a session ID
-    if (persisted.options.type === "claude" && persisted.options.sessionId === null) {
-      throw new Error(
-        `Cannot resume agent ${agentId}: Claude agent has no session ID. This agent was created but never received any prompts.`
-      );
-    }
-
-    // Validate that the working directory exists
-    try {
-      await access(cwd, constants.R_OK | constants.X_OK);
-    } catch (error) {
-      throw new Error(
-        `Working directory does not exist or is not accessible: ${cwd}`
-      );
-    }
-
-    // Spawn the ACP process without any special flags
-    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd,
-    });
-
-    // Create streams for ACP communication
-    const input = Writable.toWeb(agentProcess.stdin);
-    const output = Readable.toWeb(agentProcess.stdout);
-    const stream = ndJsonStream(input, output);
-
-    // Create the ACP client and connection
-    const client = new ACPClient(
-      agentId,
-      (id, update) => {
-        this.handleSessionNotification(id, update);
-      },
-      (id, params) => {
-        return this.handlePermissionRequest(id, params);
-      },
-      this.persistence
-    );
-    const connection = new ClientSideConnection(() => client, stream);
-
-    // Create the managed agent record
-    const agent: ManagedAgent = {
-      id: agentId,
-      status: "initializing",
-      createdAt: new Date(persisted.createdAt),
-      process: agentProcess,
-      connection,
-      subscribers: new Set(),
-      updates: [],
-      cwd,
-      title: persisted.title,
-      titleGenerationTriggered: true, // Already has a title
-      pendingPermissions: new Map(),
-      currentAssistantMessageId: null,
-      currentThoughtId: null,
-      sessionId: persisted.sessionId,
-    };
-
-    this.agents.set(agentId, agent);
-
-    // Handle process errors
-    agentProcess.on("error", (error) => {
-      this.handleAgentError(agentId, `Process error: ${error.message}`);
-    });
-
-    agentProcess.on("exit", (code, signal) => {
-      const agent = this.agents.get(agentId);
-      if (!agent) return;
-
-      if (agent.status !== "completed" && agent.status !== "killed") {
-        this.handleAgentError(
-          agentId,
-          `Process exited unexpectedly: code=${code}, signal=${signal}`
-        );
-      }
-    });
-
-    // Capture stderr for debugging
-    agentProcess.stderr.on("data", (data) => {
-      console.error(`[Agent ${agentId}] stderr:`, data.toString());
-    });
-
-    try {
-      // Initialize the connection
-      await agent.connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true,
+        console.log(`[AgentManager] Loading agent ${persistedAgent.id} as uninitialized`);
+        const agent: ManagedAgent = {
+          id: persistedAgent.id,
+          cwd: expandTilde(persistedAgent.cwd),
+          createdAt: new Date(persistedAgent.createdAt),
+          title: persistedAgent.title,
+          options: persistedAgent.options,
+          subscribers: new Set(),
+          updates: [],
+          pendingPermissions: new Map(),
+          currentAssistantMessageId: null,
+          currentThoughtId: null,
+          titleGenerationTriggered: true,
+          pendingSessionMode: null,
+          state: {
+            type: "uninitialized",
+            persistedSessionId: persistedAgent.sessionId,
           },
-        },
-      });
-
-      // Use the loadSession API to resume the existing session
-      // If this is a Claude agent, use the Claude's internal session ID for resumption
-      const sessionIdToResume = persisted.options.type === "claude"
-        ? persisted.options.sessionId! // Not null because we checked above
-        : persisted.sessionId;
-
-      console.log(`[Agent ${agentId}] Loading session - ACP: ${persisted.sessionId}, Claude: ${sessionIdToResume}`);
-      const sessionResponse = await agent.connection.loadSession({
-        sessionId: sessionIdToResume,
-        cwd,
-        mcpServers: [],
-      });
-
-      console.log(`[Agent ${agentId}] Session loaded:`, JSON.stringify(sessionResponse, null, 2));
-
-      // Extract Claude's session ID from the response metadata if available
-      const claudeSessionId = sessionResponse._meta?.claudeSessionId as string | undefined;
-      if (claudeSessionId && persisted.options.type === "claude" && persisted.options.sessionId !== claudeSessionId) {
-        console.log(`[Agent ${agentId}] Updating Claude session ID from ${persisted.options.sessionId} to ${claudeSessionId}`);
-        persisted.options.sessionId = claudeSessionId;
-        await this.persistence.upsert(persisted);
+        };
+        this.agents.set(persistedAgent.id, agent);
+      } catch (error) {
+        console.error(`[AgentManager] Failed to load agent ${persistedAgent.id}:`, error);
       }
-
-      // Store session modes from response
-      if (sessionResponse.modes) {
-        agent.currentModeId = sessionResponse.modes.currentModeId;
-        agent.availableModes = sessionResponse.modes.availableModes;
-        console.log(
-          `[Agent ${agentId}] Session loaded with mode: ${agent.currentModeId}`,
-          `Available modes:`, agent.availableModes?.map(m => m.id).join(', ')
-        );
-      }
-
-      agent.status = "ready";
-
-      return agentId;
-    } catch (error) {
-      this.handleAgentError(
-        agentId,
-        `Resume failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      throw error;
     }
+
+    console.log(`[AgentManager] Loaded ${this.agents.size} agents as uninitialized`);
   }
 
   /**
    * Create a new agent
-   * Spawns the claude-code-acp process and initializes ACP connection
+   * Creates an uninitialized agent record that will lazily start on first use
    */
   async createAgent(options: CreateAgentOptions): Promise<string> {
     const agentId = uuidv4();
@@ -308,149 +196,52 @@ export class AgentManager {
       );
     }
 
-    // Spawn the ACP process
-    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd,
-    });
+    const createdAt = new Date();
+    const agentOptions: AgentOptions = {
+      type: "claude",
+      sessionId: null,
+    };
 
-    // Create streams for ACP communication
-    const input = Writable.toWeb(agentProcess.stdin);
-    const output = Readable.toWeb(agentProcess.stdout);
-    const stream = ndJsonStream(input, output);
-
-    // Create the ACP client and connection
-    const client = new ACPClient(
-      agentId,
-      (id, update) => {
-        this.handleSessionNotification(id, update);
-      },
-      (id, params) => {
-        return this.handlePermissionRequest(id, params);
-      },
-      this.persistence
-    );
-    const connection = new ClientSideConnection(() => client, stream);
-
-    // Create the managed agent record
     const agent: ManagedAgent = {
       id: agentId,
-      status: "initializing",
-      createdAt: new Date(),
-      process: agentProcess,
-      connection,
+      cwd,
+      createdAt,
+      title: "",
+      options: agentOptions,
       subscribers: new Set(),
       updates: [],
-      cwd,
-      titleGenerationTriggered: false,
       pendingPermissions: new Map(),
       currentAssistantMessageId: null,
       currentThoughtId: null,
+      titleGenerationTriggered: false,
+      pendingSessionMode: options.initialPrompt ? null : options.initialMode ?? null,
+      state: {
+        type: "uninitialized",
+        persistedSessionId: null,
+      },
     };
 
     this.agents.set(agentId, agent);
 
-    // Handle process errors
-    agentProcess.on("error", (error) => {
-      this.handleAgentError(agentId, `Process error: ${error.message}`);
+    await this.persistence.upsert({
+      id: agentId,
+      title: agent.title || `Agent ${agentId.slice(0, 8)}`,
+      sessionId: null,
+      options: agent.options,
+      createdAt: createdAt.toISOString(),
+      cwd: agent.cwd,
     });
 
-    agentProcess.on("exit", (code, signal) => {
-      const agent = this.agents.get(agentId);
-      if (!agent) return;
+    this.notifySubscribers(agentId);
 
-      if (agent.status !== "completed" && agent.status !== "killed") {
-        this.handleAgentError(
-          agentId,
-          `Process exited unexpectedly: code=${code}, signal=${signal}`
-        );
-      }
-    });
-
-    // Capture stderr for debugging
-    agentProcess.stderr.on("data", (data) => {
-      console.error(`[Agent ${agentId}] stderr:`, data.toString());
-    });
-
-    try {
-      // Initialize the connection
-      await agent.connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: {
-          fs: {
-            readTextFile: true,
-            writeTextFile: true,
-          },
-        },
+    if (options.initialPrompt) {
+      console.log(`[Agent ${agentId}] Sending initial prompt after creation`);
+      await this.sendPrompt(agentId, options.initialPrompt, {
+        sessionMode: options.initialMode,
       });
-
-      // Create a new session
-      const sessionParams = {
-        cwd,
-        mcpServers: [],
-      };
-      console.log(`[Agent ${agentId}] newSession params:`, sessionParams);
-      const sessionResponse = await agent.connection.newSession(sessionParams);
-
-      agent.sessionId = sessionResponse.sessionId;
-
-      // Extract Claude's internal session ID from metadata
-      const claudeSessionId = sessionResponse._meta?.claudeSessionId as string | undefined;
-      if (claudeSessionId) {
-        console.log(`[Agent ${agentId}] Claude session ID: ${claudeSessionId}, ACP session ID: ${sessionResponse.sessionId}`);
-      }
-
-      console.log(`[Agent ${agentId}] newSession response:`, JSON.stringify(sessionResponse, null, 2));
-
-      // Store session modes from response
-      if (sessionResponse.modes) {
-        agent.currentModeId = sessionResponse.modes.currentModeId;
-        agent.availableModes = sessionResponse.modes.availableModes;
-        console.log(
-          `[Agent ${agentId}] Session created with mode: ${agent.currentModeId}`,
-          `Available modes:`, agent.availableModes?.map(m => m.id).join(', ')
-        );
-      } else {
-        console.log(`[Agent ${agentId}] Session created:`, sessionResponse.sessionId);
-      }
-
-      // Set initial mode if requested (must be done after session creation)
-      if (options.initialMode && agent.sessionId) {
-        console.log(`[Agent ${agentId}] Setting initial mode to: ${options.initialMode}`);
-        await this.setSessionMode(agentId, options.initialMode);
-      }
-
-      agent.status = "ready";
-
-      // Persist the new agent
-      if (agent.sessionId) {
-        await this.persistence.upsert({
-          id: agentId,
-          title: agent.title || `Agent ${agentId.slice(0, 8)}`,
-          sessionId: agent.sessionId,
-          options: {
-            type: "claude",
-            sessionId: claudeSessionId || null, // null until first prompt
-          },
-          createdAt: agent.createdAt.toISOString(),
-          cwd: agent.cwd,
-        });
-      }
-
-      // If an initial prompt was provided, send it
-      if (options.initialPrompt) {
-        console.log(`[Agent ${agentId}] Sending initial prompt`);
-        await this.sendPrompt(agentId, options.initialPrompt);
-      }
-
-      return agentId;
-    } catch (error) {
-      this.handleAgentError(
-        agentId,
-        `Initialization failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      throw error;
     }
+
+    return agentId;
   }
 
   /**
@@ -470,25 +261,37 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    if (agent.status === "killed" || agent.status === "failed") {
-      throw new Error(`Agent ${agentId} is ${agent.status}`);
+    // Ensure agent is initialized
+    await this.ensureInitialized(agentId);
+
+    const status = getAgentStatusFromState(agent.state);
+    if (status === "killed" || status === "failed") {
+      throw new Error(`Agent ${agentId} is ${status}`);
     }
 
     // Auto-cancel if agent is currently processing
-    // This allows users to interrupt stuck agents by sending a new message
-    if (agent.status === "processing") {
+    if (status === "processing") {
       console.log(`[Agent ${agentId}] Auto-cancelling current task before new prompt`);
       try {
         await this.cancelAgent(agentId);
-        // Small delay to allow cancellation to propagate
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.warn(`[Agent ${agentId}] Cancel failed, continuing with new prompt:`, error);
-        // Continue anyway - the new prompt might still work
       }
     }
 
-    // Reset message IDs for new turn - ensures each prompt gets fresh responses
+    // Get runtime (guaranteed to exist after ensureInitialized)
+    if (
+      agent.state.type !== "ready" &&
+      agent.state.type !== "processing" &&
+      agent.state.type !== "completed"
+    ) {
+      throw new Error(`Agent ${agentId} is not ready (state: ${agent.state.type})`);
+    }
+
+    const runtime = agent.state.runtime;
+
+    // Reset message IDs for new turn
     agent.currentAssistantMessageId = null;
     agent.currentThoughtId = null;
 
@@ -504,7 +307,7 @@ export class AgentManager {
       notification: {
         type: 'session',
         notification: {
-          sessionId: agent.sessionId!,
+          sessionId: runtime.sessionId,
           update: {
             sessionUpdate: 'user_message_chunk',
             content: {
@@ -517,10 +320,8 @@ export class AgentManager {
       },
     };
 
-    // Store in history
     agent.updates.push(userMessageUpdate);
 
-    // Notify subscribers
     for (const subscriber of agent.subscribers) {
       try {
         subscriber(userMessageUpdate);
@@ -529,12 +330,13 @@ export class AgentManager {
       }
     }
 
-    agent.status = "processing";
+    // Update state to processing
+    agent.state = { type: "processing", runtime };
     this.notifySubscribers(agentId);
 
-    // Start the prompt (this will eventually complete and update status)
-    const promptPromise = agent.connection.prompt({
-      sessionId: agent.sessionId!,
+    // Start the prompt
+    const promptPromise = runtime.connection.prompt({
+      sessionId: runtime.sessionId,
       prompt: [
         {
           type: "text",
@@ -546,22 +348,34 @@ export class AgentManager {
     // Handle completion in background
     promptPromise
       .then((response) => {
-        // Handle completion based on stopReason from the protocol
         console.log(`[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`);
 
+        const agent = this.agents.get(agentId);
+        if (!agent || agent.state.type !== "processing") return;
+
         if (response.stopReason === "end_turn") {
-          agent.status = "completed";
+          agent.state = {
+            type: "completed",
+            runtime: agent.state.runtime,
+            stopReason: response.stopReason,
+          };
         } else if (response.stopReason === "refusal") {
-          agent.status = "failed";
-          agent.error = "Agent refused to process the prompt";
+          agent.state = {
+            type: "failed",
+            lastError: "Agent refused to process the prompt",
+            runtime: agent.state.runtime,
+          };
         } else if (response.stopReason === "cancelled") {
-          agent.status = "ready";
+          agent.state = { type: "ready", runtime: agent.state.runtime };
         } else {
-          // max_tokens, max_turn_requests - still completed but may be truncated
-          agent.status = "completed";
+          agent.state = {
+            type: "completed",
+            runtime: agent.state.runtime,
+            stopReason: response.stopReason,
+          };
         }
 
-        this.notifyStatusChange(agentId);
+        this.notifySubscribers(agentId);
       })
       .catch((error) => {
         this.handleAgentError(
@@ -607,15 +421,23 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    if (!agent.sessionId) {
-      throw new Error(`Agent ${agentId} has no active session`);
+    const runtime = this.getRuntime(agent);
+    if (!runtime) {
+      throw new Error(`Agent ${agentId} has no active runtime to cancel`);
+    }
+
+    if (agent.state.type !== "processing") {
+      console.log(
+        `[Agent ${agentId}] Cancel called but agent is in state ${agent.state.type}; skipping`
+      );
+      return;
     }
 
     try {
-      await agent.connection.cancel({
-        sessionId: agent.sessionId,
+      await runtime.connection.cancel({
+        sessionId: runtime.sessionId,
       });
-      agent.status = "ready";
+      agent.state = { type: "ready", runtime };
       this.notifySubscribers(agentId);
     } catch (error) {
       console.error(`[Agent ${agentId}] Cancel failed:`, error);
@@ -633,7 +455,9 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    agent.status = "killed";
+    const runtime = this.getRuntime(agent);
+
+    agent.state = { type: "killed" };
 
     // Notify subscribers BEFORE removing from manager
     // This ensures subscribers can still query agent info
@@ -643,14 +467,18 @@ export class AgentManager {
     await this.persistence.remove(agentId);
 
     // Kill the process
-    agent.process.kill("SIGTERM");
+    if (runtime) {
+      runtime.process.kill("SIGTERM");
+    }
 
     // Wait a bit, then force kill if still alive
-    setTimeout(() => {
-      if (!agent.process.killed) {
-        agent.process.kill("SIGKILL");
-      }
-    }, 5000);
+    if (runtime) {
+      setTimeout(() => {
+        if (!runtime.process.killed) {
+          runtime.process.kill("SIGKILL");
+        }
+      }, 5000);
+    }
 
     // Remove from manager after a small delay to allow status updates to propagate
     setTimeout(() => {
@@ -667,25 +495,42 @@ export class AgentManager {
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.status;
+    return getAgentStatusFromState(agent.state);
   }
 
   /**
    * List all agents
    */
   listAgents(): AgentInfo[] {
-    return Array.from(this.agents.values()).map((agent) => ({
-      id: agent.id,
-      status: agent.status,
-      createdAt: agent.createdAt,
-      type: "claude" as const,
-      sessionId: agent.sessionId ?? null,
-      error: agent.error ?? null,
-      currentModeId: agent.currentModeId ?? null,
-      availableModes: agent.availableModes ?? null,
-      title: agent.title ?? null,
-      cwd: agent.cwd,
-    }));
+    return Array.from(this.agents.values()).map((agent) => {
+      const status = getAgentStatusFromState(agent.state);
+      const error = getAgentError(agent.state);
+      const sessionId =
+        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
+          ? agent.state.runtime.sessionId
+          : null;
+      const currentModeId =
+        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
+          ? agent.state.runtime.currentModeId
+          : null;
+      const availableModes =
+        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
+          ? agent.state.runtime.availableModes
+          : null;
+
+      return {
+        id: agent.id,
+        status,
+        createdAt: agent.createdAt,
+        type: "claude" as const,
+        sessionId,
+        error: error ?? null,
+        currentModeId,
+        availableModes,
+        title: agent.title,
+        cwd: agent.cwd,
+      };
+    });
   }
 
   /**
@@ -727,7 +572,8 @@ export class AgentManager {
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.currentModeId ?? null;
+    const runtime = this.getRuntime(agent);
+    return runtime?.currentModeId ?? null;
   }
 
   /**
@@ -738,7 +584,8 @@ export class AgentManager {
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
-    return agent.availableModes ?? null;
+    const runtime = this.getRuntime(agent);
+    return runtime?.availableModes ?? null;
   }
 
   /**
@@ -746,35 +593,368 @@ export class AgentManager {
    * Validates that the mode is available before setting
    */
   async setSessionMode(agentId: string, modeId: string): Promise<void> {
+    await this.ensureInitialized(agentId);
+
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    if (!agent.sessionId) {
+    const runtime = this.getRuntime(agent);
+    if (!runtime) {
       throw new Error(`Agent ${agentId} has no active session`);
     }
 
-    // Validate mode is available
-    const availableModes = agent.availableModes || [];
-    const mode = availableModes.find((m) => m.id === modeId);
-    if (!mode && availableModes.length > 0) {
-      const availableIds = availableModes.map((m) => m.id).join(", ");
-      throw new Error(
-        `Mode '${modeId}' not available for agent ${agentId}. Available modes: ${availableIds}`
-      );
+    // Validate mode is available if we have the list
+    const availableModes = runtime.availableModes ?? [];
+    if (availableModes.length > 0) {
+      const mode = availableModes.find((m) => m.id === modeId);
+      if (!mode) {
+        const availableIds = availableModes.map((m) => m.id).join(", ");
+        throw new Error(
+          `Mode '${modeId}' not available for agent ${agentId}. Available modes: ${availableIds}`
+        );
+      }
     }
 
     try {
-      await agent.connection.setSessionMode({
-        sessionId: agent.sessionId,
+      await runtime.connection.setSessionMode({
+        sessionId: runtime.sessionId,
         modeId,
       });
 
-      agent.currentModeId = modeId;
+      const updatedRuntime: AgentRuntime = {
+        ...runtime,
+        currentModeId: modeId,
+      };
+
+      switch (agent.state.type) {
+        case "ready":
+          agent.state = { type: "ready", runtime: updatedRuntime };
+          break;
+        case "processing":
+          agent.state = { type: "processing", runtime: updatedRuntime };
+          break;
+        case "completed":
+          agent.state = {
+            type: "completed",
+            runtime: updatedRuntime,
+            stopReason: agent.state.stopReason,
+          };
+          break;
+        case "initializing":
+          agent.state = {
+            type: "initializing",
+            runtime: updatedRuntime,
+            initStartedAt: agent.state.initStartedAt,
+          };
+          break;
+        case "failed":
+          agent.state = {
+            type: "failed",
+            lastError: agent.state.lastError,
+            runtime: updatedRuntime,
+          };
+          break;
+        default:
+          break;
+      }
+
       console.log(`[Agent ${agentId}] Session mode changed to: ${modeId}`);
+      this.notifySubscribers(agentId);
     } catch (error) {
       console.error(`[Agent ${agentId}] Failed to set mode:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Ensure an agent is initialized, starting runtime if needed
+   * Handles concurrent initialization requests by memoizing the promise
+   */
+  private async ensureInitialized(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const state = agent.state;
+
+    // Already initialized
+    if (
+      state.type === "ready" ||
+      state.type === "processing" ||
+      state.type === "completed"
+    ) {
+      return;
+    }
+
+    // Initialization already in progress - wait for the promise
+    if (state.type === "initializing") {
+      await state.initPromise;
+      return;
+    }
+
+    // Failed - don't retry automatically
+    if (state.type === "failed") {
+      throw new Error(
+        `Agent ${agentId} is in failed state: ${state.lastError}`
+      );
+    }
+
+    // Killed - can't initialize
+    if (state.type === "killed") {
+      throw new Error(`Agent ${agentId} has been killed`);
+    }
+
+    // Uninitialized - start initialization
+    if (state.type === "uninitialized") {
+      const persistedSessionId = state.persistedSessionId;
+
+      // Create the init promise
+      const initPromise = (async () => {
+        try {
+          const hasPersistedSession =
+            (agent.options.type === "claude" && agent.options.sessionId !== null) ||
+            !!persistedSessionId;
+          const mode = hasPersistedSession ? "resume" : "new";
+
+          console.log(
+            `[Agent ${agentId}] Starting lazy initialization (mode: ${mode})`
+          );
+          await this.startRuntimeForAgent(agent, mode, persistedSessionId);
+          console.log(`[Agent ${agentId}] Lazy initialization completed`);
+        } catch (error) {
+          console.error(
+            `[Agent ${agentId}] Lazy initialization failed:`,
+            error
+          );
+          throw error;
+        }
+      })();
+
+      // Transition to initializing state with the promise
+      agent.state = {
+        type: "initializing",
+        persistedSessionId,
+        initPromise,
+        initStartedAt: new Date(),
+      };
+
+      await initPromise;
+    }
+  }
+
+  private getRuntime(agent: ManagedAgent): AgentRuntime | null {
+    if (
+      agent.state.type === "ready" ||
+      agent.state.type === "processing" ||
+      agent.state.type === "completed"
+    ) {
+      return agent.state.runtime;
+    }
+
+    if (agent.state.type === "initializing") {
+      return agent.state.runtime;
+    }
+
+    if (agent.state.type === "failed" && agent.state.runtime) {
+      return agent.state.runtime;
+    }
+
+    return null;
+  }
+
+  /**
+   * Start runtime for an agent (spawn process, create connection, initialize session)
+   */
+  private async startRuntimeForAgent(
+    agent: ManagedAgent,
+    mode: "new" | "resume",
+    resumeSessionId?: string | null
+  ): Promise<void> {
+    const agentId = agent.id;
+    const cwd = agent.cwd;
+
+    console.log(`[Agent ${agentId}] Starting runtime (mode: ${mode})`);
+
+    try {
+      await access(cwd, constants.R_OK | constants.X_OK);
+    } catch {
+      const errorMessage = `Working directory does not exist or is not accessible: ${cwd}`;
+      console.error(`[Agent ${agentId}] ${errorMessage}`);
+      agent.state = {
+        type: "failed",
+        lastError: errorMessage,
+      };
+      this.notifySubscribers(agentId);
+      throw new Error(errorMessage);
+    }
+
+    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd,
+    });
+
+    const input = Writable.toWeb(agentProcess.stdin);
+    const output = Readable.toWeb(agentProcess.stdout);
+    const stream = ndJsonStream(input, output);
+
+    const client = new ACPClient(
+      agentId,
+      (id, update) => {
+        this.handleSessionNotification(id, update);
+      },
+      (id, params) => {
+        return this.handlePermissionRequest(id, params);
+      },
+      this.persistence
+    );
+    const connection = new ClientSideConnection(() => client, stream);
+
+    const runtime: AgentRuntime = {
+      process: agentProcess,
+      connection,
+      sessionId: "",
+      currentModeId: null,
+      availableModes: null,
+    };
+
+    agent.state = {
+      type: "initializing",
+      runtime,
+      initStartedAt: new Date(),
+    };
+
+    agentProcess.on("error", (error) => {
+      this.handleAgentError(agentId, `Process error: ${error.message}`);
+    });
+
+    agentProcess.on("exit", (code, signal) => {
+      const currentAgent = this.agents.get(agentId);
+      if (!currentAgent) return;
+
+      const status = getAgentStatusFromState(currentAgent.state);
+      if (status !== "completed" && status !== "killed") {
+        this.handleAgentError(
+          agentId,
+          `Process exited unexpectedly: code=${code}, signal=${signal}`
+        );
+      }
+    });
+
+    agentProcess.stderr.on("data", (data) => {
+      console.error(`[Agent ${agentId}] stderr:`, data.toString());
+    });
+
+    try {
+      await connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: {
+            readTextFile: true,
+            writeTextFile: true,
+          },
+        },
+      });
+
+      let sessionResponse:
+        | Awaited<ReturnType<typeof connection.newSession>>
+        | Awaited<ReturnType<typeof connection.loadSession>>;
+      let effectiveSessionId: string;
+      if (mode === "resume") {
+        const sessionIdToResume =
+          (agent.options.type === "claude" && agent.options.sessionId) ||
+          resumeSessionId ||
+          null;
+
+        if (!sessionIdToResume) {
+          throw new Error(`Cannot resume agent ${agentId}: No session ID available`);
+        }
+
+        console.log(`[Agent ${agentId}] Loading session: ${sessionIdToResume}`);
+        sessionResponse = await connection.loadSession({
+          sessionId: sessionIdToResume,
+          cwd,
+          mcpServers: [],
+        });
+        effectiveSessionId = sessionIdToResume;
+      } else {
+        console.log(`[Agent ${agentId}] Creating new session`);
+        const newSessionResponse = await connection.newSession({
+          cwd,
+          mcpServers: [],
+        });
+        sessionResponse = newSessionResponse;
+        effectiveSessionId = newSessionResponse.sessionId;
+      }
+
+      runtime.sessionId = effectiveSessionId;
+      runtime.currentModeId = sessionResponse.modes?.currentModeId ?? null;
+      runtime.availableModes = sessionResponse.modes?.availableModes ?? null;
+
+      const claudeSessionId =
+        sessionResponse._meta?.claudeSessionId as string | undefined;
+      if (
+        claudeSessionId &&
+        agent.options.type === "claude" &&
+        agent.options.sessionId !== claudeSessionId
+      ) {
+        agent.options = {
+          ...agent.options,
+          sessionId: claudeSessionId,
+        };
+      }
+
+      console.log(
+        `[Agent ${agentId}] Session ${mode === "new" ? "created" : "loaded"}: ACP=${effectiveSessionId}, Claude=${claudeSessionId || "N/A"}`
+      );
+
+      await this.persistence.upsert({
+        id: agentId,
+        title: agent.title || `Agent ${agentId.slice(0, 8)}`,
+        sessionId: runtime.sessionId,
+        options: agent.options,
+        createdAt: agent.createdAt.toISOString(),
+        cwd: agent.cwd,
+      });
+
+      agent.state = {
+        type: "ready",
+        runtime,
+      };
+
+      this.notifySubscribers(agentId);
+
+      if (agent.pendingSessionMode) {
+        const pendingMode = agent.pendingSessionMode;
+        agent.pendingSessionMode = null;
+        try {
+          await this.setSessionMode(agentId, pendingMode);
+        } catch (error) {
+          console.error(
+            `[Agent ${agentId}] Failed to apply pending session mode ${pendingMode}:`,
+            error
+          );
+        }
+      }
+
+      console.log(
+        `[Agent ${agentId}] Runtime started successfully with mode: ${runtime.currentModeId}`
+      );
+    } catch (error) {
+      const errorMessage = `Runtime startup failed: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(`[Agent ${agentId}]`, errorMessage);
+      agent.state = {
+        type: "failed",
+        lastError: errorMessage,
+      };
+      this.notifySubscribers(agentId);
+      try {
+        agentProcess.kill("SIGTERM");
+      } catch {
+        // ignore kill errors
+      }
       throw error;
     }
   }
@@ -859,32 +1039,6 @@ export class AgentManager {
   }
 
   /**
-   * Notify subscribers of a status change
-   */
-  private notifyStatusChange(agentId: string): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) return;
-
-    const update: AgentUpdate = {
-      agentId,
-      timestamp: new Date(),
-      notification: {
-        type: 'status',
-        status: agent.status,
-        error: agent.error,
-      },
-    };
-
-    for (const subscriber of agent.subscribers) {
-      try {
-        subscriber(update);
-      } catch (error) {
-        console.error(`[Agent ${agentId}] Subscriber error:`, error);
-      }
-    }
-  }
-
-  /**
    * Handle agent errors
    */
   private handleAgentError(agentId: string, errorMessage: string): void {
@@ -892,8 +1046,18 @@ export class AgentManager {
     if (!agent) return;
 
     console.error(`[Agent ${agentId}] Error:`, errorMessage);
-    agent.status = "failed";
-    agent.error = errorMessage;
+
+    // Preserve runtime if it exists
+    const runtime =
+      agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
+        ? agent.state.runtime
+        : undefined;
+
+    agent.state = {
+      type: "failed",
+      lastError: errorMessage,
+      runtime,
+    };
     this.notifySubscribers(agentId);
   }
 
@@ -904,13 +1068,16 @@ export class AgentManager {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
+    const status = getAgentStatusFromState(agent.state);
+    const error = getAgentError(agent.state);
+
     const update: AgentUpdate = {
       agentId,
       timestamp: new Date(),
       notification: {
         type: 'status',
-        status: agent.status,
-        error: agent.error,
+        status,
+        error,
       },
     };
 
@@ -935,10 +1102,7 @@ export class AgentManager {
     agent.title = title;
     console.log(`[Agent ${agentId}] Title set to: "${title}"`);
 
-    // Persist the title update
-    if (agent.sessionId) {
-      await this.persistence.updateTitle(agentId, title);
-    }
+    await this.persistence.updateTitle(agentId, title);
   }
 
   /**

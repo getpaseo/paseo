@@ -22,7 +22,7 @@ export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 export const PersistedAgentSchema = z.object({
   id: z.string(),
   title: z.string(),
-  sessionId: z.string(), // ACP protocol session ID (for backward compatibility)
+  sessionId: z.string().nullable(), // ACP protocol session ID (null for uninitialized agents)
   options: AgentOptionsSchema, // Required field with discriminated union
   createdAt: z.string(),
   cwd: z.string(),
