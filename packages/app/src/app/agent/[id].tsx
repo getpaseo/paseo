@@ -64,7 +64,7 @@ export default function AgentScreen() {
         />
 
         {/* Footer area - status bar + controls */}
-        <View style={[styles.footerContainer, { paddingBottom: insets.bottom }]}>
+        <View style={[styles.footerContainer, !isRealtimeMode && { paddingBottom: insets.bottom }]}>
           {/* Status bar - always visible, floating above controls */}
           <AgentStatusBar agentId={id!} />
           
