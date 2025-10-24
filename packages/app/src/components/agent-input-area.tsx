@@ -1,11 +1,10 @@
-import { View, TextInput, Pressable, Text } from "react-native";
+import { View, TextInput, Pressable } from "react-native";
 import { useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, ArrowUp, AudioLines, Square, ChevronDown } from "lucide-react-native";
+import { Mic, ArrowUp, AudioLines, Square } from "lucide-react-native";
 import { useSession } from "@/contexts/session-context";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
-import { ModeSelectorModal } from "./mode-selector-modal";
 
 interface AgentInputAreaProps {
   agentId: string;
@@ -13,21 +12,13 @@ interface AgentInputAreaProps {
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const { agents, ws, sendAgentMessage, sendAgentAudio, setAgentMode } = useSession();
-  const { isRealtimeMode, startRealtime } = useRealtime();
+  const { ws, sendAgentMessage, sendAgentAudio } = useSession();
+  const { startRealtime } = useRealtime();
   const audioRecorder = useAudioRecorder();
 
   const [userInput, setUserInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showModeSelector, setShowModeSelector] = useState(false);
-
-  const agent = agents.get(agentId);
-
-  // Hide when realtime is active - global footer takes over
-  if (isRealtimeMode) {
-    return null;
-  }
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -82,10 +73,6 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     }
   }
 
-  function handleModeChange(modeId: string) {
-    setAgentMode(agentId, modeId);
-  }
-
   const hasText = userInput.trim().length > 0;
 
   return (
@@ -101,26 +88,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
         editable={!isRecording && ws.isConnected}
       />
 
-      {/* Controls row */}
-      <View style={styles.controlsRow}>
-        {/* Mode badge - only show if agent has modes */}
-        {agent && agent.availableModes && agent.availableModes.length > 0 && (
-          <Pressable
-            onPress={() => setShowModeSelector(true)}
-            style={({ pressed }) => [
-              styles.modeBadge,
-              pressed && styles.modeBadgePressed,
-            ]}
-          >
-            <Text style={styles.modeBadgeText}>
-              {agent.availableModes?.find(m => m.id === agent.currentModeId)?.name || agent.currentModeId || 'default'}
-            </Text>
-            <ChevronDown size={14} color={theme.colors.mutedForeground} />
-          </Pressable>
-        )}
-
-        {/* Buttons */}
-        <View style={styles.buttonRow}>
+      {/* Buttons */}
+      <View style={styles.buttonRow}>
           {hasText ? (
             // Send button when text is entered
             <Pressable
@@ -166,64 +135,35 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
               </Pressable>
             </>
           )}
-        </View>
       </View>
-
-      {/* Mode selector modal */}
-      <ModeSelectorModal
-        visible={showModeSelector}
-        agent={agent || null}
-        onModeChange={handleModeChange}
-        onClose={() => setShowModeSelector(false)}
-      />
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    padding: theme.spacing[4],
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
     gap: theme.spacing[3],
+    height: 88,
   },
   textInput: {
-    minHeight: 44,
-    maxHeight: 120,
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 80,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.muted,
     borderRadius: theme.borderRadius.lg,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
-  controlsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  modeBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.full,
-  },
-  modeBadgePressed: {
-    backgroundColor: theme.colors.accent,
-  },
-  modeBadgeText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "capitalize",
-  },
   buttonRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    marginLeft: "auto",
   },
   sendButton: {
     width: 40,
