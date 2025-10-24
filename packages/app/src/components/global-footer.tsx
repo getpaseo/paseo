@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { View, Pressable } from "react-native";
 import { usePathname } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,7 +7,13 @@ import { AudioLines } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
 import { RealtimeControls } from "./realtime-controls";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import Animated, { 
+  FadeIn, 
+  FadeOut,
+  useAnimatedStyle,
+  withTiming,
+  useSharedValue,
+} from "react-native-reanimated";
 
 export function GlobalFooter() {
   const { theme } = useUnistyles();
@@ -22,13 +29,36 @@ export function GlobalFooter() {
   // Hidden when: on agent screen AND realtime is off
   const shouldHide = isAgentScreen && !isRealtimeMode;
 
+  // Controlled opacity for agent screen transitions (synced with AgentInputArea)
+  const realtimeOpacity = useSharedValue(isRealtimeMode ? 1 : 0);
+
+  useEffect(() => {
+    if (isAgentScreen) {
+      // On agent screen, use controlled animation for smooth cross-fade
+      realtimeOpacity.value = withTiming(isRealtimeMode ? 1 : 0, { duration: 250 });
+    }
+  }, [isRealtimeMode, isAgentScreen]);
+
+  const realtimeAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: realtimeOpacity.value,
+      pointerEvents: realtimeOpacity.value > 0.5 ? ("auto" as const) : ("none" as const),
+    };
+  });
+
   // If realtime is active, show realtime controls
   if (isRealtimeMode) {
     return (
       <Animated.View
-        entering={FadeIn.duration(400)}
-        exiting={FadeOut.duration(250)}
-        style={[styles.container, { paddingBottom: insets.bottom }]}
+        style={[
+          styles.container, 
+          { paddingBottom: insets.bottom },
+          // Use controlled opacity on agent screen for smooth transition
+          isAgentScreen && realtimeAnimatedStyle
+        ]}
+        // Keep FadeIn/FadeOut for non-agent screens (home, orchestrator, etc)
+        entering={!isAgentScreen ? FadeIn.duration(400) : undefined}
+        exiting={!isAgentScreen ? FadeOut.duration(250) : undefined}
       >
         <RealtimeControls />
       </Animated.View>

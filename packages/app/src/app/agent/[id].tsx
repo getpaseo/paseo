@@ -68,13 +68,11 @@ export default function AgentScreen() {
           {/* Status bar - always visible, floating above controls */}
           <AgentStatusBar agentId={id!} />
           
-          {/* Controls - only show AgentInputArea when not in realtime mode */}
-          {/* When in realtime mode, GlobalFooter handles showing RealtimeControls */}
-          {!isRealtimeMode && (
-            <View style={styles.controlsContainer}>
-              <AgentInputArea agentId={id!} />
-            </View>
-          )}
+          {/* Controls - AgentInputArea always mounted, fades in/out */}
+          {/* When in realtime mode, GlobalFooter's RealtimeControls overlays this */}
+          <View style={styles.controlsContainer}>
+            <AgentInputArea agentId={id!} isRealtimeMode={isRealtimeMode} />
+          </View>
         </View>
       </ReanimatedAnimated.View>
     </View>
