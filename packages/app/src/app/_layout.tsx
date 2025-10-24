@@ -58,12 +58,10 @@ export default function RootLayout() {
                   <Stack
                     screenOptions={{
                       headerShown: false,
-                      animation: "slide_from_right",
-                      animationDuration: 250,
+                      animation: "none",
                       gestureEnabled: true,
                       gestureDirection: "horizontal",
                       fullScreenGestureEnabled: true,
-                      animationMatchesGesture: true,
                     }}
                   >
                     <Stack.Screen name="index" />

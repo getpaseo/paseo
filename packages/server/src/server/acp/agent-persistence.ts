@@ -11,7 +11,7 @@ const __dirname = dirname(__filename);
 export const AgentOptionsSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("claude"),
-    sessionId: z.string(), // Claude's internal session ID
+    sessionId: z.string().nullable(), // Claude's internal session ID (null until first prompt)
   }),
   // Add more agent types here in the future
 ]);
@@ -51,9 +51,20 @@ export class AgentPersistence {
       for (const agent of parsed) {
         try {
           const validated = PersistedAgentSchema.parse(agent);
+
+          if (
+            validated.options.type === "claude" &&
+            validated.options.sessionId !== null
+          ) {
+            validated.sessionId = validated.options.sessionId;
+          }
+
           agents.push(validated);
         } catch (zodError) {
-          console.error(`[AgentPersistence] Invalid agent data for ${agent.id}:`, zodError);
+          console.error(
+            `[AgentPersistence] Invalid agent data for ${agent.id}:`,
+            zodError
+          );
           // Skip invalid agents
         }
       }
@@ -61,7 +72,9 @@ export class AgentPersistence {
       return agents;
     } catch (error) {
       // File doesn't exist or is invalid, return empty array
-      console.log("[AgentPersistence] No existing agents found or file is invalid");
+      console.log(
+        "[AgentPersistence] No existing agents found or file is invalid"
+      );
       return [];
     }
   }
@@ -124,7 +137,9 @@ export class AgentPersistence {
     if (agent) {
       agent.title = title;
       await this.save(agents);
-      console.log(`[AgentPersistence] Updated title for agent ${agentId}: "${title}"`);
+      console.log(
+        `[AgentPersistence] Updated title for agent ${agentId}: "${title}"`
+      );
     }
   }
 }
