@@ -31,13 +31,8 @@ export function RealtimeControls() {
           isMuted={isMuted}
           isDetecting={isDetecting}
           isSpeaking={isSpeaking}
+          orientation="horizontal"
         />
-        {/* Debug timer */}
-        {(isDetecting || isSpeaking) && (
-          <Text style={styles.debugTimer}>
-            {(segmentDuration / 1000).toFixed(1)}s
-          </Text>
-        )}
       </View>
       <View style={styles.buttons}>
         {/* Mute button */}
@@ -71,20 +66,23 @@ export function RealtimeControls() {
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    minHeight: 200,
-    padding: theme.spacing[4],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
+    height: 88,
   },
   volumeContainer: {
     flex: 1,
     justifyContent: "center",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   buttons: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[3],
-    paddingTop: theme.spacing[4],
   },
   muteButton: {
     width: 48,
@@ -107,11 +105,5 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: theme.colors.palette.red[600],
-  },
-  debugTimer: {
-    marginTop: theme.spacing[2],
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    fontFamily: "monospace",
   },
 }));

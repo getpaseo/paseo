@@ -23,6 +23,7 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
     const { theme } = useUnistyles();
     const bottomSheetRef = useRef<BottomSheetModal | null>(null);
     const [selectedToolCall, setSelectedToolCall] = useState<SelectedToolCall | null>(null);
+    const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
 
     function handleOpenToolCallDetails(toolCall: {
       toolName: string;
@@ -45,7 +46,16 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
           },
         },
       });
-      bottomSheetRef.current?.present();
+      setIsBottomSheetVisible(true);
+      // Delay present to next frame to ensure component is mounted
+      setTimeout(() => {
+        bottomSheetRef.current?.present();
+      }, 0);
+    }
+
+    function handleBottomSheetDismiss() {
+      setIsBottomSheetVisible(false);
+      setSelectedToolCall(null);
     }
 
     return (
@@ -139,10 +149,13 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
         )}
       </ScrollView>
 
-      <ToolCallBottomSheet
-        bottomSheetRef={bottomSheetRef}
-        selectedToolCall={selectedToolCall}
-      />
+      {isBottomSheetVisible && (
+        <ToolCallBottomSheet
+          bottomSheetRef={bottomSheetRef}
+          selectedToolCall={selectedToolCall}
+          onDismiss={handleBottomSheetDismiss}
+        />
+      )}
     </>
     );
   }

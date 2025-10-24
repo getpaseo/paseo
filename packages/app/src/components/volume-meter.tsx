@@ -16,15 +16,16 @@ interface VolumeMeterProps {
   isMuted?: boolean;
   isDetecting?: boolean;
   isSpeaking?: boolean;
+  orientation?: "vertical" | "horizontal";
 }
 
-export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSpeaking = false }: VolumeMeterProps) {
+export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSpeaking = false, orientation = "vertical" }: VolumeMeterProps) {
   const { theme } = useUnistyles();
 
   // Base dimensions
   const LINE_SPACING = 8;
-  const MAX_HEIGHT = 50;
-  const MIN_HEIGHT = 20;
+  const MAX_HEIGHT = orientation === "horizontal" ? 30 : 50;
+  const MIN_HEIGHT = orientation === "horizontal" ? 12 : 20;
 
   // Shared values for each line's height
   const line1Height = useSharedValue(MIN_HEIGHT);
@@ -162,8 +163,10 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
   const lineColor = "#FFFFFF";
   const lineWidth = 8;
 
+  const containerHeight = orientation === "horizontal" ? 60 : 100;
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { height: containerHeight }]}>
       <ReanimatedAnimated.View
         style={[
           styles.line,
@@ -205,7 +208,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 100,
   },
   line: {
     borderRadius: theme.borderRadius.full,
