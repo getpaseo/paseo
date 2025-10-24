@@ -10,7 +10,7 @@ import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentStatusBar } from "@/components/agent-status-bar";
 import { useSession } from "@/contexts/session-context";
-import { FOOTER_HEIGHT, useFooterControls } from "@/contexts/footer-controls-context";
+import { useFooterControls } from "@/contexts/footer-controls-context";
 
 export default function AgentScreen() {
   const { theme } = useUnistyles();
@@ -21,14 +21,13 @@ export default function AgentScreen() {
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
-  const footerHeight = FOOTER_HEIGHT + insets.bottom;
   const bottomInset = insets.bottom;
   const animatedKeyboardStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
     const padding = Math.max(0, absoluteHeight - bottomInset);
     return {
-      paddingBottom: footerHeight + padding,
+      paddingBottom: padding,
     };
   });
 
