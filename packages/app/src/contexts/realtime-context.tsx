@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
 import { useSession } from "./session-context";
 import { generateMessageId } from "@/types/stream";
@@ -31,7 +31,7 @@ interface RealtimeProviderProps {
 }
 
 export function RealtimeProvider({ children }: RealtimeProviderProps) {
-  const { ws, audioPlayer, isPlayingAudio, setMessages } = useSession();
+  const { ws, audioPlayer, isPlayingAudio, setMessages, setVoiceDetectionFlags } = useSession();
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
 
   const realtimeAudio = useSpeechmaticsAudio({
@@ -81,6 +81,11 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     speechConfirmationDuration: 300,
     detectionGracePeriod: 200,
   });
+
+  // Update voice detection flags whenever they change
+  useEffect(() => {
+    setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
+  }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking, setVoiceDetectionFlags]);
 
   const startRealtime = useCallback(async () => {
     try {

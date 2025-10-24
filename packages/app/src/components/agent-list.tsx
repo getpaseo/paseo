@@ -63,7 +63,10 @@ export function AgentList({ agents }: AgentListProps) {
         return (
           <Pressable
             key={agent.id}
-            style={styles.agentItem}
+            style={({ pressed }) => [
+              styles.agentItem,
+              pressed && styles.agentItemPressed,
+            ]}
             onPress={() => handleAgentPress(agent.id)}
           >
             <View style={styles.agentContent}>
@@ -111,6 +114,10 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     backgroundColor: theme.colors.muted,
+  },
+  agentItemPressed: {
+    opacity: 0.7,
+    backgroundColor: theme.colors.accent,
   },
   agentContent: {
     flex: 1,

@@ -87,6 +87,9 @@ interface SessionContextValue {
   audioPlayer: ReturnType<typeof useAudioPlayer>;
   isPlayingAudio: boolean;
   setIsPlayingAudio: (playing: boolean) => void;
+  
+  // Voice detection flags (updated by RealtimeContext)
+  setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
 
   // Messages and stream state
   messages: MessageEntry[];
@@ -133,7 +136,15 @@ interface SessionProviderProps {
 
 export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
-  const audioPlayer = useAudioPlayer();
+  
+  // State for voice detection flags (will be set by RealtimeContext)
+  const isDetectingRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  
+  const audioPlayer = useAudioPlayer({
+    isDetecting: () => isDetectingRef.current,
+    isSpeaking: () => isSpeakingRef.current,
+  });
 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [messages, setMessages] = useState<MessageEntry[]>([]);
@@ -248,6 +259,20 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         toolCall,
         options,
       }));
+    });
+
+    // Permission resolved - remove from pending
+    const unsubPermissionResolved = ws.on("agent_permission_resolved", (message) => {
+      if (message.type !== "agent_permission_resolved") return;
+      const { requestId, agentId, optionId } = message.payload;
+
+      console.log("[Session] Permission resolved:", requestId, "for agent:", agentId, "with option:", optionId);
+
+      setPendingPermissions((prev) => {
+        const next = new Map(prev);
+        next.delete(requestId);
+        return next;
+      });
     });
 
     // Audio output
@@ -458,6 +483,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubAgentStatus();
       unsubAgentUpdate();
       unsubPermissionRequest();
+      unsubPermissionResolved();
       unsubAudioOutput();
       unsubActivity();
       unsubChunk();
@@ -581,19 +607,21 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     };
     ws.send(msg);
 
-    // Remove from pending
-    setPendingPermissions((prev) => {
-      const next = new Map(prev);
-      next.delete(requestId);
-      return next;
-    });
+    // Don't remove from pending here - wait for server confirmation via agent_permission_resolved
+    // This ensures UI stays in sync whether permission is accepted via UI or MCP
   }, [ws]);
+
+  const setVoiceDetectionFlags = useCallback((isDetecting: boolean, isSpeaking: boolean) => {
+    isDetectingRef.current = isDetecting;
+    isSpeakingRef.current = isSpeaking;
+  }, []);
 
   const value: SessionContextValue = {
     ws,
     audioPlayer,
     isPlayingAudio,
     setIsPlayingAudio,
+    setVoiceDetectionFlags,
     messages,
     setMessages,
     currentAssistantMessage,

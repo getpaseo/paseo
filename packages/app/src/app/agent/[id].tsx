@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { View, Text } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { View, Text, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -18,6 +18,7 @@ export default function AgentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { agents, agentStreamState, pendingPermissions, respondToPermission } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
+  const [isContentReady, setIsContentReady] = useState(false);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -42,8 +43,39 @@ export default function AgentScreen() {
     return <AgentInputArea agentId={id} />;
   }, [id]);
 
+  // Defer heavy rendering to next frame for faster initial paint
   useEffect(() => {
-    if (!agentControls || !agent) {
+    let isMounted = true;
+    let frameId: number | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const markReady = () => {
+      if (isMounted) {
+        setIsContentReady(true);
+      }
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      frameId = requestAnimationFrame(markReady);
+    } else {
+      timeoutId = setTimeout(markReady, 0);
+    }
+
+    return () => {
+      isMounted = false;
+
+      if (frameId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(frameId);
+      }
+
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!agentControls || !agent || !isContentReady) {
       unregisterFooterControls();
       return;
     }
@@ -53,7 +85,7 @@ export default function AgentScreen() {
     return () => {
       unregisterFooterControls();
     };
-  }, [agentControls, agent, registerFooterControls, unregisterFooterControls]);
+  }, [agentControls, agent, isContentReady, registerFooterControls, unregisterFooterControls]);
 
   if (!agent) {
     return (
@@ -73,20 +105,28 @@ export default function AgentScreen() {
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        <AgentStreamView
-          agentId={id!}
-          agent={agent}
-          streamItems={streamItems}
-          pendingPermissions={agentPermissions}
-          onPermissionResponse={(requestId, optionId) =>
-            respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
-          }
-        />
+        {isContentReady ? (
+          <>
+            <AgentStreamView
+              agentId={id!}
+              agent={agent}
+              streamItems={streamItems}
+              pendingPermissions={agentPermissions}
+              onPermissionResponse={(requestId, optionId) =>
+                respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
+              }
+            />
 
-        {/* Footer area - status bar pinned within screen */}
-        <View style={styles.footerContainer}>
-          <AgentStatusBar agentId={id!} />
-        </View>
+            {/* Footer area - status bar pinned within screen */}
+            <View style={styles.footerContainer}>
+              <AgentStatusBar agentId={id!} />
+            </View>
+          </>
+        ) : (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+          </View>
+        )}
       </ReanimatedAnimated.View>
     </View>
   );
@@ -102,6 +142,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerContainer: {
     backgroundColor: theme.colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   errorContainer: {
     flex: 1,

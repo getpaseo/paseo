@@ -1,5 +1,5 @@
 import { View, Text, Pressable, Animated } from "react-native";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import Markdown from "react-native-markdown-display";
 import {
   Circle,
@@ -48,7 +48,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export function UserMessage({ message, timestamp }: UserMessageProps) {
+export const UserMessage = memo(function UserMessage({ message, timestamp }: UserMessageProps) {
   return (
     <View style={userMessageStylesheet.container}>
       <View style={userMessageStylesheet.bubble}>
@@ -56,7 +56,7 @@ export function UserMessage({ message, timestamp }: UserMessageProps) {
       </View>
     </View>
   );
-}
+});
 
 interface AssistantMessageProps {
   message: string;
@@ -133,7 +133,7 @@ const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export function AssistantMessage({
+export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
   isStreaming = false,
@@ -191,7 +191,7 @@ export function AssistantMessage({
       )}
     </View>
   );
-}
+});
 
 interface ActivityLogProps {
   type: "system" | "info" | "success" | "error" | "artifact";
@@ -274,7 +274,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export function ActivityLog({
+export const ActivityLog = memo(function ActivityLog({
   type,
   message,
   timestamp,
@@ -374,7 +374,7 @@ export function ActivityLog({
       </View>
     </Pressable>
   );
-}
+});
 
 interface ToolCallProps {
   toolName: string;
@@ -486,7 +486,7 @@ const toolKindIcons: Record<string, any> = {
   // Add more mappings as needed
 };
 
-export function ToolCall({
+export const ToolCall = memo(function ToolCall({
   toolName,
   kind,
   args,
@@ -584,4 +584,4 @@ export function ToolCall({
       </View>
     </Pressable>
   );
-}
+});

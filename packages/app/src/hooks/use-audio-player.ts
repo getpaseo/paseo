@@ -42,18 +42,40 @@ function resamplePcm24kTo16k(pcm24k: Uint8Array): Uint8Array {
   return pcm16k;
 }
 
+export interface AudioPlayerOptions {
+  isDetecting?: () => boolean;
+  isSpeaking?: () => boolean;
+}
+
 /**
  * Hook for audio playback using Speechmatics two-way audio with echo cancellation
  */
-export function useAudioPlayer() {
+export function useAudioPlayer(options?: AudioPlayerOptions) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioInitialized, setAudioInitialized] = useState(false);
   const queueRef = useRef<QueuedAudio[]>([]);
+  const suppressedQueueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
   const playbackTimeoutRef = useRef<number | null>(null);
+  const checkIntervalRef = useRef<number | null>(null);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
+      // Check if we should suppress playback due to voice detection/speaking
+      const shouldSuppress = 
+        (options?.isDetecting && options.isDetecting()) ||
+        (options?.isSpeaking && options.isSpeaking());
+
+      if (shouldSuppress) {
+        console.log("[AudioPlayer] Suppressing playback - voice detection/speaking active");
+        // Add to suppressed queue instead
+        suppressedQueueRef.current.push({ audioData, resolve, reject });
+        
+        // Start checking for when flags clear
+        startCheckingForClearFlags();
+        return;
+      }
+
       // Add to queue with its promise handlers
       queueRef.current.push({ audioData, resolve, reject });
 
@@ -64,6 +86,49 @@ export function useAudioPlayer() {
     });
   }
 
+  function startCheckingForClearFlags(): void {
+    // Already checking
+    if (checkIntervalRef.current !== null) {
+      return;
+    }
+
+    console.log("[AudioPlayer] Starting to check for clear flags");
+    
+    checkIntervalRef.current = setInterval(() => {
+      const isStillBlocked = 
+        (options?.isDetecting && options.isDetecting()) ||
+        (options?.isSpeaking && options.isSpeaking());
+
+      if (!isStillBlocked && suppressedQueueRef.current.length > 0) {
+        console.log("[AudioPlayer] Flags cleared - moving suppressed queue to main queue");
+        
+        // Move all suppressed items to main queue
+        const suppressedItems = [...suppressedQueueRef.current];
+        suppressedQueueRef.current = [];
+        
+        // Add to front of main queue (they were waiting)
+        queueRef.current = [...suppressedItems, ...queueRef.current];
+        
+        // Stop checking
+        if (checkIntervalRef.current !== null) {
+          clearInterval(checkIntervalRef.current);
+          checkIntervalRef.current = null;
+        }
+        
+        // Start processing if not already
+        if (!isProcessingQueueRef.current) {
+          processQueue();
+        }
+      } else if (!isStillBlocked && suppressedQueueRef.current.length === 0) {
+        // No more suppressed items and flags are clear - stop checking
+        if (checkIntervalRef.current !== null) {
+          clearInterval(checkIntervalRef.current);
+          checkIntervalRef.current = null;
+        }
+      }
+    }, 100); // Check every 100ms
+  }
+
   async function processQueue(): Promise<void> {
     if (isProcessingQueueRef.current || queueRef.current.length === 0) {
       return;
@@ -72,6 +137,20 @@ export function useAudioPlayer() {
     isProcessingQueueRef.current = true;
 
     while (queueRef.current.length > 0) {
+      // Before processing each item, check if flags became active
+      const shouldSuppress = 
+        (options?.isDetecting && options.isDetecting()) ||
+        (options?.isSpeaking && options.isSpeaking());
+
+      if (shouldSuppress) {
+        console.log("[AudioPlayer] Flags became active during processing - moving remaining queue to suppressed");
+        // Move remaining queue to suppressed
+        suppressedQueueRef.current = [...queueRef.current, ...suppressedQueueRef.current];
+        queueRef.current = [];
+        startCheckingForClearFlags();
+        break;
+      }
+
       const item = queueRef.current.shift()!;
       try {
         const duration = await playAudio(item.audioData);
@@ -188,20 +267,44 @@ export function useAudioPlayer() {
 
     setIsPlaying(false);
 
-    // Reject all pending promises in the queue
+    // Reject all pending promises in the main queue
     while (queueRef.current.length > 0) {
       const item = queueRef.current.shift()!;
       item.reject(new Error("Playback stopped"));
+    }
+
+    // Reject all pending promises in the suppressed queue
+    while (suppressedQueueRef.current.length > 0) {
+      const item = suppressedQueueRef.current.shift()!;
+      item.reject(new Error("Playback stopped"));
+    }
+
+    // Clear check interval
+    if (checkIntervalRef.current !== null) {
+      clearInterval(checkIntervalRef.current);
+      checkIntervalRef.current = null;
     }
 
     isProcessingQueueRef.current = false;
   }
 
   function clearQueue(): void {
-    // Reject all pending promises in the queue
+    // Reject all pending promises in the main queue
     while (queueRef.current.length > 0) {
       const item = queueRef.current.shift()!;
       item.reject(new Error("Queue cleared"));
+    }
+
+    // Reject all pending promises in the suppressed queue
+    while (suppressedQueueRef.current.length > 0) {
+      const item = suppressedQueueRef.current.shift()!;
+      item.reject(new Error("Queue cleared"));
+    }
+
+    // Clear check interval
+    if (checkIntervalRef.current !== null) {
+      clearInterval(checkIntervalRef.current);
+      checkIntervalRef.current = null;
     }
   }
 
