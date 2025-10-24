@@ -36,6 +36,8 @@ export function AgentInputArea({ agentId, isRealtimeMode }: AgentInputAreaProps)
   const animatedStyle = useAnimatedStyle(() => {
     return {
       opacity: opacity.value,
+      // When hidden, use absolute positioning to remove from layout flow
+      position: opacity.value < 0.5 ? ("absolute" as const) : ("relative" as const),
       // When hidden, disable pointer events so GlobalFooter's controls are interactive
       pointerEvents: opacity.value < 0.5 ? ("none" as const) : ("auto" as const),
     };
