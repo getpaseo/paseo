@@ -64,7 +64,8 @@ class ACPClient implements Client {
   constructor(
     private agentId: string,
     private onUpdate: (agentId: string, update: SessionNotification) => void,
-    private onPermissionRequest: (agentId: string, params: RequestPermissionRequest) => Promise<RequestPermissionResponse>
+    private onPermissionRequest: (agentId: string, params: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
+    private persistence: AgentPersistence
   ) {}
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -75,6 +76,19 @@ class ACPClient implements Client {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
+    // Check if this update contains a Claude session ID
+    const claudeSessionId = params._meta?.claudeSessionId as string | undefined;
+    if (claudeSessionId && this.persistence) {
+      const persisted = await this.persistence.load();
+      const persistedAgent = persisted.find(a => a.id === this.agentId);
+      if (persistedAgent && persistedAgent.options.type === "claude") {
+        if (persistedAgent.options.sessionId === null || persistedAgent.options.sessionId !== claudeSessionId) {
+          // Update the Claude session ID
+          persistedAgent.options.sessionId = claudeSessionId;
+          await this.persistence.upsert(persistedAgent);
+        }
+      }
+    }
     this.onUpdate(this.agentId, params);
   }
 
@@ -138,6 +152,13 @@ export class AgentManager {
     const agentId = persisted.id;
     const cwd = expandTilde(persisted.cwd);
 
+    // Check if Claude agent has a session ID
+    if (persisted.options.type === "claude" && persisted.options.sessionId === null) {
+      throw new Error(
+        `Cannot resume agent ${agentId}: Claude agent has no session ID. This agent was created but never received any prompts.`
+      );
+    }
+
     // Validate that the working directory exists
     try {
       await access(cwd, constants.R_OK | constants.X_OK);
@@ -166,7 +187,8 @@ export class AgentManager {
       },
       (id, params) => {
         return this.handlePermissionRequest(id, params);
-      }
+      },
+      this.persistence
     );
     const connection = new ClientSideConnection(() => client, stream);
 
@@ -227,7 +249,7 @@ export class AgentManager {
       // Use the loadSession API to resume the existing session
       // If this is a Claude agent, use the Claude's internal session ID for resumption
       const sessionIdToResume = persisted.options.type === "claude"
-        ? persisted.options.sessionId
+        ? persisted.options.sessionId! // Not null because we checked above
         : persisted.sessionId;
 
       console.log(`[Agent ${agentId}] Loading session - ACP: ${persisted.sessionId}, Claude: ${sessionIdToResume}`);
@@ -305,7 +327,8 @@ export class AgentManager {
       },
       (id, params) => {
         return this.handlePermissionRequest(id, params);
-      }
+      },
+      this.persistence
     );
     const connection = new ClientSideConnection(() => client, stream);
 
@@ -407,7 +430,7 @@ export class AgentManager {
           sessionId: agent.sessionId,
           options: {
             type: "claude",
-            sessionId: claudeSessionId || agent.sessionId, // Use Claude's internal session ID if available
+            sessionId: claudeSessionId || null, // null until first prompt
           },
           createdAt: agent.createdAt.toISOString(),
           cwd: agent.cwd,
