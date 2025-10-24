@@ -1,31 +1,34 @@
+import { useEffect, useMemo } from "react";
 import { View, Text } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle, FadeIn } from "react-native-reanimated";
+import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentStatusBar } from "@/components/agent-status-bar";
 import { useSession } from "@/contexts/session-context";
-import { useRealtime } from "@/contexts/realtime-context";
+import { FOOTER_HEIGHT, useFooterControls } from "@/contexts/footer-controls-context";
 
 export default function AgentScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { agents, agentStreamState, pendingPermissions, respondToPermission } = useSession();
-  const { isRealtimeMode } = useRealtime();
+  const { registerFooterControls, unregisterFooterControls } = useFooterControls();
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const footerHeight = FOOTER_HEIGHT + insets.bottom;
+  const bottomInset = insets.bottom;
   const animatedKeyboardStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
-    const padding = Math.max(0, absoluteHeight - insets.bottom);
+    const padding = Math.max(0, absoluteHeight - bottomInset);
     return {
-      paddingBottom: padding,
+      paddingBottom: footerHeight + padding,
     };
   });
 
@@ -34,6 +37,24 @@ export default function AgentScreen() {
   const agentPermissions = new Map(
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
+
+  const agentControls = useMemo(() => {
+    if (!id) return null;
+    return <AgentInputArea agentId={id} />;
+  }, [id]);
+
+  useEffect(() => {
+    if (!agentControls || !agent) {
+      unregisterFooterControls();
+      return;
+    }
+
+    registerFooterControls(agentControls);
+
+    return () => {
+      unregisterFooterControls();
+    };
+  }, [agentControls, agent, registerFooterControls, unregisterFooterControls]);
 
   if (!agent) {
     return (
@@ -63,16 +84,9 @@ export default function AgentScreen() {
           }
         />
 
-        {/* Footer area - status bar + controls */}
-        <View style={[styles.footerContainer, !isRealtimeMode && { paddingBottom: insets.bottom }]}>
-          {/* Status bar - always visible, floating above controls */}
+        {/* Footer area - status bar pinned within screen */}
+        <View style={styles.footerContainer}>
           <AgentStatusBar agentId={id!} />
-          
-          {/* Controls - AgentInputArea always mounted, fades in/out */}
-          {/* When in realtime mode, GlobalFooter's RealtimeControls overlays this */}
-          <View style={styles.controlsContainer}>
-            <AgentInputArea agentId={id!} isRealtimeMode={isRealtimeMode} />
-          </View>
         </View>
       </ReanimatedAnimated.View>
     </View>
@@ -89,10 +103,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerContainer: {
     backgroundColor: theme.colors.background,
-  },
-  controlsContainer: {
-    borderTopWidth: theme.borderWidth[1],
-    borderTopColor: theme.colors.border,
+    paddingBottom: theme.spacing[6],
   },
   errorContainer: {
     flex: 1,
