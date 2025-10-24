@@ -103,7 +103,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerContainer: {
     backgroundColor: theme.colors.background,
-    paddingBottom: theme.spacing[6],
   },
   errorContainer: {
     flex: 1,
