@@ -15,6 +15,7 @@ import Animated, {
   withTiming,
   useSharedValue,
 } from "react-native-reanimated";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 
 export function GlobalFooter() {
   const { theme } = useUnistyles();
@@ -31,12 +32,26 @@ export function GlobalFooter() {
   const showAgentControls = isAgentScreen && hasRegisteredControls;
 
   const transition = useSharedValue(isRealtimeMode ? 1 : 0);
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const bottomInset = insets.bottom;
 
   useEffect(() => {
     if (showAgentControls) {
       transition.value = withTiming(isRealtimeMode ? 1 : 0, { duration: 250 });
     }
   }, [isRealtimeMode, showAgentControls]);
+
+  const keyboardAnimatedStyle = useAnimatedStyle(
+    () => {
+      "worklet";
+      const absoluteHeight = Math.abs(keyboardHeight.value);
+      const shift = Math.max(0, absoluteHeight - bottomInset);
+      return {
+        transform: [{ translateY: -shift }],
+      };
+    },
+    [bottomInset],
+  );
 
   const realtimeAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -54,13 +69,14 @@ export function GlobalFooter() {
 
   if (showAgentControls) {
     return (
-      <View
+      <Animated.View
         style={[
           styles.container,
           {
             paddingBottom: insets.bottom,
             height: FOOTER_HEIGHT + insets.bottom,
           },
+          keyboardAnimatedStyle,
         ]}
       >
         <View style={styles.content}>
@@ -75,7 +91,7 @@ export function GlobalFooter() {
             <RealtimeControls />
           </Animated.View>
         </View>
-      </View>
+      </Animated.View>
     );
   }
 
@@ -93,6 +109,7 @@ export function GlobalFooter() {
             paddingBottom: insets.bottom,
             height: FOOTER_HEIGHT + insets.bottom,
           },
+          keyboardAnimatedStyle,
         ]}
         entering={FadeIn.duration(400)}
         exiting={FadeOut.duration(250)}
@@ -113,6 +130,7 @@ export function GlobalFooter() {
           paddingBottom: insets.bottom,
           height: FOOTER_HEIGHT + insets.bottom,
         },
+        keyboardAnimatedStyle,
       ]}
     >
       <View style={styles.centeredButtonContainer}>
