@@ -80,7 +80,14 @@ async function main() {
     console.log("✓ OpenAI client initialized");
 
     // Initialize STT (Whisper)
-    initializeSTT({ apiKey });
+    const sttConfidenceThreshold = process.env.STT_CONFIDENCE_THRESHOLD
+      ? parseFloat(process.env.STT_CONFIDENCE_THRESHOLD)
+      : undefined; // Will default to -3.0 in stt-openai.ts
+
+    initializeSTT({
+      apiKey,
+      confidenceThreshold: sttConfidenceThreshold
+    });
 
     // Initialize TTS
     const ttsVoice = (process.env.TTS_VOICE || "alloy") as

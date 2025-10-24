@@ -190,6 +190,22 @@ export class Session {
           return;
         }
 
+        // Handle permission resolved notifications
+        if (notification.type === "permission_resolved") {
+          this.emit({
+            type: "agent_permission_resolved",
+            payload: {
+              agentId: notification.agentId,
+              requestId: notification.requestId,
+              optionId: notification.optionId,
+            },
+          });
+          console.log(
+            `[Session ${this.clientId}] Forwarded permission resolved for agent ${agentId} with requestId ${notification.requestId}`
+          );
+          return;
+        }
+
         // Handle status updates
         if (notification.type === "status") {
           const status = notification.status;

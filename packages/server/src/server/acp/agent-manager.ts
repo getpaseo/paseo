@@ -225,14 +225,27 @@ export class AgentManager {
       });
 
       // Use the loadSession API to resume the existing session
-      console.log(`[Agent ${agentId}] Loading session ${persisted.sessionId} via loadSession API`);
+      // If this is a Claude agent, use the Claude's internal session ID for resumption
+      const sessionIdToResume = persisted.options.type === "claude"
+        ? persisted.options.sessionId
+        : persisted.sessionId;
+
+      console.log(`[Agent ${agentId}] Loading session - ACP: ${persisted.sessionId}, Claude: ${sessionIdToResume}`);
       const sessionResponse = await agent.connection.loadSession({
-        sessionId: persisted.sessionId,
+        sessionId: sessionIdToResume,
         cwd,
         mcpServers: [],
       });
 
       console.log(`[Agent ${agentId}] Session loaded:`, JSON.stringify(sessionResponse, null, 2));
+
+      // Extract Claude's session ID from the response metadata if available
+      const claudeSessionId = sessionResponse._meta?.claudeSessionId as string | undefined;
+      if (claudeSessionId && persisted.options.type === "claude" && persisted.options.sessionId !== claudeSessionId) {
+        console.log(`[Agent ${agentId}] Updating Claude session ID from ${persisted.options.sessionId} to ${claudeSessionId}`);
+        persisted.options.sessionId = claudeSessionId;
+        await this.persistence.upsert(persisted);
+      }
 
       // Store session modes from response
       if (sessionResponse.modes) {
@@ -357,6 +370,13 @@ export class AgentManager {
       const sessionResponse = await agent.connection.newSession(sessionParams);
 
       agent.sessionId = sessionResponse.sessionId;
+
+      // Extract Claude's internal session ID from metadata
+      const claudeSessionId = sessionResponse._meta?.claudeSessionId as string | undefined;
+      if (claudeSessionId) {
+        console.log(`[Agent ${agentId}] Claude session ID: ${claudeSessionId}, ACP session ID: ${sessionResponse.sessionId}`);
+      }
+
       console.log(`[Agent ${agentId}] newSession response:`, JSON.stringify(sessionResponse, null, 2));
 
       // Store session modes from response
@@ -385,6 +405,10 @@ export class AgentManager {
           id: agentId,
           title: agent.title || `Agent ${agentId.slice(0, 8)}`,
           sessionId: agent.sessionId,
+          options: {
+            type: "claude",
+            sessionId: claudeSessionId || agent.sessionId, // Use Claude's internal session ID if available
+          },
           createdAt: agent.createdAt.toISOString(),
           cwd: agent.cwd,
         });
@@ -1030,6 +1054,32 @@ export class AgentManager {
 
     // Remove from pending
     agent.pendingPermissions.delete(requestId);
+
+    // Emit permission_resolved notification so UI can update
+    const agentUpdate: AgentUpdate = {
+      agentId,
+      timestamp: new Date(),
+      notification: {
+        type: 'permission_resolved',
+        requestId,
+        agentId,
+        optionId,
+      },
+    };
+
+    // Store the update in history
+    agent.updates.push(agentUpdate);
+
+    // Notify all subscribers (including Session which will forward to WebSocket)
+    for (const subscriber of agent.subscribers) {
+      try {
+        subscriber(agentUpdate);
+      } catch (error) {
+        console.error(`[Agent ${agentId}] Subscriber error:`, error);
+      }
+    }
+
+    console.log(`[Agent ${agentId}] Permission resolved notification emitted: ${requestId}`);
   }
 
   /**

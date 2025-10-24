@@ -298,6 +298,15 @@ export const AgentPermissionRequestMessageSchema = z.object({
   }),
 });
 
+export const AgentPermissionResolvedMessageSchema = z.object({
+  type: z.literal("agent_permission_resolved"),
+  payload: z.object({
+    agentId: z.string(),
+    requestId: z.string(),
+    optionId: z.string(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -313,6 +322,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListConversationsResponseMessageSchema,
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
+  AgentPermissionResolvedMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -334,6 +344,7 @@ export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
 export type ListConversationsResponseMessage = z.infer<typeof ListConversationsResponseMessageSchema>;
 export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
+export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

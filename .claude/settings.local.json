@@ -11,9 +11,14 @@
       "Bash(tmux capture-pane:*)",
       "Read(//tmp/claude-code-acp/**)",
       "Read(//private/tmp/claude-code-acp/node_modules/@anthropic-ai/claude-agent-sdk/**)",
-      "Bash(identify:*)"
+      "Bash(identify:*)",
+      "Bash(npm view:*)",
+      "Read(//Users/moboudra/dotfiles/claude/projects/**)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "/Users/moboudra/dev/claude-code-acp/"
+    ]
   }
 }

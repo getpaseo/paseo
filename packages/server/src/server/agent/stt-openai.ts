@@ -7,12 +7,22 @@ import { v4 as uuidv4 } from "uuid";
 export interface STTConfig {
   apiKey: string;
   model?: "whisper-1";
+  confidenceThreshold?: number; // Default: -3.0
+}
+
+export interface LogprobToken {
+  token: string;
+  logprob: number;
+  bytes?: number[];
 }
 
 export interface TranscriptionResult {
   text: string;
   language?: string;
   duration?: number;
+  logprobs?: LogprobToken[];
+  avgLogprob?: number;
+  isLowConfidence?: boolean;
 }
 
 let openaiClient: OpenAI | null = null;
@@ -53,19 +63,60 @@ export async function transcribeAudio(
     // Call OpenAI Whisper API
     const response = await openaiClient.audio.transcriptions.create({
       file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-      model: config.model || "gpt-4o-transcribe",
+      language: "en",
+      model: config.model ?? "gpt-4o-transcribe",
+      include: ["logprobs"],
       response_format: "json", // Get language and duration info
     });
 
     const duration = Date.now() - startTime;
 
+    // Get confidence threshold (default: -3.0)
+    const confidenceThreshold = config.confidenceThreshold ?? -3.0;
+
+    // Analyze logprobs if available
+    let avgLogprob: number | undefined;
+    let isLowConfidence = false;
+    const logprobs = response.logprobs as LogprobToken[] | undefined;
+
+    if (logprobs && logprobs.length > 0) {
+      // Calculate average logprob
+      const totalLogprob = logprobs.reduce(
+        (sum, token) => sum + token.logprob,
+        0
+      );
+      avgLogprob = totalLogprob / logprobs.length;
+
+      // Check if transcription is low confidence
+      isLowConfidence = avgLogprob < confidenceThreshold;
+
+      if (isLowConfidence) {
+        console.log(
+          `[STT] Low confidence transcription detected (avg: ${avgLogprob.toFixed(
+            2
+          )}, threshold: ${confidenceThreshold}): "${response.text}"`
+        );
+        console.log(
+          `[STT] Token logprobs:`,
+          logprobs.map((t) => `${t.token}:${t.logprob.toFixed(2)}`).join(", ")
+        );
+      }
+    }
+
     console.log(
-      `[STT] Transcription complete in ${duration}ms: "${response.text}"`
+      `[STT] Transcription complete in ${duration}ms: "${response.text}"${
+        avgLogprob !== undefined
+          ? ` (avg logprob: ${avgLogprob.toFixed(2)})`
+          : ""
+      }`
     );
 
     return {
       text: response.text,
       duration: duration,
+      logprobs: logprobs,
+      avgLogprob: avgLogprob,
+      isLowConfidence: isLowConfidence,
     };
   } catch (error: any) {
     console.error("[STT] Transcription error:", error);
