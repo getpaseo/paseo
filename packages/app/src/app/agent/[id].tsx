@@ -7,13 +7,16 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { AgentStatusBar } from "@/components/agent-status-bar";
 import { useSession } from "@/contexts/session-context";
+import { useRealtime } from "@/contexts/realtime-context";
 
 export default function AgentScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { agents, agentStreamState, pendingPermissions, respondToPermission } = useSession();
+  const { isRealtimeMode } = useRealtime();
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -60,13 +63,19 @@ export default function AgentScreen() {
           }
         />
 
-        {/* Agent Input - will hide itself when realtime is active */}
-        <ReanimatedAnimated.View
-          entering={FadeIn.duration(250).delay(100)}
-          style={[styles.inputContainer, { paddingBottom: insets.bottom }]}
-        >
-          <AgentInputArea agentId={id!} />
-        </ReanimatedAnimated.View>
+        {/* Footer area - status bar + controls */}
+        <View style={[styles.footerContainer, { paddingBottom: insets.bottom }]}>
+          {/* Status bar - always visible, floating above controls */}
+          <AgentStatusBar agentId={id!} />
+          
+          {/* Controls - only show AgentInputArea when not in realtime mode */}
+          {/* When in realtime mode, GlobalFooter handles showing RealtimeControls */}
+          {!isRealtimeMode && (
+            <View style={styles.controlsContainer}>
+              <AgentInputArea agentId={id!} />
+            </View>
+          )}
+        </View>
       </ReanimatedAnimated.View>
     </View>
   );
@@ -80,8 +89,10 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     flex: 1,
   },
-  inputContainer: {
+  footerContainer: {
     backgroundColor: theme.colors.background,
+  },
+  controlsContainer: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
