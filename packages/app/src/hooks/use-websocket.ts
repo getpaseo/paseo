@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type {
   WSInboundMessage,
   WSOutboundMessage,
@@ -150,12 +150,15 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
     [send]
   );
 
-  return {
-    isConnected,
-    conversationId: currentConversationId,
-    send,
-    on,
-    sendPing,
-    sendUserMessage,
-  };
+  return useMemo(
+    () => ({
+      isConnected,
+      conversationId: currentConversationId,
+      send,
+      on,
+      sendPing,
+      sendUserMessage,
+    }),
+    [isConnected, currentConversationId, send, on, sendPing, sendUserMessage]
+  );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { View, Text, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,7 +18,6 @@ export default function AgentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { agents, agentStreamState, pendingPermissions, respondToPermission, initializeAgent } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
-  const [isContentReady, setIsContentReady] = useState(false);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -38,6 +37,9 @@ export default function AgentScreen() {
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
 
+  // Agent is initializing if we don't have stream state yet
+  const isInitializing = id ? !agentStreamState.has(id) : false;
+
   useEffect(() => {
     if (!id) {
       return;
@@ -50,39 +52,8 @@ export default function AgentScreen() {
     return <AgentInputArea agentId={id} />;
   }, [id]);
 
-  // Defer heavy rendering to next frame for faster initial paint
   useEffect(() => {
-    let isMounted = true;
-    let frameId: number | null = null;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-    const markReady = () => {
-      if (isMounted) {
-        setIsContentReady(true);
-      }
-    };
-
-    if (typeof requestAnimationFrame === "function") {
-      frameId = requestAnimationFrame(markReady);
-    } else {
-      timeoutId = setTimeout(markReady, 0);
-    }
-
-    return () => {
-      isMounted = false;
-
-      if (frameId !== null && typeof cancelAnimationFrame === "function") {
-        cancelAnimationFrame(frameId);
-      }
-
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!agentControls || !agent || !isContentReady) {
+    if (!agentControls || !agent || isInitializing) {
       unregisterFooterControls();
       return;
     }
@@ -92,7 +63,7 @@ export default function AgentScreen() {
     return () => {
       unregisterFooterControls();
     };
-  }, [agentControls, agent, isContentReady, registerFooterControls, unregisterFooterControls]);
+  }, [agentControls, agent, isInitializing, registerFooterControls, unregisterFooterControls]);
 
   if (!agent) {
     return (
@@ -112,7 +83,12 @@ export default function AgentScreen() {
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        {isContentReady ? (
+        {isInitializing ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>Loading agent...</Text>
+          </View>
+        ) : (
           <>
             <AgentStreamView
               agentId={id!}
@@ -129,10 +105,6 @@ export default function AgentScreen() {
               <AgentStatusBar agentId={id!} />
             </View>
           </>
-        ) : (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-          </View>
         )}
       </ReanimatedAnimated.View>
     </View>
@@ -154,6 +126,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.mutedForeground,
   },
   errorContainer: {
     flex: 1,

@@ -923,12 +923,7 @@ export class Session {
   private async sendSessionState(): Promise<void> {
     try {
       // Get live agents with session modes
-      const agents = this.agentManager?.listAgents() || [];
-
-      // Subscribe to all existing agents so future updates stream through
-      for (const agent of agents) {
-        this.subscribeToAgent(agent.id);
-      }
+      const agents = this.agentManager.listAgents();
 
       // Get live commands from terminal manager
       let commands: any[] = [];
