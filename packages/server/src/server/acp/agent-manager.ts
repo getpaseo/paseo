@@ -505,18 +505,10 @@ export class AgentManager {
     return Array.from(this.agents.values()).map((agent) => {
       const status = getAgentStatusFromState(agent.state);
       const error = getAgentError(agent.state);
-      const sessionId =
-        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
-          ? agent.state.runtime.sessionId
-          : null;
-      const currentModeId =
-        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
-          ? agent.state.runtime.currentModeId
-          : null;
-      const availableModes =
-        agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
-          ? agent.state.runtime.availableModes
-          : null;
+      const runtime = this.getRuntime(agent);
+      const sessionId = runtime?.sessionId ?? null;
+      const currentModeId = runtime?.currentModeId ?? null;
+      const availableModes = runtime?.availableModes ?? null;
 
       return {
         id: agent.id,
@@ -562,6 +554,43 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
     return [...agent.updates];
+  }
+
+  /**
+   * Lazily initialize an agent and return its info and existing history
+   * Used by clients to opt-in to agent startup on demand
+   */
+  async initializeAgentAndGetHistory(
+    agentId: string
+  ): Promise<{ info: AgentInfo; updates: AgentUpdate[] }> {
+    await this.ensureInitialized(agentId);
+
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const status = getAgentStatusFromState(agent.state);
+    const error = getAgentError(agent.state);
+    const runtime = this.getRuntime(agent);
+
+    const info: AgentInfo = {
+      id: agent.id,
+      status,
+      createdAt: agent.createdAt,
+      type: "claude",
+      sessionId: runtime?.sessionId ?? null,
+      error: error ?? null,
+      currentModeId: runtime?.currentModeId ?? null,
+      availableModes: runtime?.availableModes ?? null,
+      title: agent.title,
+      cwd: agent.cwd,
+    };
+
+    return {
+      info,
+      updates: [...agent.updates],
+    };
   }
 
   /**
@@ -645,6 +674,8 @@ export class AgentManager {
         case "initializing":
           agent.state = {
             type: "initializing",
+            persistedSessionId: agent.state.persistedSessionId,
+            initPromise: agent.state.initPromise,
             runtime: updatedRuntime,
             initStartedAt: agent.state.initStartedAt,
           };
@@ -755,7 +786,7 @@ export class AgentManager {
     }
 
     if (agent.state.type === "initializing") {
-      return agent.state.runtime;
+      return agent.state.runtime ?? null;
     }
 
     if (agent.state.type === "failed" && agent.state.runtime) {
@@ -820,10 +851,16 @@ export class AgentManager {
       availableModes: null,
     };
 
+    if (agent.state.type !== "initializing") {
+      throw new Error(`Agent ${agentId} must be initializing before starting runtime`);
+    }
+
     agent.state = {
       type: "initializing",
+      persistedSessionId: agent.state.persistedSessionId,
+      initPromise: agent.state.initPromise,
+      initStartedAt: agent.state.initStartedAt,
       runtime,
-      initStartedAt: new Date(),
     };
 
     agentProcess.on("error", (error) => {

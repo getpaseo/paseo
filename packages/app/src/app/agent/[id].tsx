@@ -16,7 +16,7 @@ export default function AgentScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { agents, agentStreamState, pendingPermissions, respondToPermission } = useSession();
+  const { agents, agentStreamState, pendingPermissions, respondToPermission, initializeAgent } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const [isContentReady, setIsContentReady] = useState(false);
 
@@ -37,6 +37,13 @@ export default function AgentScreen() {
   const agentPermissions = new Map(
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
+
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+    initializeAgent({ agentId: id });
+  }, [id, initializeAgent]);
 
   const agentControls = useMemo(() => {
     if (!id) return null;

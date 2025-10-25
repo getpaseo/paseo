@@ -57,15 +57,15 @@ export interface Agent {
   status: AgentStatus;
   createdAt: Date;
   type: "claude";
-  sessionId?: string;
-  error?: string;
-  currentModeId?: string;
-  availableModes?: Array<{
+  sessionId: string | null;
+  error: string | null;
+  currentModeId: string | null;
+  availableModes: Array<{
     id: string;
     name: string;
     description?: string | null;
-  }>;
-  title?: string;
+  }> | null;
+  title: string | null;
   cwd: string;
 }
 
@@ -112,6 +112,7 @@ interface SessionContextValue {
   setPendingPermissions: (perms: Map<string, PendingPermission> | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>)) => void;
 
   // Helpers
+  initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string) => void;
   sendAgentAudio: (agentId: string, audioBlob: Blob) => Promise<void>;
   createAgent: (options: { cwd: string; initialMode?: string; requestId?: string }) => void;
@@ -165,12 +166,32 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       console.log("[Session] Session state:", agentsList.length, "agents,", commandsList.length, "commands");
 
-      setAgents(new Map(agentsList.map((a) => [a.id, {
-        ...a,
-        createdAt: new Date(a.createdAt),
-      } as Agent])));
+      setAgents(
+        new Map(
+          agentsList.map((agentInfo) => {
+            const createdAt = new Date(agentInfo.createdAt);
+            return [
+              agentInfo.id,
+              {
+                id: agentInfo.id,
+                status: agentInfo.status as AgentStatus,
+                type: agentInfo.type,
+                createdAt,
+                title: agentInfo.title ?? null,
+                cwd: agentInfo.cwd,
+                sessionId: agentInfo.sessionId ?? null,
+                error: agentInfo.error ?? null,
+                currentModeId: agentInfo.currentModeId ?? null,
+                availableModes: agentInfo.availableModes ?? null,
+              } satisfies Agent,
+            ];
+          })
+        )
+      );
 
       setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
+      setAgentStreamState(new Map());
+      setAgentUpdates(new Map());
     });
 
     // Agent created
@@ -185,14 +206,75 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         status: status as AgentStatus,
         type,
         createdAt: new Date(),
-        title,
+        title: title ?? null,
         cwd,
-        currentModeId,
-        availableModes,
+        sessionId: null,
+        error: null,
+        currentModeId: currentModeId ?? null,
+        availableModes: availableModes ?? null,
       };
 
       setAgents((prev) => new Map(prev).set(agentId, agent));
       setAgentStreamState((prev) => new Map(prev).set(agentId, []));
+    });
+
+    // Agent initialized - receive full history on demand
+    const unsubAgentInitialized = ws.on("agent_initialized", (message) => {
+      if (message.type !== "agent_initialized") return;
+      const { agentId, info, updates } = message.payload;
+
+      console.log(
+        "[Session] Agent initialized:",
+        agentId,
+        "updates:",
+        updates.length
+      );
+
+      setAgents((prev) => {
+        const next = new Map(prev);
+        const createdAt = new Date(info.createdAt);
+        const existing = next.get(agentId);
+
+        const normalizedAgent: Agent = {
+          id: info.id,
+          status: info.status as AgentStatus,
+          type: info.type,
+          createdAt,
+          title: info.title ?? null,
+          cwd: info.cwd,
+          sessionId: info.sessionId ?? null,
+          error: info.error ?? null,
+          currentModeId: info.currentModeId ?? null,
+          availableModes: info.availableModes ?? null,
+        };
+
+        next.set(
+          agentId,
+          existing
+            ? {
+                ...existing,
+                ...normalizedAgent,
+              }
+            : normalizedAgent
+        );
+        return next;
+      });
+
+      const normalizedUpdates: AgentUpdate[] = updates.map((update) => ({
+        agentId: update.agentId,
+        timestamp: new Date(update.timestamp),
+        notification: update.notification,
+      }));
+
+      setAgentUpdates((prev) => new Map(prev).set(agentId, normalizedUpdates));
+
+      setAgentStreamState((prev) => {
+        const reconstructedStream = normalizedUpdates.reduce<StreamItem[]>(
+          (acc, update) => reduceStreamUpdate(acc, update.notification, update.timestamp),
+          []
+        );
+        return new Map(prev).set(agentId, reconstructedStream);
+      });
     });
 
     // Agent status update (mode changes, title changes, etc.)
@@ -209,11 +291,11 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         const updatedAgent: Agent = {
           ...existingAgent,
           status: info.status as AgentStatus,
-          sessionId: info.sessionId,
-          error: info.error,
-          currentModeId: info.currentModeId,
-          availableModes: info.availableModes,
-          title: info.title,
+          sessionId: info.sessionId ?? null,
+          error: info.error ?? null,
+          currentModeId: info.currentModeId ?? null,
+          availableModes: info.availableModes ?? null,
+          title: info.title ?? null,
           cwd: info.cwd,
         };
 
@@ -224,11 +306,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     // Agent update
     const unsubAgentUpdate = ws.on("agent_update", (message) => {
       if (message.type !== "agent_update") return;
-      const { agentId, notification } = message.payload;
+      const { agentId, notification, timestamp: rawTimestamp } = message.payload;
+      const timestamp = new Date(rawTimestamp);
 
       const update: AgentUpdate = {
         agentId,
-        timestamp: new Date(),
+        timestamp,
         notification,
       };
 
@@ -240,7 +323,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       // Update stream state using reducer
       setAgentStreamState((prev) => {
         const currentStream = prev.get(agentId) || [];
-        const newStream = reduceStreamUpdate(currentStream, notification, new Date());
+        const newStream = reduceStreamUpdate(currentStream, notification, timestamp);
         return new Map(prev).set(agentId, newStream);
       });
     });
@@ -480,6 +563,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     return () => {
       unsubSessionState();
       unsubAgentCreated();
+      unsubAgentInitialized();
       unsubAgentStatus();
       unsubAgentUpdate();
       unsubPermissionRequest();
@@ -490,6 +574,18 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubTranscription();
     };
   }, [ws, audioPlayer, setIsPlayingAudio]);
+
+  const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "initialize_agent_request",
+        agentId,
+        requestId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
 
   const sendAgentMessage = useCallback((agentId: string, message: string) => {
     // Generate unique message ID for deduplication
@@ -636,6 +732,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setAgentUpdates,
     pendingPermissions,
     setPendingPermissions,
+    initializeAgent,
     sendAgentMessage,
     sendAgentAudio,
     createAgent,
