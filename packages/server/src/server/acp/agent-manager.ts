@@ -1406,4 +1406,106 @@ export class AgentManager {
 
     return allPermissions;
   }
+
+  /**
+   * Gracefully shutdown all agents
+   * Waits for processing agents to finish, then terminates all processes
+   * @param timeout - Maximum time to wait for processing agents (ms), default 2 minutes
+   */
+  async shutdown(timeout: number = 120000): Promise<void> {
+    console.log("[AgentManager] Starting graceful shutdown...");
+
+    // Find agents currently processing work
+    const processingAgents = Array.from(this.agents.values()).filter(
+      (agent) => agent.state.type === "processing"
+    );
+
+    if (processingAgents.length > 0) {
+      console.log(
+        `[AgentManager] Waiting for ${processingAgents.length} agent(s) to finish processing...`
+      );
+
+      // Wait for processing agents to complete or timeout
+      await Promise.race([
+        // Wait for all processing agents to finish
+        Promise.all(
+          processingAgents.map((agent) => this.waitForAgentToFinish(agent.id))
+        ),
+        // Timeout fallback
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            console.log(
+              `[AgentManager] Timeout reached (${timeout}ms), proceeding with shutdown`
+            );
+            resolve();
+          }, timeout)
+        ),
+      ]);
+    }
+
+    // Persist state and terminate all agents
+    console.log("[AgentManager] Persisting agent state and terminating...");
+
+    const shutdownPromises = Array.from(this.agents.values()).map(
+      async (agent) => {
+        try {
+          const runtime = this.getRuntime(agent);
+
+          // Persist current state if agent has a session
+          if (runtime) {
+            await this.persistence.upsert({
+              id: agent.id,
+              title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
+              sessionId: runtime.sessionId,
+              options: agent.options,
+              createdAt: agent.createdAt.toISOString(),
+              cwd: agent.cwd,
+            });
+            console.log(`[Agent ${agent.id}] State persisted`);
+
+            // Send graceful termination signal
+            runtime.process.kill("SIGTERM");
+          }
+        } catch (error) {
+          console.error(`[Agent ${agent.id}] Shutdown error:`, error);
+        }
+      }
+    );
+
+    await Promise.all(shutdownPromises);
+
+    // Give processes a moment to exit cleanly
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    console.log("[AgentManager] Graceful shutdown complete");
+  }
+
+  /**
+   * Wait for a specific agent to finish processing
+   */
+  private waitForAgentToFinish(agentId: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const agent = this.agents.get(agentId);
+      if (!agent || agent.state.type !== "processing") {
+        resolve();
+        return;
+      }
+
+      console.log(`[Agent ${agentId}] Waiting for work to complete...`);
+
+      // Subscribe to status changes
+      const unsubscribe = this.subscribeToUpdates(agentId, (update) => {
+        if (update.notification.type === "status") {
+          const status = update.notification.status;
+          if (status !== "processing") {
+            console.log(
+              `[Agent ${agentId}] Finished processing (status: ${status})`
+            );
+            unsubscribe();
+            resolve();
+          }
+        }
+      });
+    });
+  }
 }

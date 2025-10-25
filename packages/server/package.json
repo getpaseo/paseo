@@ -4,7 +4,8 @@
   "description": "Voice assistant backend server",
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
+    "dev": "NODE_ENV=development node --watch --import tsx src/server/index.ts",
+    "dev:tsx": "NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
     "build": "tsc -p tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit",

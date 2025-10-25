@@ -120,14 +120,29 @@ async function main() {
   });
 
   // Graceful shutdown
-  process.on("SIGTERM", () => {
-    console.log("\nSIGTERM received, shutting down gracefully...");
+  const handleShutdown = async (signal: string) => {
+    console.log(`\n${signal} received, shutting down gracefully...`);
+
+    // Wait for agents to finish work (with 2 minute timeout)
+    await agentManager.shutdown(120000);
+
+    // Close WebSocket and HTTP servers
     wsServer.close();
     httpServer.close(() => {
       console.log("Server closed");
       process.exit(0);
     });
-  });
+
+    // Force exit after 10 seconds if HTTP server doesn't close
+    // This runs AFTER agent shutdown completes
+    setTimeout(() => {
+      console.log("Forcing shutdown - HTTP server didn't close in time");
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+  process.on("SIGINT", () => handleShutdown("SIGINT"));
 }
 
 main();
