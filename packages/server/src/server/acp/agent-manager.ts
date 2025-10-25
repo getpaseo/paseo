@@ -81,11 +81,16 @@ class ACPClient implements Client {
   constructor(
     private agentId: string,
     private onUpdate: (agentId: string, update: SessionNotification) => void,
-    private onPermissionRequest: (agentId: string, params: RequestPermissionRequest) => Promise<RequestPermissionResponse>,
+    private onPermissionRequest: (
+      agentId: string,
+      params: RequestPermissionRequest
+    ) => Promise<RequestPermissionResponse>,
     private persistence: AgentPersistence
   ) {}
 
-  async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  async requestPermission(
+    params: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
     console.log(`[Agent ${this.agentId}] Permission requested:`, params);
 
     // Forward to agent manager which will handle the permission flow
@@ -97,9 +102,12 @@ class ACPClient implements Client {
     const claudeSessionId = params._meta?.claudeSessionId as string | undefined;
     if (claudeSessionId && this.persistence) {
       const persisted = await this.persistence.load();
-      const persistedAgent = persisted.find(a => a.id === this.agentId);
+      const persistedAgent = persisted.find((a) => a.id === this.agentId);
       if (persistedAgent && persistedAgent.options.type === "claude") {
-        if (persistedAgent.options.sessionId === null || persistedAgent.options.sessionId !== claudeSessionId) {
+        if (
+          persistedAgent.options.sessionId === null ||
+          persistedAgent.options.sessionId !== claudeSessionId
+        ) {
           // Update the Claude session ID
           persistedAgent.options.sessionId = claudeSessionId;
           await this.persistence.upsert(persistedAgent);
@@ -109,7 +117,9 @@ class ACPClient implements Client {
     this.onUpdate(this.agentId, params);
   }
 
-  async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+  async readTextFile(
+    params: ReadTextFileRequest
+  ): Promise<ReadTextFileResponse> {
     console.log(`[Agent ${this.agentId}] Read text file:`, params.path);
     const fs = await import("fs/promises");
     try {
@@ -121,7 +131,9 @@ class ACPClient implements Client {
     }
   }
 
-  async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+  async writeTextFile(
+    params: WriteTextFileRequest
+  ): Promise<WriteTextFileResponse> {
     console.log(`[Agent ${this.agentId}] Write text file:`, params.path);
     const fs = await import("fs/promises");
     try {
@@ -151,7 +163,9 @@ export class AgentManager {
 
     for (const persistedAgent of persistedAgents) {
       try {
-        console.log(`[AgentManager] Loading agent ${persistedAgent.id} as uninitialized`);
+        console.log(
+          `[AgentManager] Loading agent ${persistedAgent.id} as uninitialized`
+        );
         const agent: ManagedAgent = {
           id: persistedAgent.id,
           cwd: expandTilde(persistedAgent.cwd),
@@ -172,11 +186,16 @@ export class AgentManager {
         };
         this.agents.set(persistedAgent.id, agent);
       } catch (error) {
-        console.error(`[AgentManager] Failed to load agent ${persistedAgent.id}:`, error);
+        console.error(
+          `[AgentManager] Failed to load agent ${persistedAgent.id}:`,
+          error
+        );
       }
     }
 
-    console.log(`[AgentManager] Loaded ${this.agents.size} agents as uninitialized`);
+    console.log(
+      `[AgentManager] Loaded ${this.agents.size} agents as uninitialized`
+    );
   }
 
   /**
@@ -214,7 +233,9 @@ export class AgentManager {
       currentAssistantMessageId: null,
       currentThoughtId: null,
       titleGenerationTriggered: false,
-      pendingSessionMode: options.initialPrompt ? null : options.initialMode ?? null,
+      pendingSessionMode: options.initialPrompt
+        ? null
+        : options.initialMode ?? null,
       state: {
         type: "uninitialized",
         persistedSessionId: null,
@@ -271,12 +292,17 @@ export class AgentManager {
 
     // Auto-cancel if agent is currently processing
     if (status === "processing") {
-      console.log(`[Agent ${agentId}] Auto-cancelling current task before new prompt`);
+      console.log(
+        `[Agent ${agentId}] Auto-cancelling current task before new prompt`
+      );
       try {
         await this.cancelAgent(agentId);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       } catch (error) {
-        console.warn(`[Agent ${agentId}] Cancel failed, continuing with new prompt:`, error);
+        console.warn(
+          `[Agent ${agentId}] Cancel failed, continuing with new prompt:`,
+          error
+        );
       }
     }
 
@@ -286,7 +312,9 @@ export class AgentManager {
       agent.state.type !== "processing" &&
       agent.state.type !== "completed"
     ) {
-      throw new Error(`Agent ${agentId} is not ready (state: ${agent.state.type})`);
+      throw new Error(
+        `Agent ${agentId} is not ready (state: ${agent.state.type})`
+      );
     }
 
     const runtime = agent.state.runtime;
@@ -305,13 +333,13 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: 'session',
+        type: "session",
         notification: {
           sessionId: runtime.sessionId,
           update: {
-            sessionUpdate: 'user_message_chunk',
+            sessionUpdate: "user_message_chunk",
             content: {
-              type: 'text',
+              type: "text",
               text: prompt,
             },
             ...(options?.messageId ? { messageId: options.messageId } : {}),
@@ -348,7 +376,9 @@ export class AgentManager {
     // Handle completion in background
     promptPromise
       .then((response) => {
-        console.log(`[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`);
+        console.log(
+          `[Agent ${agentId}] Prompt completed with stopReason: ${response.stopReason}`
+        );
 
         const agent = this.agents.get(agentId);
         if (!agent || agent.state.type !== "processing") return;
@@ -378,9 +408,12 @@ export class AgentManager {
         this.notifySubscribers(agentId);
       })
       .catch((error) => {
+        console.error(`[Agent ${agentId}] Prompt failed:`, error);
         this.handleAgentError(
           agentId,
-          `Prompt failed: ${error instanceof Error ? error.message : String(error)}`
+          `Prompt failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         );
       });
 
@@ -388,7 +421,9 @@ export class AgentManager {
 
     // If no maxWait specified, return immediately
     if (maxWait === undefined) {
-      console.log(`[Agent ${agentId}] Prompt sent (non-blocking, use get_agent_status to check completion)`);
+      console.log(
+        `[Agent ${agentId}] Prompt sent (non-blocking, use get_agent_status to check completion)`
+      );
       return { didComplete: false };
     }
 
@@ -400,11 +435,15 @@ export class AgentManager {
 
       const response = await Promise.race([promptPromise, timeoutPromise]);
 
-      console.log(`[Agent ${agentId}] Prompt completed within ${maxWait}ms with stopReason: ${response.stopReason}`);
+      console.log(
+        `[Agent ${agentId}] Prompt completed within ${maxWait}ms with stopReason: ${response.stopReason}`
+      );
       return { didComplete: true, stopReason: response.stopReason };
     } catch (error) {
       if (error instanceof Error && error.message === "timeout") {
-        console.log(`[Agent ${agentId}] Prompt did not complete within ${maxWait}ms (still processing)`);
+        console.log(
+          `[Agent ${agentId}] Prompt did not complete within ${maxWait}ms (still processing)`
+        );
         return { didComplete: false };
       }
       // Real error - rethrow
@@ -746,7 +785,8 @@ export class AgentManager {
       const initPromise = (async () => {
         try {
           const hasPersistedSession =
-            (agent.options.type === "claude" && agent.options.sessionId !== null) ||
+            (agent.options.type === "claude" &&
+              agent.options.sessionId !== null) ||
             !!persistedSessionId;
           const mode = hasPersistedSession ? "resume" : "new";
 
@@ -852,7 +892,9 @@ export class AgentManager {
     };
 
     if (agent.state.type !== "initializing") {
-      throw new Error(`Agent ${agentId} must be initializing before starting runtime`);
+      throw new Error(
+        `Agent ${agentId} must be initializing before starting runtime`
+      );
     }
 
     agent.state = {
@@ -906,7 +948,9 @@ export class AgentManager {
           null;
 
         if (!sessionIdToResume) {
-          throw new Error(`Cannot resume agent ${agentId}: No session ID available`);
+          throw new Error(
+            `Cannot resume agent ${agentId}: No session ID available`
+          );
         }
 
         console.log(`[Agent ${agentId}] Loading session: ${sessionIdToResume}`);
@@ -930,8 +974,9 @@ export class AgentManager {
       runtime.currentModeId = sessionResponse.modes?.currentModeId ?? null;
       runtime.availableModes = sessionResponse.modes?.availableModes ?? null;
 
-      const claudeSessionId =
-        sessionResponse._meta?.claudeSessionId as string | undefined;
+      const claudeSessionId = sessionResponse._meta?.claudeSessionId as
+        | string
+        | undefined;
       if (
         claudeSessionId &&
         agent.options.type === "claude" &&
@@ -944,7 +989,9 @@ export class AgentManager {
       }
 
       console.log(
-        `[Agent ${agentId}] Session ${mode === "new" ? "created" : "loaded"}: ACP=${effectiveSessionId}, Claude=${claudeSessionId || "N/A"}`
+        `[Agent ${agentId}] Session ${
+          mode === "new" ? "created" : "loaded"
+        }: ACP=${effectiveSessionId}, Claude=${claudeSessionId || "N/A"}`
       );
 
       await this.persistence.upsert({
@@ -980,7 +1027,9 @@ export class AgentManager {
         `[Agent ${agentId}] Runtime started successfully with mode: ${runtime.currentModeId}`
       );
     } catch (error) {
-      const errorMessage = `Runtime startup failed: ${error instanceof Error ? error.message : String(error)}`;
+      const errorMessage = `Runtime startup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
       console.error(`[Agent ${agentId}]`, errorMessage);
       agent.state = {
         type: "failed",
@@ -1000,7 +1049,10 @@ export class AgentManager {
    * Handle session notifications from the ACP connection
    * Augments agent message and thought chunks with stable message IDs
    */
-  private handleSessionNotification(agentId: string, update: SessionNotification): void {
+  private handleSessionNotification(
+    agentId: string,
+    update: SessionNotification
+  ): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
@@ -1010,7 +1062,7 @@ export class AgentManager {
     const updateType = update.update.sessionUpdate;
 
     // Agent message chunks - add stable message ID
-    if (updateType === 'agent_message_chunk') {
+    if (updateType === "agent_message_chunk") {
       if (!agent.currentAssistantMessageId) {
         agent.currentAssistantMessageId = uuidv4();
       }
@@ -1023,7 +1075,7 @@ export class AgentManager {
       };
     }
     // Agent thought chunks - add stable message ID
-    else if (updateType === 'agent_thought_chunk') {
+    else if (updateType === "agent_thought_chunk") {
       if (!agent.currentThoughtId) {
         agent.currentThoughtId = uuidv4();
       }
@@ -1040,7 +1092,7 @@ export class AgentManager {
       enrichedUpdate = update as EnrichedSessionNotification;
 
       // Reset message IDs on new turn (user message or tool call starts new turn)
-      if (updateType === 'tool_call' || updateType === 'user_message_chunk') {
+      if (updateType === "tool_call" || updateType === "user_message_chunk") {
         agent.currentAssistantMessageId = null;
         agent.currentThoughtId = null;
       }
@@ -1051,7 +1103,7 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: 'session',
+        type: "session",
         notification: enrichedUpdate,
       },
     };
@@ -1060,10 +1112,7 @@ export class AgentManager {
     agent.updates.push(agentUpdate);
 
     // Log update for debugging
-    console.log(
-      `[Agent ${agentId}] Session update:`,
-      updateType
-    );
+    console.log(`[Agent ${agentId}] Session update:`, updateType);
 
     // Notify all subscribers
     for (const subscriber of agent.subscribers) {
@@ -1086,7 +1135,9 @@ export class AgentManager {
 
     // Preserve runtime if it exists
     const runtime =
-      agent.state.type !== "uninitialized" && agent.state.type !== "killed" && agent.state.type !== "failed"
+      agent.state.type !== "uninitialized" &&
+      agent.state.type !== "killed" &&
+      agent.state.type !== "failed"
         ? agent.state.runtime
         : undefined;
 
@@ -1112,7 +1163,7 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: 'status',
+        type: "status",
         status,
         error,
       },
@@ -1191,7 +1242,9 @@ export class AgentManager {
     // Generate unique request ID
     const requestId = uuidv4();
 
-    console.log(`[Agent ${agentId}] Creating pending permission request: ${requestId}`);
+    console.log(
+      `[Agent ${agentId}] Creating pending permission request: ${requestId}`
+    );
 
     // Create a promise that will be resolved when user responds
     return new Promise<RequestPermissionResponse>((resolve, reject) => {
@@ -1212,8 +1265,8 @@ export class AgentManager {
         agentId,
         timestamp: new Date(),
         notification: {
-          type: 'permission',
-          requestId,  // Pass the requestId that we stored in pendingPermissions
+          type: "permission",
+          requestId, // Pass the requestId that we stored in pendingPermissions
           request: params,
         },
       };
@@ -1230,12 +1283,16 @@ export class AgentManager {
         }
       }
 
-      console.log(`[Agent ${agentId}] Permission request emitted: ${requestId}`);
+      console.log(
+        `[Agent ${agentId}] Permission request emitted: ${requestId}`
+      );
 
       // Set a timeout to auto-reject after 5 minutes if no response
       setTimeout(() => {
         if (agent.pendingPermissions.has(requestId)) {
-          console.warn(`[Agent ${agentId}] Permission request ${requestId} timed out`);
+          console.warn(
+            `[Agent ${agentId}] Permission request ${requestId} timed out`
+          );
           agent.pendingPermissions.delete(requestId);
           reject(new Error("Permission request timed out"));
         }
@@ -1284,7 +1341,7 @@ export class AgentManager {
       agentId,
       timestamp: new Date(),
       notification: {
-        type: 'permission_resolved',
+        type: "permission_resolved",
         requestId,
         agentId,
         optionId,
@@ -1303,7 +1360,9 @@ export class AgentManager {
       }
     }
 
-    console.log(`[Agent ${agentId}] Permission resolved notification emitted: ${requestId}`);
+    console.log(
+      `[Agent ${agentId}] Permission resolved notification emitted: ${requestId}`
+    );
   }
 
   /**
