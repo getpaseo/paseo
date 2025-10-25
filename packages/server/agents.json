@@ -53,5 +53,16 @@
     },
     "createdAt": "2025-10-25T12:44:52.183Z",
     "cwd": "/Users/moboudra/dev/faro/main"
+  },
+  {
+    "id": "415c2eb6-6649-4f3f-aee5-acc3d6b2cfd4",
+    "title": "Agent 415c2eb6",
+    "sessionId": "019a1c5a-0929-76de-ad58-1b80fa056209",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-25T17:10:52.912Z",
+    "cwd": "/Users/moboudra/dev/faro/main"
   }
 ]
