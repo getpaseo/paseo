@@ -284,7 +284,8 @@ export class Session {
     const hasUserMessage = updates.some(
       (update) =>
         update.notification.type === "session" &&
-        update.notification.notification.update.sessionUpdate === "user_message_chunk"
+        update.notification.notification.update.sessionUpdate ===
+          "user_message_chunk"
     );
 
     // Need at least one user message and some additional updates (3-5) for context
@@ -467,14 +468,15 @@ export class Session {
           break;
 
         case "create_agent_request":
-          await this.handleCreateAgentRequest(msg.cwd, msg.initialMode, msg.requestId);
+          await this.handleCreateAgentRequest(
+            msg.cwd,
+            msg.initialMode,
+            msg.requestId
+          );
           break;
 
         case "initialize_agent_request":
-          await this.handleInitializeAgentRequest(
-            msg.agentId,
-            msg.requestId
-          );
+          await this.handleInitializeAgentRequest(msg.agentId, msg.requestId);
           break;
 
         case "set_agent_mode":
@@ -790,8 +792,12 @@ export class Session {
       this.subscribeToAgent(agentId);
 
       // Auto-initialize agent immediately on explicit creation so it's ready to use
-      console.log(`[Session ${this.clientId}] Auto-initializing agent ${agentId}`);
-      const { info } = await this.agentManager.initializeAgentAndGetHistory(agentId);
+      console.log(
+        `[Session ${this.clientId}] Auto-initializing agent ${agentId}`
+      );
+      const { info } = await this.agentManager.initializeAgentAndGetHistory(
+        agentId
+      );
 
       // Emit agent_created message with initialized info
       this.emit({

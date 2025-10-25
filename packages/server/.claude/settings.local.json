@@ -5,7 +5,8 @@
       "Read(//Users/moboudra/dev/voice-dev/packages/web/app/hooks/**)",
       "Read(//Users/moboudra/dev/voice-dev/packages/web/app/**)",
       "Read(//Users/moboudra/dev/voice-dev/**)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(tmux capture-pane:*)"
     ],
     "deny": [],
     "ask": []
