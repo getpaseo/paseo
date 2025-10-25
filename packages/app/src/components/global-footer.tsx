@@ -140,33 +140,57 @@ export function GlobalFooter() {
     );
   }
 
-  // For home and orchestrator screens, show centered realtime button
+  // For home and orchestrator screens, show three buttons
   return (
-    <Animated.View
-      entering={FadeIn.duration(250)}
-      exiting={FadeOut.duration(250)}
-      style={[
-        styles.container,
-        {
-          paddingBottom: insets.bottom,
-          height: FOOTER_HEIGHT + insets.bottom,
-        },
-        keyboardAnimatedStyle,
-      ]}
-    >
-      <View style={styles.centeredButtonContainer}>
-        <Pressable
-          onPress={startRealtime}
-          disabled={!ws.isConnected}
-          style={[
-            styles.centeredRealtimeButton,
-            !ws.isConnected && styles.buttonDisabled,
-          ]}
-        >
-          <AudioLines size={24} color="white" />
-        </Pressable>
-      </View>
-    </Animated.View>
+    <>
+      <Animated.View
+        entering={FadeIn.duration(250)}
+        exiting={FadeOut.duration(250)}
+        style={[
+          styles.container,
+          {
+            paddingBottom: insets.bottom,
+            height: FOOTER_HEIGHT + insets.bottom,
+          },
+          keyboardAnimatedStyle,
+        ]}
+      >
+        <View style={styles.threeButtonContainer}>
+          <Pressable
+            onPress={() => router.push("/")}
+            style={styles.footerButton}
+          >
+            <Users size={20} color={theme.colors.foreground} />
+            <Text style={styles.footerButtonText}>Agents</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => setShowCreateModal(true)}
+            style={styles.footerButton}
+          >
+            <Plus size={20} color={theme.colors.foreground} />
+            <Text style={styles.footerButtonText}>New Agent</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={startRealtime}
+            disabled={!ws.isConnected}
+            style={[
+              styles.footerButton,
+              !ws.isConnected && styles.buttonDisabled,
+            ]}
+          >
+            <AudioLines size={20} color={theme.colors.foreground} />
+            <Text style={styles.footerButtonText}>Realtime</Text>
+          </Pressable>
+        </View>
+      </Animated.View>
+
+      <CreateAgentModal
+        isVisible={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+      />
+    </>
   );
 }
 
@@ -186,18 +210,23 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
   },
-  centeredButtonContainer: {
-    padding: theme.spacing[6],
-    alignItems: "center",
-    justifyContent: "center",
+  threeButtonContainer: {
+    flexDirection: "row",
+    padding: theme.spacing[4],
+    gap: theme.spacing[3],
   },
-  centeredRealtimeButton: {
-    width: 56,
-    height: 56,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.blue[600],
+  footerButton: {
+    flex: 1,
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
+    paddingVertical: theme.spacing[3],
+    gap: theme.spacing[1],
+  },
+  footerButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
   },
   buttonDisabled: {
     opacity: 0.5,
