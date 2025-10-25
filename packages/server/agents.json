@@ -10,5 +10,29 @@
     "createdAt": "2025-10-25T19:50:58.711Z",
     "lastActivityAt": "2025-10-25T19:50:58.711Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "1f1a734d-58f2-466e-8887-a3185e489dd9",
+    "title": "Standardize Footer Height to 75",
+    "sessionId": "fd0f63c2-8ab2-44a3-9b7c-7709bf339807",
+    "options": {
+      "type": "claude",
+      "sessionId": "fd0f63c2-8ab2-44a3-9b7c-7709bf339807"
+    },
+    "createdAt": "2025-10-25T20:00:32.595Z",
+    "lastActivityAt": "2025-10-25T20:00:32.595Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "41833717-74f8-496e-ac4b-399e96121777",
+    "title": "Implement Image Upload in Chat",
+    "sessionId": "aad97d76-78d0-43c2-b853-e43825987dd3",
+    "options": {
+      "type": "claude",
+      "sessionId": "aad97d76-78d0-43c2-b853-e43825987dd3"
+    },
+    "createdAt": "2025-10-25T20:12:17.214Z",
+    "lastActivityAt": "2025-10-25T20:12:17.214Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]

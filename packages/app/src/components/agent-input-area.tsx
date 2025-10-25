@@ -11,6 +11,7 @@ import { Mic, ArrowUp, AudioLines, Square } from "lucide-react-native";
 import { useSession } from "@/contexts/session-context";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
 
 interface AgentInputAreaProps {
   agentId: string;
@@ -18,6 +19,7 @@ interface AgentInputAreaProps {
 
 const MIN_INPUT_HEIGHT = 40;
 const MAX_INPUT_HEIGHT = 160;
+const BASE_VERTICAL_PADDING = (FOOTER_HEIGHT - MIN_INPUT_HEIGHT) / 2;
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
@@ -177,11 +179,11 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
+    paddingVertical: BASE_VERTICAL_PADDING,
     gap: theme.spacing[3],
-    minHeight: 88,
+    minHeight: FOOTER_HEIGHT,
   },
   textInput: {
     flex: 1,

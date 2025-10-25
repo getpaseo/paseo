@@ -4,6 +4,10 @@ import { MicOff, Square } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
+import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+
+const CONTROL_BUTTON_SIZE = 48;
+const VERTICAL_PADDING = (FOOTER_HEIGHT - CONTROL_BUTTON_SIZE) / 2;
 
 export function RealtimeControls() {
   const { theme } = useUnistyles();
@@ -70,8 +74,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-    height: 88,
+    paddingVertical: VERTICAL_PADDING,
+    height: FOOTER_HEIGHT,
   },
   volumeContainer: {
     flex: 1,

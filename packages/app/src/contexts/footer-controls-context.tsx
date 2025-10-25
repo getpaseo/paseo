@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-export const FOOTER_HEIGHT = 88;
+export const FOOTER_HEIGHT = 75;
 
 interface FooterControlsContextValue {
   controls: ReactNode | null;
