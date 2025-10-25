@@ -10,6 +10,7 @@ const AgentInfoSchema = z.object({
   id: z.string(),
   status: z.string(),
   createdAt: z.date(),
+  lastActivityAt: z.date(),
   type: z.literal("claude"),
   sessionId: z.string().nullable(),
   error: z.string().nullable(),

@@ -42,6 +42,7 @@ interface ManagedAgent {
   id: string;
   cwd: string;
   createdAt: Date;
+  lastActivityAt: Date;
   title: string;
   options: AgentOptions;
   subscribers: Set<AgentUpdateCallback>;
@@ -166,10 +167,15 @@ export class AgentManager {
         console.log(
           `[AgentManager] Loading agent ${persistedAgent.id} as uninitialized`
         );
+        const createdAt = new Date(persistedAgent.createdAt);
+        const lastActivityAt = persistedAgent.lastActivityAt
+          ? new Date(persistedAgent.lastActivityAt)
+          : createdAt;
         const agent: ManagedAgent = {
           id: persistedAgent.id,
           cwd: expandTilde(persistedAgent.cwd),
-          createdAt: new Date(persistedAgent.createdAt),
+          createdAt,
+          lastActivityAt,
           title: persistedAgent.title,
           options: persistedAgent.options,
           subscribers: new Set(),
@@ -225,6 +231,7 @@ export class AgentManager {
       id: agentId,
       cwd,
       createdAt,
+      lastActivityAt: createdAt,
       title: "",
       options: agentOptions,
       subscribers: new Set(),
@@ -250,6 +257,7 @@ export class AgentManager {
       sessionId: null,
       options: agent.options,
       createdAt: createdAt.toISOString(),
+      lastActivityAt: agent.lastActivityAt.toISOString(),
       cwd: agent.cwd,
     });
 
@@ -553,6 +561,7 @@ export class AgentManager {
         id: agent.id,
         status,
         createdAt: agent.createdAt,
+        lastActivityAt: agent.lastActivityAt,
         type: "claude" as const,
         sessionId,
         error: error ?? null,
@@ -617,6 +626,7 @@ export class AgentManager {
       id: agent.id,
       status,
       createdAt: agent.createdAt,
+      lastActivityAt: agent.lastActivityAt,
       type: "claude",
       sessionId: runtime?.sessionId ?? null,
       error: error ?? null,
@@ -1000,6 +1010,7 @@ export class AgentManager {
         sessionId: runtime.sessionId,
         options: agent.options,
         createdAt: agent.createdAt.toISOString(),
+        lastActivityAt: agent.lastActivityAt.toISOString(),
         cwd: agent.cwd,
       });
 
@@ -1055,6 +1066,9 @@ export class AgentManager {
   ): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
+
+    // Update last activity timestamp
+    agent.lastActivityAt = new Date();
 
     // Augment update with stable message IDs for deduplication
     let enrichedUpdate: EnrichedSessionNotification;
@@ -1286,17 +1300,6 @@ export class AgentManager {
       console.log(
         `[Agent ${agentId}] Permission request emitted: ${requestId}`
       );
-
-      // Set a timeout to auto-reject after 5 minutes if no response
-      setTimeout(() => {
-        if (agent.pendingPermissions.has(requestId)) {
-          console.warn(
-            `[Agent ${agentId}] Permission request ${requestId} timed out`
-          );
-          agent.pendingPermissions.delete(requestId);
-          reject(new Error("Permission request timed out"));
-        }
-      }, 5 * 60 * 1000); // 5 minutes
     });
   }
 
@@ -1459,6 +1462,7 @@ export class AgentManager {
               sessionId: runtime.sessionId,
               options: agent.options,
               createdAt: agent.createdAt.toISOString(),
+              lastActivityAt: agent.lastActivityAt.toISOString(),
               cwd: agent.cwd,
             });
             console.log(`[Agent ${agent.id}] State persisted`);

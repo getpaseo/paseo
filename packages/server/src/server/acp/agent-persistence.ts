@@ -25,6 +25,7 @@ export const PersistedAgentSchema = z.object({
   sessionId: z.string().nullable(), // ACP protocol session ID (null for uninitialized agents)
   options: AgentOptionsSchema, // Required field with discriminated union
   createdAt: z.string(),
+  lastActivityAt: z.string().optional(), // Migration: optional for backward compatibility
   cwd: z.string(),
 });
 
@@ -51,6 +52,11 @@ export class AgentPersistence {
       for (const agent of parsed) {
         try {
           const validated = PersistedAgentSchema.parse(agent);
+
+          // Migration: if lastActivityAt is missing, default to createdAt
+          if (!validated.lastActivityAt) {
+            validated.lastActivityAt = validated.createdAt;
+          }
 
           if (
             validated.options.type === "claude" &&

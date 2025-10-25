@@ -56,6 +56,7 @@ export interface Agent {
   id: string;
   status: AgentStatus;
   createdAt: Date;
+  lastActivityAt: Date;
   type: "claude";
   sessionId: string | null;
   error: string | null;
@@ -170,6 +171,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         new Map(
           agentsList.map((agentInfo) => {
             const createdAt = new Date(agentInfo.createdAt);
+            const lastActivityAt = agentInfo.lastActivityAt 
+              ? new Date(agentInfo.lastActivityAt) 
+              : createdAt;
             return [
               agentInfo.id,
               {
@@ -177,6 +181,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
                 status: agentInfo.status as AgentStatus,
                 type: agentInfo.type,
                 createdAt,
+                lastActivityAt,
                 title: agentInfo.title ?? null,
                 cwd: agentInfo.cwd,
                 sessionId: agentInfo.sessionId ?? null,
@@ -201,11 +206,13 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       console.log("[Session] Agent created:", agentId);
 
+      const now = new Date();
       const agent: Agent = {
         id: agentId,
         status: status as AgentStatus,
         type,
-        createdAt: new Date(),
+        createdAt: now,
+        lastActivityAt: now,
         title: title ?? null,
         cwd,
         sessionId: null,
@@ -233,6 +240,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       setAgents((prev) => {
         const next = new Map(prev);
         const createdAt = new Date(info.createdAt);
+        const lastActivityAt = info.lastActivityAt 
+          ? new Date(info.lastActivityAt) 
+          : createdAt;
         const existing = next.get(agentId);
 
         const normalizedAgent: Agent = {
@@ -240,6 +250,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           status: info.status as AgentStatus,
           type: info.type,
           createdAt,
+          lastActivityAt,
           title: info.title ?? null,
           cwd: info.cwd,
           sessionId: info.sessionId ?? null,
@@ -288,6 +299,10 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         const existingAgent = prev.get(agentId);
         if (!existingAgent) return prev;
 
+        const lastActivityAt = info.lastActivityAt 
+          ? new Date(info.lastActivityAt) 
+          : existingAgent.lastActivityAt;
+
         const updatedAgent: Agent = {
           ...existingAgent,
           status: info.status as AgentStatus,
@@ -297,6 +312,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           availableModes: info.availableModes ?? null,
           title: info.title ?? null,
           cwd: info.cwd,
+          lastActivityAt,
         };
 
         return new Map(prev).set(agentId, updatedAgent);

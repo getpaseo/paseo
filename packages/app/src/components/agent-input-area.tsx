@@ -1,4 +1,10 @@
-import { View, TextInput, Pressable } from "react-native";
+import {
+  View,
+  TextInput,
+  Pressable,
+  NativeSyntheticEvent,
+  TextInputContentSizeChangeEventData,
+} from "react-native";
 import { useState } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, AudioLines, Square } from "lucide-react-native";
@@ -10,6 +16,9 @@ interface AgentInputAreaProps {
   agentId: string;
 }
 
+const MIN_INPUT_HEIGHT = 40;
+const MAX_INPUT_HEIGHT = 160;
+
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const { ws, sendAgentMessage, sendAgentAudio } = useSession();
@@ -17,6 +26,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const audioRecorder = useAudioRecorder();
 
   const [userInput, setUserInput] = useState("");
+  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -25,6 +35,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
     const message = userInput.trim();
     setUserInput("");
+    setInputHeight(MIN_INPUT_HEIGHT);
     setIsProcessing(true);
 
     try {
@@ -73,6 +84,24 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     }
   }
 
+  function handleContentSizeChange(
+    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
+  ) {
+    const contentHeight = event.nativeEvent.contentSize.height;
+    const boundedHeight = Math.min(
+      MAX_INPUT_HEIGHT,
+      Math.max(MIN_INPUT_HEIGHT, contentHeight),
+    );
+
+    setInputHeight((currentHeight) => {
+      if (Math.abs(currentHeight - boundedHeight) < 1) {
+        return currentHeight;
+      }
+
+      return boundedHeight;
+    });
+  }
+
   const hasText = userInput.trim().length > 0;
 
   return (
@@ -83,8 +112,13 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
         onChangeText={setUserInput}
         placeholder="Message agent..."
         placeholderTextColor={theme.colors.mutedForeground}
-        style={styles.textInput}
+        style={[
+          styles.textInput,
+          { height: inputHeight, minHeight: MIN_INPUT_HEIGHT, maxHeight: MAX_INPUT_HEIGHT },
+        ]}
         multiline
+        scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
+        onContentSizeChange={handleContentSizeChange}
         editable={!isRecording && ws.isConnected}
       />
 
@@ -143,16 +177,14 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     gap: theme.spacing[3],
-    height: 88,
+    minHeight: 88,
   },
   textInput: {
     flex: 1,
-    minHeight: 40,
-    maxHeight: 80,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.muted,

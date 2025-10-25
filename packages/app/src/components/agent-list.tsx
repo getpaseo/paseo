@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { Agent } from "@/contexts/session-context";
 import type { AgentStatus } from "@server/server/acp/types";
+import { formatTimeAgo } from "@/utils/time";
 
 interface AgentListProps {
   agents: Map<string, Agent>;
@@ -48,7 +49,11 @@ function getStatusLabel(status: AgentStatus): string {
 
 export function AgentList({ agents }: AgentListProps) {
   const { theme } = useUnistyles();
-  const agentArray = Array.from(agents.values());
+  
+  // Sort agents by lastActivityAt (most recent first)
+  const agentArray = Array.from(agents.values()).sort((a, b) => {
+    return b.lastActivityAt.getTime() - a.lastActivityAt.getTime();
+  });
 
   function handleAgentPress(agentId: string) {
     router.push(`/agent/${agentId}`);
@@ -59,6 +64,7 @@ export function AgentList({ agents }: AgentListProps) {
       {agentArray.map((agent) => {
         const statusColor = getStatusColor(agent.status);
         const statusLabel = getStatusLabel(agent.status);
+        const timeAgo = formatTimeAgo(agent.lastActivityAt);
 
         return (
           <Pressable
@@ -77,14 +83,14 @@ export function AgentList({ agents }: AgentListProps) {
                 {agent.title || "New Agent"}
               </Text>
 
-              <View style={styles.directoryRow}>
-                <Text
-                  style={styles.agentDirectory}
-                  numberOfLines={1}
-                >
-                  {agent.cwd}
-                </Text>
+              <Text
+                style={styles.agentDirectory}
+                numberOfLines={1}
+              >
+                {agent.cwd}
+              </Text>
 
+              <View style={styles.statusRow}>
                 <View style={styles.statusBadge}>
                   <View
                     style={[styles.statusDot, { backgroundColor: statusColor }]}
@@ -93,6 +99,10 @@ export function AgentList({ agents }: AgentListProps) {
                     {statusLabel}
                   </Text>
                 </View>
+
+                <Text style={styles.timeAgo}>
+                  {timeAgo}
+                </Text>
               </View>
             </View>
           </Pressable>
@@ -128,15 +138,16 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     marginBottom: theme.spacing[1],
   },
-  directoryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
   agentDirectory: {
-    flex: 1,
     fontSize: theme.fontSize.sm,
     color: theme.colors.mutedForeground,
+    marginBottom: theme.spacing[1],
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
   },
   statusBadge: {
     flexDirection: "row",
@@ -151,5 +162,9 @@ const styles = StyleSheet.create((theme) => ({
   statusText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
+  },
+  timeAgo: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
   },
 }));

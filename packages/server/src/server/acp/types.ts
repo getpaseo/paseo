@@ -116,6 +116,7 @@ export interface AgentInfo {
   id: string;
   status: AgentStatus;
   createdAt: Date;
+  lastActivityAt: Date;
   type: "claude";
   sessionId: string | null;
   error: string | null;
