@@ -222,18 +222,7 @@ export class Session {
                 payload: {
                   agentId,
                   status,
-                  info: {
-                    id: info.id,
-                    status: info.status,
-                    createdAt: info.createdAt,
-                    type: info.type,
-                    sessionId: info.sessionId ?? undefined,
-                    error: info.error ?? undefined,
-                    currentModeId: info.currentModeId ?? undefined,
-                    availableModes: info.availableModes ?? undefined,
-                    title: info.title ?? undefined,
-                    cwd: info.cwd,
-                  },
+                  info,
                 },
               });
               console.log(
@@ -331,18 +320,7 @@ export class Session {
             payload: {
               agentId,
               status: updatedInfo.status,
-              info: {
-                id: updatedInfo.id,
-                status: updatedInfo.status,
-                createdAt: updatedInfo.createdAt,
-                type: updatedInfo.type,
-                sessionId: updatedInfo.sessionId ?? undefined,
-                error: updatedInfo.error ?? undefined,
-                currentModeId: updatedInfo.currentModeId ?? undefined,
-                availableModes: updatedInfo.availableModes ?? undefined,
-                title: updatedInfo.title ?? undefined,
-                cwd: updatedInfo.cwd,
-              },
+              info: updatedInfo,
             },
           });
         }
@@ -490,6 +468,13 @@ export class Session {
 
         case "create_agent_request":
           await this.handleCreateAgentRequest(msg.cwd, msg.initialMode, msg.requestId);
+          break;
+
+        case "initialize_agent_request":
+          await this.handleInitializeAgentRequest(
+            msg.agentId,
+            msg.requestId
+          );
           break;
 
         case "set_agent_mode":
@@ -716,6 +701,61 @@ export class Session {
   }
 
   /**
+   * Handle on-demand agent initialization request from client
+   */
+  private async handleInitializeAgentRequest(
+    agentId: string,
+    requestId?: string
+  ): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Initializing agent ${agentId} on demand`
+    );
+
+    try {
+      this.subscribeToAgent(agentId);
+
+      const { info, updates } =
+        await this.agentManager.initializeAgentAndGetHistory(agentId);
+
+      this.emit({
+        type: "agent_initialized",
+        payload: {
+          agentId,
+          info,
+          updates: updates.map((update) => ({
+            agentId: update.agentId,
+            timestamp:
+              update.timestamp instanceof Date
+                ? update.timestamp
+                : new Date(update.timestamp),
+            notification: update.notification,
+          })),
+          requestId,
+        },
+      });
+
+      console.log(
+        `[Session ${this.clientId}] Agent ${agentId} initialized with ${updates.length} historical updates`
+      );
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to initialize agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to initialize agent: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Handle create agent request
    */
   private async handleCreateAgentRequest(
@@ -749,23 +789,27 @@ export class Session {
       // Subscribe to agent updates
       this.subscribeToAgent(agentId);
 
-      // Emit agent_created message
+      // Auto-initialize agent immediately on explicit creation so it's ready to use
+      console.log(`[Session ${this.clientId}] Auto-initializing agent ${agentId}`);
+      const { info } = await this.agentManager.initializeAgentAndGetHistory(agentId);
+
+      // Emit agent_created message with initialized info
       this.emit({
         type: "agent_created",
         payload: {
           agentId,
-          status: agentInfo?.status || "initializing",
+          status: info.status,
           type: "claude",
-          currentModeId: agentInfo?.currentModeId ?? undefined,
-          availableModes: agentInfo?.availableModes ?? undefined,
-          title: agentInfo?.title ?? undefined,
-          cwd: agentInfo?.cwd || cwd,
+          currentModeId: info.currentModeId ?? undefined,
+          availableModes: info.availableModes ?? undefined,
+          title: info.title ?? undefined,
+          cwd: info.cwd,
           requestId,
         },
       });
       console.log(
-        `[Session ${this.clientId}] Emitted agent_created with currentModeId:`,
-        agentInfo?.currentModeId
+        `[Session ${this.clientId}] Emitted agent_created with status: ${info.status}, currentModeId:`,
+        info.currentModeId
       );
     } catch (error: any) {
       console.error(
@@ -810,18 +854,7 @@ export class Session {
           payload: {
             agentId,
             status: info.status,
-            info: {
-              id: info.id,
-              status: info.status,
-              createdAt: info.createdAt,
-              type: info.type,
-              title: info.title ?? undefined,
-              cwd: info.cwd,
-              sessionId: info.sessionId ?? undefined,
-              error: info.error ?? undefined,
-              currentModeId: info.currentModeId ?? undefined,
-              availableModes: info.availableModes ?? undefined,
-            },
+            info,
           },
         });
       }
@@ -886,30 +919,9 @@ export class Session {
       // Get live agents with session modes
       const agents = this.agentManager?.listAgents() || [];
 
-      // Subscribe to all existing agents and send their history (in case of reconnection)
+      // Subscribe to all existing agents so future updates stream through
       for (const agent of agents) {
         this.subscribeToAgent(agent.id);
-
-        // Get historical updates from AgentManager
-        const history = this.agentManager.getAgentUpdates(agent.id);
-
-        // Send each historical update to client
-        console.log(
-          `[Session ${this.clientId}] Sending ${history.length} historical updates for agent ${agent.id}`
-        );
-        for (const update of history) {
-          this.emit({
-            type: "agent_update",
-            payload: {
-              agentId: update.agentId,
-              timestamp:
-                update.timestamp instanceof Date
-                  ? update.timestamp
-                  : new Date(update.timestamp),
-              notification: update.notification,
-            },
-          });
-        }
       }
 
       // Get live commands from terminal manager

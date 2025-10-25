@@ -20,5 +20,38 @@
     },
     "createdAt": "2025-10-24T15:57:04.442Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "50128b81-017c-4ab5-8901-3d3f6b65898c",
+    "title": "Agent 50128b81",
+    "sessionId": null,
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-25T10:48:01.416Z",
+    "cwd": "/Users/moboudra/dev/faro/main"
+  },
+  {
+    "id": "cf327185-2307-4744-b2d0-c50f8bfa8f55",
+    "title": "Agent cf327185",
+    "sessionId": "019a1b66-dbf2-76b0-b578-60abfbd65d22",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-25T12:37:28.278Z",
+    "cwd": "/Users/moboudra/dev/faro/main"
+  },
+  {
+    "id": "9af00580-418b-4053-a942-a8d168ab5703",
+    "title": "Initial User Greeting",
+    "sessionId": "7adb8247-5ffe-44a0-ae8b-177a5611fe6c",
+    "options": {
+      "type": "claude",
+      "sessionId": "7adb8247-5ffe-44a0-ae8b-177a5611fe6c"
+    },
+    "createdAt": "2025-10-25T12:44:52.183Z",
+    "cwd": "/Users/moboudra/dev/faro/main"
   }
 ]

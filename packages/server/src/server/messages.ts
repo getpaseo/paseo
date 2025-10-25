@@ -1,5 +1,30 @@
 import { z } from "zod";
 
+const AgentModeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+});
+
+const AgentInfoSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  createdAt: z.date(),
+  type: z.literal("claude"),
+  sessionId: z.string().nullable(),
+  error: z.string().nullable(),
+  currentModeId: z.string().nullable(),
+  availableModes: z.array(AgentModeSchema).nullable(),
+  title: z.string().nullable(),
+  cwd: z.string(),
+});
+
+const AgentUpdatePayloadSchema = z.object({
+  agentId: z.string(),
+  timestamp: z.date(),
+  notification: z.any(),
+});
+
 // ============================================================================
 // Session Inbound Messages (Session receives these)
 // ============================================================================
@@ -66,6 +91,12 @@ export const CreateAgentRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const InitializeAgentRequestMessageSchema = z.object({
+  type: z.literal("initialize_agent_request"),
+  agentId: z.string(),
+  requestId: z.string().optional(),
+});
+
 export const SetAgentModeMessageSchema = z.object({
   type: z.literal("set_agent_mode"),
   agentId: z.string(),
@@ -91,6 +122,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SendAgentMessageSchema,
   SendAgentAudioSchema,
   CreateAgentRequestMessageSchema,
+  InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
 ]);
@@ -182,11 +214,7 @@ export const AgentCreatedMessageSchema = z.object({
     status: z.string(),
     type: z.literal("claude"),
     currentModeId: z.string().optional(),
-    availableModes: z.array(z.object({
-      id: z.string(),
-      name: z.string(),
-      description: z.string().nullable().optional(),
-    })).optional(),
+    availableModes: z.array(AgentModeSchema).optional(),
     title: z.string().optional(),
     cwd: z.string(),
     requestId: z.string().optional(),
@@ -195,12 +223,7 @@ export const AgentCreatedMessageSchema = z.object({
 
 export const AgentUpdateMessageSchema = z.object({
   type: z.literal("agent_update"),
-  payload: z.object({
-    agentId: z.string(),
-    timestamp: z.date(),
-    // Runtime validation with z.any(), TypeScript enforces AgentNotification type
-    notification: z.any(),
-  }),
+  payload: AgentUpdatePayloadSchema,
 });
 
 export const AgentStatusMessageSchema = z.object({
@@ -208,46 +231,14 @@ export const AgentStatusMessageSchema = z.object({
   payload: z.object({
     agentId: z.string(),
     status: z.string(),
-    info: z.object({
-      id: z.string(),
-      status: z.string(),
-      createdAt: z.date(),
-      type: z.literal("claude"),
-      sessionId: z.string().optional(),
-      error: z.string().optional(),
-      currentModeId: z.string().optional(),
-      availableModes: z.array(z.object({
-        id: z.string(),
-        name: z.string(),
-        description: z.string().nullable().optional(),
-      })).optional(),
-      title: z.string().optional(),
-      cwd: z.string(),
-    }),
+    info: AgentInfoSchema,
   }),
 });
 
 export const SessionStateMessageSchema = z.object({
   type: z.literal("session_state"),
   payload: z.object({
-    agents: z.array(
-      z.object({
-        id: z.string(),
-        status: z.string(),
-        createdAt: z.date(),
-        type: z.literal("claude"),
-        sessionId: z.string().nullable(),
-        error: z.string().nullable(),
-        currentModeId: z.string().nullable(),
-        availableModes: z.array(z.object({
-          id: z.string(),
-          name: z.string(),
-          description: z.string().nullable().optional(),
-        })).nullable(),
-        title: z.string().nullable(),
-        cwd: z.string(),
-      })
-    ),
+    agents: z.array(AgentInfoSchema),
     commands: z.array(
       z.object({
         id: z.string(),
@@ -258,6 +249,16 @@ export const SessionStateMessageSchema = z.object({
         exitCode: z.number().nullable(),
       })
     ),
+  }),
+});
+
+export const AgentInitializedMessageSchema = z.object({
+  type: z.literal("agent_initialized"),
+  payload: z.object({
+    agentId: z.string(),
+    info: AgentInfoSchema,
+    updates: z.array(AgentUpdatePayloadSchema),
+    requestId: z.string().optional(),
   }),
 });
 
@@ -319,6 +320,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentUpdateMessageSchema,
   AgentStatusMessageSchema,
   SessionStateMessageSchema,
+  AgentInitializedMessageSchema,
   ListConversationsResponseMessageSchema,
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
@@ -341,6 +343,7 @@ export type AgentCreatedMessage = z.infer<typeof AgentCreatedMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
+export type AgentInitializedMessage = z.infer<typeof AgentInitializedMessageSchema>;
 export type ListConversationsResponseMessage = z.infer<typeof ListConversationsResponseMessageSchema>;
 export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
@@ -355,6 +358,7 @@ export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessage
 export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
 export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
+export type InitializeAgentRequestMessage = z.infer<typeof InitializeAgentRequestMessageSchema>;
 export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 

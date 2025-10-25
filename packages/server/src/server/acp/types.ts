@@ -65,7 +65,13 @@ export interface AgentRuntime {
  */
 export type ManagedAgentState =
   | { type: "uninitialized"; persistedSessionId: string | null; lastError?: string }
-  | { type: "initializing"; persistedSessionId: string | null; initPromise: Promise<void>; initStartedAt: Date }
+  | {
+      type: "initializing";
+      persistedSessionId: string | null;
+      initPromise: Promise<void>;
+      initStartedAt: Date;
+      runtime?: AgentRuntime;
+    }
   | { type: "ready"; runtime: AgentRuntime }
   | { type: "processing"; runtime: AgentRuntime }
   | { type: "completed"; runtime: AgentRuntime; stopReason?: string }
