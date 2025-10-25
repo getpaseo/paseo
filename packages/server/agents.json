@@ -64,5 +64,16 @@
     },
     "createdAt": "2025-10-25T17:10:52.912Z",
     "cwd": "/Users/moboudra/dev/faro/main"
+  },
+  {
+    "id": "cac8f9e6-3b3b-4916-8e04-2b2ea8053f22",
+    "title": "Review Open Pull Requests",
+    "sessionId": "5f3938aa-bd06-47f2-b09e-b6bae76f7ffc",
+    "options": {
+      "type": "claude",
+      "sessionId": "5f3938aa-bd06-47f2-b09e-b6bae76f7ffc"
+    },
+    "createdAt": "2025-10-25T17:43:48.309Z",
+    "cwd": "/Users/moboudra/dev/faro/main"
   }
 ]
