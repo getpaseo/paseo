@@ -250,6 +250,33 @@ export class Session {
             },
           });
 
+          // Check if this is a current_mode_update - emit agent_status so UI updates immediately
+          if (notification.notification.update.sessionUpdate === "current_mode_update") {
+            try {
+              const info = this.agentManager!.listAgents().find(
+                (a) => a.id === agentId
+              );
+              if (info) {
+                this.emit({
+                  type: "agent_status",
+                  payload: {
+                    agentId,
+                    status: info.status,
+                    info,
+                  },
+                });
+                console.log(
+                  `[Session ${this.clientId}] Agent ${agentId} mode changed to: ${info.currentModeId}`
+                );
+              }
+            } catch (error) {
+              console.error(
+                `[Session ${this.clientId}] Failed to get agent info for mode update:`,
+                error
+              );
+            }
+          }
+
           // Trigger title generation after first meaningful update
           this.maybeTriggerTitleGeneration(agentId);
         }
