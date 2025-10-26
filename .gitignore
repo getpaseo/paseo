@@ -43,3 +43,6 @@ coverage/
 # Misc
 *.pem
 .vercel
+
+# Runtime agent data
+packages/server/agents.json
