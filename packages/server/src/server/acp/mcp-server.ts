@@ -37,6 +37,7 @@ function serializeAgentInfo(info: any): any {
   return {
     ...info,
     createdAt: info.createdAt.toISOString(),
+    lastActivityAt: info.lastActivityAt.toISOString(),
   };
 }
 
@@ -212,6 +213,7 @@ export async function createAgentMcpServer(
             id: z.string(),
             status: z.string(),
             createdAt: z.string(),
+            lastActivityAt: z.string(),
             type: z.literal("claude"),
             sessionId: z.string().nullable(),
             error: z.string().nullable(),
@@ -260,6 +262,7 @@ export async function createAgentMcpServer(
             id: z.string(),
             status: z.string(),
             createdAt: z.string(),
+            lastActivityAt: z.string(),
             type: z.literal("claude"),
             sessionId: z.string().nullable(),
             error: z.string().nullable(),

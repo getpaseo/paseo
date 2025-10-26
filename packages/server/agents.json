@@ -284,7 +284,7 @@
       "sessionId": "20b0b2c2-18ec-409b-b932-a20c9ca8e0d3"
     },
     "createdAt": "2025-10-26T09:45:29.563Z",
-    "lastActivityAt": "2025-10-26T12:25:20.827Z",
+    "lastActivityAt": "2025-10-26T13:11:22.795Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   },
   {
@@ -358,5 +358,29 @@
     "createdAt": "2025-10-26T12:25:48.081Z",
     "lastActivityAt": "2025-10-26T12:26:13.370Z",
     "cwd": "/Users/moboudra/dev/voice-dev-gland"
+  },
+  {
+    "id": "d1ebfcdf-039a-459e-a918-13d290e26c85",
+    "title": "Add Floating Scroll-to-Bottom Button",
+    "sessionId": "9e5654e1-a459-43e9-8f6d-757208c8f2b5",
+    "options": {
+      "type": "claude",
+      "sessionId": "9e5654e1-a459-43e9-8f6d-757208c8f2b5"
+    },
+    "createdAt": "2025-10-26T13:31:29.627Z",
+    "lastActivityAt": "2025-10-26T13:32:14.171Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "97423777-33d3-414a-ae79-ea303230010a",
+    "title": "Commit Local Changes",
+    "sessionId": "019a20d4-5fd4-76db-8021-697b8204597e",
+    "options": {
+      "type": "claude",
+      "sessionId": "addbd42f-dbb1-4536-bc2b-e70a64587de6"
+    },
+    "createdAt": "2025-10-26T14:02:59.844Z",
+    "lastActivityAt": "2025-10-26T14:03:22.696Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]
