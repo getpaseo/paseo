@@ -61,7 +61,7 @@ function GroupedTextItem({ item }: { item: GroupedTextMessage }) {
 
   return (
     <View style={[stylesheet.card, isThought && stylesheet.thoughtCard]}>
-      <Text style={stylesheet.timestamp}>
+      <Text style={[stylesheet.timestamp, isThought && stylesheet.thoughtTimestamp]}>
         {formatTimestamp(item.startTimestamp)}
       </Text>
       {isThought && (
@@ -260,17 +260,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.muted,
     borderLeftWidth: 3,
     borderLeftColor: theme.colors.palette.purple[500],
+    paddingVertical: theme.spacing[2],
   },
   timestamp: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     marginBottom: theme.spacing[1],
   },
+  thoughtTimestamp: {
+    marginBottom: theme.spacing[0],
+  },
   thoughtLabel: {
     color: theme.colors.palette.purple[500],
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing[1],
+    marginBottom: theme.spacing[0],
   },
   text: {
     color: theme.colors.foreground,

@@ -284,7 +284,7 @@
       "sessionId": "20b0b2c2-18ec-409b-b932-a20c9ca8e0d3"
     },
     "createdAt": "2025-10-26T09:45:29.563Z",
-    "lastActivityAt": "2025-10-26T13:11:22.795Z",
+    "lastActivityAt": "2025-10-26T14:53:00.404Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   },
   {
@@ -380,7 +380,18 @@
       "sessionId": "addbd42f-dbb1-4536-bc2b-e70a64587de6"
     },
     "createdAt": "2025-10-26T14:02:59.844Z",
-    "lastActivityAt": "2025-10-26T14:08:58.462Z",
+    "lastActivityAt": "2025-10-26T16:45:15.700Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "f1df26aa-4b20-499e-a84b-1d61828cf7fe",
+    "title": "Prepare Concise Session Title",
+    "sessionId": "019a215a-22dd-7930-9db7-e38d256ac597",
+    "options": {
+      "type": "codex"
+    },
+    "createdAt": "2025-10-26T16:29:01.354Z",
+    "lastActivityAt": "2025-10-26T16:29:17.523Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]

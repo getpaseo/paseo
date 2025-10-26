@@ -4,6 +4,7 @@ import type {
   ClientSideConnection,
 } from "@agentclientprotocol/sdk";
 import type { ChildProcess } from "child_process";
+import type { AgentModeDefinition, AgentType } from "./agent-types.js";
 
 /**
  * Extended update types with messageId for proper deduplication
@@ -68,13 +69,10 @@ export type AgentStatus =
   | "killed";
 
 /**
- * Session mode definition from ACP
+ * Session mode definition from ACP.
+ * Alias to the shared agent mode definition used across the app.
  */
-export interface SessionMode {
-  id: string;
-  name: string;
-  description?: string | null;
-}
+export type SessionMode = AgentModeDefinition;
 
 /**
  * Runtime state for an initialized agent
@@ -117,7 +115,7 @@ export interface AgentInfo {
   status: AgentStatus;
   createdAt: Date;
   lastActivityAt: Date;
-  type: "claude";
+  type: AgentType;
   sessionId: string | null;
   error: string | null;
   currentModeId: string | null;
@@ -141,6 +139,7 @@ export interface AgentUpdate {
  */
 export interface CreateAgentOptions {
   cwd: string;
+  type: AgentType;
   initialPrompt?: string;
   initialMode?: string;
 }

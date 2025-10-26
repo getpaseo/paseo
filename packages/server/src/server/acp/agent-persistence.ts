@@ -13,7 +13,9 @@ export const AgentOptionsSchema = z.discriminatedUnion("type", [
     type: z.literal("claude"),
     sessionId: z.string().nullable(), // Claude's internal session ID (null until first prompt)
   }),
-  // Add more agent types here in the future
+  z.object({
+    type: z.literal("codex"),
+  }),
 ]);
 
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;

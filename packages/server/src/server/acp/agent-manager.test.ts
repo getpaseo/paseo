@@ -38,6 +38,7 @@ describe("AgentManager", () => {
 
     const agentId = await manager.createAgent({
       cwd: tmpDir,
+      type: "claude",
       initialMode: "plan",
     });
     createdAgents.push({ manager, agentId });
@@ -96,10 +97,11 @@ describe("AgentManager", () => {
   }, 120000);
 
   describe("persistence", () => {
-    it.only("should load persisted agent and send new prompt", async () => {
+    it("should load persisted agent and send new prompt", async () => {
       const manager = new AgentManager();
       const agentId = await manager.createAgent({
         cwd: tmpDir,
+        type: "claude",
       });
       createdAgents.push({ manager, agentId });
 
@@ -115,7 +117,9 @@ describe("AgentManager", () => {
 
       expect(status).toBe("completed");
 
-      const agentBeforeKill = manager.listAgents().find((a) => a.id === agentId);
+      const agentBeforeKill = manager
+        .listAgents()
+        .find((a) => a.id === agentId);
       const claudeSessionId = manager.getClaudeSessionId(agentId);
       console.log("Before kill - ACP Session ID:", agentBeforeKill?.sessionId);
       console.log("Before kill - Claude Session ID:", claudeSessionId);
@@ -127,7 +131,9 @@ describe("AgentManager", () => {
       await newManager.initialize();
 
       // Update the tracking to use the new manager instance
-      const trackingIndex = createdAgents.findIndex((a) => a.agentId === agentId);
+      const trackingIndex = createdAgents.findIndex(
+        (a) => a.agentId === agentId
+      );
       if (trackingIndex >= 0) {
         createdAgents[trackingIndex] = { manager: newManager, agentId };
       }

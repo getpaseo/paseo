@@ -1,5 +1,5 @@
 import { View, Text, Pressable, Animated } from "react-native";
-import { useState, useEffect, useRef, memo } from "react";
+import { useState, useEffect, useRef, memo, useMemo } from "react";
 import Markdown from "react-native-markdown-display";
 import {
   Circle,
@@ -16,6 +16,7 @@ import {
   Pencil,
   Eye,
   SquareTerminal,
+  Brain,
 } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
@@ -48,7 +49,10 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export const UserMessage = memo(function UserMessage({ message, timestamp }: UserMessageProps) {
+export const UserMessage = memo(function UserMessage({
+  message,
+  timestamp,
+}: UserMessageProps) {
   return (
     <View style={userMessageStylesheet.container}>
       <View style={userMessageStylesheet.bubble}>
@@ -64,7 +68,7 @@ interface AssistantMessageProps {
   isStreaming?: boolean;
 }
 
-const assistantMessageStylesheet = StyleSheet.create((theme) => ({
+export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     marginBottom: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
@@ -133,6 +137,20 @@ const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
+const markdownStyles = {
+  body: assistantMessageStylesheet.markdownBody,
+  paragraph: assistantMessageStylesheet.markdownParagraph,
+  strong: assistantMessageStylesheet.markdownStrong,
+  em: assistantMessageStylesheet.markdownEm,
+  code_inline: assistantMessageStylesheet.markdownCodeInline,
+  code_block: assistantMessageStylesheet.markdownCodeBlock,
+  fence: assistantMessageStylesheet.markdownFence,
+  link: assistantMessageStylesheet.markdownLink,
+  bullet_list: assistantMessageStylesheet.markdownList,
+  ordered_list: assistantMessageStylesheet.markdownList,
+  list_item: assistantMessageStylesheet.markdownListItem,
+};
+
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
@@ -161,20 +179,6 @@ export const AssistantMessage = memo(function AssistantMessage({
       fadeAnim.setValue(1);
     }
   }, [isStreaming, fadeAnim]);
-
-  const markdownStyles = {
-    body: assistantMessageStylesheet.markdownBody,
-    paragraph: assistantMessageStylesheet.markdownParagraph,
-    strong: assistantMessageStylesheet.markdownStrong,
-    em: assistantMessageStylesheet.markdownEm,
-    code_inline: assistantMessageStylesheet.markdownCodeInline,
-    code_block: assistantMessageStylesheet.markdownCodeBlock,
-    fence: assistantMessageStylesheet.markdownFence,
-    link: assistantMessageStylesheet.markdownLink,
-    bullet_list: assistantMessageStylesheet.markdownList,
-    ordered_list: assistantMessageStylesheet.markdownList,
-    list_item: assistantMessageStylesheet.markdownListItem,
-  };
 
   return (
     <View style={assistantMessageStylesheet.container}>
@@ -375,6 +379,79 @@ export const ActivityLog = memo(function ActivityLog({
     </Pressable>
   );
 });
+
+interface AgentThoughtMessageProps {
+  message: string;
+}
+
+const agentThoughtStylesheet = StyleSheet.create((theme) => ({
+  container: {
+    marginHorizontal: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
+  card: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  iconContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    paddingTop: theme.spacing[1],
+  },
+  icon: {
+    color: theme.colors.mutedForeground,
+    opacity: 0.8,
+  },
+  textContainer: {
+    flex: 1,
+    paddingVertical: theme.spacing[1],
+  },
+  label: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: "uppercase",
+    marginBottom: theme.spacing[1],
+  },
+  text: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.base,
+    lineHeight: 20,
+  },
+}));
+
+export function AgentThoughtMessage({ message }: AgentThoughtMessageProps) {
+  const messageText = useMemo(() => {
+    return message
+      .trim()
+      .replace(/^\*\*|\*\*$/g, "")
+      .trim();
+  }, [message]);
+
+  return (
+    <View style={agentThoughtStylesheet.container}>
+      <View style={agentThoughtStylesheet.card}>
+        <View style={agentThoughtStylesheet.iconContainer}>
+          <Brain size={18} style={agentThoughtStylesheet.icon} />
+        </View>
+        <View style={agentThoughtStylesheet.textContainer}>
+          <Text style={agentThoughtStylesheet.text}>{messageText}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
 
 interface ToolCallProps {
   toolName: string;
