@@ -110,7 +110,10 @@ export function GlobalFooter() {
             </Pressable>
 
             <Pressable
-              onPress={() => setShowCreateModal(true)}
+              onPress={() => {
+                console.log("[GlobalFooter] New Agent button pressed");
+                setShowCreateModal(true);
+              }}
               style={({ pressed }) => [
                 styles.footerButton,
                 pressed && styles.buttonPressed,

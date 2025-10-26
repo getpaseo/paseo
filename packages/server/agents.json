@@ -386,12 +386,71 @@
   {
     "id": "f1df26aa-4b20-499e-a84b-1d61828cf7fe",
     "title": "Prepare Concise Session Title",
-    "sessionId": "019a215a-22dd-7930-9db7-e38d256ac597",
+    "sessionId": "019a2187-dd32-7563-8622-92595939ad89",
     "options": {
       "type": "codex"
     },
     "createdAt": "2025-10-26T16:29:01.354Z",
     "lastActivityAt": "2025-10-26T16:29:17.523Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "de1f30f2-9d27-4404-9f71-098c5adc04ec",
+    "title": "Create Agent Modal UI Upgrades",
+    "sessionId": "019a21a1-6568-7252-90e6-a7da2cc0f27d",
+    "options": {
+      "type": "codex"
+    },
+    "createdAt": "2025-10-26T17:46:54.882Z",
+    "lastActivityAt": "2025-10-26T17:48:55.022Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "94c0e1c6-3a7e-493d-895f-b178369f978a",
+    "title": "Fix Create Agent Modal Layout",
+    "sessionId": "dbee3818-e273-42fb-bf31-27fa46b2a25c",
+    "options": {
+      "type": "claude",
+      "sessionId": "dbee3818-e273-42fb-bf31-27fa46b2a25c"
+    },
+    "createdAt": "2025-10-26T18:52:14.017Z",
+    "lastActivityAt": "2025-10-26T18:53:54.752Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "cc4c74db-6269-43ce-b48b-236565bb857c",
+    "title": "Greeting Interaction in BlankPage Editor",
+    "sessionId": "82cdf496-2191-4416-b0a8-b16901cfe277",
+    "options": {
+      "type": "claude",
+      "sessionId": "82cdf496-2191-4416-b0a8-b16901cfe277"
+    },
+    "createdAt": "2025-10-26T18:57:45.992Z",
+    "lastActivityAt": "2025-10-26T18:57:55.860Z",
+    "cwd": "/Users/moboudra/dev/blankpage/editor"
+  },
+  {
+    "id": "daf7e31e-95f2-4ec9-a7cc-113b33e3a487",
+    "title": "Add Projects with File Browsing",
+    "sessionId": "5ba144c8-027e-41c1-80af-4b5a241db88d",
+    "options": {
+      "type": "claude",
+      "sessionId": "5ba144c8-027e-41c1-80af-4b5a241db88d"
+    },
+    "createdAt": "2025-10-26T19:05:05.128Z",
+    "lastActivityAt": "2025-10-26T19:07:24.165Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "090e938a-d9a8-4b2e-9fd9-70b6dfc87ad4",
+    "title": "Commit to Voice Dev Repo",
+    "sessionId": "019a2205-e54b-748f-bd06-eac1e168e84f",
+    "options": {
+      "type": "claude",
+      "sessionId": "2a933d01-f806-42cb-8b9d-8000b864900f"
+    },
+    "createdAt": "2025-10-26T19:36:42.420Z",
+    "lastActivityAt": "2025-10-26T19:36:59.561Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]
