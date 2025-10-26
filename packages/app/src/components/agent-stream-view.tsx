@@ -40,11 +40,14 @@ export function AgentStreamView({
   const [selectedToolCall, setSelectedToolCall] =
     useState<SelectedToolCall | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const hasScrolledInitially = useRef(false);
 
-  // Auto-scroll to bottom when new items arrive, but only if user is already at bottom
+  // Scroll to bottom immediately on initial load, then animate for new messages
   useEffect(() => {
     if (isNearBottom) {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
+      const shouldAnimate = hasScrolledInitially.current;
+      scrollViewRef.current?.scrollToEnd({ animated: shouldAnimate });
+      hasScrolledInitially.current = true;
     }
   }, [streamItems, isNearBottom]);
 
@@ -66,14 +69,6 @@ export function AgentStreamView({
       contentSize.height - contentOffset.y - layoutMeasurement.height;
     // Consider user "at bottom" if within 10px of the end
     const nearBottom = distanceFromBottom < 10;
-    console.log('[AgentStreamView] Scroll:', { 
-      contentHeight: contentSize.height, 
-      scrollY: contentOffset.y, 
-      layoutHeight: layoutMeasurement.height,
-      distanceFromBottom, 
-      nearBottom,
-      currentIsNearBottom: isNearBottom
-    });
     setIsNearBottom(nearBottom);
   }
 
