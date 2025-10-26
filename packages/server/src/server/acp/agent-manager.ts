@@ -510,12 +510,13 @@ export class AgentManager {
     const runtime = this.getRuntime(agent);
 
     // Persist current state before killing
+    // Clear sessionId so next start creates a new session
     if (runtime) {
       await this.persistence.upsert({
         id: agent.id,
         title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
-        sessionId: runtime.sessionId,
-        options: agent.options,
+        sessionId: null,
+        options: { ...agent.options, sessionId: null },
         createdAt: agent.createdAt.toISOString(),
         lastActivityAt: agent.lastActivityAt.toISOString(),
         cwd: agent.cwd,

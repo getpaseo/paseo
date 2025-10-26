@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "id": "fc818184-5676-4f24-a92a-77e9e15c515d",
+    "title": "Agent fc818184",
+    "sessionId": null,
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T06:59:13.289Z",
+    "lastActivityAt": "2025-10-26T06:59:22.379Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-wm5mun"
+  }
+]
