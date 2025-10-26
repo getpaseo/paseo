@@ -6,5 +6,11 @@ export default defineConfig({
     hookTimeout: 30000,
     globals: true,
     environment: "node",
+    pool: "threads",
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
   },
 });

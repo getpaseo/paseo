@@ -6,9 +6,10 @@ import { ArrowLeft } from "lucide-react-native";
 
 interface BackHeaderProps {
   title?: string;
+  rightContent?: React.ReactNode;
 }
 
-export function BackHeader({ title }: BackHeaderProps) {
+export function BackHeader({ title, rightContent }: BackHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
 
@@ -31,8 +32,10 @@ export function BackHeader({ title }: BackHeaderProps) {
             )}
           </View>
 
-          {/* Right side - Empty for now */}
-          <View style={styles.headerRight} />
+          {/* Right side */}
+          <View style={styles.headerRight}>
+            {rightContent}
+          </View>
         </View>
       </View>
     </View>

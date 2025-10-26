@@ -416,6 +416,46 @@ export class AgentManager {
       }
     }
 
+    // Clear any pending permissions since we're starting a new turn
+    if (agent.pendingPermissions.size > 0) {
+      console.log(
+        `[Agent ${agentId}] Clearing ${agent.pendingPermissions.size} pending permission(s)`
+      );
+      
+      // Reject all pending permission promises with cancellation
+      for (const [requestId, permission] of agent.pendingPermissions) {
+        permission.resolve({
+          outcome: {
+            outcome: "cancelled" as const,
+          },
+        });
+
+        // Emit permission_resolved notification so UI updates
+        const agentUpdate: AgentUpdate = {
+          agentId,
+          timestamp: new Date(),
+          notification: {
+            type: "permission_resolved",
+            requestId,
+            agentId,
+            optionId: "cancelled",
+          },
+        };
+
+        agent.updates.push(agentUpdate);
+
+        for (const subscriber of agent.subscribers) {
+          try {
+            subscriber(agentUpdate);
+          } catch (error) {
+            console.error(`[Agent ${agentId}] Subscriber error:`, error);
+          }
+        }
+      }
+
+      agent.pendingPermissions.clear();
+    }
+
     // Get runtime (guaranteed to exist after ensureInitialized)
     if (
       agent.state.type !== "ready" &&
@@ -506,14 +546,14 @@ export class AgentManager {
             stopReason: response.stopReason,
           };
         } else if (response.stopReason === "refusal") {
-          console.error(
+          console.warn(
             `[Agent ${agentId}] Agent refused to process the prompt`,
             response
           );
           agent.state = {
-            type: "failed",
-            lastError: "Agent refused to process the prompt",
+            type: "completed",
             runtime: agent.state.runtime,
+            stopReason: response.stopReason,
           };
         } else if (response.stopReason === "cancelled") {
           agent.state = { type: "ready", runtime: agent.state.runtime };
