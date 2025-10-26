@@ -1,38 +1,50 @@
 [
   {
-    "id": "5d28d04a-1b29-43fd-b27e-bcaa32ee453d",
-    "title": "Add Three Global Footer Buttons",
-    "sessionId": "147f5a79-e310-4bfd-86fa-0c6a011cb7c7",
+    "id": "2ecc51dc-8f52-43ab-8637-4ba46f32394a",
+    "title": "Finish Agent Chat Image Upload",
+    "sessionId": "019a1d14-12ca-76eb-9223-d7d01300dc92",
     "options": {
       "type": "claude",
-      "sessionId": "147f5a79-e310-4bfd-86fa-0c6a011cb7c7"
+      "sessionId": null
     },
-    "createdAt": "2025-10-25T19:50:58.711Z",
-    "lastActivityAt": "2025-10-25T19:50:58.711Z",
+    "createdAt": "2025-10-25T20:34:05.716Z",
+    "lastActivityAt": "2025-10-25T20:37:53.588Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   },
   {
-    "id": "1f1a734d-58f2-466e-8887-a3185e489dd9",
-    "title": "Standardize Footer Height to 75",
-    "sessionId": "fd0f63c2-8ab2-44a3-9b7c-7709bf339807",
+    "id": "e46d161a-e62f-4ab4-aacc-a25c7150762f",
+    "title": "Add Press Feedback to Global Footer",
+    "sessionId": "823b28b2-c1b6-4418-bda8-b159326c475a",
     "options": {
       "type": "claude",
-      "sessionId": "fd0f63c2-8ab2-44a3-9b7c-7709bf339807"
+      "sessionId": "823b28b2-c1b6-4418-bda8-b159326c475a"
     },
-    "createdAt": "2025-10-25T20:00:32.595Z",
-    "lastActivityAt": "2025-10-25T20:00:32.595Z",
+    "createdAt": "2025-10-25T20:40:58.222Z",
+    "lastActivityAt": "2025-10-25T20:40:58.222Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   },
   {
-    "id": "41833717-74f8-496e-ac4b-399e96121777",
-    "title": "Implement Image Upload in Chat",
-    "sessionId": "aad97d76-78d0-43c2-b853-e43825987dd3",
+    "id": "d97317df-8572-40ef-9513-72b1bcacec5d",
+    "title": "Agent d97317df",
+    "sessionId": "019a1f22-1604-7698-a517-72f5d09d4173",
     "options": {
       "type": "claude",
-      "sessionId": "aad97d76-78d0-43c2-b853-e43825987dd3"
+      "sessionId": null
     },
-    "createdAt": "2025-10-25T20:12:17.214Z",
-    "lastActivityAt": "2025-10-25T20:12:17.214Z",
+    "createdAt": "2025-10-26T06:08:38.234Z",
+    "lastActivityAt": "2025-10-26T06:08:38.234Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "ee685172-a0c4-4575-a4c4-ad6b10e380a3",
+    "title": "Agent ee685172",
+    "sessionId": "546da3f3-0d5e-42b5-b541-1c853ac5de4b",
+    "options": {
+      "type": "claude",
+      "sessionId": "546da3f3-0d5e-42b5-b541-1c853ac5de4b"
+    },
+    "createdAt": "2025-10-26T06:21:26.065Z",
+    "lastActivityAt": "2025-10-26T06:21:26.065Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-CHqB3A"
   }
 ]

@@ -158,7 +158,10 @@ export function GlobalFooter() {
         <View style={styles.threeButtonContainer}>
           <Pressable
             onPress={() => router.push("/")}
-            style={styles.footerButton}
+            style={({ pressed }) => [
+              styles.footerButton,
+              pressed && styles.buttonPressed,
+            ]}
           >
             <Users size={20} color={theme.colors.foreground} />
             <Text style={styles.footerButtonText}>Agents</Text>
@@ -166,7 +169,10 @@ export function GlobalFooter() {
 
           <Pressable
             onPress={() => setShowCreateModal(true)}
-            style={styles.footerButton}
+            style={({ pressed }) => [
+              styles.footerButton,
+              pressed && styles.buttonPressed,
+            ]}
           >
             <Plus size={20} color={theme.colors.foreground} />
             <Text style={styles.footerButtonText}>New Agent</Text>
@@ -175,9 +181,10 @@ export function GlobalFooter() {
           <Pressable
             onPress={startRealtime}
             disabled={!ws.isConnected}
-            style={[
+            style={({ pressed }) => [
               styles.footerButton,
               !ws.isConnected && styles.buttonDisabled,
+              pressed && !ws.isConnected && styles.buttonPressed,
             ]}
           >
             <AudioLines size={20} color={theme.colors.foreground} />
@@ -229,6 +236,9 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   buttonDisabled: {
+    opacity: 0.5,
+  },
+  buttonPressed: {
     opacity: 0.5,
   },
 }));

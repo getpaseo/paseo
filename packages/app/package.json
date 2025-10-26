@@ -12,13 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@boudra/expo-two-way-audio": "^0.1.3",
     "@expo/vector-icons": "^15.0.2",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
-    "@boudra/expo-two-way-audio": "^0.1.3",
     "buffer": "^6.0.3",
     "expo": "^54.0.18",
     "expo-audio": "~1.0.13",
@@ -30,6 +30,7 @@
     "expo-font": "~14.0.9",
     "expo-haptics": "~15.0.7",
     "expo-image": "~3.0.10",
+    "expo-image-picker": "^17.0.8",
     "expo-keep-awake": "^15.0.7",
     "expo-linking": "~8.0.8",
     "expo-router": "~6.0.13",

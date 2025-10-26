@@ -114,7 +114,7 @@ interface SessionContextValue {
 
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
-  sendAgentMessage: (agentId: string, message: string) => void;
+  sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob) => Promise<void>;
   createAgent: (options: { cwd: string; initialMode?: string; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
@@ -603,7 +603,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const sendAgentMessage = useCallback((agentId: string, message: string) => {
+  const sendAgentMessage = useCallback(async (agentId: string, message: string, imageUris?: string[]) => {
     // Generate unique message ID for deduplication
     const messageId = generateMessageId();
 
@@ -632,7 +632,32 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       return updated;
     });
 
-    // Send to agent with messageId
+    // Convert images to base64 if provided
+    let imagesData: Array<{ data: string; mimeType: string }> | undefined;
+    if (imageUris && imageUris.length > 0) {
+      imagesData = [];
+      for (const imageUri of imageUris) {
+        try {
+          const response = await fetch(imageUri);
+          const blob = await response.blob();
+          const arrayBuffer = await blob.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = btoa(binary);
+          imagesData.push({
+            data: base64,
+            mimeType: blob.type || 'image/jpeg',
+          });
+        } catch (error) {
+          console.error('[Session] Failed to convert image:', error);
+        }
+      }
+    }
+
+    // Send to agent with messageId and optional images
     const msg: WSInboundMessage = {
       type: "session",
       message: {
@@ -640,6 +665,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         agentId,
         text: message,
         messageId,
+        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
       },
     };
     ws.send(msg);

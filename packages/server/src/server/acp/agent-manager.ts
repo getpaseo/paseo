@@ -13,6 +13,7 @@ import {
   type ReadTextFileResponse,
   type WriteTextFileRequest,
   type WriteTextFileResponse,
+  type ContentBlock,
 } from "@agentclientprotocol/sdk";
 import { v4 as uuidv4 } from "uuid";
 import { expandTilde } from "../terminal-mcp/tmux.js";
@@ -276,13 +277,13 @@ export class AgentManager {
   /**
    * Send a prompt to an agent
    * @param agentId - Agent ID
-   * @param prompt - The prompt text
+   * @param prompt - The prompt text or ContentBlock array
    * @param options - Optional settings: maxWait (ms), sessionMode to set before sending, messageId for deduplication
    * @returns Object with didComplete boolean indicating if agent finished within maxWait time
    */
   async sendPrompt(
     agentId: string,
-    prompt: string,
+    prompt: string | ContentBlock[],
     options?: { maxWait?: number; sessionMode?: string; messageId?: string }
   ): Promise<{ didComplete: boolean; stopReason?: string }> {
     const agent = this.agents.get(agentId);
@@ -336,6 +337,15 @@ export class AgentManager {
       await this.setSessionMode(agentId, options.sessionMode);
     }
 
+    // Convert prompt to ContentBlock array if it's a string
+    const contentBlocks: ContentBlock[] = typeof prompt === "string"
+      ? [{ type: "text", text: prompt }]
+      : prompt;
+
+    // Extract text for user message notification (use first text block)
+    const firstTextBlock = contentBlocks.find(block => block.type === "text");
+    const userMessageText = firstTextBlock && "text" in firstTextBlock ? firstTextBlock.text : "[message with attachments]";
+
     // Emit user message notification
     const userMessageUpdate: AgentUpdate = {
       agentId,
@@ -348,7 +358,7 @@ export class AgentManager {
             sessionUpdate: "user_message_chunk",
             content: {
               type: "text",
-              text: prompt,
+              text: userMessageText,
             },
             ...(options?.messageId ? { messageId: options.messageId } : {}),
           },
@@ -370,15 +380,10 @@ export class AgentManager {
     agent.state = { type: "processing", runtime };
     this.notifySubscribers(agentId);
 
-    // Start the prompt
+    // Start the prompt with ContentBlock array
     const promptPromise = runtime.connection.prompt({
       sessionId: runtime.sessionId,
-      prompt: [
-        {
-          type: "text",
-          text: prompt,
-        },
-      ],
+      prompt: contentBlocks,
     });
 
     // Handle completion in background
@@ -1413,9 +1418,8 @@ export class AgentManager {
   /**
    * Gracefully shutdown all agents
    * Waits for processing agents to finish, then terminates all processes
-   * @param timeout - Maximum time to wait for processing agents (ms), default 2 minutes
    */
-  async shutdown(timeout: number = 120000): Promise<void> {
+  async shutdown(): Promise<void> {
     console.log("[AgentManager] Starting graceful shutdown...");
 
     // Find agents currently processing work
@@ -1428,22 +1432,10 @@ export class AgentManager {
         `[AgentManager] Waiting for ${processingAgents.length} agent(s) to finish processing...`
       );
 
-      // Wait for processing agents to complete or timeout
-      await Promise.race([
-        // Wait for all processing agents to finish
-        Promise.all(
-          processingAgents.map((agent) => this.waitForAgentToFinish(agent.id))
-        ),
-        // Timeout fallback
-        new Promise<void>((resolve) =>
-          setTimeout(() => {
-            console.log(
-              `[AgentManager] Timeout reached (${timeout}ms), proceeding with shutdown`
-            );
-            resolve();
-          }, timeout)
-        ),
-      ]);
+      // Wait for all processing agents to finish
+      await Promise.all(
+        processingAgents.map((agent) => this.waitForAgentToFinish(agent.id))
+      );
     }
 
     // Persist state and terminate all agents

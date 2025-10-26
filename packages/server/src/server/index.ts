@@ -123,8 +123,8 @@ async function main() {
   const handleShutdown = async (signal: string) => {
     console.log(`\n${signal} received, shutting down gracefully...`);
 
-    // Wait for agents to finish work (with 2 minute timeout)
-    await agentManager.shutdown(120000);
+    // Wait for agents to finish work
+    await agentManager.shutdown();
 
     // Close WebSocket and HTTP servers
     wsServer.close();

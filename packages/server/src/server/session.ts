@@ -459,7 +459,8 @@ export class Session {
           await this.handleSendAgentMessage(
             msg.agentId,
             msg.text,
-            msg.messageId
+            msg.messageId,
+            msg.images
           );
           break;
 
@@ -603,23 +604,46 @@ export class Session {
   }
 
   /**
-   * Handle text message to agent
+   * Handle text message to agent (with optional image attachments)
    */
   private async handleSendAgentMessage(
     agentId: string,
     text: string,
-    messageId?: string
+    messageId?: string,
+    images?: Array<{ data: string; mimeType: string }>
   ): Promise<void> {
     console.log(
       `[Session ${
         this.clientId
-      }] Sending text to agent ${agentId}: ${text.substring(0, 50)}...`
+      }] Sending text to agent ${agentId}: ${text.substring(0, 50)}...${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
     );
 
     try {
+      // Import ContentBlock type from ACP SDK
+      type ContentBlock = Parameters<typeof this.agentManager.sendPrompt>[1] extends (string | infer U) ? U extends Array<infer T> ? T : never : never;
+
+      // Build ContentBlock array
+      const contentBlocks: ContentBlock[] = [
+        {
+          type: "text",
+          text,
+        } as ContentBlock,
+      ];
+
+      // Add image blocks if present
+      if (images && images.length > 0) {
+        for (const image of images) {
+          contentBlocks.push({
+            type: "image",
+            data: image.data,
+            mimeType: image.mimeType,
+          } as ContentBlock);
+        }
+      }
+
       // sendPrompt will emit the user message notification
-      await this.agentManager.sendPrompt(agentId, text, { messageId });
-      console.log(`[Session ${this.clientId}] Sent text to agent ${agentId}`);
+      await this.agentManager.sendPrompt(agentId, contentBlocks, { messageId });
+      console.log(`[Session ${this.clientId}] Sent message to agent ${agentId} with ${contentBlocks.length} content block(s)`);
     } catch (error: any) {
       console.error(
         `[Session ${this.clientId}] Failed to send text to agent ${agentId}:`,

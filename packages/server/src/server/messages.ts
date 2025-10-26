@@ -75,6 +75,10 @@ export const SendAgentMessageSchema = z.object({
   agentId: z.string(),
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
+  images: z.array(z.object({
+    data: z.string(), // base64 encoded image
+    mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+  })).optional(),
 });
 
 export const SendAgentAudioSchema = z.object({
