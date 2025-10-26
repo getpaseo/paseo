@@ -60,7 +60,7 @@ export async function createAgentMcpServer(
     {
       title: "Create Coding Agent",
       description:
-        "Creates a new Claude Code agent via ACP. The agent runs as a separate process and can execute coding tasks autonomously in a specified directory. Returns immediately with agent ID and status. If an initial prompt is provided, the agent will start working on it automatically.",
+        "Creates a new Claude Code agent via ACP. The agent runs as a separate process and can execute coding tasks autonomously in a specified directory. Returns immediately with agent ID and status. If an initial prompt is provided, the agent will start working on it automatically. Optionally create a git worktree for isolated development.",
       inputSchema: {
         cwd: z
           .string()
@@ -79,6 +79,12 @@ export async function createAgentMcpServer(
           .describe(
             "Initial session mode for the agent (e.g., 'ask', 'code', 'architect'). If not specified, the agent will use its default mode. The available modes depend on the specific agent implementation."
           ),
+        worktreeName: z
+          .string()
+          .optional()
+          .describe(
+            "Optional git worktree branch name for isolated development. Must be a valid slug: lowercase letters, numbers, and hyphens only (e.g., 'feature-auth', 'fix-bug-123'). Creates a new git worktree with this branch name and runs the agent in the worktree directory. Only works if cwd is inside a git repository."
+          ),
       },
       outputSchema: {
         agentId: z.string().describe("Unique identifier for the created agent"),
@@ -87,7 +93,7 @@ export async function createAgentMcpServer(
           .describe(
             "Current agent status: 'initializing', 'ready', 'processing', etc."
           ),
-        cwd: z.string().describe("The resolved absolute working directory the agent is running in"),
+        cwd: z.string().describe("The resolved absolute working directory the agent is running in (worktree path if worktreeName was provided)"),
         currentModeId: z.string().nullable().describe("The agent's current session mode"),
         availableModes: z.array(z.object({
           id: z.string(),
@@ -96,9 +102,21 @@ export async function createAgentMcpServer(
         })).nullable().describe("Available session modes for this agent"),
       },
     },
-    async ({ cwd, initialPrompt, initialMode }) => {
+    async ({ cwd, initialPrompt, initialMode, worktreeName }) => {
       // Expand and resolve the working directory
-      const resolvedCwd = expandPath(cwd);
+      let resolvedCwd = expandPath(cwd);
+
+      // Handle worktree creation if requested
+      if (worktreeName) {
+        const { createWorktree } = await import("../../utils/worktree.js");
+        
+        const worktreeConfig = await createWorktree({
+          branchName: worktreeName,
+          cwd: resolvedCwd,
+        });
+
+        resolvedCwd = worktreeConfig.worktreePath;
+      }
 
       const agentId = await agentManager.createAgent({
         cwd: resolvedCwd,

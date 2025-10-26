@@ -13,7 +13,6 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import {
   BottomSheetModal,
   BottomSheetBackdrop,
-  BottomSheetView,
   BottomSheetScrollView,
   BottomSheetTextInput,
   BottomSheetFooter,
@@ -286,18 +285,16 @@ export function CreateAgentModal({
       android_keyboardInputMode="adjustResize"
       topInset={insets.top}
     >
-      <BottomSheetView style={styles.sheetContent}>
+      <BottomSheetScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Create New Agent</Text>
         </View>
 
         {/* Form */}
-        <BottomSheetScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
           {/* Working Directory Input */}
           <View style={styles.formSection}>
             <Text style={styles.label}>Working Directory</Text>
@@ -403,8 +400,7 @@ export function CreateAgentModal({
               ))}
             </View>
           </View>
-        </BottomSheetScrollView>
-      </BottomSheetView>
+      </BottomSheetScrollView>
     </BottomSheetModal>
   );
 }
@@ -415,9 +411,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   handleIndicator: {
     backgroundColor: theme.colors.border,
-  },
-  sheetContent: {
-    flex: 1,
   },
   header: {
     alignItems: "center",
@@ -431,12 +424,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
   },
-  scrollView: {
-    flex: 1,
-  },
   scrollContent: {
     padding: theme.spacing[6],
-    paddingBottom: theme.spacing[6],
+    // Add extra padding at bottom to account for fixed footer button
+    // Footer height is roughly: padding (16) + button (48) + margin (16) = 80
+    paddingBottom: 100,
   },
   formSection: {
     marginBottom: theme.spacing[6],

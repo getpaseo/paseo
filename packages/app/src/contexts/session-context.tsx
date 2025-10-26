@@ -116,8 +116,8 @@ interface SessionContextValue {
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
-  sendAgentAudio: (agentId: string, audioBlob: Blob) => Promise<void>;
-  createAgent: (options: { cwd: string; initialMode?: string; requestId?: string }) => void;
+  sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
+  createAgent: (options: { cwd: string; initialMode?: string; worktreeName?: string; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (requestId: string, agentId: string, sessionId: string, selectedOptionIds: string[]) => void;
 }
@@ -670,7 +670,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const sendAgentAudio = useCallback(async (agentId: string, audioBlob: Blob) => {
+  const sendAgentAudio = useCallback(async (agentId: string, audioBlob: Blob, requestId?: string) => {
     try {
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -693,18 +693,19 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           audio: base64Audio,
           format,
           isLast: true,
+          requestId,
         },
       };
       ws.send(msg);
 
-      console.log("[Session] Sent audio to agent:", agentId, format, audioBlob.size, "bytes");
+      console.log("[Session] Sent audio to agent:", agentId, format, audioBlob.size, "bytes", requestId ? `(requestId: ${requestId})` : "");
     } catch (error) {
       console.error("[Session] Failed to send audio:", error);
       throw error;
     }
   }, [ws]);
 
-  const createAgent = useCallback((options: { cwd: string; initialMode?: string; requestId?: string }) => {
+  const createAgent = useCallback((options: { cwd: string; initialMode?: string; worktreeName?: string; requestId?: string }) => {
     const msg: WSInboundMessage = {
       type: "session",
       message: {

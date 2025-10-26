@@ -87,12 +87,14 @@ export const SendAgentAudioSchema = z.object({
   audio: z.string(), // base64 encoded
   format: z.string(),
   isLast: z.boolean(),
+  requestId: z.string().optional(), // Client-provided ID for tracking transcription
 });
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   cwd: z.string(),
   initialMode: z.string().optional(),
+  worktreeName: z.string().optional(),
   requestId: z.string().optional(),
 });
 
@@ -181,6 +183,7 @@ export const TranscriptionResultMessageSchema = z.object({
     text: z.string(),
     language: z.string().optional(),
     duration: z.number().optional(),
+    requestId: z.string().optional(), // Echoed back from request for tracking
   }),
 });
 
