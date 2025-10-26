@@ -6,22 +6,22 @@ import {
   ScrollView,
   ActivityIndicator,
   InteractionManager,
+  TextInput,
+  Modal,
+  useWindowDimensions,
+  type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import Animated, { useAnimatedStyle } from "react-native-reanimated";
-import {
-  BottomSheetModal,
-  BottomSheetBackdrop,
-  BottomSheetScrollView,
-  BottomSheetTextInput,
-  BottomSheetFooter,
-} from "@gorhom/bottom-sheet";
-import type {
-  BottomSheetBackdropProps,
-  BottomSheetFooterProps,
-} from "@gorhom/bottom-sheet";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  Easing,
+  runOnJS,
+} from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { X } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useSession } from "@/contexts/session-context";
@@ -31,6 +31,7 @@ import {
   listAgentTypeDefinitions,
   type AgentType,
   type AgentTypeDefinition,
+  type AgentModeDefinition,
 } from "@server/server/acp/agent-types";
 
 interface CreateAgentModalProps {
@@ -50,30 +51,37 @@ const fallbackDefinition = agentTypeDefinitionMap.claude ?? agentTypeDefinitions
 const DEFAULT_AGENT_TYPE: AgentType = fallbackDefinition
   ? fallbackDefinition.id
   : "claude";
-const DEFAULT_MODE_FOR_DEFAULT_AGENT = fallbackDefinition?.defaultModeId;
+const DEFAULT_MODE_FOR_DEFAULT_AGENT = fallbackDefinition?.defaultModeId ?? "";
+const BACKDROP_OPACITY = 0.55;
 
 export function CreateAgentModal({
   isVisible,
   onClose,
 }: CreateAgentModalProps) {
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
-  const { recentPaths, addRecentPath } = useRecentPaths();
+  const { height: screenHeight, width: screenWidth } = useWindowDimensions();
+  const slideOffset = useSharedValue(screenHeight);
+  const backdropOpacity = useSharedValue(0);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const isCompactLayout = screenWidth < 720;
+
+  const { recentPaths, addRecentPath } = useRecentPaths();
   const { ws, createAgent } = useSession();
   const router = useRouter();
 
+  const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
   const [selectedAgentType, setSelectedAgentType] = useState<AgentType>(
     DEFAULT_AGENT_TYPE
   );
-  const [selectedMode, setSelectedMode] = useState(
-    DEFAULT_MODE_FOR_DEFAULT_AGENT ?? ""
-  );
+  const [selectedMode, setSelectedMode] = useState(DEFAULT_MODE_FOR_DEFAULT_AGENT);
   const [worktreeName, setWorktreeName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+
+  const pendingNavigationAgentIdRef = useRef<string | null>(null);
+
   const agentDefinition = agentTypeDefinitionMap[selectedAgentType];
   const modeOptions = agentDefinition?.availableModes ?? [];
 
@@ -82,53 +90,138 @@ export function CreateAgentModal({
       return;
     }
 
-    const availableModeIds = agentDefinition.availableModes.map(
-      (mode) => mode.id
-    );
-
-    if (availableModeIds.length === 0) {
+    if (modeOptions.length === 0) {
       if (selectedMode !== "") {
         setSelectedMode("");
       }
       return;
     }
 
+    const availableModeIds = modeOptions.map((mode) => mode.id);
+
     if (!availableModeIds.includes(selectedMode)) {
       const fallbackModeId =
         agentDefinition.defaultModeId ?? availableModeIds[0];
       setSelectedMode(fallbackModeId);
     }
-  }, [agentDefinition, selectedMode]);
+  }, [agentDefinition, selectedMode, modeOptions]);
 
-  // Use ref instead of state to survive state resets in onDismiss
-  const pendingNavigationAgentIdRef = useRef<string | null>(null);
+  const resetFormState = useCallback(() => {
+    setWorkingDir("");
+    setWorktreeName("");
+    setSelectedAgentType(DEFAULT_AGENT_TYPE);
+    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_AGENT);
+    setErrorMessage("");
+    setIsLoading(false);
+    setPendingRequestId(null);
+  }, []);
 
-  const snapPoints = useMemo(() => ["90%"], []);
+  const navigateToAgentIfNeeded = useCallback(() => {
+    const agentId = pendingNavigationAgentIdRef.current;
+    if (!agentId) {
+      return;
+    }
 
-  // Keyboard animation for footer
-  const animatedFooterStyle = useAnimatedStyle(() => {
+    pendingNavigationAgentIdRef.current = null;
+    InteractionManager.runAfterInteractions(() => {
+      router.push(`/agent/${agentId}`);
+    });
+  }, [router]);
+
+  const handleCloseAnimationComplete = useCallback(() => {
+    console.log("[CreateAgentModal] close animation complete – resetting form");
+    resetFormState();
+    setIsMounted(false);
+    navigateToAgentIfNeeded();
+  }, [navigateToAgentIfNeeded, resetFormState]);
+
+  useEffect(() => {
+    if (!isVisible) {
+      console.log("[CreateAgentModal] visibility effect skipped (isVisible is false)", {
+        isMounted,
+      });
+      return;
+    }
+
+    console.log("[CreateAgentModal] visibility effect triggered", {
+      wasMounted: isMounted,
+      screenHeight,
+    });
+    setIsMounted(true);
+    slideOffset.value = screenHeight;
+    backdropOpacity.value = 0;
+
+    backdropOpacity.value = withTiming(BACKDROP_OPACITY, {
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+    });
+    slideOffset.value = withTiming(0, {
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [isVisible, slideOffset, backdropOpacity, screenHeight]);
+
+  useEffect(() => {
+    if (!isMounted || isVisible) {
+      console.log("[CreateAgentModal] close animation skipped", {
+        isMounted,
+        isVisible,
+      });
+      return;
+    }
+
+    console.log("[CreateAgentModal] close animation starting", {
+      screenHeight,
+    });
+    backdropOpacity.value = withTiming(0, {
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+    });
+    slideOffset.value = withTiming(
+      screenHeight,
+      {
+        duration: 220,
+        easing: Easing.in(Easing.cubic),
+      },
+      (finished) => {
+        if (finished) {
+          console.log("[CreateAgentModal] slide animation finished");
+          runOnJS(handleCloseAnimationComplete)();
+        }
+      }
+    );
+  }, [
+    isMounted,
+    isVisible,
+    slideOffset,
+    backdropOpacity,
+    screenHeight,
+    handleCloseAnimationComplete,
+  ]);
+
+  const footerAnimatedStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
-    const padding = Math.max(0, absoluteHeight - insets.bottom);
+    const shift = Math.max(0, absoluteHeight - insets.bottom);
     return {
-      paddingBottom: padding,
+      transform: [{ translateY: -shift }],
     };
-  });
+  }, [insets.bottom, keyboardHeight]);
 
-  const renderBackdrop = useMemo(
-    () => (props: BottomSheetBackdropProps) =>
-      (
-        <BottomSheetBackdrop
-          {...props}
-          disappearsOnIndex={-1}
-          appearsOnIndex={0}
-          opacity={0.5}
-        />
-      ),
-    []
-  );
+  const containerAnimatedStyle = useAnimatedStyle(() => {
+    "worklet";
+    return {
+      transform: [{ translateY: slideOffset.value }],
+    };
+  }, [slideOffset]);
 
-  // Slugify helper function
+  const backdropAnimatedStyle = useAnimatedStyle(() => {
+    "worklet";
+    return {
+      opacity: backdropOpacity.value,
+    };
+  }, [backdropOpacity]);
+
   const slugifyWorktreeName = useCallback((input: string): string => {
     return input
       .toLowerCase()
@@ -136,16 +229,16 @@ export function CreateAgentModal({
       .replace(/^-+|-+$/g, "");
   }, []);
 
-  // Validate worktree name
   const validateWorktreeName = useCallback((name: string): { valid: boolean; error?: string } => {
-    if (!name) return { valid: true }; // Optional field
+    if (!name) {
+      return { valid: true };
+    }
 
     if (name.length > 100) {
       return { valid: false, error: "Worktree name too long (max 100 characters)" };
     }
 
-    const validPattern = /^[a-z0-9-]+$/;
-    if (!validPattern.test(name)) {
+    if (!/^[a-z0-9-]+$/.test(name)) {
       return {
         valid: false,
         error: "Must contain only lowercase letters, numbers, and hyphens",
@@ -163,8 +256,13 @@ export function CreateAgentModal({
     return { valid: true };
   }, []);
 
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
   const handleCreate = useCallback(async () => {
-    if (!workingDir.trim()) {
+    const trimmedPath = workingDir.trim();
+    if (!trimmedPath) {
       setErrorMessage("Working directory is required");
       return;
     }
@@ -173,10 +271,8 @@ export function CreateAgentModal({
       return;
     }
 
-    const path = workingDir.trim();
     const worktree = worktreeName.trim();
 
-    // Validate worktree name if provided
     if (worktree) {
       const validation = validateWorktreeName(worktree);
       if (!validation.valid) {
@@ -185,15 +281,12 @@ export function CreateAgentModal({
       }
     }
 
-    // Save to recent paths
     try {
-      await addRecentPath(path);
+      await addRecentPath(trimmedPath);
     } catch (error) {
       console.error("[CreateAgentModal] Failed to save recent path:", error);
-      // Continue anyway - don't block agent creation
     }
 
-    // Generate request ID
     const requestId = generateMessageId();
 
     setIsLoading(true);
@@ -203,10 +296,9 @@ export function CreateAgentModal({
     const modeId =
       modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
 
-    // Create the agent
     try {
       createAgent({
-        cwd: path,
+        cwd: trimmedPath,
         agentType: selectedAgentType,
         initialMode: modeId,
         worktreeName: worktree || undefined,
@@ -230,61 +322,23 @@ export function CreateAgentModal({
     createAgent,
   ]);
 
-  const renderFooter = useCallback(
-    (props: BottomSheetFooterProps) => (
-      <BottomSheetFooter {...props} style={animatedFooterStyle}>
-        <Animated.View
-          style={[styles.footer, { paddingBottom: insets.bottom }]}
-        >
-          <Pressable
-            style={[
-              styles.createButton,
-              (!workingDir.trim() || isLoading) && styles.createButtonDisabled,
-            ]}
-            onPress={handleCreate}
-            disabled={!workingDir.trim() || isLoading}
-          >
-            {isLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator color={defaultTheme.colors.palette.white} />
-                <Text style={styles.createButtonText}>Creating...</Text>
-              </View>
-            ) : (
-              <Text style={styles.createButtonText}>Create Agent</Text>
-            )}
-          </Pressable>
-        </Animated.View>
-      </BottomSheetFooter>
-    ),
-    [insets.bottom, workingDir, animatedFooterStyle, isLoading, handleCreate]
-  );
-
   useEffect(() => {
-    if (isVisible) {
-      bottomSheetRef.current?.present();
+    if (!pendingRequestId) {
+      return;
     }
-  }, [isVisible]);
-
-  // Listen for agent_created events
-  useEffect(() => {
-    if (!pendingRequestId) return;
 
     const unsubscribe = ws.on("agent_created", (message) => {
-      if (message.type !== "agent_created") return;
+      if (message.type !== "agent_created") {
+        return;
+      }
 
       const { agentId, requestId } = message.payload;
 
-      // Check if this is the response to our request
       if (requestId === pendingRequestId) {
         console.log("[CreateAgentModal] Agent created:", agentId);
         setIsLoading(false);
         setPendingRequestId(null);
-
-        // Store the agent ID in ref for navigation after modal dismisses
-        // Using ref instead of state because state gets reset in onDismiss
         pendingNavigationAgentIdRef.current = agentId;
-
-        // Close modal - navigation will happen in handleDismiss
         handleClose();
       }
     });
@@ -292,314 +346,508 @@ export function CreateAgentModal({
     return () => {
       unsubscribe();
     };
-  }, [pendingRequestId, ws]);
+  }, [pendingRequestId, ws, handleClose]);
 
-  function handleClose() {
-    bottomSheetRef.current?.dismiss();
+  const shouldRender = isVisible || isMounted;
+
+  const workingDirIsEmpty = !workingDir.trim();
+  const headerPaddingTop = useMemo(() => insets.top + defaultTheme.spacing[4], [insets.top]);
+  const horizontalPaddingLeft = useMemo(() => defaultTheme.spacing[6] + insets.left, [insets.left]);
+  const horizontalPaddingRight = useMemo(() => defaultTheme.spacing[6] + insets.right, [insets.right]);
+
+  const handleSheetLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height, y } = event.nativeEvent.layout;
+    console.log("[CreateAgentModal] sheet layout", { height, y });
+  }, []);
+
+  if (!shouldRender) {
+    console.log("[CreateAgentModal] render skipped", {
+      isVisible,
+      isMounted,
+    });
+    return null;
   }
 
-  function handleDismiss() {
-    const agentId = pendingNavigationAgentIdRef.current;
-
-    // Reset all state
-    setWorkingDir("");
-    setWorktreeName("");
-    setSelectedAgentType(DEFAULT_AGENT_TYPE);
-    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_AGENT ?? "");
-    setErrorMessage("");
-    setIsLoading(false);
-    setPendingRequestId(null);
-    onClose();
-
-    // Navigate after interactions complete to avoid race with dismiss animation
-    if (agentId) {
-      InteractionManager.runAfterInteractions(() => {
-        router.push(`/agent/${agentId}`);
-        pendingNavigationAgentIdRef.current = null;
-      });
-    }
-  }
+  console.log("[CreateAgentModal] rendering modal", {
+    isVisible,
+    isMounted,
+  });
 
   return (
-    <BottomSheetModal
-      ref={bottomSheetRef}
-      snapPoints={snapPoints}
-      enableDynamicSizing={false}
-      enablePanDownToClose={true}
-      onDismiss={handleDismiss}
-      backgroundStyle={styles.sheetBackground}
-      handleIndicatorStyle={styles.handleIndicator}
-      backdropComponent={renderBackdrop}
-      footerComponent={renderFooter}
-      keyboardBehavior="interactive"
-      keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-      topInset={insets.top}
+    <Modal
+      transparent
+      statusBarTranslucent
+      animationType="none"
+      visible={shouldRender}
+      onRequestClose={handleClose}
     >
-      <BottomSheetScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Create New Agent</Text>
-        </View>
-
-        {/* Form */}
-          {/* Working Directory Input */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>Working Directory</Text>
-            <BottomSheetTextInput
-              style={[styles.input, isLoading && styles.inputDisabled]}
-              placeholder="/path/to/project"
-              placeholderTextColor={defaultTheme.colors.mutedForeground}
-              value={workingDir}
-              onChangeText={(text) => {
-                setWorkingDir(text);
-                setErrorMessage("");
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isLoading}
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, backdropAnimatedStyle]}>
+          <Pressable style={styles.backdropPressable} onPress={handleClose} />
+        </Animated.View>
+        <Animated.View
+          style={[styles.sheet, containerAnimatedStyle]}
+          onLayout={handleSheetLayout}
+        >
+          <View style={styles.content}>
+            <ModalHeader
+              paddingTop={headerPaddingTop}
+              paddingLeft={horizontalPaddingLeft}
+              paddingRight={horizontalPaddingRight}
+              onClose={handleClose}
             />
-            {errorMessage && (
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            )}
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={[
+                styles.scrollContent,
+                {
+                  paddingBottom: insets.bottom + defaultTheme.spacing[16],
+                  paddingLeft: horizontalPaddingLeft,
+                  paddingRight: horizontalPaddingRight,
+                },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <WorkingDirectorySection
+                errorMessage={errorMessage}
+                isLoading={isLoading}
+                recentPaths={recentPaths}
+                workingDir={workingDir}
+                onChangeWorkingDir={(value) => {
+                  setWorkingDir(value);
+                  setErrorMessage("");
+                }}
+              />
 
-            {/* Recent Paths Chips */}
-            {recentPaths.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.recentPathsContainer}
-                keyboardShouldPersistTaps="handled"
+              <View
+                style={[
+                  styles.selectorRow,
+                  isCompactLayout && styles.selectorRowStacked,
+                ]}
               >
-                {recentPaths.map((path) => (
-                  <Pressable
-                    key={path}
-                    style={styles.recentPathChip}
-                    onPress={() => setWorkingDir(path)}
-                  >
-                    <Text style={styles.recentPathChipText} numberOfLines={1}>
-                      {path}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
-          </View>
+                <AssistantSelector
+                  agentTypeDefinitions={agentTypeDefinitions}
+                  disabled={isLoading}
+                  isStacked={isCompactLayout}
+                  selectedAgentType={selectedAgentType}
+                  onSelect={setSelectedAgentType}
+                />
+                <ModeSelector
+                  disabled={isLoading}
+                  isStacked={isCompactLayout}
+                  modeOptions={modeOptions}
+                  selectedMode={selectedMode}
+                  onSelect={setSelectedMode}
+                />
+              </View>
 
-          {/* Agent Type Selector */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>Agent Type</Text>
-            <View style={styles.agentTypeContainer}>
-              {agentTypeDefinitions.map((definition) => {
-                const isSelected = selectedAgentType === definition.id;
-                return (
-                  <Pressable
-                    key={definition.id}
-                    onPress={() => setSelectedAgentType(definition.id)}
-                    disabled={isLoading}
+              <WorktreeSection
+                isLoading={isLoading}
+                value={worktreeName}
+                onChange={(text) => {
+                  const slugified = slugifyWorktreeName(text);
+                  setWorktreeName(slugified);
+                  setErrorMessage("");
+                }}
+              />
+            </ScrollView>
+
+            <Animated.View
+              style={[
+                styles.footer,
+                {
+                  paddingBottom: insets.bottom + defaultTheme.spacing[4],
+                  paddingLeft: horizontalPaddingLeft,
+                  paddingRight: horizontalPaddingRight,
+                },
+                footerAnimatedStyle,
+              ]}
+            >
+              <Pressable
+                style={[
+                  styles.createButton,
+                  (workingDirIsEmpty || isLoading) && styles.createButtonDisabled,
+                ]}
+                onPress={handleCreate}
+                disabled={workingDirIsEmpty || isLoading}
+              >
+                {isLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator color={defaultTheme.colors.palette.white} />
+                    <Text style={styles.createButtonText}>Creating...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.createButtonText}>Create Agent</Text>
+                )}
+              </Pressable>
+            </Animated.View>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+interface ModalHeaderProps {
+  paddingTop: number;
+  paddingLeft: number;
+  paddingRight: number;
+  onClose: () => void;
+}
+
+function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose }: ModalHeaderProps): JSX.Element {
+  return (
+    <View style={[styles.header, { paddingTop, paddingLeft, paddingRight }]}>
+      <Text style={styles.headerTitle}>Create New Agent</Text>
+      <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
+        <X size={20} style={styles.closeIcon} />
+      </Pressable>
+    </View>
+  );
+}
+
+interface WorkingDirectorySectionProps {
+  workingDir: string;
+  isLoading: boolean;
+  errorMessage: string;
+  recentPaths: string[];
+  onChangeWorkingDir: (value: string) => void;
+}
+
+function WorkingDirectorySection({
+  workingDir,
+  isLoading,
+  errorMessage,
+  recentPaths,
+  onChangeWorkingDir,
+}: WorkingDirectorySectionProps): JSX.Element {
+  return (
+    <View style={styles.formSection}>
+      <Text style={styles.label}>Working Directory</Text>
+      <TextInput
+        style={[styles.input, isLoading && styles.inputDisabled]}
+        placeholder="/path/to/project"
+        placeholderTextColor={defaultTheme.colors.mutedForeground}
+        value={workingDir}
+        onChangeText={onChangeWorkingDir}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!isLoading}
+      />
+      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+      {recentPaths.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.recentPathsContainer}
+          keyboardShouldPersistTaps="handled"
+        >
+          {recentPaths.map((path) => (
+            <Pressable key={path} style={styles.recentPathChip} onPress={() => onChangeWorkingDir(path)}>
+              <Text style={styles.recentPathChipText} numberOfLines={1}>
+                {path}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
+interface AssistantSelectorProps {
+  agentTypeDefinitions: AgentTypeDefinition[];
+  selectedAgentType: AgentType;
+  disabled: boolean;
+  isStacked: boolean;
+  onSelect: (agentType: AgentType) => void;
+}
+
+function AssistantSelector({
+  agentTypeDefinitions,
+  selectedAgentType,
+  disabled,
+  isStacked,
+  onSelect,
+}: AssistantSelectorProps): JSX.Element {
+  return (
+    <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
+      <Text style={styles.label}>Assistant</Text>
+      <View style={styles.optionGroup}>
+        {agentTypeDefinitions.map((definition) => {
+          const isSelected = selectedAgentType === definition.id;
+          return (
+            <Pressable
+              key={definition.id}
+              onPress={() => onSelect(definition.id)}
+              disabled={disabled}
+              style={[
+                styles.optionCard,
+                isSelected && styles.optionCardSelected,
+                disabled && styles.optionCardDisabled,
+              ]}
+            >
+              <View style={styles.optionContent}>
+                <View
+                  style={[
+                    styles.radioOuter,
+                    isSelected ? styles.radioOuterSelected : styles.radioOuterUnselected,
+                  ]}
+                >
+                  {isSelected ? <View style={styles.radioInner} /> : null}
+                </View>
+                <Text style={styles.optionLabel}>{definition.label}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+interface ModeSelectorProps {
+  modeOptions: AgentModeDefinition[];
+  selectedMode: string;
+  disabled: boolean;
+  isStacked: boolean;
+  onSelect: (modeId: string) => void;
+}
+
+function ModeSelector({
+  modeOptions,
+  selectedMode,
+  disabled,
+  isStacked,
+  onSelect,
+}: ModeSelectorProps): JSX.Element {
+  return (
+    <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
+      <Text style={styles.label}>Permissions</Text>
+      {modeOptions.length === 0 ? (
+        <Text style={styles.helperText}>This assistant does not expose selectable permissions.</Text>
+      ) : (
+        <View style={styles.optionGroup}>
+          {modeOptions.map((mode) => {
+            const isSelected = selectedMode === mode.id;
+            return (
+              <Pressable
+                key={mode.id}
+                onPress={() => onSelect(mode.id)}
+                disabled={disabled}
+                style={[
+                  styles.optionCard,
+                  isSelected && styles.optionCardSelected,
+                  disabled && styles.optionCardDisabled,
+                ]}
+              >
+                <View style={styles.optionContent}>
+                  <View
                     style={[
-                      styles.agentTypeOption,
-                      isSelected && styles.agentTypeOptionSelected,
-                      isLoading && styles.agentTypeOptionDisabled,
+                      styles.radioOuter,
+                      isSelected ? styles.radioOuterSelected : styles.radioOuterUnselected,
                     ]}
                   >
-                    <View style={styles.agentTypeOptionContent}>
-                      <View
-                        style={[
-                          styles.radioOuter,
-                          isSelected
-                            ? styles.radioOuterSelected
-                            : styles.radioOuterUnselected,
-                        ]}
-                      >
-                        {isSelected && <View style={styles.radioInner} />}
-                      </View>
-                      <View style={styles.agentTypeTextContainer}>
-                        <Text style={styles.agentTypeLabel}>
-                          {definition.label}
-                        </Text>
-                        {definition.description ? (
-                          <Text style={styles.agentTypeDescription}>
-                            {definition.description}
-                          </Text>
-                        ) : null}
-                        <Text style={styles.agentTypeMeta}>
-                          {definition.availableModes.length > 0
-                            ? `Modes: ${definition.availableModes
-                                .map((mode) => mode.name)
-                                .join(", ")}`
-                            : "Modes: none"}
-                        </Text>
-                      </View>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
+                    {isSelected ? <View style={styles.radioInner} /> : null}
+                  </View>
+                  <View style={styles.modeTextContainer}>
+                    <Text style={styles.optionLabel}>{mode.name}</Text>
+                    {mode.description ? <Text style={styles.modeDescription}>{mode.description}</Text> : null}
+                  </View>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
 
-          {/* Worktree Name Input (Optional) */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>Worktree Name (Optional)</Text>
-            <BottomSheetTextInput
-              style={[styles.input, isLoading && styles.inputDisabled]}
-              placeholder="feature-branch-name"
-              placeholderTextColor={defaultTheme.colors.mutedForeground}
-              value={worktreeName}
-              onChangeText={(text) => {
-                // Auto-slugify as user types
-                const slugified = slugifyWorktreeName(text);
-                setWorktreeName(slugified);
-                setErrorMessage("");
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isLoading}
-            />
-            <Text style={styles.helperText}>
-              Create a git worktree for isolated development. Must be lowercase, alphanumeric, and hyphens only.
-            </Text>
-          </View>
+interface WorktreeSectionProps {
+  value: string;
+  isLoading: boolean;
+  onChange: (value: string) => void;
+}
 
-          {/* Mode Selector */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>Mode</Text>
-            {modeOptions.length === 0 ? (
-              <Text style={styles.helperText}>
-                This agent type does not expose selectable modes.
-              </Text>
-            ) : (
-              <View style={styles.modeContainer}>
-                {modeOptions.map((mode) => {
-                  const isSelected = selectedMode === mode.id;
-                  return (
-                    <Pressable
-                      key={mode.id}
-                      onPress={() => setSelectedMode(mode.id)}
-                      disabled={isLoading}
-                      style={[
-                        styles.modeOption,
-                        isSelected && styles.modeOptionSelected,
-                        isLoading && styles.modeOptionDisabled,
-                      ]}
-                    >
-                      <View style={styles.modeOptionContent}>
-                        <View
-                          style={[
-                            styles.radioOuter,
-                            isSelected
-                              ? styles.radioOuterSelected
-                              : styles.radioOuterUnselected,
-                          ]}
-                        >
-                          {isSelected && <View style={styles.radioInner} />}
-                        </View>
-                        <View style={styles.modeTextContainer}>
-                          <Text style={styles.modeLabel}>{mode.name}</Text>
-                          {mode.description ? (
-                            <Text style={styles.modeDescription}>
-                              {mode.description}
-                            </Text>
-                          ) : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            )}
-          </View>
-      </BottomSheetScrollView>
-    </BottomSheetModal>
+function WorktreeSection({ value, isLoading, onChange }: WorktreeSectionProps): JSX.Element {
+  return (
+    <View style={styles.formSection}>
+      <Text style={styles.label}>Worktree Name (Optional)</Text>
+      <TextInput
+        style={[styles.input, isLoading && styles.inputDisabled]}
+        placeholder="feature-branch-name"
+        placeholderTextColor={defaultTheme.colors.mutedForeground}
+        value={value}
+        onChangeText={onChange}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!isLoading}
+      />
+      <Text style={styles.helperText}>
+        Create a git worktree for isolated development. Must be lowercase, alphanumeric, and hyphens only.
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  sheetBackground: {
-    backgroundColor: theme.colors.card,
+  overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
   },
-  handleIndicator: {
-    backgroundColor: theme.colors.border,
+  backdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: theme.colors.palette.gray[900],
+    zIndex: 1,
+  },
+  backdropPressable: {
+    flex: 1,
+  },
+  sheet: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    zIndex: 2,
+    width: "100%",
+    backgroundColor: theme.colors.card,
+    overflow: "hidden",
+  },
+  content: {
+    flex: 1,
   },
   header: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   headerTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.semibold,
   },
+  closeButton: {
+    padding: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeIcon: {
+    color: theme.colors.mutedForeground,
+  },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
-    padding: theme.spacing[6],
-    // Add extra padding at bottom to account for fixed footer button
-    // Footer height is roughly: padding (16) + button (48) + margin (16) = 80
-    paddingBottom: 100,
+    paddingTop: theme.spacing[6],
+    paddingBottom: theme.spacing[8],
+    gap: theme.spacing[6],
   },
   formSection: {
-    marginBottom: theme.spacing[6],
+    gap: theme.spacing[3],
   },
   label: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing[2],
   },
   input: {
     backgroundColor: theme.colors.background,
-    color: theme.colors.foreground,
-    padding: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
   inputDisabled: {
     opacity: theme.opacity[50],
   },
+  errorText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
+  },
   helperText: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
-    marginTop: theme.spacing[2],
   },
-  errorText: {
-    color: theme.colors.destructive,
+  recentPathsContainer: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
+  recentPathChip: {
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    maxWidth: 200,
+  },
+  recentPathChipText: {
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    marginTop: theme.spacing[2],
+    fontWeight: theme.fontWeight.semibold,
   },
-  modeContainer: {
+  selectorRow: {
+    flexDirection: "row",
+    gap: theme.spacing[4],
+  },
+  selectorRowStacked: {
+    flexDirection: "column",
+  },
+  selectorColumn: {
+    flex: 1,
     gap: theme.spacing[3],
   },
-  modeOption: {
+  selectorColumnFull: {
+    width: "100%",
+  },
+  optionGroup: {
+    gap: theme.spacing[3],
+  },
+  optionCard: {
     backgroundColor: theme.colors.background,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    padding: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
   },
-  modeOptionSelected: {
+  optionCardSelected: {
     borderColor: theme.colors.palette.blue[500],
     backgroundColor: theme.colors.muted,
   },
-  modeOptionDisabled: {
+  optionCardDisabled: {
     opacity: theme.opacity[50],
   },
-  modeOptionContent: {
+  optionContent: {
     flexDirection: "row",
     alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  optionLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
   },
   radioOuter: {
     width: 20,
     height: 20,
     borderRadius: theme.borderRadius.full,
     borderWidth: theme.borderWidth[2],
-    marginRight: theme.spacing[3],
     alignItems: "center",
     justifyContent: "center",
   },
@@ -617,60 +865,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   modeTextContainer: {
     flex: 1,
-  },
-  modeLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing[1],
+    gap: theme.spacing[1],
   },
   modeDescription: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-  },
-  agentTypeContainer: {
-    gap: theme.spacing[3],
-  },
-  agentTypeOption: {
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    padding: theme.spacing[4],
-  },
-  agentTypeOptionSelected: {
-    borderColor: theme.colors.palette.blue[500],
-    backgroundColor: theme.colors.muted,
-  },
-  agentTypeOptionDisabled: {
-    opacity: theme.opacity[50],
-  },
-  agentTypeOptionContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  agentTypeTextContainer: {
-    flex: 1,
-  },
-  agentTypeLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing[1],
-  },
-  agentTypeDescription: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    marginBottom: theme.spacing[1],
-  },
-  agentTypeMeta: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
   footer: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[6],
     paddingTop: theme.spacing[4],
     backgroundColor: theme.colors.card,
   },
@@ -678,7 +881,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.blue[500],
     paddingVertical: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[4],
     alignItems: "center",
   },
   createButtonDisabled: {
@@ -694,24 +896,5 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  recentPathsContainer: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
-  },
-  recentPathChip: {
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    maxWidth: 200,
-  },
-  recentPathChipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
 }));
