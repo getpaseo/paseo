@@ -374,13 +374,13 @@
   {
     "id": "97423777-33d3-414a-ae79-ea303230010a",
     "title": "Commit Local Changes",
-    "sessionId": "019a20d4-5fd4-76db-8021-697b8204597e",
+    "sessionId": "addbd42f-dbb1-4536-bc2b-e70a64587de6",
     "options": {
       "type": "claude",
       "sessionId": "addbd42f-dbb1-4536-bc2b-e70a64587de6"
     },
     "createdAt": "2025-10-26T14:02:59.844Z",
-    "lastActivityAt": "2025-10-26T14:03:22.696Z",
+    "lastActivityAt": "2025-10-26T14:08:58.462Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]
