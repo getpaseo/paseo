@@ -1115,6 +1115,17 @@ export class AgentManager {
         agent.currentAssistantMessageId = null;
         agent.currentThoughtId = null;
       }
+
+      // Handle mode changes
+      if (update.update.sessionUpdate === "current_mode_update") {
+        const newModeId = update.update.currentModeId;
+        const runtime = this.getRuntime(agent);
+
+        if (runtime && runtime.currentModeId !== newModeId) {
+          console.log(`[Agent ${agentId}] Mode changed: ${runtime.currentModeId} -> ${newModeId}`);
+          runtime.currentModeId = newModeId;
+        }
+      }
     }
 
     // Create agent update with enriched notification wrapped in discriminated union
