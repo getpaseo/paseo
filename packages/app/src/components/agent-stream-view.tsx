@@ -1,5 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { View, Text, ScrollView, Pressable } from "react-native";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  Pressable,
+  FlatList,
+  ListRenderItemInfo,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  InteractionManager,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
@@ -34,7 +43,7 @@ export function AgentStreamView({
   pendingPermissions,
   onPermissionResponse,
 }: AgentStreamViewProps) {
-  const scrollViewRef = useRef<ScrollView>(null);
+  const flatListRef = useRef<FlatList<StreamItem>>(null);
   const bottomSheetRef = useRef<BottomSheetModal | null>(null);
   const insets = useSafeAreaInsets();
   const [selectedToolCall, setSelectedToolCall] =
@@ -42,39 +51,14 @@ export function AgentStreamView({
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
+  const isProgrammaticScrollRef = useRef(false);
+  const isNearBottomRef = useRef(true);
 
   useEffect(() => {
     hasScrolledInitially.current = false;
     hasAutoScrolledOnce.current = false;
+    isNearBottomRef.current = true;
   }, [agentId]);
-
-  // Scroll to bottom immediately on initial load, then animate for new messages
-  useEffect(() => {
-    if (streamItems.length === 0) {
-      return;
-    }
-
-    const scrollView = scrollViewRef.current;
-    if (!scrollView) {
-      return;
-    }
-
-    if (!hasAutoScrolledOnce.current) {
-      // First load: jump to bottom without animation and remember we did it
-      scrollView.scrollToEnd({ animated: false });
-      hasScrolledInitially.current = true;
-      hasAutoScrolledOnce.current = true;
-      return;
-    }
-
-    if (!isNearBottom) {
-      return;
-    }
-
-    const shouldAnimate = hasScrolledInitially.current;
-    scrollView.scrollToEnd({ animated: shouldAnimate });
-    hasScrolledInitially.current = true;
-  }, [streamItems, isNearBottom]);
 
   function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
     setSelectedToolCall(toolCall);
@@ -88,140 +72,203 @@ export function AgentStreamView({
     setSelectedToolCall(null);
   }
 
-  function handleScroll(event: any) {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const distanceFromBottom =
-      contentSize.height - contentOffset.y - layoutMeasurement.height;
-    // Consider user "at bottom" if within 10px of the end
-    const nearBottom = distanceFromBottom < 10;
-    setIsNearBottom(nearBottom);
-  }
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset } = event.nativeEvent;
+      const threshold = Math.max(insets.bottom, 32);
+      const nearBottom = contentOffset.y <= threshold;
+      isNearBottomRef.current = nearBottom;
+      setIsNearBottom(nearBottom);
+    },
+    [insets.bottom]
+  );
+
+  const scrollToBottomInternal = useCallback(
+    ({ animated }: { animated: boolean }) => {
+      const list = flatListRef.current;
+      if (!list) {
+        return;
+      }
+
+      isProgrammaticScrollRef.current = true;
+      list.scrollToOffset({ offset: 0, animated });
+      if (!animated) {
+        isProgrammaticScrollRef.current = false;
+        isNearBottomRef.current = true;
+        setIsNearBottom(true);
+      } else {
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+          isNearBottomRef.current = true;
+          setIsNearBottom(true);
+        }, 300);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (streamItems.length === 0) {
+      return;
+    }
+
+    if (!hasAutoScrolledOnce.current) {
+      const handle = InteractionManager.runAfterInteractions(() => {
+        scrollToBottomInternal({ animated: false });
+        hasAutoScrolledOnce.current = true;
+        hasScrolledInitially.current = true;
+      });
+      return () => handle.cancel();
+    }
+
+    if (!isNearBottomRef.current) {
+      return;
+    }
+
+    const shouldAnimate = hasScrolledInitially.current;
+    scrollToBottomInternal({ animated: shouldAnimate });
+    hasScrolledInitially.current = true;
+  }, [streamItems, scrollToBottomInternal]);
 
   function scrollToBottom() {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
+    scrollToBottomInternal({ animated: true });
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
   }
+
+  function renderStreamItem({ item }: ListRenderItemInfo<StreamItem>) {
+    switch (item.kind) {
+      case "user_message":
+        return (
+          <UserMessage
+            message={item.text}
+            timestamp={item.timestamp.getTime()}
+          />
+        );
+
+      case "assistant_message":
+        return (
+          <AssistantMessage
+            message={item.text}
+            timestamp={item.timestamp.getTime()}
+          />
+        );
+
+      case "thought":
+        return (
+          <ActivityLog
+            type="info"
+            message={item.text}
+            timestamp={item.timestamp.getTime()}
+          />
+        );
+
+      case "tool_call": {
+        const { payload } = item;
+
+        // Extract data based on source
+        if (payload.source === "acp") {
+          const data = payload.data;
+          // Map ACP status to display status
+          const toolStatus =
+            data.status === "pending" || data.status === "in_progress"
+              ? ("executing" as const)
+              : data.status === "completed"
+              ? ("completed" as const)
+              : ("failed" as const);
+
+          return (
+            <ToolCall
+              toolName={data.title ?? "Unknown Tool"}
+              kind={data.kind}
+              args={data.rawInput}
+              result={data.rawOutput}
+              status={toolStatus}
+              onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+            />
+          );
+        }
+
+        // Orchestrator tool call
+        const data = payload.data;
+        return (
+          <ToolCall
+            toolName={data.toolName}
+            args={data.arguments}
+            result={data.result}
+            status={data.status}
+            onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+          />
+        );
+      }
+
+      case "plan":
+      case "activity_log":
+      case "artifact":
+      default:
+        return null;
+    }
+  }
+
+  const pendingPermissionItems = useMemo(
+    () =>
+      Array.from(pendingPermissions.values()).filter(
+        (perm) => perm.agentId === agentId
+      ),
+    [pendingPermissions, agentId]
+  );
+
+  const flatListData = useMemo(() => {
+    return [...streamItems].reverse();
+  }, [streamItems]);
 
   return (
     <View style={stylesheet.container}>
-      {/* Content list */}
-      <ScrollView
-        ref={scrollViewRef}
-        style={stylesheet.scrollView}
+      <FlatList
+        ref={flatListRef}
+        data={flatListData}
+        renderItem={renderStreamItem}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={{
-          paddingTop: 24,
-          paddingBottom: Math.max(insets.bottom, 32),
+          paddingVertical: 0,
+          flexGrow: 1,
         }}
+        style={stylesheet.list}
         onScroll={handleScroll}
         scrollEventThrottle={16}
-      >
-        {streamItems.length === 0 ? (
-          <View style={stylesheet.emptyState}>
-            <Text style={stylesheet.emptyStateText}>
-              Start chatting with this agent...
-            </Text>
+        ListEmptyComponent={
+          <View style={stylesheet.invertedWrapper}>
+            <View style={stylesheet.emptyState}>
+              <Text style={stylesheet.emptyStateText}>
+                Start chatting with this agent...
+              </Text>
+            </View>
           </View>
-        ) : (
-          streamItems.map((item) => {
-            switch (item.kind) {
-              case "user_message":
-                return (
-                  <UserMessage
-                    key={item.id}
-                    message={item.text}
-                    timestamp={item.timestamp.getTime()}
+        }
+        ListHeaderComponent={
+          <View style={stylesheet.invertedWrapper}>
+            {pendingPermissionItems.length > 0 ? (
+              <View style={stylesheet.permissionsContainer}>
+                {pendingPermissionItems.map((permission) => (
+                  <PermissionRequestCard
+                    key={permission.requestId}
+                    permission={permission}
+                    onResponse={onPermissionResponse}
                   />
-                );
-
-              case "assistant_message":
-                return (
-                  <AssistantMessage
-                    key={item.id}
-                    message={item.text}
-                    timestamp={item.timestamp.getTime()}
-                  />
-                );
-
-              case "thought":
-                return (
-                  <ActivityLog
-                    key={item.id}
-                    type="info"
-                    message={item.text}
-                    timestamp={item.timestamp.getTime()}
-                  />
-                );
-
-              case "tool_call": {
-                const { payload } = item;
-
-                // Extract data based on source
-                if (payload.source === "acp") {
-                  const data = payload.data;
-                  // Map ACP status to display status
-                  const toolStatus =
-                    data.status === "pending" || data.status === "in_progress"
-                      ? ("executing" as const)
-                      : data.status === "completed"
-                      ? ("completed" as const)
-                      : ("failed" as const);
-
-                  return (
-                    <ToolCall
-                      key={item.id}
-                      toolName={data.title ?? "Unknown Tool"}
-                      kind={data.kind}
-                      args={data.rawInput}
-                      result={data.rawOutput}
-                      status={toolStatus}
-                      onOpenDetails={() =>
-                        handleOpenToolCallDetails({ payload })
-                      }
-                    />
-                  );
-                } else {
-                  // Orchestrator tool call
-                  const data = payload.data;
-                  return (
-                    <ToolCall
-                      key={item.id}
-                      toolName={data.toolName}
-                      args={data.arguments}
-                      result={data.result}
-                      status={data.status}
-                      onOpenDetails={() =>
-                        handleOpenToolCallDetails({ payload })
-                      }
-                    />
-                  );
-                }
-              }
-
-              case "plan":
-                // TODO: Render plan component
-                return null;
-
-              case "activity_log":
-              case "artifact":
-                // These are orchestrator-only, skip for now
-                return null;
-
-              default:
-                return null;
-            }
-          })
-        )}
-
-        {/* Render pending permissions for this agent */}
-        {Array.from(pendingPermissions.values())
-          .filter((perm) => perm.agentId === agentId)
-          .map((permission) => (
-            <PermissionRequestCard
-              key={permission.requestId}
-              permission={permission}
-              onResponse={onPermissionResponse}
-            />
-          ))}
-      </ScrollView>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        }
+        extraData={pendingPermissionItems.length}
+        maintainVisibleContentPosition={{
+          minIndexForVisible: 0,
+          autoscrollToTopThreshold: 40,
+        }}
+        initialNumToRender={12}
+        windowSize={10}
+        inverted
+      />
 
       {/* Scroll to bottom button */}
       {!isNearBottom && (
@@ -234,7 +281,10 @@ export function AgentStreamView({
             style={stylesheet.scrollToBottomButton}
             onPress={scrollToBottom}
           >
-            <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+            <ChevronDown
+              size={24}
+              color={stylesheet.scrollToBottomIcon.color}
+            />
           </Pressable>
         </Animated.View>
       )}
@@ -400,7 +450,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  scrollView: {
+  list: {
     flex: 1,
     paddingHorizontal: theme.spacing[2],
   },
@@ -409,6 +459,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: theme.spacing[12],
+  },
+  permissionsContainer: {
+    gap: theme.spacing[2],
+  },
+  invertedWrapper: {
+    transform: [{ scaleY: -1 }],
+    width: "100%",
   },
   emptyStateText: {
     color: theme.colors.mutedForeground,
