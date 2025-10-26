@@ -110,13 +110,6 @@ class ACPClient implements Client {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
-    if (params.update.sessionUpdate === "agent_message_chunk") {
-      console.log(
-        `[Agent ${this.agentId}] Message chunk update:`,
-        JSON.stringify(params, null, 2)
-      );
-    }
-
     // Check if this update contains a Claude session ID
     const claudeSessionId = params._meta?.claudeSessionId as string | undefined;
     if (claudeSessionId) {
@@ -1230,9 +1223,6 @@ export class AgentManager {
 
     // Store the update in history
     agent.updates.push(agentUpdate);
-
-    // Log update for debugging
-    console.log(`[Agent ${agentId}] Session update:`, updateType);
 
     // Notify all subscribers
     for (const subscriber of agent.subscribers) {

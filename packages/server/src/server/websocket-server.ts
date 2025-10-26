@@ -160,6 +160,16 @@ export class VoiceAssistantWebSocketServer {
           // Extract and forward session message
           const sessionMessage = extractSessionMessage(message);
           if (sessionMessage) {
+            // Debug: Log create_agent_request details
+            if (sessionMessage.type === "create_agent_request") {
+              console.log("[WS] create_agent_request details:", {
+                cwd: sessionMessage.cwd,
+                initialMode: sessionMessage.initialMode,
+                worktreeName: sessionMessage.worktreeName,
+                requestId: sessionMessage.requestId,
+              });
+            }
+            
             const session = this.sessions.get(ws);
             if (session) {
               await session.handleMessage(sessionMessage);

@@ -33,6 +33,7 @@ import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
 } from "../services/agent-title-generator.js";
+import { expandTilde } from "./terminal-mcp/tmux.js";
 
 const execAsync = promisify(exec);
 
@@ -166,10 +167,6 @@ export class Session {
       agentId,
       (update: AgentUpdate) => {
         const notification = update.notification;
-        console.log(
-          `[Session ${this.clientId}] Agent update notification type:`,
-          notification.type
-        );
 
         // Handle permission requests
         if (notification.type === "permission") {
@@ -499,7 +496,8 @@ export class Session {
           await this.handleCreateAgentRequest(
             msg.cwd,
             msg.initialMode,
-            msg.requestId
+            msg.requestId,
+            msg.worktreeName
           );
           break;
 
@@ -695,7 +693,7 @@ export class Session {
   private async handleSendAgentAudio(
     msg: Extract<SessionInboundMessage, { type: "send_agent_audio" }>
   ): Promise<void> {
-    const { agentId, audio, format, isLast } = msg;
+    const { agentId, audio, format, isLast, requestId } = msg;
 
     // Decode base64
     const audioBuffer = Buffer.from(audio, "base64");
@@ -729,6 +727,17 @@ export class Session {
       console.log(
         `[Session ${this.clientId}] Transcribed audio for agent ${agentId}: ${transcriptText}`
       );
+
+      // Emit transcription result to client with requestId
+      this.emit({
+        type: "transcription_result",
+        payload: {
+          text: result.text,
+          language: result.language,
+          duration: result.duration,
+          requestId,
+        },
+      });
 
       // Send transcribed text to agent
       await this.agentManager.sendPrompt(agentId, transcriptText);
@@ -814,17 +823,44 @@ export class Session {
   private async handleCreateAgentRequest(
     cwd: string,
     initialMode?: string,
-    requestId?: string
+    requestId?: string,
+    worktreeName?: string
   ): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${
         initialMode || "default"
-      }`
+      }${worktreeName ? ` with worktree ${worktreeName}` : ""}`
     );
 
     try {
+      let effectiveCwd = cwd;
+
+      // Handle worktree creation if requested
+      if (worktreeName) {
+        const { createWorktree } = await import("../utils/worktree.js");
+        console.log(
+          `[Session ${this.clientId}] Creating worktree with branch: ${worktreeName}`
+        );
+
+        // Expand tilde in path before passing to createWorktree
+        const expandedCwd = expandTilde(cwd);
+        console.log(
+          `[Session ${this.clientId}] Expanded cwd from ${cwd} to ${expandedCwd}`
+        );
+
+        const worktreeConfig = await createWorktree({
+          branchName: worktreeName,
+          cwd: expandedCwd,
+        });
+
+        effectiveCwd = worktreeConfig.worktreePath;
+        console.log(
+          `[Session ${this.clientId}] Worktree created at: ${effectiveCwd}`
+        );
+      }
+
       const agentId = await this.agentManager.createAgent({
-        cwd,
+        cwd: effectiveCwd,
         initialMode,
       });
 

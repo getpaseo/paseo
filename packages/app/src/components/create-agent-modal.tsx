@@ -60,6 +60,7 @@ export function CreateAgentModal({
 
   const [workingDir, setWorkingDir] = useState("");
   const [selectedMode, setSelectedMode] = useState("plan");
+  const [worktreeName, setWorktreeName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
@@ -92,6 +93,94 @@ export function CreateAgentModal({
     []
   );
 
+  // Slugify helper function
+  const slugifyWorktreeName = useCallback((input: string): string => {
+    return input
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }, []);
+
+  // Validate worktree name
+  const validateWorktreeName = useCallback((name: string): { valid: boolean; error?: string } => {
+    if (!name) return { valid: true }; // Optional field
+
+    if (name.length > 100) {
+      return { valid: false, error: "Worktree name too long (max 100 characters)" };
+    }
+
+    const validPattern = /^[a-z0-9-]+$/;
+    if (!validPattern.test(name)) {
+      return {
+        valid: false,
+        error: "Must contain only lowercase letters, numbers, and hyphens",
+      };
+    }
+
+    if (name.startsWith("-") || name.endsWith("-")) {
+      return { valid: false, error: "Cannot start or end with a hyphen" };
+    }
+
+    if (name.includes("--")) {
+      return { valid: false, error: "Cannot have consecutive hyphens" };
+    }
+
+    return { valid: true };
+  }, []);
+
+  const handleCreate = useCallback(async () => {
+    if (!workingDir.trim()) {
+      setErrorMessage("Working directory is required");
+      return;
+    }
+
+    if (isLoading) {
+      return;
+    }
+
+    const path = workingDir.trim();
+    const worktree = worktreeName.trim();
+
+    // Validate worktree name if provided
+    if (worktree) {
+      const validation = validateWorktreeName(worktree);
+      if (!validation.valid) {
+        setErrorMessage(`Invalid worktree name: ${validation.error}`);
+        return;
+      }
+    }
+
+    // Save to recent paths
+    try {
+      await addRecentPath(path);
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to save recent path:", error);
+      // Continue anyway - don't block agent creation
+    }
+
+    // Generate request ID
+    const requestId = generateMessageId();
+
+    setIsLoading(true);
+    setPendingRequestId(requestId);
+    setErrorMessage("");
+
+    // Create the agent
+    try {
+      createAgent({
+        cwd: path,
+        initialMode: selectedMode,
+        worktreeName: worktree || undefined,
+        requestId,
+      });
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to create agent:", error);
+      setErrorMessage("Failed to create agent. Please try again.");
+      setIsLoading(false);
+      setPendingRequestId(null);
+    }
+  }, [workingDir, worktreeName, selectedMode, isLoading, validateWorktreeName, addRecentPath, createAgent]);
+
   const renderFooter = useCallback(
     (props: BottomSheetFooterProps) => (
       <BottomSheetFooter {...props} style={animatedFooterStyle}>
@@ -118,7 +207,7 @@ export function CreateAgentModal({
         </Animated.View>
       </BottomSheetFooter>
     ),
-    [insets.bottom, workingDir, animatedFooterStyle, isLoading]
+    [insets.bottom, workingDir, animatedFooterStyle, isLoading, handleCreate]
   );
 
   useEffect(() => {
@@ -156,48 +245,6 @@ export function CreateAgentModal({
     };
   }, [pendingRequestId, ws]);
 
-  async function handleCreate() {
-    if (!workingDir.trim()) {
-      setErrorMessage("Working directory is required");
-      return;
-    }
-
-    if (isLoading) {
-      return;
-    }
-
-    const path = workingDir.trim();
-
-    // Save to recent paths
-    try {
-      await addRecentPath(path);
-    } catch (error) {
-      console.error("[CreateAgentModal] Failed to save recent path:", error);
-      // Continue anyway - don't block agent creation
-    }
-
-    // Generate request ID
-    const requestId = generateMessageId();
-
-    setIsLoading(true);
-    setPendingRequestId(requestId);
-    setErrorMessage("");
-
-    // Create the agent
-    try {
-      createAgent({
-        cwd: path,
-        initialMode: selectedMode,
-        requestId,
-      });
-    } catch (error) {
-      console.error("[CreateAgentModal] Failed to create agent:", error);
-      setErrorMessage("Failed to create agent. Please try again.");
-      setIsLoading(false);
-      setPendingRequestId(null);
-    }
-  }
-
   function handleClose() {
     bottomSheetRef.current?.dismiss();
   }
@@ -207,6 +254,7 @@ export function CreateAgentModal({
 
     // Reset all state
     setWorkingDir("");
+    setWorktreeName("");
     setSelectedMode("plan");
     setErrorMessage("");
     setIsLoading(false);
@@ -291,6 +339,29 @@ export function CreateAgentModal({
                 ))}
               </ScrollView>
             )}
+          </View>
+
+          {/* Worktree Name Input (Optional) */}
+          <View style={styles.formSection}>
+            <Text style={styles.label}>Worktree Name (Optional)</Text>
+            <BottomSheetTextInput
+              style={[styles.input, isLoading && styles.inputDisabled]}
+              placeholder="feature-branch-name"
+              placeholderTextColor={defaultTheme.colors.mutedForeground}
+              value={worktreeName}
+              onChangeText={(text) => {
+                // Auto-slugify as user types
+                const slugified = slugifyWorktreeName(text);
+                setWorktreeName(slugified);
+                setErrorMessage("");
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!isLoading}
+            />
+            <Text style={styles.helperText}>
+              Create a git worktree for isolated development. Must be lowercase, alphanumeric, and hyphens only.
+            </Text>
           </View>
 
           {/* Mode Selector */}
