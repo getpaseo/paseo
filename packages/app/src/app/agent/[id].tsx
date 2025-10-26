@@ -306,7 +306,7 @@ const styles = StyleSheet.create((theme) => ({
     ...StyleSheet.absoluteFillObject,
   },
   dropdownMenu: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.popover,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[2],
     shadowColor: "#000",

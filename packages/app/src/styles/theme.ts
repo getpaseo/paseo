@@ -129,7 +129,7 @@ const darkSemanticColors = {
   foreground: "#fafafa",
   card: "#09090b",
   cardForeground: "#fafafa",
-  popover: "#09090b",
+  popover: "#18181b",
   popoverForeground: "#fafafa",
   primary: "#fafafa",
   primaryForeground: "#18181b",
