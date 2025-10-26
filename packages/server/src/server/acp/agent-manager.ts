@@ -29,7 +29,11 @@ import type {
   AgentRuntime,
   ManagedAgentState,
 } from "./types.js";
-import { AgentPersistence, type AgentOptions } from "./agent-persistence.js";
+import {
+  AgentPersistence,
+  type AgentOptions,
+  type PersistedAgent,
+} from "./agent-persistence.js";
 
 interface PendingPermission {
   requestId: string;
@@ -55,6 +59,14 @@ interface ManagedAgent {
   pendingSessionMode: string | null;
   state: ManagedAgentState;
 }
+
+type UpdateAgentCallback = (
+  agentId: string,
+  updateFn: (
+    agent: ManagedAgent
+  ) => boolean | void | Promise<boolean | void>,
+  options?: { sessionId: string | null }
+) => Promise<void>;
 
 /**
  * Get the status from an agent's state
@@ -87,7 +99,7 @@ class ACPClient implements Client {
       agentId: string,
       params: RequestPermissionRequest
     ) => Promise<RequestPermissionResponse>,
-    private persistence: AgentPersistence
+    private updateAgent: UpdateAgentCallback
   ) {}
 
   async requestPermission(
@@ -100,21 +112,28 @@ class ACPClient implements Client {
   }
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
+    if (params.update.sessionUpdate === "agent_message_chunk") {
+      console.log(`[Agent ${this.agentId}] Message chunk update:`, JSON.stringify(params, null, 2));
+    }
+
     // Check if this update contains a Claude session ID
     const claudeSessionId = params._meta?.claudeSessionId as string | undefined;
-    if (claudeSessionId && this.persistence) {
-      const persisted = await this.persistence.load();
-      const persistedAgent = persisted.find((a) => a.id === this.agentId);
-      if (persistedAgent && persistedAgent.options.type === "claude") {
-        if (
-          persistedAgent.options.sessionId === null ||
-          persistedAgent.options.sessionId !== claudeSessionId
-        ) {
-          // Update the Claude session ID
-          persistedAgent.options.sessionId = claudeSessionId;
-          await this.persistence.upsert(persistedAgent);
+    if (claudeSessionId) {
+      await this.updateAgent(this.agentId, (agent) => {
+        if (agent.options.type !== "claude") {
+          return false;
         }
-      }
+        if (agent.options.sessionId === claudeSessionId) {
+          return false;
+        }
+
+        agent.options = {
+          ...agent.options,
+          sessionId: claudeSessionId,
+        };
+
+        return true;
+      });
     }
     this.onUpdate(this.agentId, params);
   }
@@ -252,15 +271,7 @@ export class AgentManager {
 
     this.agents.set(agentId, agent);
 
-    await this.persistence.upsert({
-      id: agentId,
-      title: agent.title || `Agent ${agentId.slice(0, 8)}`,
-      sessionId: null,
-      options: agent.options,
-      createdAt: createdAt.toISOString(),
-      lastActivityAt: agent.lastActivityAt.toISOString(),
-      cwd: agent.cwd,
-    });
+    await this.updateAgent(agentId, () => undefined);
 
     this.notifySubscribers(agentId);
 
@@ -510,17 +521,8 @@ export class AgentManager {
     const runtime = this.getRuntime(agent);
 
     // Persist current state before killing
-    // Clear sessionId so next start creates a new session
     if (runtime) {
-      await this.persistence.upsert({
-        id: agent.id,
-        title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
-        sessionId: null,
-        options: { ...agent.options, sessionId: null },
-        createdAt: agent.createdAt.toISOString(),
-        lastActivityAt: agent.lastActivityAt.toISOString(),
-        cwd: agent.cwd,
-      });
+      await this.updateAgent(agentId, () => true);
     }
 
     agent.state = { type: "killed" };
@@ -862,6 +864,63 @@ export class AgentManager {
     return null;
   }
 
+  private getPersistableSessionId(agent: ManagedAgent): string | null {
+    const { state } = agent;
+
+    switch (state.type) {
+      case "ready":
+      case "processing":
+      case "completed":
+        return state.runtime.sessionId;
+      case "initializing":
+        return state.runtime?.sessionId ?? state.persistedSessionId ?? null;
+      case "failed":
+        return state.runtime?.sessionId ?? null;
+      case "uninitialized":
+        return state.persistedSessionId;
+      case "killed":
+      default:
+        return null;
+    }
+  }
+
+  private serializeAgent(agent: ManagedAgent): PersistedAgent {
+    return {
+      id: agent.id,
+      title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
+      sessionId: this.getPersistableSessionId(agent),
+      options: agent.options,
+      createdAt: agent.createdAt.toISOString(),
+      lastActivityAt: agent.lastActivityAt.toISOString(),
+      cwd: agent.cwd,
+    };
+  }
+
+  private async updateAgent(
+    agentId: string,
+    updateFn: (
+      agent: ManagedAgent
+    ) => boolean | void | Promise<boolean | void>,
+    options?: { sessionId: string | null }
+  ): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const shouldPersist = await updateFn(agent);
+    if (shouldPersist === false) {
+      return;
+    }
+
+    const persistedAgent = this.serializeAgent(agent);
+    if (options) {
+      persistedAgent.sessionId = options.sessionId;
+    }
+
+    await this.persistence.upsert(persistedAgent);
+  }
+
   /**
    * Start runtime for an agent (spawn process, create connection, initialize session)
    */
@@ -905,7 +964,7 @@ export class AgentManager {
       (id, params) => {
         return this.handlePermissionRequest(id, params);
       },
-      this.persistence
+      (id, updateFn, options) => this.updateAgent(id, updateFn, options)
     );
     const connection = new ClientSideConnection(() => client, stream);
 
@@ -1003,37 +1062,30 @@ export class AgentManager {
       const claudeSessionId = sessionResponse._meta?.claudeSessionId as
         | string
         | undefined;
-      if (
-        claudeSessionId &&
-        agent.options.type === "claude" &&
-        agent.options.sessionId !== claudeSessionId
-      ) {
-        agent.options = {
-          ...agent.options,
-          sessionId: claudeSessionId,
-        };
-      }
-
       console.log(
         `[Agent ${agentId}] Session ${
           mode === "new" ? "created" : "loaded"
         }: ACP=${effectiveSessionId}, Claude=${claudeSessionId || "N/A"}`
       );
 
-      await this.persistence.upsert({
-        id: agentId,
-        title: agent.title || `Agent ${agentId.slice(0, 8)}`,
-        sessionId: runtime.sessionId,
-        options: agent.options,
-        createdAt: agent.createdAt.toISOString(),
-        lastActivityAt: agent.lastActivityAt.toISOString(),
-        cwd: agent.cwd,
-      });
+      await this.updateAgent(agentId, (managedAgent) => {
+        if (
+          claudeSessionId &&
+          managedAgent.options.type === "claude" &&
+          managedAgent.options.sessionId !== claudeSessionId
+        ) {
+          managedAgent.options = {
+            ...managedAgent.options,
+            sessionId: claudeSessionId,
+          };
+        }
 
-      agent.state = {
-        type: "ready",
-        runtime,
-      };
+        managedAgent.state = {
+          type: "ready",
+          runtime,
+        };
+        return true;
+      });
 
       this.notifySubscribers(agentId);
 
@@ -1223,15 +1275,12 @@ export class AgentManager {
    * Set the title for an agent
    */
   async setAgentTitle(agentId: string, title: string): Promise<void> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
+    await this.updateAgent(agentId, (managedAgent) => {
+      managedAgent.title = title;
+      return true;
+    });
 
-    agent.title = title;
     console.log(`[Agent ${agentId}] Title set to: "${title}"`);
-
-    await this.persistence.updateTitle(agentId, title);
   }
 
   /**
@@ -1243,6 +1292,20 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
     return agent.title ?? null;
+  }
+
+  /**
+   * Get Claude session ID for an agent
+   */
+  getClaudeSessionId(agentId: string): string | null {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    if (agent.options.type === "claude") {
+      return agent.options.sessionId;
+    }
+    return null;
   }
 
   /**
@@ -1470,15 +1533,7 @@ export class AgentManager {
 
           // Persist current state if agent has a session
           if (runtime) {
-            await this.persistence.upsert({
-              id: agent.id,
-              title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
-              sessionId: runtime.sessionId,
-              options: agent.options,
-              createdAt: agent.createdAt.toISOString(),
-              lastActivityAt: agent.lastActivityAt.toISOString(),
-              cwd: agent.cwd,
-            });
+            await this.updateAgent(agent.id, () => undefined);
             console.log(`[Agent ${agent.id}] State persisted`);
 
             // Send graceful termination signal

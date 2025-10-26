@@ -1,14 +1,134 @@
 [
   {
-    "id": "fc818184-5676-4f24-a92a-77e9e15c515d",
-    "title": "Agent fc818184",
+    "id": "299ab613-74d7-478b-a990-f95b044606b4",
+    "title": "Agent 299ab613",
+    "sessionId": "019a1f5d-1184-772c-acb4-0b61ad47bb18",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:13:03.607Z",
+    "lastActivityAt": "2025-10-26T07:13:07.664Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-c5m2nU"
+  },
+  {
+    "id": "c6132199-a93b-428e-ac6b-6e8067855117",
+    "title": "Agent c6132199",
+    "sessionId": "019a1f5d-5a27-712a-a003-c33d85514452",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:13:22.279Z",
+    "lastActivityAt": "2025-10-26T07:13:34.996Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-YqAd2n"
+  },
+  {
+    "id": "01cb507d-5c45-402a-9010-278077d72511",
+    "title": "Agent 01cb507d",
+    "sessionId": "019a1f5e-63ae-7318-a927-ace1f5177b40",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:14:29.299Z",
+    "lastActivityAt": "2025-10-26T07:14:34.243Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-YqAd2n"
+  },
+  {
+    "id": "3647cfd5-7691-469d-a5b4-dfddf4950327",
+    "title": "Agent 3647cfd5",
+    "sessionId": "019a1f5f-f3e1-72b9-bca0-6a58fc8bd52a",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:16:12.630Z",
+    "lastActivityAt": "2025-10-26T07:16:26.477Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-SHg6iy"
+  },
+  {
+    "id": "52623113-d211-4ee0-bdfd-329e8dd8378b",
+    "title": "Agent 52623113",
+    "sessionId": "019a1f60-2ce3-756c-8850-b310052bb04e",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:16:27.236Z",
+    "lastActivityAt": "2025-10-26T07:16:30.640Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-SHg6iy"
+  },
+  {
+    "id": "9c675fcd-50c0-4228-a8d5-544286655713",
+    "title": "Agent 9c675fcd",
+    "sessionId": "019a1f60-b291-739b-8f8c-d4615aaf8e80",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:17:01.370Z",
+    "lastActivityAt": "2025-10-26T07:17:16.318Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-0sCjpk"
+  },
+  {
+    "id": "9b7dc1ab-2465-4772-a821-760dd505b8d7",
+    "title": "Agent 9b7dc1ab",
+    "sessionId": "019a1f60-ef6b-76ab-9bce-e25cd24556cf",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:17:17.000Z",
+    "lastActivityAt": "2025-10-26T07:17:22.332Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-0sCjpk"
+  },
+  {
+    "id": "c83eea1e-f5c8-435a-bc02-716542d60e0e",
+    "title": "Agent c83eea1e",
     "sessionId": null,
     "options": {
       "type": "claude",
       "sessionId": null
     },
-    "createdAt": "2025-10-26T06:59:13.289Z",
-    "lastActivityAt": "2025-10-26T06:59:22.379Z",
-    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-wm5mun"
+    "createdAt": "2025-10-26T07:28:27.901Z",
+    "lastActivityAt": "2025-10-26T07:28:41.570Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-QcKr0I"
+  },
+  {
+    "id": "354b099b-ffb9-4c42-9b82-2590550e7299",
+    "title": "Agent 354b099b",
+    "sessionId": null,
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T07:28:42.609Z",
+    "lastActivityAt": "2025-10-26T07:28:52.065Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-QcKr0I"
+  },
+  {
+    "id": "28b888fa-7cbc-48a7-973a-964e8a5f29f5",
+    "title": "Agent 28b888fa",
+    "sessionId": "03e4b827-033e-4212-b3ca-cfee515cf1f0",
+    "options": {
+      "type": "claude",
+      "sessionId": "03e4b827-033e-4212-b3ca-cfee515cf1f0"
+    },
+    "createdAt": "2025-10-26T07:29:17.693Z",
+    "lastActivityAt": "2025-10-26T07:29:31.675Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-Gi719a"
+  },
+  {
+    "id": "b535f9b4-230f-40a9-8db8-30b791be1df4",
+    "title": "Agent b535f9b4",
+    "sessionId": "06c94e04-8cc6-4219-8bf5-d0ef7eb9e46a",
+    "options": {
+      "type": "claude",
+      "sessionId": "06c94e04-8cc6-4219-8bf5-d0ef7eb9e46a"
+    },
+    "createdAt": "2025-10-26T07:29:32.156Z",
+    "lastActivityAt": "2025-10-26T07:29:40.533Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-Gi719a"
   }
 ]
