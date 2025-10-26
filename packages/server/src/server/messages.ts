@@ -122,6 +122,11 @@ export const AgentPermissionResponseMessageSchema = z.object({
   optionId: z.string(),
 });
 
+export const GitDiffRequestSchema = z.object({
+  type: z.literal("git_diff_request"),
+  agentId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   RealtimeAudioChunkMessageSchema,
@@ -137,6 +142,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
+  GitDiffRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -321,6 +327,15 @@ export const AgentPermissionResolvedMessageSchema = z.object({
   }),
 });
 
+export const GitDiffResponseSchema = z.object({
+  type: z.literal("git_diff_response"),
+  payload: z.object({
+    agentId: z.string(),
+    diff: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -338,6 +353,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
+  GitDiffResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -374,6 +390,8 @@ export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessage
 export type InitializeAgentRequestMessage = z.infer<typeof InitializeAgentRequestMessageSchema>;
 export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
+export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
+export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

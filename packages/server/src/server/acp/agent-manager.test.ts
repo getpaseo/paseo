@@ -96,6 +96,83 @@ describe("AgentManager", () => {
     }
   }, 120000);
 
+  it("should not fail when sending '.' after plan permission request", async () => {
+    const manager = new AgentManager();
+    let permissionRequest: RequestPermissionRequest | null = null;
+    let requestId: string | null = null;
+
+    const agentId = await manager.createAgent({
+      cwd: tmpDir,
+      type: "claude",
+      initialMode: "plan",
+    });
+    createdAgents.push({ manager, agentId });
+
+    const unsubscribe = manager.subscribeToUpdates(
+      agentId,
+      (update: AgentUpdate) => {
+        const notification: AgentNotification = update.notification;
+        if (notification.type === "permission") {
+          permissionRequest = notification.request;
+          requestId = notification.requestId;
+        }
+      }
+    );
+
+    try {
+      await manager.sendPrompt(
+        agentId,
+        "Create a file called test.txt with the content 'hello world'"
+      );
+
+      let attempts = 0;
+      while (!permissionRequest && attempts < 40) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        attempts++;
+      }
+
+      expect(permissionRequest).toBeDefined();
+      expect(requestId).toBeDefined();
+
+      console.log("Permission request received, now sending '.' message instead of responding");
+
+      // Instead of responding to permission, send a "." message
+      await manager.sendPrompt(agentId, ".");
+
+      // Wait for agent to finish processing
+      let status = manager.getAgentStatus(agentId);
+      let waitAttempts = 0;
+      while (status === "processing" && waitAttempts < 60) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        status = manager.getAgentStatus(agentId);
+        waitAttempts++;
+      }
+
+      const agentInfo = manager.listAgents().find((a) => a.id === agentId);
+      const updates = manager.getAgentUpdates(agentId);
+      const sessionUpdates = updates.filter(u => u.notification.type === "session");
+
+      console.log("Agent status after '.' message:", status);
+      console.log("Agent error:", agentInfo?.error);
+      console.log("Session updates count:", sessionUpdates.length);
+      console.log("Last few updates:", updates.slice(-5).map(u => ({
+        type: u.notification.type,
+        timestamp: u.timestamp,
+      })));
+
+      // The agent should NOT be in failed state
+      expect(status).not.toBe("failed");
+      
+      // The agent should be in a usable state (ready, completed, or processing)
+      expect(["ready", "completed", "processing"]).toContain(status);
+      
+      // There should be no error
+      expect(agentInfo?.error).toBeNull();
+    } finally {
+      unsubscribe();
+    }
+  }, 120000);
+
   describe("persistence", () => {
     it("should load persisted agent and send new prompt", async () => {
       const manager = new AgentManager();

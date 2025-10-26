@@ -69,6 +69,7 @@ export default function RootLayout() {
                     <Stack.Screen name="agent/[id]" />
                     <Stack.Screen name="settings" />
                     <Stack.Screen name="audio-test" />
+                    <Stack.Screen name="git-diff" />
                   </Stack>
                   <GlobalFooter />
                 </AppContainer>

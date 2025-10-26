@@ -518,6 +518,10 @@ export class Session {
             msg.optionId
           );
           break;
+
+        case "git_diff_request":
+          await this.handleGitDiffRequest(msg.agentId);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -1013,6 +1017,62 @@ export class Session {
         },
       });
       throw error;
+    }
+  }
+
+  /**
+   * Handle git diff request for an agent
+   */
+  private async handleGitDiffRequest(agentId: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Handling git diff request for agent ${agentId}`
+    );
+
+    try {
+      const agents = this.agentManager.listAgents();
+      const agent = agents.find((a) => a.id === agentId);
+
+      if (!agent) {
+        this.emit({
+          type: "git_diff_response",
+          payload: {
+            agentId,
+            diff: "",
+            error: `Agent not found: ${agentId}`,
+          },
+        });
+        return;
+      }
+
+      const { stdout } = await execAsync("git diff HEAD", {
+        cwd: agent.cwd,
+      });
+
+      this.emit({
+        type: "git_diff_response",
+        payload: {
+          agentId,
+          diff: stdout,
+          error: null,
+        },
+      });
+
+      console.log(
+        `[Session ${this.clientId}] Git diff for agent ${agentId} completed (${stdout.length} bytes)`
+      );
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to get git diff for agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "git_diff_response",
+        payload: {
+          agentId,
+          diff: "",
+          error: error.message,
+        },
+      });
     }
   }
 

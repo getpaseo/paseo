@@ -267,28 +267,24 @@ export function AgentStreamView({
         onMomentumScrollEnd={handleScrollEnd}
         scrollEventThrottle={16}
         ListEmptyComponent={
-          <View style={stylesheet.invertedWrapper}>
-            <View style={stylesheet.emptyState}>
-              <Text style={stylesheet.emptyStateText}>
-                Start chatting with this agent...
-              </Text>
-            </View>
+          <View style={stylesheet.emptyState}>
+            <Text style={stylesheet.emptyStateText}>
+              Start chatting with this agent...
+            </Text>
           </View>
         }
         ListHeaderComponent={
-          <View style={stylesheet.invertedWrapper}>
-            {pendingPermissionItems.length > 0 ? (
-              <View style={stylesheet.permissionsContainer}>
-                {pendingPermissionItems.map((permission) => (
-                  <PermissionRequestCard
-                    key={permission.requestId}
-                    permission={permission}
-                    onResponse={onPermissionResponse}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </View>
+          pendingPermissionItems.length > 0 ? (
+            <View style={stylesheet.permissionsContainer}>
+              {pendingPermissionItems.map((permission) => (
+                <PermissionRequestCard
+                  key={permission.requestId}
+                  permission={permission}
+                  onResponse={onPermissionResponse}
+                />
+              ))}
+            </View>
+          ) : null
         }
         extraData={pendingPermissionItems.length}
         maintainVisibleContentPosition={{

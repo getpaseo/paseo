@@ -115,6 +115,10 @@ interface SessionContextValue {
   pendingPermissions: Map<string, PendingPermission>;
   setPendingPermissions: (perms: Map<string, PendingPermission> | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>)) => void;
 
+  // Git diffs
+  gitDiffs: Map<string, string>;
+  requestGitDiff: (agentId: string) => void;
+
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
@@ -167,6 +171,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
   const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(new Map());
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
+  const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
 
   // WebSocket message handlers
   useEffect(() => {
@@ -593,6 +598,21 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       }
     });
 
+    // Git diff response handler
+    const unsubGitDiff = ws.on("git_diff_response", (message) => {
+      if (message.type !== "git_diff_response") return;
+      const { agentId, diff, error } = message.payload;
+
+      console.log("[Session] Git diff response for agent:", agentId, error ? `(error: ${error})` : "");
+
+      if (error) {
+        console.error("[Session] Git diff error:", error);
+        setGitDiffs((prev) => new Map(prev).set(agentId, `Error: ${error}`));
+      } else {
+        setGitDiffs((prev) => new Map(prev).set(agentId, diff || ""));
+      }
+    });
+
     return () => {
       unsubSessionState();
       unsubAgentCreated();
@@ -605,6 +625,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubActivity();
       unsubChunk();
       unsubTranscription();
+      unsubGitDiff();
     };
   }, [ws, audioPlayer, setIsPlayingAudio]);
 
@@ -776,6 +797,17 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     isSpeakingRef.current = isSpeaking;
   }, []);
 
+  const requestGitDiff = useCallback((agentId: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "git_diff_request",
+        agentId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
   const value: SessionContextValue = {
     ws,
     audioPlayer,
@@ -797,6 +829,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setAgentUpdates,
     pendingPermissions,
     setPendingPermissions,
+    gitDiffs,
+    requestGitDiff,
     initializeAgent,
     sendAgentMessage,
     sendAgentAudio,
