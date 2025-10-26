@@ -86,4 +86,55 @@ describe("AgentManager", () => {
     },
     120000
   );
+
+  it(
+    "should load persisted agent and send new prompt",
+    async () => {
+      const agentId = await manager.createAgent({
+        cwd: tmpDir,
+      });
+
+      await manager.sendPrompt(agentId, "echo 'first message'");
+
+      let status = manager.getAgentStatus(agentId);
+      let attempts = 0;
+      while (status !== "completed" && status !== "failed" && attempts < 60) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        status = manager.getAgentStatus(agentId);
+        attempts++;
+      }
+
+      expect(status).toBe("completed");
+
+      await manager.killAgent(agentId);
+
+      const newManager = new AgentManager();
+      await newManager.initialize();
+
+      const agents = newManager.listAgents();
+      const loadedAgent = agents.find((a) => a.id === agentId);
+
+      expect(loadedAgent).toBeDefined();
+      expect(loadedAgent?.id).toBe(agentId);
+      expect(loadedAgent?.cwd).toBe(tmpDir);
+
+      await newManager.sendPrompt(agentId, "echo 'second message'");
+
+      status = newManager.getAgentStatus(agentId);
+      attempts = 0;
+      while (status !== "completed" && status !== "failed" && attempts < 60) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        status = newManager.getAgentStatus(agentId);
+        attempts++;
+      }
+
+      expect(status).toBe("completed");
+
+      const finalUpdates = newManager.getAgentUpdates(agentId);
+      expect(finalUpdates.length).toBeGreaterThan(0);
+
+      await newManager.killAgent(agentId);
+    },
+    120000
+  );
 });
