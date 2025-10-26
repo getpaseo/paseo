@@ -62,9 +62,7 @@ interface ManagedAgent {
 
 type UpdateAgentCallback = (
   agentId: string,
-  updateFn: (
-    agent: ManagedAgent
-  ) => boolean | void | Promise<boolean | void>,
+  updateFn: (agent: ManagedAgent) => boolean | void | Promise<boolean | void>,
   options?: { sessionId: string | null }
 ) => Promise<void>;
 
@@ -113,7 +111,10 @@ class ACPClient implements Client {
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
     if (params.update.sessionUpdate === "agent_message_chunk") {
-      console.log(`[Agent ${this.agentId}] Message chunk update:`, JSON.stringify(params, null, 2));
+      console.log(
+        `[Agent ${this.agentId}] Message chunk update:`,
+        JSON.stringify(params, null, 2)
+      );
     }
 
     // Check if this update contains a Claude session ID
@@ -349,13 +350,15 @@ export class AgentManager {
     }
 
     // Convert prompt to ContentBlock array if it's a string
-    const contentBlocks: ContentBlock[] = typeof prompt === "string"
-      ? [{ type: "text", text: prompt }]
-      : prompt;
+    const contentBlocks: ContentBlock[] =
+      typeof prompt === "string" ? [{ type: "text", text: prompt }] : prompt;
 
     // Extract text for user message notification (use first text block)
-    const firstTextBlock = contentBlocks.find(block => block.type === "text");
-    const userMessageText = firstTextBlock && "text" in firstTextBlock ? firstTextBlock.text : "[message with attachments]";
+    const firstTextBlock = contentBlocks.find((block) => block.type === "text");
+    const userMessageText =
+      firstTextBlock && "text" in firstTextBlock
+        ? firstTextBlock.text
+        : "[message with attachments]";
 
     // Emit user message notification
     const userMessageUpdate: AgentUpdate = {
@@ -540,6 +543,7 @@ export class AgentManager {
     if (runtime) {
       setTimeout(() => {
         if (!runtime.process.killed) {
+          console.log(`[Agent ${agentId}] Force killing process`);
           runtime.process.kill("SIGKILL");
         }
       }, 5000);
@@ -898,9 +902,7 @@ export class AgentManager {
 
   private async updateAgent(
     agentId: string,
-    updateFn: (
-      agent: ManagedAgent
-    ) => boolean | void | Promise<boolean | void>,
+    updateFn: (agent: ManagedAgent) => boolean | void | Promise<boolean | void>,
     options?: { sessionId: string | null }
   ): Promise<void> {
     const agent = this.agents.get(agentId);
@@ -1185,7 +1187,9 @@ export class AgentManager {
         const runtime = this.getRuntime(agent);
 
         if (runtime && runtime.currentModeId !== newModeId) {
-          console.log(`[Agent ${agentId}] Mode changed: ${runtime.currentModeId} -> ${newModeId}`);
+          console.log(
+            `[Agent ${agentId}] Mode changed: ${runtime.currentModeId} -> ${newModeId}`
+          );
           runtime.currentModeId = newModeId;
         }
       }

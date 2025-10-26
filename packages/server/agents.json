@@ -130,5 +130,77 @@
     "createdAt": "2025-10-26T07:29:32.156Z",
     "lastActivityAt": "2025-10-26T07:29:40.533Z",
     "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-Gi719a"
+  },
+  {
+    "id": "94e1e306-5837-4ce3-9a09-09f1c8ae2678",
+    "title": "Agent 94e1e306",
+    "sessionId": "0bc2cfed-8898-4834-8827-23283ba231cf",
+    "options": {
+      "type": "claude",
+      "sessionId": "0bc2cfed-8898-4834-8827-23283ba231cf"
+    },
+    "createdAt": "2025-10-26T07:41:24.824Z",
+    "lastActivityAt": "2025-10-26T07:41:34.736Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-c77wpz"
+  },
+  {
+    "id": "686a1db9-e41c-4d4b-b0ab-6ae7e573bbd3",
+    "title": "Agent 686a1db9",
+    "sessionId": "c62d4b37-df4b-4c73-8afb-9c8a994cd1c9",
+    "options": {
+      "type": "claude",
+      "sessionId": "c62d4b37-df4b-4c73-8afb-9c8a994cd1c9"
+    },
+    "createdAt": "2025-10-26T07:42:30.564Z",
+    "lastActivityAt": "2025-10-26T07:42:39.893Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-m0yPgj"
+  },
+  {
+    "id": "badd51fa-7f43-453a-802e-8504944cc388",
+    "title": "Agent badd51fa",
+    "sessionId": "09459e2b-92be-4535-9109-64f0f3eac5d5",
+    "options": {
+      "type": "claude",
+      "sessionId": "09459e2b-92be-4535-9109-64f0f3eac5d5"
+    },
+    "createdAt": "2025-10-26T07:49:57.618Z",
+    "lastActivityAt": "2025-10-26T07:50:05.977Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-JNRc9I"
+  },
+  {
+    "id": "26610309-c9e2-4a33-94c1-c4afe7ec439b",
+    "title": "Agent 26610309",
+    "sessionId": "a73bcefc-d829-4286-b192-a6a5c04927c0",
+    "options": {
+      "type": "claude",
+      "sessionId": "a73bcefc-d829-4286-b192-a6a5c04927c0"
+    },
+    "createdAt": "2025-10-26T07:51:04.294Z",
+    "lastActivityAt": "2025-10-26T07:51:15.950Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-3t9vQe"
+  },
+  {
+    "id": "4c4f71e5-cb60-4040-9911-746258b43d1f",
+    "title": "Agent 4c4f71e5",
+    "sessionId": "99af8673-ba9a-4fe1-bb96-19ea54760cfe",
+    "options": {
+      "type": "claude",
+      "sessionId": "99af8673-ba9a-4fe1-bb96-19ea54760cfe"
+    },
+    "createdAt": "2025-10-26T07:52:50.829Z",
+    "lastActivityAt": "2025-10-26T07:53:02.229Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-UOhobf"
+  },
+  {
+    "id": "835f1dc5-1398-4743-ad97-f9ebae232cc1",
+    "title": "Agent 835f1dc5",
+    "sessionId": "90231d13-4f40-435d-aec5-ce43d76ac98f",
+    "options": {
+      "type": "claude",
+      "sessionId": "90231d13-4f40-435d-aec5-ce43d76ac98f"
+    },
+    "createdAt": "2025-10-26T07:57:16.797Z",
+    "lastActivityAt": "2025-10-26T07:57:29.704Z",
+    "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-GAWCrz"
   }
 ]
