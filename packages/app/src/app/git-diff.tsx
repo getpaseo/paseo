@@ -64,11 +64,8 @@ export default function GitDiffScreen() {
       return;
     }
 
-    if (diffText !== undefined) {
-      setIsLoading(false);
-      return;
-    }
-
+    // Always request fresh diff when screen mounts
+    setIsLoading(true);
     requestGitDiff(agentId);
 
     const timeout = setTimeout(() => {
@@ -76,7 +73,7 @@ export default function GitDiffScreen() {
     }, 5000);
 
     return () => clearTimeout(timeout);
-  }, [agentId, diffText, requestGitDiff]);
+  }, [agentId, requestGitDiff]);
 
   useEffect(() => {
     if (diffText !== undefined) {
