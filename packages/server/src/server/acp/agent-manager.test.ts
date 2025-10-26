@@ -78,7 +78,7 @@ describe("AgentManager", () => {
         expect(content).toContain("hello world");
 
         const agentInfo = manager.listAgents().find((a) => a.id === agentId);
-        console.log("Final agent mode:", agentInfo?.currentModeId);
+        expect(agentInfo?.currentModeId).toBe("acceptEdits");
       } finally {
         unsubscribe();
         await manager.killAgent(agentId);
