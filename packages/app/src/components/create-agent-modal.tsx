@@ -27,24 +27,30 @@ import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useSession } from "@/contexts/session-context";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
+import {
+  listAgentTypeDefinitions,
+  type AgentType,
+  type AgentTypeDefinition,
+} from "@server/server/acp/agent-types";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
   onClose: () => void;
 }
 
-const MODES = [
-  {
-    value: "plan",
-    label: "Plan",
-    description: "Plan and design before implementing",
-  },
-  {
-    value: "bypassPermissions",
-    label: "Bypass Permissions",
-    description: "Skip permission prompts for faster execution",
-  },
-] as const;
+const agentTypeDefinitions = listAgentTypeDefinitions();
+
+const agentTypeDefinitionMap: Record<AgentType, AgentTypeDefinition> =
+  {} as Record<AgentType, AgentTypeDefinition>;
+for (const definition of agentTypeDefinitions) {
+  agentTypeDefinitionMap[definition.id] = definition;
+}
+
+const fallbackDefinition = agentTypeDefinitionMap.claude ?? agentTypeDefinitions[0];
+const DEFAULT_AGENT_TYPE: AgentType = fallbackDefinition
+  ? fallbackDefinition.id
+  : "claude";
+const DEFAULT_MODE_FOR_DEFAULT_AGENT = fallbackDefinition?.defaultModeId;
 
 export function CreateAgentModal({
   isVisible,
@@ -58,11 +64,41 @@ export function CreateAgentModal({
   const router = useRouter();
 
   const [workingDir, setWorkingDir] = useState("");
-  const [selectedMode, setSelectedMode] = useState("plan");
+  const [selectedAgentType, setSelectedAgentType] = useState<AgentType>(
+    DEFAULT_AGENT_TYPE
+  );
+  const [selectedMode, setSelectedMode] = useState(
+    DEFAULT_MODE_FOR_DEFAULT_AGENT ?? ""
+  );
   const [worktreeName, setWorktreeName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+  const agentDefinition = agentTypeDefinitionMap[selectedAgentType];
+  const modeOptions = agentDefinition?.availableModes ?? [];
+
+  useEffect(() => {
+    if (!agentDefinition) {
+      return;
+    }
+
+    const availableModeIds = agentDefinition.availableModes.map(
+      (mode) => mode.id
+    );
+
+    if (availableModeIds.length === 0) {
+      if (selectedMode !== "") {
+        setSelectedMode("");
+      }
+      return;
+    }
+
+    if (!availableModeIds.includes(selectedMode)) {
+      const fallbackModeId =
+        agentDefinition.defaultModeId ?? availableModeIds[0];
+      setSelectedMode(fallbackModeId);
+    }
+  }, [agentDefinition, selectedMode]);
 
   // Use ref instead of state to survive state resets in onDismiss
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
@@ -164,11 +200,15 @@ export function CreateAgentModal({
     setPendingRequestId(requestId);
     setErrorMessage("");
 
+    const modeId =
+      modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+
     // Create the agent
     try {
       createAgent({
         cwd: path,
-        initialMode: selectedMode,
+        agentType: selectedAgentType,
+        initialMode: modeId,
         worktreeName: worktree || undefined,
         requestId,
       });
@@ -178,7 +218,17 @@ export function CreateAgentModal({
       setIsLoading(false);
       setPendingRequestId(null);
     }
-  }, [workingDir, worktreeName, selectedMode, isLoading, validateWorktreeName, addRecentPath, createAgent]);
+  }, [
+    workingDir,
+    worktreeName,
+    selectedMode,
+    selectedAgentType,
+    modeOptions,
+    isLoading,
+    validateWorktreeName,
+    addRecentPath,
+    createAgent,
+  ]);
 
   const renderFooter = useCallback(
     (props: BottomSheetFooterProps) => (
@@ -254,7 +304,8 @@ export function CreateAgentModal({
     // Reset all state
     setWorkingDir("");
     setWorktreeName("");
-    setSelectedMode("plan");
+    setSelectedAgentType(DEFAULT_AGENT_TYPE);
+    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_AGENT ?? "");
     setErrorMessage("");
     setIsLoading(false);
     setPendingRequestId(null);
@@ -338,6 +389,58 @@ export function CreateAgentModal({
             )}
           </View>
 
+          {/* Agent Type Selector */}
+          <View style={styles.formSection}>
+            <Text style={styles.label}>Agent Type</Text>
+            <View style={styles.agentTypeContainer}>
+              {agentTypeDefinitions.map((definition) => {
+                const isSelected = selectedAgentType === definition.id;
+                return (
+                  <Pressable
+                    key={definition.id}
+                    onPress={() => setSelectedAgentType(definition.id)}
+                    disabled={isLoading}
+                    style={[
+                      styles.agentTypeOption,
+                      isSelected && styles.agentTypeOptionSelected,
+                      isLoading && styles.agentTypeOptionDisabled,
+                    ]}
+                  >
+                    <View style={styles.agentTypeOptionContent}>
+                      <View
+                        style={[
+                          styles.radioOuter,
+                          isSelected
+                            ? styles.radioOuterSelected
+                            : styles.radioOuterUnselected,
+                        ]}
+                      >
+                        {isSelected && <View style={styles.radioInner} />}
+                      </View>
+                      <View style={styles.agentTypeTextContainer}>
+                        <Text style={styles.agentTypeLabel}>
+                          {definition.label}
+                        </Text>
+                        {definition.description ? (
+                          <Text style={styles.agentTypeDescription}>
+                            {definition.description}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.agentTypeMeta}>
+                          {definition.availableModes.length > 0
+                            ? `Modes: ${definition.availableModes
+                                .map((mode) => mode.name)
+                                .join(", ")}`
+                            : "Modes: none"}
+                        </Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
           {/* Worktree Name Input (Optional) */}
           <View style={styles.formSection}>
             <Text style={styles.label}>Worktree Name (Optional)</Text>
@@ -364,41 +467,50 @@ export function CreateAgentModal({
           {/* Mode Selector */}
           <View style={styles.formSection}>
             <Text style={styles.label}>Mode</Text>
-            <View style={styles.modeContainer}>
-              {MODES.map((mode) => (
-                <Pressable
-                  key={mode.value}
-                  onPress={() => setSelectedMode(mode.value)}
-                  disabled={isLoading}
-                  style={[
-                    styles.modeOption,
-                    selectedMode === mode.value && styles.modeOptionSelected,
-                    isLoading && styles.modeOptionDisabled,
-                  ]}
-                >
-                  <View style={styles.modeOptionContent}>
-                    <View
+            {modeOptions.length === 0 ? (
+              <Text style={styles.helperText}>
+                This agent type does not expose selectable modes.
+              </Text>
+            ) : (
+              <View style={styles.modeContainer}>
+                {modeOptions.map((mode) => {
+                  const isSelected = selectedMode === mode.id;
+                  return (
+                    <Pressable
+                      key={mode.id}
+                      onPress={() => setSelectedMode(mode.id)}
+                      disabled={isLoading}
                       style={[
-                        styles.radioOuter,
-                        selectedMode === mode.value
-                          ? styles.radioOuterSelected
-                          : styles.radioOuterUnselected,
+                        styles.modeOption,
+                        isSelected && styles.modeOptionSelected,
+                        isLoading && styles.modeOptionDisabled,
                       ]}
                     >
-                      {selectedMode === mode.value && (
-                        <View style={styles.radioInner} />
-                      )}
-                    </View>
-                    <View style={styles.modeTextContainer}>
-                      <Text style={styles.modeLabel}>{mode.label}</Text>
-                      <Text style={styles.modeDescription}>
-                        {mode.description}
-                      </Text>
-                    </View>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
+                      <View style={styles.modeOptionContent}>
+                        <View
+                          style={[
+                            styles.radioOuter,
+                            isSelected
+                              ? styles.radioOuterSelected
+                              : styles.radioOuterUnselected,
+                          ]}
+                        >
+                          {isSelected && <View style={styles.radioInner} />}
+                        </View>
+                        <View style={styles.modeTextContainer}>
+                          <Text style={styles.modeLabel}>{mode.name}</Text>
+                          {mode.description ? (
+                            <Text style={styles.modeDescription}>
+                              {mode.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
           </View>
       </BottomSheetScrollView>
     </BottomSheetModal>
@@ -513,6 +625,45 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   modeDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  agentTypeContainer: {
+    gap: theme.spacing[3],
+  },
+  agentTypeOption: {
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    padding: theme.spacing[4],
+  },
+  agentTypeOptionSelected: {
+    borderColor: theme.colors.palette.blue[500],
+    backgroundColor: theme.colors.muted,
+  },
+  agentTypeOptionDisabled: {
+    opacity: theme.opacity[50],
+  },
+  agentTypeOptionContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  agentTypeTextContainer: {
+    flex: 1,
+  },
+  agentTypeLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing[1],
+  },
+  agentTypeDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[1],
+  },
+  agentTypeMeta: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },

@@ -29,6 +29,7 @@ import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { AgentManager } from "./acp/agent-manager.js";
 import { createAgentMcpServer } from "./acp/mcp-server.js";
 import type { AgentUpdate } from "./acp/types.js";
+import type { AgentType } from "./acp/agent-types.js";
 import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
@@ -493,12 +494,13 @@ export class Session {
           break;
 
         case "create_agent_request":
-          await this.handleCreateAgentRequest(
-            msg.cwd,
-            msg.initialMode,
-            msg.requestId,
-            msg.worktreeName
-          );
+          await this.handleCreateAgentRequest({
+            cwd: msg.cwd,
+            initialMode: msg.initialMode,
+            requestId: msg.requestId,
+            worktreeName: msg.worktreeName,
+            agentType: msg.agentType,
+          });
           break;
 
         case "initialize_agent_request":
@@ -820,12 +822,19 @@ export class Session {
   /**
    * Handle create agent request
    */
-  private async handleCreateAgentRequest(
-    cwd: string,
-    initialMode?: string,
-    requestId?: string,
-    worktreeName?: string
-  ): Promise<void> {
+  private async handleCreateAgentRequest({
+    cwd,
+    initialMode,
+    requestId,
+    worktreeName,
+    agentType,
+  }: {
+    cwd: string;
+    initialMode?: string;
+    requestId?: string;
+    worktreeName?: string;
+    agentType?: AgentType;
+  }): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Creating agent in ${cwd} with mode ${
         initialMode || "default"
@@ -859,8 +868,11 @@ export class Session {
         );
       }
 
+      const normalizedType: AgentType = agentType ?? "claude";
+
       const agentId = await this.agentManager.createAgent({
         cwd: effectiveCwd,
+        type: normalizedType,
         initialMode,
       });
 
@@ -892,7 +904,7 @@ export class Session {
         payload: {
           agentId,
           status: info.status,
-          type: "claude",
+          type: info.type,
           currentModeId: info.currentModeId ?? undefined,
           availableModes: info.availableModes ?? undefined,
           title: info.title ?? undefined,
@@ -1419,7 +1431,7 @@ export class Session {
                     payload: {
                       agentId,
                       status: agentInfo.status,
-                      type: "claude",
+                      type: agentInfo.type,
                       currentModeId: agentInfo.currentModeId ?? undefined,
                       availableModes: agentInfo.availableModes ?? undefined,
                       title: agentInfo.title || undefined,

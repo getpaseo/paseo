@@ -19,18 +19,16 @@ import {
   UserMessage,
   ActivityLog,
   ToolCall,
+  AgentThoughtMessage,
 } from "./message";
 import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import type { StreamItem } from "@/types/stream";
-import type {
-  SelectedToolCall,
-  PendingPermission,
-  AgentInfo,
-} from "@/types/shared";
+import type { SelectedToolCall, PendingPermission } from "@/types/shared";
+import type { Agent } from "@/contexts/session-context";
 
 export interface AgentStreamViewProps {
   agentId: string;
-  agent: AgentInfo;
+  agent: Agent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
   onPermissionResponse: (requestId: string, optionId: string) => void;
@@ -53,6 +51,7 @@ export function AgentStreamView({
   const hasAutoScrolledOnce = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
+  const isUserScrollingRef = useRef(false);
 
   useEffect(() => {
     hasScrolledInitially.current = false;
@@ -77,11 +76,40 @@ export function AgentStreamView({
       const { contentOffset } = event.nativeEvent;
       const threshold = Math.max(insets.bottom, 32);
       const nearBottom = contentOffset.y <= threshold;
+
+      if (isProgrammaticScrollRef.current) {
+        if (nearBottom && !isNearBottomRef.current) {
+          isNearBottomRef.current = true;
+          setIsNearBottom(true);
+        }
+        return;
+      }
+
+      if (!nearBottom && !isUserScrollingRef.current) {
+        return;
+      }
+
+      if (isNearBottomRef.current === nearBottom) {
+        return;
+      }
+
       isNearBottomRef.current = nearBottom;
       setIsNearBottom(nearBottom);
     },
     [insets.bottom]
   );
+
+  const handleScrollBeginDrag = useCallback(() => {
+    isUserScrollingRef.current = true;
+  }, []);
+
+  const handleMomentumScrollBegin = useCallback(() => {
+    isUserScrollingRef.current = true;
+  }, []);
+
+  const handleScrollEnd = useCallback(() => {
+    isUserScrollingRef.current = false;
+  }, []);
 
   const scrollToBottomInternal = useCallback(
     ({ animated }: { animated: boolean }) => {
@@ -156,10 +184,8 @@ export function AgentStreamView({
 
       case "thought":
         return (
-          <ActivityLog
-            type="info"
+          <AgentThoughtMessage
             message={item.text}
-            timestamp={item.timestamp.getTime()}
           />
         );
 
@@ -235,6 +261,10 @@ export function AgentStreamView({
         }}
         style={stylesheet.list}
         onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollEnd}
+        onMomentumScrollBegin={handleMomentumScrollBegin}
+        onMomentumScrollEnd={handleScrollEnd}
         scrollEventThrottle={16}
         ListEmptyComponent={
           <View style={stylesheet.invertedWrapper}>

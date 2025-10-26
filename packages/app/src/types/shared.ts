@@ -1,4 +1,3 @@
-import type { AgentStatus } from '@server/server/acp/types';
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import type { ToolCallPayload } from './stream';
 
@@ -22,12 +21,4 @@ export interface PendingPermission {
   options: RequestPermissionRequest['options'];
 }
 
-/**
- * Agent info for UI display
- */
-export interface AgentInfo {
-  id: string;
-  status: AgentStatus;
-  createdAt: Date;
-  type: 'claude';
-}
+// Agent info interface is provided by SessionContext's Agent type

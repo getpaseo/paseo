@@ -9,6 +9,7 @@ import type {
   WSInboundMessage,
 } from "@server/server/messages";
 import type { AgentStatus, AgentUpdate, AgentNotification } from "@server/server/acp/types";
+import type { AgentType } from "@server/server/acp/agent-types";
 import { parseSessionUpdate } from "@/types/agent-activity";
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
@@ -58,7 +59,7 @@ export interface Agent {
   status: AgentStatus;
   createdAt: Date;
   lastActivityAt: Date;
-  type: "claude";
+  type: AgentType;
   sessionId: string | null;
   error: string | null;
   currentModeId: string | null;
@@ -118,7 +119,13 @@ interface SessionContextValue {
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
-  createAgent: (options: { cwd: string; initialMode?: string; worktreeName?: string; requestId?: string }) => void;
+  createAgent: (options: {
+    cwd: string;
+    agentType: AgentType;
+    initialMode?: string;
+    worktreeName?: string;
+    requestId?: string;
+  }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (requestId: string, agentId: string, sessionId: string, selectedOptionIds: string[]) => void;
 }
@@ -720,7 +727,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     }
   }, [ws]);
 
-  const createAgent = useCallback((options: { cwd: string; initialMode?: string; worktreeName?: string; requestId?: string }) => {
+  const createAgent = useCallback((options: { cwd: string; agentType: AgentType; initialMode?: string; worktreeName?: string; requestId?: string }) => {
     const msg: WSInboundMessage = {
       type: "session",
       message: {

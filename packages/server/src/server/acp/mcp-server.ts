@@ -121,6 +121,7 @@ export async function createAgentMcpServer(
 
       const agentId = await agentManager.createAgent({
         cwd: resolvedCwd,
+        type: "claude",
         initialPrompt,
         initialMode,
       });

@@ -17,6 +17,10 @@ import {
 } from "@agentclientprotocol/sdk";
 import { v4 as uuidv4 } from "uuid";
 import { expandTilde } from "../terminal-mcp/tmux.js";
+import {
+  getAgentModes,
+  getAgentTypeDefinition,
+} from "./agent-types.js";
 import type {
   AgentStatus,
   AgentInfo,
@@ -84,6 +88,84 @@ function getAgentError(state: ManagedAgentState): string | undefined {
     return state.lastError;
   }
   return undefined;
+}
+
+function normalizeModes(modes?: SessionMode[] | null): SessionMode[] {
+  if (!modes) {
+    return [];
+  }
+  return modes.map((mode) => ({
+    id: mode.id,
+    name: mode.name,
+    description: mode.description ?? null,
+  }));
+}
+
+function getStaticModes(type: AgentOptions["type"]): SessionMode[] {
+  const staticModes = getAgentModes(type);
+  return staticModes.map((mode) => ({
+    id: mode.id,
+    name: mode.name,
+    description: mode.description ?? null,
+  }));
+}
+
+function buildAvailableModes(
+  type: AgentOptions["type"],
+  runtimeModes?: SessionMode[] | null
+): SessionMode[] | null {
+  const runtimeList = normalizeModes(runtimeModes);
+  if (runtimeList.length > 0) {
+    return runtimeList;
+  }
+
+  const staticModes = getStaticModes(type);
+  return staticModes.length > 0 ? staticModes : null;
+}
+
+function resolveModeSelection({
+  type,
+  requestedModeId,
+  runtimeModes,
+}: {
+  type: AgentOptions["type"];
+  requestedModeId?: string | null;
+  runtimeModes?: SessionMode[] | null;
+}): {
+  availableModes: SessionMode[] | null;
+  modeId: string | null;
+  wasAdjusted: boolean;
+} {
+  const availableModes = buildAvailableModes(type, runtimeModes);
+
+  if (!availableModes || availableModes.length === 0) {
+    return {
+      availableModes: null,
+      modeId: null,
+      wasAdjusted: Boolean(requestedModeId),
+    };
+  }
+
+  if (requestedModeId) {
+    const match = availableModes.find((mode) => mode.id === requestedModeId);
+    if (match) {
+      return {
+        availableModes,
+        modeId: requestedModeId,
+        wasAdjusted: false,
+      };
+    }
+  }
+
+  const definition = getAgentTypeDefinition(type);
+  const fallbackModeId =
+    definition.defaultModeId ?? (availableModes[0]?.id ?? null);
+
+  return {
+    availableModes,
+    modeId: fallbackModeId,
+    wasAdjusted: Boolean(requestedModeId),
+  };
 }
 
 /**
@@ -236,10 +318,26 @@ export class AgentManager {
     }
 
     const createdAt = new Date();
-    const agentOptions: AgentOptions = {
-      type: "claude",
-      sessionId: null,
-    };
+    const agentOptions: AgentOptions =
+      options.type === "claude"
+        ? {
+            type: "claude",
+            sessionId: null,
+          }
+        : {
+            type: "codex",
+          };
+
+    const modeSelection = resolveModeSelection({
+      type: options.type,
+      requestedModeId: options.initialMode ?? null,
+    });
+
+    if (options.initialMode && modeSelection.wasAdjusted) {
+      console.warn(
+        `[AgentManager] Invalid initial mode '${options.initialMode}' for agent type '${options.type}'. Falling back to '${modeSelection.modeId ?? "none"}'.`
+      );
+    }
 
     const agent: ManagedAgent = {
       id: agentId,
@@ -254,9 +352,7 @@ export class AgentManager {
       currentAssistantMessageId: null,
       currentThoughtId: null,
       titleGenerationTriggered: false,
-      pendingSessionMode: options.initialPrompt
-        ? null
-        : options.initialMode ?? null,
+      pendingSessionMode: options.initialPrompt ? null : modeSelection.modeId,
       state: {
         type: "uninitialized",
         persistedSessionId: null,
@@ -593,14 +689,17 @@ export class AgentManager {
       const runtime = this.getRuntime(agent);
       const sessionId = runtime?.sessionId ?? null;
       const currentModeId = runtime?.currentModeId ?? null;
-      const availableModes = runtime?.availableModes ?? null;
+      const availableModes = buildAvailableModes(
+        agent.options.type,
+        runtime?.availableModes ?? null
+      );
 
       return {
         id: agent.id,
         status,
         createdAt: agent.createdAt,
         lastActivityAt: agent.lastActivityAt,
-        type: "claude" as const,
+        type: agent.options.type,
         sessionId,
         error: error ?? null,
         currentModeId,
@@ -659,17 +758,21 @@ export class AgentManager {
     const status = getAgentStatusFromState(agent.state);
     const error = getAgentError(agent.state);
     const runtime = this.getRuntime(agent);
+    const availableModes = buildAvailableModes(
+      agent.options.type,
+      runtime?.availableModes ?? null
+    );
 
     const info: AgentInfo = {
       id: agent.id,
       status,
       createdAt: agent.createdAt,
       lastActivityAt: agent.lastActivityAt,
-      type: "claude",
+      type: agent.options.type,
       sessionId: runtime?.sessionId ?? null,
       error: error ?? null,
       currentModeId: runtime?.currentModeId ?? null,
-      availableModes: runtime?.availableModes ?? null,
+      availableModes,
       title: agent.title,
       cwd: agent.cwd,
     };
@@ -701,7 +804,10 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
     const runtime = this.getRuntime(agent);
-    return runtime?.availableModes ?? null;
+    return buildAvailableModes(
+      agent.options.type,
+      runtime?.availableModes ?? null
+    );
   }
 
   /**
@@ -721,9 +827,12 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} has no active session`);
     }
 
-    // Validate mode is available if we have the list
-    const availableModes = runtime.availableModes ?? [];
-    if (availableModes.length > 0) {
+    const availableModes = buildAvailableModes(
+      agent.options.type,
+      runtime.availableModes ?? null
+    );
+
+    if (availableModes && availableModes.length > 0) {
       const mode = availableModes.find((m) => m.id === modeId);
       if (!mode) {
         const availableIds = availableModes.map((m) => m.id).join(", ");
@@ -742,6 +851,7 @@ export class AgentManager {
       const updatedRuntime: AgentRuntime = {
         ...runtime,
         currentModeId: modeId,
+        availableModes,
       };
 
       switch (agent.state.type) {
@@ -832,11 +942,13 @@ export class AgentManager {
       // Create the init promise
       const initPromise = (async () => {
         try {
+          const definition = getAgentTypeDefinition(agent.options.type);
           const hasPersistedSession =
-            (agent.options.type === "claude" &&
+            definition.supportsSessionPersistence &&
+            ((agent.options.type === "claude" &&
               agent.options.sessionId !== null) ||
-            !!persistedSessionId;
-          const mode = hasPersistedSession ? "resume" : "new";
+              !!persistedSessionId);
+          const mode: "new" | "resume" = hasPersistedSession ? "resume" : "new";
 
           console.log(
             `[Agent ${agentId}] Starting lazy initialization (mode: ${mode})`
@@ -965,7 +1077,8 @@ export class AgentManager {
       throw new Error(errorMessage);
     }
 
-    const agentProcess = spawn("npx", ["@boudra/claude-code-acp"], {
+    const definition = getAgentTypeDefinition(agent.options.type);
+    const agentProcess = spawn(definition.spawn.command, definition.spawn.args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd,
     });
@@ -1040,11 +1153,15 @@ export class AgentManager {
         },
       });
 
+      const supportsResume = definition.supportsSessionPersistence;
+      const canResume = supportsResume && mode === "resume";
+
       let sessionResponse:
         | Awaited<ReturnType<typeof connection.newSession>>
         | Awaited<ReturnType<typeof connection.loadSession>>;
       let effectiveSessionId: string;
-      if (mode === "resume") {
+
+      if (canResume) {
         const sessionIdToResume =
           (agent.options.type === "claude" && agent.options.sessionId) ||
           resumeSessionId ||
@@ -1064,7 +1181,13 @@ export class AgentManager {
         });
         effectiveSessionId = sessionIdToResume;
       } else {
-        console.log(`[Agent ${agentId}] Creating new session`);
+        if (mode === "resume" && !supportsResume) {
+          console.log(
+            `[Agent ${agentId}] Resume requested but unsupported for type '${definition.id}', starting new session`
+          );
+        } else {
+          console.log(`[Agent ${agentId}] Creating new session`);
+        }
         const newSessionResponse = await connection.newSession({
           cwd,
           mcpServers: [],
@@ -1074,16 +1197,37 @@ export class AgentManager {
       }
 
       runtime.sessionId = effectiveSessionId;
-      runtime.currentModeId = sessionResponse.modes?.currentModeId ?? null;
-      runtime.availableModes = sessionResponse.modes?.availableModes ?? null;
 
-      const claudeSessionId = sessionResponse._meta?.claudeSessionId as
-        | string
-        | undefined;
+      const modeSelection = resolveModeSelection({
+        type: agent.options.type,
+        requestedModeId: sessionResponse.modes?.currentModeId ?? null,
+        runtimeModes: sessionResponse.modes?.availableModes ?? null,
+      });
+
+      runtime.availableModes = modeSelection.availableModes;
+      runtime.currentModeId = modeSelection.modeId;
+
+      if (
+        sessionResponse.modes?.currentModeId &&
+        modeSelection.wasAdjusted
+      ) {
+        console.warn(
+          `[Agent ${agentId}] Mode '${sessionResponse.modes.currentModeId}' not available for type '${agent.options.type}', using '${modeSelection.modeId ?? "none"}' instead.`
+        );
+      }
+
+      const claudeSessionId =
+        sessionResponse._meta?.claudeSessionId !== undefined
+          ? (sessionResponse._meta?.claudeSessionId as string | undefined)
+          : undefined;
       console.log(
         `[Agent ${agentId}] Session ${
-          mode === "new" ? "created" : "loaded"
-        }: ACP=${effectiveSessionId}, Claude=${claudeSessionId || "N/A"}`
+          canResume ? "loaded" : "created"
+        }: ACP=${effectiveSessionId}${
+          agent.options.type === "claude"
+            ? `, Claude=${claudeSessionId || "N/A"}`
+            : ""
+        }`
       );
 
       await this.updateAgent(agentId, (managedAgent) => {

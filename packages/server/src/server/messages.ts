@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { AgentType } from "./acp/agent-types.js";
+import { listAgentTypeDefinitions } from "./acp/agent-types.js";
 
 const AgentModeSchema = z.object({
   id: z.string(),
@@ -6,12 +8,14 @@ const AgentModeSchema = z.object({
   description: z.string().nullable().optional(),
 });
 
+const agentTypes = listAgentTypeDefinitions().map((definition) => definition.id);
+
 const AgentInfoSchema = z.object({
   id: z.string(),
   status: z.string(),
   createdAt: z.date(),
   lastActivityAt: z.date(),
-  type: z.literal("claude"),
+  type: z.enum(agentTypes as [AgentType, ...AgentType[]]),
   sessionId: z.string().nullable(),
   error: z.string().nullable(),
   currentModeId: z.string().nullable(),
@@ -95,6 +99,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   cwd: z.string(),
   initialMode: z.string().optional(),
   worktreeName: z.string().optional(),
+  agentType: z.enum(agentTypes as [AgentType, ...AgentType[]]).optional(),
   requestId: z.string().optional(),
 });
 
@@ -220,7 +225,7 @@ export const AgentCreatedMessageSchema = z.object({
   payload: z.object({
     agentId: z.string(),
     status: z.string(),
-    type: z.literal("claude"),
+    type: z.enum(agentTypes as [AgentType, ...AgentType[]]),
     currentModeId: z.string().optional(),
     availableModes: z.array(AgentModeSchema).optional(),
     title: z.string().optional(),
