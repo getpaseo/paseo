@@ -100,6 +100,7 @@ interface SessionContextValue {
   setCurrentAssistantMessage: (message: string) => void;
   agentStreamState: Map<string, StreamItem[]>;
   setAgentStreamState: (state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
+  initializingAgents: Map<string, boolean>;
 
   // Agents and commands
   agents: Map<string, Agent>;
@@ -153,6 +154,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
+  const [initializingAgents, setInitializingAgents] = useState<Map<string, boolean>>(new Map());
 
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
@@ -198,6 +200,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
       setAgentStreamState(new Map());
       setAgentUpdates(new Map());
+      setInitializingAgents(new Map());
     });
 
     // Agent created
@@ -286,6 +289,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           []
         );
         return new Map(prev).set(agentId, reconstructedStream);
+      });
+
+      setInitializingAgents((prev) => {
+        const next = new Map(prev);
+        next.set(agentId, false);
+        return next;
       });
     });
 
@@ -593,6 +602,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   }, [ws, audioPlayer, setIsPlayingAudio]);
 
   const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+    setInitializingAgents((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, true);
+      return next;
+    });
+
     const msg: WSInboundMessage = {
       type: "session",
       message: {
@@ -766,6 +781,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setCurrentAssistantMessage,
     agentStreamState,
     setAgentStreamState,
+    initializingAgents,
     agents,
     setAgents,
     commands,

@@ -41,14 +41,39 @@ export function AgentStreamView({
     useState<SelectedToolCall | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
+  const hasAutoScrolledOnce = useRef(false);
+
+  useEffect(() => {
+    hasScrolledInitially.current = false;
+    hasAutoScrolledOnce.current = false;
+  }, [agentId]);
 
   // Scroll to bottom immediately on initial load, then animate for new messages
   useEffect(() => {
-    if (isNearBottom) {
-      const shouldAnimate = hasScrolledInitially.current;
-      scrollViewRef.current?.scrollToEnd({ animated: shouldAnimate });
-      hasScrolledInitially.current = true;
+    if (streamItems.length === 0) {
+      return;
     }
+
+    const scrollView = scrollViewRef.current;
+    if (!scrollView) {
+      return;
+    }
+
+    if (!hasAutoScrolledOnce.current) {
+      // First load: jump to bottom without animation and remember we did it
+      scrollView.scrollToEnd({ animated: false });
+      hasScrolledInitially.current = true;
+      hasAutoScrolledOnce.current = true;
+      return;
+    }
+
+    if (!isNearBottom) {
+      return;
+    }
+
+    const shouldAnimate = hasScrolledInitially.current;
+    scrollView.scrollToEnd({ animated: shouldAnimate });
+    hasScrolledInitially.current = true;
   }, [streamItems, isNearBottom]);
 
   function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
