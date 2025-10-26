@@ -417,6 +417,10 @@ export class AgentManager {
             stopReason: response.stopReason,
           };
         } else if (response.stopReason === "refusal") {
+          console.error(
+            `[Agent ${agentId}] Agent refused to process the prompt`,
+            response
+          );
           agent.state = {
             type: "failed",
             lastError: "Agent refused to process the prompt",
