@@ -499,7 +499,7 @@ export class AgentManager {
 
   /**
    * Kill an agent
-   * Terminates the process and removes it from the manager
+   * Terminates the process but keeps it in persistence for resumption
    */
   async killAgent(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
@@ -509,14 +509,24 @@ export class AgentManager {
 
     const runtime = this.getRuntime(agent);
 
+    // Persist current state before killing
+    if (runtime) {
+      await this.persistence.upsert({
+        id: agent.id,
+        title: agent.title || `Agent ${agent.id.slice(0, 8)}`,
+        sessionId: runtime.sessionId,
+        options: agent.options,
+        createdAt: agent.createdAt.toISOString(),
+        lastActivityAt: agent.lastActivityAt.toISOString(),
+        cwd: agent.cwd,
+      });
+    }
+
     agent.state = { type: "killed" };
 
     // Notify subscribers BEFORE removing from manager
     // This ensures subscribers can still query agent info
     this.notifySubscribers(agentId);
-
-    // Remove from persistence
-    await this.persistence.remove(agentId);
 
     // Kill the process
     if (runtime) {
