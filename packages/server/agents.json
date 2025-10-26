@@ -202,5 +202,17 @@
     "createdAt": "2025-10-26T07:57:16.797Z",
     "lastActivityAt": "2025-10-26T07:57:29.704Z",
     "cwd": "/var/folders/xl/kkk9drfd3ms_t8x7rmy4z6900000gn/T/acp-test-GAWCrz"
+  },
+  {
+    "id": "5bce2465-b921-4af5-9e7c-1e59d566dbe0",
+    "title": "Agent 5bce2465",
+    "sessionId": "23b203ae-d3fb-40ba-8ad0-ddd049d7166f",
+    "options": {
+      "type": "claude",
+      "sessionId": "23b203ae-d3fb-40ba-8ad0-ddd049d7166f"
+    },
+    "createdAt": "2025-10-26T07:59:07.111Z",
+    "lastActivityAt": "2025-10-26T07:59:17.913Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]

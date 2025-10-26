@@ -11,6 +11,7 @@ import type {
 import type { AgentStatus, AgentUpdate, AgentNotification } from "@server/server/acp/types";
 import { parseSessionUpdate } from "@/types/agent-activity";
 import { ScrollView } from "react-native";
+import * as FileSystem from 'expo-file-system';
 
 export type MessageEntry =
   | {
@@ -638,18 +639,16 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       imagesData = [];
       for (const imageUri of imageUris) {
         try {
-          const response = await fetch(imageUri);
-          const blob = await response.blob();
-          const arrayBuffer = await blob.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuffer);
-          let binary = '';
-          for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64 = btoa(binary);
+          // Use FileSystem.File to read the image as base64
+          const file = new FileSystem.File(imageUri);
+          const base64 = file.base64Sync();
+          
+          // Get MIME type from the file
+          const mimeType = file.type || 'image/jpeg';
+          
           imagesData.push({
             data: base64,
-            mimeType: blob.type || 'image/jpeg',
+            mimeType,
           });
         } catch (error) {
           console.error('[Session] Failed to convert image:', error);
