@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
-import Animated, { FadeIn, FadeOut, useAnimatedStyle, SharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
 import {
   AssistantMessage,
@@ -25,7 +25,6 @@ export interface AgentStreamViewProps {
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
   onPermissionResponse: (requestId: string, optionId: string) => void;
-  keyboardHeight: SharedValue<number>;
 }
 
 export function AgentStreamView({
@@ -34,7 +33,6 @@ export function AgentStreamView({
   streamItems,
   pendingPermissions,
   onPermissionResponse,
-  keyboardHeight,
 }: AgentStreamViewProps) {
   const scrollViewRef = useRef<ScrollView>(null);
   const bottomSheetRef = useRef<BottomSheetModal | null>(null);
@@ -43,17 +41,6 @@ export function AgentStreamView({
     useState<SelectedToolCall | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
-
-  // Animated content padding that responds to keyboard
-  const contentPaddingStyle = useAnimatedStyle(() => {
-    "worklet";
-    const absoluteHeight = Math.abs(keyboardHeight.value);
-    const keyboardPadding = Math.max(0, absoluteHeight - insets.bottom);
-    const basePadding = Math.max(insets.bottom, 32);
-    return {
-      paddingBottom: basePadding + keyboardPadding,
-    };
-  }, [insets.bottom]);
 
   // Scroll to bottom immediately on initial load, then animate for new messages
   useEffect(() => {
@@ -95,12 +82,10 @@ export function AgentStreamView({
       <ScrollView
         ref={scrollViewRef}
         style={stylesheet.scrollView}
-        contentContainerStyle={[
-          {
-            paddingTop: 24,
-          },
-          contentPaddingStyle,
-        ]}
+        contentContainerStyle={{
+          paddingTop: 24,
+          paddingBottom: Math.max(insets.bottom, 32),
+        }}
         onScroll={handleScroll}
         scrollEventThrottle={16}
       >

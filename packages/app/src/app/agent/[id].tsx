@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
+import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
@@ -20,13 +20,18 @@ export default function AgentScreen() {
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
-  const bottomInset = insets.bottom;
+  const bottomInset = useSharedValue(insets.bottom);
+
+  useEffect(() => {
+    bottomInset.value = insets.bottom;
+  }, [insets.bottom, bottomInset]);
+
   const animatedKeyboardStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
-    const padding = Math.max(0, absoluteHeight - bottomInset);
+    const shift = Math.max(0, absoluteHeight - bottomInset.value);
     return {
-      paddingBottom: padding,
+      transform: [{ translateY: -shift }],
     };
   });
 
@@ -81,25 +86,26 @@ export default function AgentScreen() {
       <BackHeader title={agent.title || "Agent"} />
 
       {/* Content Area with Keyboard Animation */}
-      <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        {isInitializing ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={styles.loadingText}>Loading agent...</Text>
-          </View>
-        ) : (
-          <AgentStreamView
-            agentId={id!}
-            agent={agent}
-            streamItems={streamItems}
-            pendingPermissions={agentPermissions}
-            onPermissionResponse={(requestId, optionId) =>
-              respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
-            }
-            keyboardHeight={keyboardHeight}
-          />
-        )}
-      </ReanimatedAnimated.View>
+      <View style={styles.contentContainer}>
+        <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
+          {isInitializing ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={theme.colors.primary} />
+              <Text style={styles.loadingText}>Loading agent...</Text>
+            </View>
+          ) : (
+            <AgentStreamView
+              agentId={id!}
+              agent={agent}
+              streamItems={streamItems}
+              pendingPermissions={agentPermissions}
+              onPermissionResponse={(requestId, optionId) =>
+                respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
+              }
+            />
+          )}
+        </ReanimatedAnimated.View>
+      </View>
     </View>
   );
 }
@@ -108,6 +114,10 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  contentContainer: {
+    flex: 1,
+    overflow: "hidden",
   },
   content: {
     flex: 1,
