@@ -214,5 +214,17 @@
     "createdAt": "2025-10-26T07:59:07.111Z",
     "lastActivityAt": "2025-10-26T07:59:17.913Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "69af3b81-92d0-48a6-abd6-e357a4cf67b5",
+    "title": "Manage Test Agent Lifecycle",
+    "sessionId": "9f844826-2c8e-414f-a236-a9279233b053",
+    "options": {
+      "type": "claude",
+      "sessionId": "9f844826-2c8e-414f-a236-a9279233b053"
+    },
+    "createdAt": "2025-10-26T08:32:55.726Z",
+    "lastActivityAt": "2025-10-26T08:37:47.226Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
   }
 ]

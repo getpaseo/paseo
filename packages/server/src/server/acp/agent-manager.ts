@@ -557,6 +557,25 @@ export class AgentManager {
   }
 
   /**
+   * Delete an agent completely
+   * Kills the process and removes it from persistence
+   */
+  async deleteAgent(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    // Kill the agent process
+    await this.killAgent(agentId);
+
+    // Remove from persistence
+    await this.persistence.remove(agentId);
+
+    console.log(`[Agent ${agentId}] Deleted from persistence`);
+  }
+
+  /**
    * Get the status of an agent
    */
   getAgentStatus(agentId: string): AgentStatus {
