@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { View, Pressable, Text } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,8 +13,6 @@ import Animated, {
   FadeIn,
   FadeOut,
   useAnimatedStyle,
-  withTiming,
-  useSharedValue,
 } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 
@@ -31,20 +29,11 @@ export function GlobalFooter() {
   // Determine current screen type
   const isAgentScreen = pathname?.startsWith("/agent/");
 
-  const agentControlsHeight = useSharedValue(FOOTER_HEIGHT);
-
   const hasRegisteredControls = !!controls;
   const showAgentControls = isAgentScreen && hasRegisteredControls;
 
-  const transition = useSharedValue(isRealtimeMode ? 1 : 0);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const bottomInset = insets.bottom;
-
-  useEffect(() => {
-    if (showAgentControls) {
-      transition.value = withTiming(isRealtimeMode ? 1 : 0, { duration: 250 });
-    }
-  }, [isRealtimeMode, showAgentControls]);
 
   const keyboardAnimatedStyle = useAnimatedStyle(
     () => {
@@ -58,33 +47,6 @@ export function GlobalFooter() {
     [bottomInset],
   );
 
-  const containerAnimatedStyle = useAnimatedStyle(
-    () => {
-      "worklet";
-      const agentHeight = Math.max(agentControlsHeight.value, FOOTER_HEIGHT);
-      const expandedHeight = agentHeight - (agentHeight - FOOTER_HEIGHT) * transition.value;
-
-      return {
-        height: expandedHeight + bottomInset,
-      };
-    },
-    [bottomInset],
-  );
-
-  const realtimeAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: transition.value,
-      pointerEvents: transition.value > 0.5 ? ("auto" as const) : ("none" as const),
-    };
-  });
-
-  const agentControlsAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: 1 - transition.value,
-      pointerEvents: transition.value < 0.5 ? ("auto" as const) : ("none" as const),
-    };
-  });
-
   if (showAgentControls) {
     return (
       <Animated.View
@@ -93,25 +55,10 @@ export function GlobalFooter() {
           {
             paddingBottom: insets.bottom,
           },
-          containerAnimatedStyle,
           keyboardAnimatedStyle,
         ]}
       >
-        <View style={styles.content}>
-          <Animated.View
-            onLayout={(event) => {
-              agentControlsHeight.value = Math.max(event.nativeEvent.layout.height, FOOTER_HEIGHT);
-            }}
-            style={[styles.absoluteBottomFill, agentControlsAnimatedStyle]}
-          >
-            {controls}
-          </Animated.View>
-          <Animated.View
-            style={[styles.absoluteBottomFill, realtimeAnimatedStyle]}
-          >
-            <RealtimeControls />
-          </Animated.View>
-        </View>
+        {controls}
       </Animated.View>
     );
   }
@@ -120,76 +67,72 @@ export function GlobalFooter() {
     return null;
   }
 
-  // Determine if realtime is active on non-agent screens
-  if (isRealtimeMode) {
-    return (
-      <Animated.View
-        style={[
-          styles.container,
-          {
-            paddingBottom: insets.bottom,
-            height: FOOTER_HEIGHT + insets.bottom,
-          },
-          keyboardAnimatedStyle,
-        ]}
-        entering={FadeIn.duration(400)}
-        exiting={FadeOut.duration(250)}
-      >
-        <RealtimeControls />
-      </Animated.View>
-    );
-  }
+  // For home and orchestrator screens, show three buttons with realtime stacked on top
+  const nonAgentFooterHeight = isRealtimeMode
+    ? FOOTER_HEIGHT * 2 + insets.bottom
+    : FOOTER_HEIGHT + insets.bottom;
 
-  // For home and orchestrator screens, show three buttons
   return (
     <>
       <Animated.View
-        entering={FadeIn.duration(250)}
-        exiting={FadeOut.duration(250)}
         style={[
           styles.container,
           {
             paddingBottom: insets.bottom,
-            height: FOOTER_HEIGHT + insets.bottom,
+            height: nonAgentFooterHeight,
           },
           keyboardAnimatedStyle,
         ]}
       >
-        <View style={styles.threeButtonContainer}>
-          <Pressable
-            onPress={() => router.push("/")}
-            style={({ pressed }) => [
-              styles.footerButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Users size={20} color={theme.colors.foreground} />
-            <Text style={styles.footerButtonText}>Agents</Text>
-          </Pressable>
+        <View style={styles.nonAgentContent}>
+          {/* Realtime controls - only visible when active */}
+          {isRealtimeMode && (
+            <Animated.View
+              style={styles.realtimeSection}
+              entering={FadeIn.duration(250)}
+              exiting={FadeOut.duration(250)}
+            >
+              <RealtimeControls />
+            </Animated.View>
+          )}
 
-          <Pressable
-            onPress={() => setShowCreateModal(true)}
-            style={({ pressed }) => [
-              styles.footerButton,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Plus size={20} color={theme.colors.foreground} />
-            <Text style={styles.footerButtonText}>New Agent</Text>
-          </Pressable>
+          {/* Three button menu - always visible */}
+          <View style={styles.threeButtonContainer}>
+            <Pressable
+              onPress={() => router.push("/")}
+              style={({ pressed }) => [
+                styles.footerButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <Users size={20} color={theme.colors.foreground} />
+              <Text style={styles.footerButtonText}>Agents</Text>
+            </Pressable>
 
-          <Pressable
-            onPress={startRealtime}
-            disabled={!ws.isConnected}
-            style={({ pressed }) => [
-              styles.footerButton,
-              !ws.isConnected && styles.buttonDisabled,
-              pressed && !ws.isConnected && styles.buttonPressed,
-            ]}
-          >
-            <AudioLines size={20} color={theme.colors.foreground} />
-            <Text style={styles.footerButtonText}>Realtime</Text>
-          </Pressable>
+            <Pressable
+              onPress={() => setShowCreateModal(true)}
+              style={({ pressed }) => [
+                styles.footerButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <Plus size={20} color={theme.colors.foreground} />
+              <Text style={styles.footerButtonText}>New Agent</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={startRealtime}
+              disabled={!ws.isConnected}
+              style={({ pressed }) => [
+                styles.footerButton,
+                !ws.isConnected && styles.buttonDisabled,
+                pressed && !ws.isConnected && styles.buttonPressed,
+              ]}
+            >
+              <AudioLines size={20} color={theme.colors.foreground} />
+              <Text style={styles.footerButtonText}>Realtime</Text>
+            </Pressable>
+          </View>
         </View>
       </Animated.View>
 
@@ -207,20 +150,19 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
-  content: {
-    flex: 1,
-    minHeight: FOOTER_HEIGHT,
+  nonAgentContent: {
+    flexDirection: "column",
   },
-  absoluteBottomFill: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
+  realtimeSection: {
+    height: FOOTER_HEIGHT,
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
   },
   threeButtonContainer: {
     flexDirection: "row",
     padding: theme.spacing[4],
     gap: theme.spacing[3],
+    height: FOOTER_HEIGHT,
   },
   footerButton: {
     flex: 1,

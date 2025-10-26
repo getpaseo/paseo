@@ -8,7 +8,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
-import { AgentStatusBar } from "@/components/agent-status-bar";
 import { useSession } from "@/contexts/session-context";
 import { useFooterControls } from "@/contexts/footer-controls-context";
 
@@ -89,22 +88,15 @@ export default function AgentScreen() {
             <Text style={styles.loadingText}>Loading agent...</Text>
           </View>
         ) : (
-          <>
-            <AgentStreamView
-              agentId={id!}
-              agent={agent}
-              streamItems={streamItems}
-              pendingPermissions={agentPermissions}
-              onPermissionResponse={(requestId, optionId) =>
-                respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
-              }
-            />
-
-            {/* Footer area - status bar pinned within screen */}
-            <View style={styles.footerContainer}>
-              <AgentStatusBar agentId={id!} />
-            </View>
-          </>
+          <AgentStreamView
+            agentId={id!}
+            agent={agent}
+            streamItems={streamItems}
+            pendingPermissions={agentPermissions}
+            onPermissionResponse={(requestId, optionId) =>
+              respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
+            }
+          />
         )}
       </ReanimatedAnimated.View>
     </View>
@@ -118,9 +110,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     flex: 1,
-  },
-  footerContainer: {
-    backgroundColor: theme.colors.background,
   },
   loadingContainer: {
     flex: 1,

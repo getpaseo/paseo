@@ -3,6 +3,8 @@ import { View, Text, ScrollView, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { ChevronDown } from "lucide-react-native";
 import {
   AssistantMessage,
   UserMessage,
@@ -64,7 +66,19 @@ export function AgentStreamView({
       contentSize.height - contentOffset.y - layoutMeasurement.height;
     // Consider user "at bottom" if within 10px of the end
     const nearBottom = distanceFromBottom < 10;
+    console.log('[AgentStreamView] Scroll:', { 
+      contentHeight: contentSize.height, 
+      scrollY: contentOffset.y, 
+      layoutHeight: layoutMeasurement.height,
+      distanceFromBottom, 
+      nearBottom,
+      currentIsNearBottom: isNearBottom
+    });
     setIsNearBottom(nearBottom);
+  }
+
+  function scrollToBottom() {
+    scrollViewRef.current?.scrollToEnd({ animated: true });
   }
 
   return (
@@ -188,6 +202,22 @@ export function AgentStreamView({
             />
           ))}
       </ScrollView>
+
+      {/* Scroll to bottom button */}
+      {!isNearBottom && (
+        <Animated.View
+          style={stylesheet.scrollToBottomContainer}
+          entering={FadeIn.duration(200)}
+          exiting={FadeOut.duration(200)}
+        >
+          <Pressable
+            style={stylesheet.scrollToBottomButton}
+            onPress={scrollToBottom}
+          >
+            <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+          </Pressable>
+        </Animated.View>
+      )}
 
       <ToolCallBottomSheet
         bottomSheetRef={bottomSheetRef}
@@ -364,6 +394,33 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
+  },
+  scrollToBottomContainer: {
+    position: "absolute",
+    bottom: 16,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    pointerEvents: "box-none",
+  },
+  scrollToBottomButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.colors.muted,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  scrollToBottomIcon: {
+    color: theme.colors.foreground,
   },
 }));
 
