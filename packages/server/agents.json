@@ -224,7 +224,139 @@
       "sessionId": "9f844826-2c8e-414f-a236-a9279233b053"
     },
     "createdAt": "2025-10-26T08:32:55.726Z",
-    "lastActivityAt": "2025-10-26T08:43:50.999Z",
+    "lastActivityAt": "2025-10-26T08:52:29.872Z",
     "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "01005d0b-bfa2-4af0-9a3f-be30abc13416",
+    "title": "Plan Dummy File Creation",
+    "sessionId": "bb0abc76-ea48-42e6-826d-4eabe6673934",
+    "options": {
+      "type": "claude",
+      "sessionId": "bb0abc76-ea48-42e6-826d-4eabe6673934"
+    },
+    "createdAt": "2025-10-26T08:55:15.517Z",
+    "lastActivityAt": "2025-10-26T09:38:15.566Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "f9243dd7-c8c1-464a-b1b1-bcbb117a855a",
+    "title": "Fix Agent Page Auto-Scroll",
+    "sessionId": "5d373fa4-551f-457c-94b3-80b93fceb8db",
+    "options": {
+      "type": "claude",
+      "sessionId": "5d373fa4-551f-457c-94b3-80b93fceb8db"
+    },
+    "createdAt": "2025-10-26T08:58:52.052Z",
+    "lastActivityAt": "2025-10-26T08:59:37.873Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "cb049284-a950-4d09-88b2-19a53a6537c8",
+    "title": "Update Voice Note Recording UI",
+    "sessionId": "8211a874-e907-4e2c-8be9-65340d8b5474",
+    "options": {
+      "type": "claude",
+      "sessionId": "8211a874-e907-4e2c-8be9-65340d8b5474"
+    },
+    "createdAt": "2025-10-26T09:15:28.908Z",
+    "lastActivityAt": "2025-10-26T09:16:35.102Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "a10721ba-5054-4141-8937-96bd1de43c80",
+    "title": "Lower Agent Page Bottom Threshold",
+    "sessionId": "7a77e68c-b5bb-4af4-8aa9-75df179bb5a0",
+    "options": {
+      "type": "claude",
+      "sessionId": "7a77e68c-b5bb-4af4-8aa9-75df179bb5a0"
+    },
+    "createdAt": "2025-10-26T09:31:25.429Z",
+    "lastActivityAt": "2025-10-26T09:32:08.991Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "ce150913-d726-45f6-8ce8-b273a6eb846b",
+    "title": "Create Agent with Work Tree",
+    "sessionId": "20b0b2c2-18ec-409b-b932-a20c9ca8e0d3",
+    "options": {
+      "type": "claude",
+      "sessionId": "20b0b2c2-18ec-409b-b932-a20c9ca8e0d3"
+    },
+    "createdAt": "2025-10-26T09:45:29.563Z",
+    "lastActivityAt": "2025-10-26T12:25:20.827Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "a81597c0-5a56-480c-a39f-774018078af2",
+    "title": "Show Pwd and Git Status",
+    "sessionId": "8b38e1a5-161a-4adb-a5e1-875d50b803ab",
+    "options": {
+      "type": "claude",
+      "sessionId": "8b38e1a5-161a-4adb-a5e1-875d50b803ab"
+    },
+    "createdAt": "2025-10-26T09:54:57.233Z",
+    "lastActivityAt": "2025-10-26T09:55:19.464Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "445fccbe-9d88-4205-ae42-342785c7ff85",
+    "title": "Agent 445fccbe",
+    "sessionId": "8c5f56b1-d61c-46d0-9bb2-acd0d5761e34",
+    "options": {
+      "type": "claude",
+      "sessionId": "8c5f56b1-d61c-46d0-9bb2-acd0d5761e34"
+    },
+    "createdAt": "2025-10-26T09:57:56.313Z",
+    "lastActivityAt": "2025-10-26T09:58:07.755Z",
+    "cwd": "/Users/moboudra/dev/voice-dev-test-worktree-feature"
+  },
+  {
+    "id": "667220be-001a-4975-b06d-af2385d67d16",
+    "title": "Agent 667220be",
+    "sessionId": "bb024cfa-304a-407b-bd66-f865ad33cd22",
+    "options": {
+      "type": "claude",
+      "sessionId": "bb024cfa-304a-407b-bd66-f865ad33cd22"
+    },
+    "createdAt": "2025-10-26T10:00:25.342Z",
+    "lastActivityAt": "2025-10-26T10:00:35.188Z",
+    "cwd": "/Users/moboudra/dev/voice-dev-test-e2e-worktree"
+  },
+  {
+    "id": "acbf1000-1516-455b-8c76-5e33429242eb",
+    "title": "Check Repo Path and Status",
+    "sessionId": "e5e0f403-e8fd-47d3-9ea9-fe7aa532e49a",
+    "options": {
+      "type": "claude",
+      "sessionId": "e5e0f403-e8fd-47d3-9ea9-fe7aa532e49a"
+    },
+    "createdAt": "2025-10-26T10:01:31.658Z",
+    "lastActivityAt": "2025-10-26T10:01:55.618Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "e31d3ad4-f5cd-445e-9d1d-582f0ffee01f",
+    "title": "Agent e31d3ad4",
+    "sessionId": "019a2076-05ac-7468-8c48-17959cc1afc1",
+    "options": {
+      "type": "claude",
+      "sessionId": null
+    },
+    "createdAt": "2025-10-26T12:19:56.347Z",
+    "lastActivityAt": "2025-10-26T12:19:56.347Z",
+    "cwd": "/Users/moboudra/dev/voice-dev"
+  },
+  {
+    "id": "be7b076f-14b1-4ce4-9faf-74e107a1a3ce",
+    "title": "Git Status and Working Directory",
+    "sessionId": "1d9fed78-3021-4fc5-91b0-a8f4cfb3bb4f",
+    "options": {
+      "type": "claude",
+      "sessionId": "1d9fed78-3021-4fc5-91b0-a8f4cfb3bb4f"
+    },
+    "createdAt": "2025-10-26T12:25:48.081Z",
+    "lastActivityAt": "2025-10-26T12:26:13.370Z",
+    "cwd": "/Users/moboudra/dev/voice-dev-gland"
   }
 ]

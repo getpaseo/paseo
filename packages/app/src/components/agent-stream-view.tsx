@@ -37,11 +37,14 @@ export function AgentStreamView({
   const insets = useSafeAreaInsets();
   const [selectedToolCall, setSelectedToolCall] =
     useState<SelectedToolCall | null>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
-  // Auto-scroll to bottom when new items arrive
+  // Auto-scroll to bottom when new items arrive, but only if user is already at bottom
   useEffect(() => {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
-  }, [streamItems]);
+    if (isNearBottom) {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [streamItems, isNearBottom]);
 
   function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
     setSelectedToolCall(toolCall);
@@ -55,6 +58,15 @@ export function AgentStreamView({
     setSelectedToolCall(null);
   }
 
+  function handleScroll(event: any) {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const distanceFromBottom =
+      contentSize.height - contentOffset.y - layoutMeasurement.height;
+    // Consider user "at bottom" if within 10px of the end
+    const nearBottom = distanceFromBottom < 10;
+    setIsNearBottom(nearBottom);
+  }
+
   return (
     <View style={stylesheet.container}>
       {/* Content list */}
@@ -65,6 +77,8 @@ export function AgentStreamView({
           paddingTop: 24,
           paddingBottom: Math.max(insets.bottom, 32),
         }}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
       >
         {streamItems.length === 0 ? (
           <View style={stylesheet.emptyState}>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { View } from "react-native";
 import ReanimatedAnimated, {
   useSharedValue,
@@ -24,54 +24,52 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
 
   // Base dimensions
   const LINE_SPACING = 8;
+  const LINE_WIDTH = 8;
   const MAX_HEIGHT = orientation === "horizontal" ? 30 : 50;
   const MIN_HEIGHT = orientation === "horizontal" ? 12 : 20;
 
-  // Shared values for each line's height
+  // Create shared values for 3 dots unconditionally
   const line1Height = useSharedValue(MIN_HEIGHT);
   const line2Height = useSharedValue(MIN_HEIGHT);
   const line3Height = useSharedValue(MIN_HEIGHT);
-
-  // Idle pulse animations (when no volume)
   const line1Pulse = useSharedValue(1);
   const line2Pulse = useSharedValue(1);
   const line3Pulse = useSharedValue(1);
 
-  // Start idle animations with different phases
+  // Start idle animations with different phases for all dots
   useEffect(() => {
     if (isMuted) {
-      // When muted, set pulse to 1 (no animation)
+      // When muted, set all pulses to 1 (no animation)
       line1Pulse.value = 1;
       line2Pulse.value = 1;
       line3Pulse.value = 1;
       return;
     }
 
-    // Line 1 - fastest pulse
+    // Animate each dot with different phases and durations
     line1Pulse.value = withRepeat(
       withSequence(
-        withTiming(1.2, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 0 }),
+        withTiming(1.15, { duration: 800, easing: Easing.inOut(Easing.ease) }),
         withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       false
     );
 
-    // Line 2 - medium pulse with offset
     line2Pulse.value = withRepeat(
       withSequence(
-        withTiming(1, { duration: 400 }),
-        withTiming(1.15, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 200 }),
+        withTiming(1.20, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
         withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       false
     );
 
-    // Line 3 - slowest pulse with different offset
     line3Pulse.value = withRepeat(
       withSequence(
-        withTiming(1, { duration: 600 }),
+        withTiming(1, { duration: 400 }),
         withTiming(1.25, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
         withTiming(1, { duration: 1200, easing: Easing.inOut(Easing.ease) })
       ),
@@ -80,10 +78,10 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     );
   }, [isMuted]);
 
-  // Update heights based on volume with different responsiveness per line
+  // Update heights based on volume with different responsiveness for all dots
   useEffect(() => {
     if (isMuted) {
-      // When muted, keep lines at minimum height without animation
+      // When muted, keep all lines at minimum height without animation
       line1Height.value = MIN_HEIGHT;
       line2Height.value = MIN_HEIGHT;
       line3Height.value = MIN_HEIGHT;
@@ -92,25 +90,23 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
 
     if (volume > 0.01) {
       // Active volume - animate heights based on volume
-      // Line 1 - most responsive, follows volume closely
       const target1 = MIN_HEIGHT + (MAX_HEIGHT * volume * 1.2);
+      const target2 = MIN_HEIGHT + (MAX_HEIGHT * volume * 1.05);
+      const target3 = MIN_HEIGHT + (MAX_HEIGHT * volume * 0.9);
+
       line1Height.value = withSpring(target1, {
         damping: 10,
         stiffness: 200,
       });
 
-      // Line 2 - medium responsiveness
-      const target2 = MIN_HEIGHT + (MAX_HEIGHT * volume * 0.9);
       line2Height.value = withSpring(target2, {
-        damping: 12,
-        stiffness: 150,
+        damping: 12.5,
+        stiffness: 175,
       });
 
-      // Line 3 - smoothest, lags behind
-      const target3 = MIN_HEIGHT + (MAX_HEIGHT * volume * 0.7);
       line3Height.value = withSpring(target3, {
         damping: 15,
-        stiffness: 100,
+        stiffness: 150,
       });
     } else {
       // No volume - return to minimum
@@ -118,10 +114,12 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
         damping: 20,
         stiffness: 150,
       });
+
       line2Height.value = withSpring(MIN_HEIGHT, {
         damping: 20,
         stiffness: 150,
       });
+
       line3Height.value = withSpring(MIN_HEIGHT, {
         damping: 20,
         stiffness: 150,
@@ -129,7 +127,10 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     }
   }, [volume, isMuted]);
 
-  // Animated styles for each line
+  const lineColor = "#FFFFFF";
+  const containerHeight = orientation === "horizontal" ? 60 : 100;
+
+  // Create animated styles unconditionally at top level
   const line1Style = useAnimatedStyle(() => {
     const isActive = isDetecting || isSpeaking;
     const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
@@ -160,20 +161,12 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     };
   });
 
-  const lineColor = "#FFFFFF";
-  const lineWidth = 8;
-
-  const containerHeight = orientation === "horizontal" ? 60 : 100;
-
   return (
     <View style={[styles.container, { height: containerHeight }]}>
       <ReanimatedAnimated.View
         style={[
           styles.line,
-          {
-            width: lineWidth,
-            backgroundColor: lineColor,
-          },
+          { width: LINE_WIDTH, backgroundColor: lineColor },
           line1Style,
         ]}
       />
@@ -181,10 +174,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
       <ReanimatedAnimated.View
         style={[
           styles.line,
-          {
-            width: lineWidth,
-            backgroundColor: lineColor,
-          },
+          { width: LINE_WIDTH, backgroundColor: lineColor },
           line2Style,
         ]}
       />
@@ -192,10 +182,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
       <ReanimatedAnimated.View
         style={[
           styles.line,
-          {
-            width: lineWidth,
-            backgroundColor: lineColor,
-          },
+          { width: LINE_WIDTH, backgroundColor: lineColor },
           line3Style,
         ]}
       />
