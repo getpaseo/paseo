@@ -132,20 +132,4 @@ export class AgentPersistence {
       console.log(`[AgentPersistence] Removed agent ${agentId}`);
     }
   }
-
-  /**
-   * Update agent title
-   */
-  async updateTitle(agentId: string, title: string): Promise<void> {
-    const agents = await this.load();
-    const agent = agents.find((a) => a.id === agentId);
-
-    if (agent) {
-      agent.title = title;
-      await this.save(agents);
-      console.log(
-        `[AgentPersistence] Updated title for agent ${agentId}: "${title}"`
-      );
-    }
-  }
 }

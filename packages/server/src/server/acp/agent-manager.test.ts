@@ -106,6 +106,12 @@ describe("AgentManager", () => {
 
       expect(status).toBe("completed");
 
+      const agentBeforeKill = manager.listAgents().find((a) => a.id === agentId);
+      const claudeSessionId = manager.getClaudeSessionId(agentId);
+      console.log("Before kill - ACP Session ID:", agentBeforeKill?.sessionId);
+      console.log("Before kill - Claude Session ID:", claudeSessionId);
+      console.log("Working directory:", tmpDir);
+
       await manager.killAgent(agentId);
 
       const newManager = new AgentManager();
@@ -113,6 +119,10 @@ describe("AgentManager", () => {
 
       const agents = newManager.listAgents();
       const loadedAgent = agents.find((a) => a.id === agentId);
+      const loadedClaudeSessionId = newManager.getClaudeSessionId(agentId);
+
+      console.log("After reload - ACP Session ID:", loadedAgent?.sessionId);
+      console.log("After reload - Claude Session ID:", loadedClaudeSessionId);
 
       expect(loadedAgent).toBeDefined();
       expect(loadedAgent?.id).toBe(agentId);
