@@ -261,11 +261,6 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
   return (
     <View style={styles.container}>
-      {/* Status bar */}
-      <View style={styles.statusBarContainer}>
-        <AgentStatusBar agentId={agentId} />
-      </View>
-
       {/* Border separator */}
       <View style={styles.borderSeparator} />
 
@@ -298,10 +293,26 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
             </View>
           )}
 
-          {/* Input row */}
-          <View style={styles.inputRow}>
-            {/* Attachment button */}
-            {!isRecording && (
+          {/* Full-width text input */}
+          <TextInput
+            value={userInput}
+            onChangeText={setUserInput}
+            placeholder="Message agent..."
+            placeholderTextColor={theme.colors.mutedForeground}
+            style={[
+              styles.textInput,
+              { height: inputHeight, minHeight: MIN_INPUT_HEIGHT, maxHeight: MAX_INPUT_HEIGHT },
+            ]}
+            multiline
+            scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
+            onContentSizeChange={handleContentSizeChange}
+            editable={!isRecording && ws.isConnected}
+          />
+
+          {/* Button row below input */}
+          <View style={styles.buttonRow}>
+            {/* Left button group */}
+            <View style={styles.leftButtonGroup}>
               <Pressable
                 onPress={handlePickImage}
                 disabled={!ws.isConnected}
@@ -312,71 +323,52 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
               >
                 <Paperclip size={20} color={theme.colors.foreground} />
               </Pressable>
-            )}
+              <AgentStatusBar agentId={agentId} />
+            </View>
 
-            {/* Text input */}
-            <TextInput
-              value={userInput}
-              onChangeText={setUserInput}
-              placeholder="Message agent..."
-              placeholderTextColor={theme.colors.mutedForeground}
-              style={[
-                styles.textInput,
-                { height: inputHeight, minHeight: MIN_INPUT_HEIGHT, maxHeight: MAX_INPUT_HEIGHT },
-              ]}
-              multiline
-              scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
-              onContentSizeChange={handleContentSizeChange}
-              editable={!isRecording && ws.isConnected}
-            />
-
-            {/* Buttons */}
-            <View style={styles.buttonRow}>
-                {hasText || hasImages ? (
-                  // Send button when text is entered or images are selected
+            {/* Right button group */}
+            <View style={styles.rightButtonGroup}>
+              {hasText || hasImages ? (
+                <Pressable
+                  onPress={handleSendMessage}
+                  disabled={!ws.isConnected || isProcessing}
+                  style={[
+                    styles.sendButton,
+                    (!ws.isConnected || isProcessing) && styles.buttonDisabled,
+                  ]}
+                >
+                  <ArrowUp size={20} color="white" />
+                </Pressable>
+              ) : !isRealtimeMode ? (
+                <>
                   <Pressable
-                    onPress={handleSendMessage}
-                    disabled={!ws.isConnected || isProcessing}
+                    onPress={handleVoicePress}
+                    disabled={!ws.isConnected}
                     style={[
-                      styles.sendButton,
-                      (!ws.isConnected || isProcessing) && styles.buttonDisabled,
+                      styles.voiceButton,
+                      !ws.isConnected && styles.buttonDisabled,
+                      isRecording && styles.voiceButtonRecording,
                     ]}
                   >
-                    <ArrowUp size={20} color="white" />
+                    {isRecording ? (
+                      <Square size={14} color="white" fill="white" />
+                    ) : (
+                      <Mic size={20} color={theme.colors.foreground} />
+                    )}
                   </Pressable>
-                ) : !isRealtimeMode ? (
-                  // Voice and Realtime buttons when no text and not in realtime mode
-                  <>
-                    {/* Voice recording button */}
-                    <Pressable
-                      onPress={handleVoicePress}
-                      disabled={!ws.isConnected}
-                      style={[
-                        styles.voiceButton,
-                        !ws.isConnected && styles.buttonDisabled,
-                        isRecording && styles.voiceButtonRecording,
-                      ]}
-                    >
-                      {isRecording ? (
-                        <Square size={14} color="white" fill="white" />
-                      ) : (
-                        <Mic size={20} color={theme.colors.foreground} />
-                      )}
-                    </Pressable>
 
-                    {/* Realtime button */}
-                    <Pressable
-                      onPress={startRealtime}
-                      disabled={!ws.isConnected}
-                      style={[
-                        styles.realtimeButton,
-                        !ws.isConnected && styles.buttonDisabled,
-                      ]}
-                    >
-                      <AudioLines size={20} color={theme.colors.background} />
-                    </Pressable>
-                  </>
-                ) : null}
+                  <Pressable
+                    onPress={startRealtime}
+                    disabled={!ws.isConnected}
+                    style={[
+                      styles.realtimeButton,
+                      !ws.isConnected && styles.buttonDisabled,
+                    ]}
+                  >
+                    <AudioLines size={20} color={theme.colors.background} />
+                  </Pressable>
+                </>
+              ) : null}
             </View>
           </View>
         </Animated.View>
@@ -400,9 +392,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "column",
   },
-  statusBarContainer: {
-    backgroundColor: theme.colors.background,
-  },
   borderSeparator: {
     height: theme.borderWidth[1],
     backgroundColor: theme.colors.border,
@@ -417,8 +406,8 @@ const styles = StyleSheet.create((theme) => ({
   inputContainer: {
     flexDirection: "column",
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: BASE_VERTICAL_PADDING,
-    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    gap: theme.spacing[3],
     minHeight: FOOTER_HEIGHT,
   },
   overlayContainer: {
@@ -452,7 +441,26 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  inputRow: {
+  textInput: {
+    width: "100%",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.lg,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  leftButtonGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  rightButtonGroup: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -462,20 +470,6 @@ const styles = StyleSheet.create((theme) => ({
     height: 40,
     alignItems: "center",
     justifyContent: "center",
-  },
-  textInput: {
-    flex: 1,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.lg,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
   },
   sendButton: {
     width: 40,

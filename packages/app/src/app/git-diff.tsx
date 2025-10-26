@@ -134,18 +134,28 @@ export default function GitDiffScreen() {
                 >
                   <View style={styles.diffLinesContainer}>
                     {file.lines.map((line, lineIndex) => (
-                      <Text
+                      <View
                         key={lineIndex}
                         style={[
-                          styles.diffLine,
-                          line.type === "add" && styles.addLine,
-                          line.type === "remove" && styles.removeLine,
-                          line.type === "header" && styles.headerLine,
-                          line.type === "context" && styles.contextLine,
+                          styles.diffLineContainer,
+                          line.type === "add" && styles.addLineContainer,
+                          line.type === "remove" && styles.removeLineContainer,
+                          line.type === "header" && styles.headerLineContainer,
+                          line.type === "context" && styles.contextLineContainer,
                         ]}
                       >
-                        {line.content}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.diffLineText,
+                            line.type === "add" && styles.addLineText,
+                            line.type === "remove" && styles.removeLineText,
+                            line.type === "header" && styles.headerLineText,
+                            line.type === "context" && styles.contextLineText,
+                          ]}
+                        >
+                          {line.content}
+                        </Text>
+                      </View>
                     ))}
                   </View>
                 </ScrollView>
@@ -232,27 +242,42 @@ const styles = StyleSheet.create((theme) => ({
   diffLinesContainer: {
     alignSelf: "flex-start",
   },
-  diffLine: {
-    fontSize: theme.fontSize.xs,
-    fontFamily: "monospace",
+  diffLineContainer: {
+    minWidth: "100%",
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
-    flexShrink: 0,
-    minWidth: "100%",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
   },
-  addLine: {
+  diffLineText: {
+    fontSize: theme.fontSize.xs,
+    fontFamily: "monospace",
+    color: theme.colors.foreground,
+    flexShrink: 0,
+  },
+  addLineContainer: {
     backgroundColor: theme.colors.palette.green[900],
+  },
+  addLineText: {
     color: theme.colors.palette.green[200],
   },
-  removeLine: {
+  removeLineContainer: {
     backgroundColor: theme.colors.palette.red[900],
+  },
+  removeLineText: {
     color: theme.colors.palette.red[200],
   },
-  headerLine: {
-    color: theme.colors.mutedForeground,
+  headerLineContainer: {
     backgroundColor: theme.colors.muted,
   },
-  contextLine: {
+  headerLineText: {
+    color: theme.colors.mutedForeground,
+  },
+  contextLineContainer: {
+    backgroundColor: theme.colors.card,
+  },
+  contextLineText: {
     color: theme.colors.mutedForeground,
   },
 }));

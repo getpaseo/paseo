@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useCallback, useState } from "react";
-import { View, Text, ActivityIndicator, Pressable, Modal, Dimensions } from "react-native";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  Pressable,
+  Modal,
+  useWindowDimensions,
+  LayoutChangeEvent,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -28,8 +36,10 @@ export default function AgentScreen() {
     initializeAgent,
   } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
 
   // Keyboard animation
@@ -97,25 +107,75 @@ export default function AgentScreen() {
     };
   }, [agentControls, agent, isInitializing, registerFooterControls, unregisterFooterControls]);
 
-  const handleOpenMenu = useCallback(() => {
-    menuButtonRef.current?.measureInWindow((x, y, width, height) => {
-      const screenWidth = Dimensions.get("window").width;
-      const verticalOffset = 6;
-      const horizontalMargin = 16;
-      const desiredLeft = x + width - DROPDOWN_WIDTH;
-      const maxLeft = screenWidth - DROPDOWN_WIDTH - horizontalMargin;
-      const clampedLeft = Math.min(Math.max(desiredLeft, horizontalMargin), maxLeft);
+  const recalculateMenuPosition = useCallback(
+    (onMeasured?: () => void) => {
+      requestAnimationFrame(() => {
+        const anchor = menuButtonRef.current;
 
-      setMenuPosition({
-        top: y + height + verticalOffset,
-        left: clampedLeft,
+        if (!anchor) {
+          if (onMeasured) {
+            onMeasured();
+          }
+          return;
+        }
+
+        anchor.measureInWindow((x, y, width, height) => {
+          const verticalOffset = 8;
+          const horizontalMargin = 16;
+          const desiredLeft = x + width - DROPDOWN_WIDTH;
+          const maxLeft = windowWidth - DROPDOWN_WIDTH - horizontalMargin;
+          const clampedLeft = Math.min(Math.max(desiredLeft, horizontalMargin), maxLeft);
+
+          // Position menu below button - add insets.top to account for status bar
+          const buttonBottom = y + height + insets.top;
+          const top = buttonBottom + verticalOffset;
+          
+          // If menu would go off screen, clamp to visible area
+          const bottomEdge = top + menuContentHeight;
+          const maxBottom = windowHeight - horizontalMargin;
+          const clampedTop = bottomEdge > maxBottom 
+            ? Math.max(verticalOffset, maxBottom - menuContentHeight)
+            : top;
+
+          console.log('[Menu] Button position:', { x, y, width, height, insetsTop: insets.top });
+          console.log('[Menu] Calculated position:', { buttonBottom, top, clampedTop, left: clampedLeft });
+
+          setMenuPosition({
+            top: clampedTop,
+            left: clampedLeft,
+          });
+
+          if (onMeasured) {
+            onMeasured();
+          }
+        });
       });
+    },
+    [menuContentHeight, windowHeight, windowWidth]
+  );
+
+  const handleOpenMenu = useCallback(() => {
+    recalculateMenuPosition(() => {
       setMenuVisible(true);
     });
-  }, []);
+  }, [recalculateMenuPosition]);
 
   const handleCloseMenu = useCallback(() => {
     setMenuVisible(false);
+    setMenuContentHeight(0);
+  }, []);
+
+  useEffect(() => {
+    if (!menuVisible) {
+      return;
+    }
+
+    recalculateMenuPosition();
+  }, [menuVisible, recalculateMenuPosition]);
+
+  const handleMenuLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setMenuContentHeight((current) => (current === height ? current : height));
   }, []);
 
   const handleViewChanges = useCallback(() => {
@@ -191,6 +251,7 @@ export default function AgentScreen() {
                 width: DROPDOWN_WIDTH,
               },
             ]}
+            onLayout={handleMenuLayout}
           >
             <Pressable onPress={handleViewChanges} style={styles.menuItem}>
               <GitBranch size={20} color={theme.colors.foreground} />

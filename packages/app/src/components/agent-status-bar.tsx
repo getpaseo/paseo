@@ -78,16 +78,13 @@ export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
         </Pressable>
       )}
 
-      {/* Agent Status Indicator */}
-      <View style={styles.statusIndicator}>
-        <View
-          style={[
-            styles.statusDot,
-            { backgroundColor: getStatusColor(agent.status) },
-          ]}
-        />
-        <Text style={styles.statusText}>{getStatusLabel(agent.status)}</Text>
-      </View>
+      {/* Agent Status Indicator - just a dot */}
+      <View
+        style={[
+          styles.statusDot,
+          { backgroundColor: getStatusColor(agent.status) },
+        ]}
+      />
 
       {/* Mode selector modal */}
       <ModeSelectorModal
@@ -105,9 +102,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[1],
   },
   modeBadge: {
     flexDirection: "row",
