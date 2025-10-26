@@ -15,7 +15,14 @@ export default function AgentScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { agents, agentStreamState, pendingPermissions, respondToPermission, initializeAgent } = useSession();
+  const {
+    agents,
+    agentStreamState,
+    initializingAgents,
+    pendingPermissions,
+    respondToPermission,
+    initializeAgent,
+  } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
 
   // Keyboard animation
@@ -41,15 +48,29 @@ export default function AgentScreen() {
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
 
-  // Agent is initializing if we don't have stream state yet
-  const isInitializing = id ? !agentStreamState.has(id) : false;
+  const hasStreamState = id ? agentStreamState.has(id) : false;
+  const initializationState = id ? initializingAgents.get(id) : undefined;
+  const isInitializing = id
+    ? initializationState !== undefined
+      ? initializationState
+      : !hasStreamState
+    : false;
 
   useEffect(() => {
     if (!id) {
       return;
     }
+
+    if (initializationState !== undefined) {
+      return;
+    }
+
+    if (hasStreamState) {
+      return;
+    }
+
     initializeAgent({ agentId: id });
-  }, [id, initializeAgent]);
+  }, [id, initializeAgent, initializationState, hasStreamState]);
 
   const agentControls = useMemo(() => {
     if (!id) return null;
