@@ -96,6 +96,7 @@ export default function AgentScreen() {
             onPermissionResponse={(requestId, optionId) =>
               respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
             }
+            keyboardHeight={keyboardHeight}
           />
         )}
       </ReanimatedAnimated.View>
