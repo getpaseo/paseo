@@ -135,6 +135,19 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   markdownListItem: {
     marginBottom: theme.spacing[1],
   },
+  markdownBlockquote: {
+    backgroundColor: theme.colors.secondary,
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.primary,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    marginVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.sm,
+  },
+  markdownBlockquoteText: {
+    color: theme.colors.foreground,
+    fontStyle: "italic" as const,
+  },
 }));
 
 const markdownStyles = {
@@ -149,6 +162,8 @@ const markdownStyles = {
   bullet_list: assistantMessageStylesheet.markdownList,
   ordered_list: assistantMessageStylesheet.markdownList,
   list_item: assistantMessageStylesheet.markdownListItem,
+  blockquote: assistantMessageStylesheet.markdownBlockquote,
+  blockquote_text: assistantMessageStylesheet.markdownBlockquoteText,
 };
 
 export const AssistantMessage = memo(function AssistantMessage({
