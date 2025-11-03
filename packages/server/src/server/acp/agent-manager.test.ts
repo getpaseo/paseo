@@ -96,6 +96,73 @@ describe("AgentManager", () => {
     }
   }, 120000);
 
+  it("should wait for permission requests", async () => {
+    const manager = new AgentManager();
+    let capturedPermission: Awaited<
+      ReturnType<(typeof manager)["waitForPermissionRequest"]>
+    > | null = null;
+
+    const agentId = await manager.createAgent({
+      cwd: tmpDir,
+      type: "claude",
+      initialMode: "plan",
+    });
+    createdAgents.push({ manager, agentId });
+
+    const waitPromise = manager
+      .waitForPermissionRequest(agentId)
+      .then((permission) => {
+        capturedPermission = permission;
+        return permission;
+      });
+
+    await manager.sendPrompt(
+      agentId,
+      "Create a file called wait-for-permission.txt with the content 'hello world'"
+    );
+
+    const permission = await waitPromise;
+    expect(permission).not.toBeNull();
+    expect(permission!.agentId).toBe(agentId);
+    expect(permission!.requestId).toBeDefined();
+    expect(permission!.options.length).toBeGreaterThan(0);
+
+    const acceptOption = permission!.options.find(
+      (option) => option.kind === "allow_once" || option.kind === "allow_always"
+    );
+    expect(acceptOption).toBeDefined();
+
+    manager.respondToPermission(
+      permission!.agentId,
+      permission!.requestId,
+      acceptOption!.optionId
+    );
+
+    // Ensure the captured permission matches the resolved value
+    expect(capturedPermission).toEqual(permission);
+  }, 120000);
+
+  it("should support aborting waitForPermissionRequest", async () => {
+    const manager = new AgentManager();
+
+    const agentId = await manager.createAgent({
+      cwd: tmpDir,
+      type: "claude",
+      initialMode: "plan",
+    });
+    createdAgents.push({ manager, agentId });
+
+    const controller = new AbortController();
+
+    const waitPromise = manager.waitForPermissionRequest(agentId, {
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(waitPromise).rejects.toMatchObject({ name: "AbortError" });
+  }, 30000);
+
   it("should not fail when sending '.' after plan permission request", async () => {
     const manager = new AgentManager();
     let permissionRequest: RequestPermissionRequest | null = null;

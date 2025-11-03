@@ -379,14 +379,13 @@ export class AgentManager {
    * Send a prompt to an agent
    * @param agentId - Agent ID
    * @param prompt - The prompt text or ContentBlock array
-   * @param options - Optional settings: maxWait (ms), sessionMode to set before sending, messageId for deduplication
-   * @returns Object with didComplete boolean indicating if agent finished within maxWait time
+   * @param options - Optional settings: sessionMode to set before sending, messageId for deduplication
    */
   async sendPrompt(
     agentId: string,
     prompt: string | ContentBlock[],
-    options?: { maxWait?: number; sessionMode?: string; messageId?: string }
-  ): Promise<{ didComplete: boolean; stopReason?: string }> {
+    options?: { sessionMode?: string; messageId?: string }
+  ): Promise<void> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
@@ -577,38 +576,9 @@ export class AgentManager {
         );
       });
 
-    const maxWait = options?.maxWait;
-
-    // If no maxWait specified, return immediately
-    if (maxWait === undefined) {
-      console.log(
-        `[Agent ${agentId}] Prompt sent (non-blocking, use get_agent_status to check completion)`
-      );
-      return { didComplete: false };
-    }
-
-    // If maxWait specified, race between completion and timeout
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), maxWait)
-      );
-
-      const response = await Promise.race([promptPromise, timeoutPromise]);
-
-      console.log(
-        `[Agent ${agentId}] Prompt completed within ${maxWait}ms with stopReason: ${response.stopReason}`
-      );
-      return { didComplete: true, stopReason: response.stopReason };
-    } catch (error) {
-      if (error instanceof Error && error.message === "timeout") {
-        console.log(
-          `[Agent ${agentId}] Prompt did not complete within ${maxWait}ms (still processing)`
-        );
-        return { didComplete: false };
-      }
-      // Real error - rethrow
-      throw error;
-    }
+    console.log(
+      `[Agent ${agentId}] Prompt sent (non-blocking, use get_agent_status to check completion)`
+    );
   }
 
   /**
@@ -1699,6 +1669,158 @@ export class AgentManager {
     }
 
     return allPermissions;
+  }
+
+  /**
+   * Wait for the next permission request from an agent, or until agent finishes
+   * Resolves immediately if a permission is already pending
+   * Returns permission data if agent requests permission, or null if agent finishes without requesting
+   */
+  async waitForPermissionRequest(
+    agentId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{
+    agentId: string;
+    requestId: string;
+    sessionId: string;
+    toolCall: any;
+    options: Array<{
+      kind: string;
+      name: string;
+      optionId: string;
+    }>;
+  } | null> {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const abortSignal = options?.signal ?? null;
+
+    const createAbortError = () => {
+      const error = new Error(
+        `Wait for permission aborted for agent ${agentId}`
+      );
+      error.name = "AbortError";
+      return error;
+    };
+
+    const formatPending = (
+      requestId: string,
+      permission: PendingPermission
+    ) => ({
+      agentId,
+      requestId,
+      sessionId: permission.sessionId,
+      toolCall: permission.params.toolCall,
+      options: permission.params.options,
+    });
+
+    // Return immediately if a permission is already pending
+    const existingPermission = agent.pendingPermissions.entries().next();
+    if (!existingPermission.done) {
+      const [requestId, permission] = existingPermission.value;
+      return formatPending(requestId, permission);
+    }
+
+    if (abortSignal?.aborted) {
+      throw createAbortError();
+    }
+
+    const initialStatus = getAgentStatusFromState(agent.state);
+    
+    // If agent is not processing or initializing, return null (no permission requested)
+    if (initialStatus !== "processing" && initialStatus !== "initializing") {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let unsubscribe: (() => void) | null = null;
+
+      const cleanup = () => {
+        if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = null;
+        }
+        abortSignal?.removeEventListener("abort", onAbort);
+      };
+
+      const resolvePending = (value: ReturnType<typeof formatPending>) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const rejectWithError = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const onAbort = () => {
+        rejectWithError(createAbortError());
+      };
+
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      try {
+        unsubscribe = this.subscribeToUpdates(agentId, (update) => {
+          if (settled) {
+            return;
+          }
+
+          const notification = update.notification;
+
+          if (notification.type === "permission") {
+            const { requestId } = notification;
+            const pendingPermission =
+              agent.pendingPermissions.get(requestId) ?? null;
+
+            if (!pendingPermission) {
+              rejectWithError(
+                new Error(
+                  `Permission ${requestId} no longer pending for agent ${agentId}`
+                )
+              );
+              return;
+            }
+
+            resolvePending(formatPending(requestId, pendingPermission));
+            return;
+          }
+
+          if (notification.type === "status") {
+            const status = notification.status;
+            
+            // If agent transitions out of processing without requesting permission, return null
+            if (status !== "processing") {
+              settled = true;
+              cleanup();
+              resolve(null);
+              return;
+            }
+          }
+        });
+      } catch (error) {
+        rejectWithError(
+          error instanceof Error ? error : new Error(String(error))
+        );
+        return;
+      }
+
+      if (abortSignal?.aborted) {
+        onAbort();
+      }
+    });
   }
 
   /**

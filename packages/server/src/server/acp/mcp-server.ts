@@ -5,6 +5,10 @@ import { resolve } from "path";
 import { AgentManager } from "./agent-manager.js";
 import type { AgentNotification } from "./types.js";
 import { curateAgentActivity } from "./activity-curator.js";
+import {
+  listAgentTypeDefinitions,
+  type AgentType,
+} from "./agent-types.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -50,6 +54,17 @@ export async function createAgentMcpServer(
 ): Promise<McpServer> {
   const { agentManager } = options;
 
+  const agentTypeDefinitions = listAgentTypeDefinitions();
+  if (agentTypeDefinitions.length === 0) {
+    throw new Error("[Agent MCP] No agent types configured");
+  }
+
+  const agentTypeIds = agentTypeDefinitions.map(
+    (definition) => definition.id
+  ) as [AgentType, ...AgentType[]];
+
+  const AgentTypeEnum = z.enum(agentTypeIds);
+
   const server = new McpServer({
     name: "agent-mcp",
     version: "1.0.0",
@@ -61,25 +76,25 @@ export async function createAgentMcpServer(
     {
       title: "Create Coding Agent",
       description:
-        "Creates a new Claude Code agent via ACP. The agent runs as a separate process and can execute coding tasks autonomously in a specified directory. Returns immediately with agent ID and status. If an initial prompt is provided, the agent will start working on it automatically. Optionally create a git worktree for isolated development.",
+        "Creates a new Claude Code or Codex agent via ACP. The agent runs as a separate process and can execute coding tasks autonomously in a specified directory. Returns immediately with agent ID, type, and status. If an initial prompt is provided, the agent will start working on it automatically. Optionally create a git worktree for isolated development.",
       inputSchema: {
         cwd: z
           .string()
           .describe(
             "REQUIRED: Working directory for the agent. Can be absolute path, tilde-prefixed path, or relative path (e.g., '~/dev/project', '/path/to/repo', './subdir')."
           ),
+        agentType: AgentTypeEnum.optional().describe(
+          "Optional: Agent implementation to spawn. 'claude' provides full Claude Code capabilities with session persistence. 'codex' uses Zed Codex ACP with fast startup and explicit permission modes. Defaults to 'claude'."
+        ),
         initialPrompt: z
           .string()
           .optional()
           .describe(
             "Optional initial task or prompt for the agent to start working on immediately after creation. If provided, agent will begin processing this task right away."
           ),
-        initialMode: z
-          .string()
-          .optional()
-          .describe(
-            "Initial session mode for the agent (e.g., 'ask', 'code', 'architect'). If not specified, the agent will use its default mode. The available modes depend on the specific agent implementation."
-          ),
+        initialMode: z.string().optional().describe(
+          "Optional: Initial session mode for the agent. Mode is validated at runtime based on agent type. Claude Code supports 'default', 'plan', and 'bypassPermissions'. Codex supports 'read-only', 'auto', and 'full-access'. Defaults to the agent type's default mode."
+        ),
         worktreeName: z
           .string()
           .optional()
@@ -89,6 +104,7 @@ export async function createAgentMcpServer(
       },
       outputSchema: {
         agentId: z.string().describe("Unique identifier for the created agent"),
+        type: AgentTypeEnum.describe("Agent implementation that was created"),
         status: z
           .string()
           .describe(
@@ -99,11 +115,11 @@ export async function createAgentMcpServer(
         availableModes: z.array(z.object({
           id: z.string(),
           name: z.string(),
-          description: z.string().optional(),
+          description: z.string().nullable().optional(),
         })).nullable().describe("Available session modes for this agent"),
       },
     },
-    async ({ cwd, initialPrompt, initialMode, worktreeName }) => {
+    async ({ cwd, agentType, initialPrompt, initialMode, worktreeName }) => {
       // Expand and resolve the working directory
       let resolvedCwd = expandPath(cwd);
 
@@ -119,9 +135,11 @@ export async function createAgentMcpServer(
         resolvedCwd = worktreeConfig.worktreePath;
       }
 
+      const resolvedType: AgentType = agentType ?? "claude";
+
       const agentId = await agentManager.createAgent({
         cwd: resolvedCwd,
-        type: "claude",
+        type: resolvedType,
         initialPrompt,
         initialMode,
       });
@@ -132,6 +150,7 @@ export async function createAgentMcpServer(
 
       const result = {
         agentId,
+        type: resolvedType,
         status,
         cwd: resolvedCwd,
         currentModeId: currentModeId ?? null,
@@ -145,13 +164,86 @@ export async function createAgentMcpServer(
     }
   );
 
+  // Tool: wait_for_agent
+  server.registerTool(
+    "wait_for_agent",
+    {
+      title: "Wait For Agent",
+      description:
+        "Wait until the agent requests permission or finishes its task. Returns the agent's activity and permission request (if any). Use this to monitor agent progress without polling.",
+      inputSchema: {
+        agentId: z
+          .string()
+          .describe("Agent ID to wait on (typically the result of create_coding_agent)"),
+      },
+      outputSchema: {
+        agentId: z.string(),
+        status: z
+          .string()
+          .describe("Agent status after waiting completed"),
+        permission: z.object({
+          agentId: z.string(),
+          requestId: z.string(),
+          sessionId: z.string(),
+          toolCall: z.any(),
+          options: z.array(
+            z.object({
+              kind: z.string(),
+              name: z.string(),
+              optionId: z.string(),
+            })
+          ),
+        }).nullable().describe("Permission request if agent requested one, null if agent finished without requesting"),
+        activity: z.object({
+          format: z
+            .literal("curated")
+            .describe("Activity format: curated text for easy reading"),
+          updateCount: z
+            .number()
+            .describe("Total number of updates recorded for the agent"),
+          currentModeId: z
+            .string()
+            .nullable()
+            .describe("Current session mode"),
+          content: z
+            .string()
+            .describe("Curated activity transcript including the latest updates"),
+        }),
+      },
+    },
+    async ({ agentId }, { signal }) => {
+      const permission = await agentManager.waitForPermissionRequest(agentId, {
+        signal,
+      });
+      const updates = agentManager.getAgentUpdates(agentId);
+      const curatedText = curateAgentActivity(updates);
+      const currentModeId = agentManager.getCurrentMode(agentId);
+      const status = agentManager.getAgentStatus(agentId);
+
+      return {
+        content: [],
+        structuredContent: {
+          agentId,
+          status,
+          permission,
+          activity: {
+            format: "curated" as const,
+            updateCount: updates.length,
+            currentModeId,
+            content: curatedText,
+          },
+        },
+      };
+    }
+  );
+
   // Tool: send_agent_prompt
   server.registerTool(
     "send_agent_prompt",
     {
       title: "Send Agent Prompt",
       description:
-        "Sends a task or prompt to an existing agent. By default, returns immediately without waiting (non-blocking). The agent will process the prompt in the background. Use get_agent_status or get_agent_activity to check progress. Optionally specify maxWait to wait for completion, or sessionMode to switch modes before sending.",
+        "Sends a task or prompt to an existing agent. Returns immediately without waiting (non-blocking). The agent will process the prompt in the background. Use wait_for_agent, get_agent_status, or get_agent_activity to monitor progress. Optionally switch session modes before sending.",
       inputSchema: {
         agentId: z.string().describe("Agent ID returned from create_coding_agent"),
         prompt: z
@@ -159,35 +251,25 @@ export async function createAgentMcpServer(
           .describe(
             "The task, instruction, or feedback to send to the agent. Be specific about what you want the agent to accomplish."
           ),
-        sessionMode: z
-          .string()
-          .optional()
-          .describe(
-            "Optional: Session mode to set before sending the prompt (e.g., 'plan', 'code', 'default'). If specified, the agent's mode will be changed before processing the prompt."
-          ),
-        maxWait: z
-          .number()
-          .optional()
-          .describe(
-            "Optional: Maximum milliseconds to wait for agent to complete. If not provided, returns immediately (non-blocking). If agent doesn't finish within this time, returns with didComplete=false and agent continues processing in background."
-          ),
+        sessionMode: z.string().optional().describe(
+          "Optional: Session mode to set before sending the prompt. Mode is validated at runtime based on agent type. Claude Code supports 'default', 'plan', and 'bypassPermissions'. Codex offers 'read-only', 'auto', and 'full-access' for progressively broader permissions."
+        ),
       },
       outputSchema: {
         success: z.boolean().describe("Whether the prompt was sent successfully"),
-        didComplete: z.boolean().describe("Whether the agent completed within maxWait time (always false if maxWait not specified)"),
-        stopReason: z.string().nullable().describe("Reason agent stopped if it completed: 'end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'"),
+        status: z
+          .string()
+          .describe("Agent status immediately after enqueuing the prompt (usually 'processing')"),
       },
     },
-    async ({ agentId, prompt, sessionMode, maxWait }) => {
-      const response = await agentManager.sendPrompt(agentId, prompt, {
-        maxWait,
+    async ({ agentId, prompt, sessionMode }) => {
+      await agentManager.sendPrompt(agentId, prompt, {
         sessionMode,
       });
 
       const result = {
         success: true,
-        didComplete: response.didComplete,
-        stopReason: response.stopReason ?? null,
+        status: agentManager.getAgentStatus(agentId),
       };
 
       return {
@@ -215,14 +297,14 @@ export async function createAgentMcpServer(
             status: z.string(),
             createdAt: z.string(),
             lastActivityAt: z.string(),
-            type: z.enum(["claude", "codex"]),
+            type: AgentTypeEnum,
             sessionId: z.string().nullable(),
             error: z.string().nullable(),
             currentModeId: z.string().nullable(),
             availableModes: z.array(z.object({
               id: z.string(),
               name: z.string(),
-              description: z.string().optional(),
+              description: z.string().nullable().optional(),
             })).nullable(),
           })
           .describe("Detailed agent information"),
@@ -264,14 +346,14 @@ export async function createAgentMcpServer(
             status: z.string(),
             createdAt: z.string(),
             lastActivityAt: z.string(),
-            type: z.enum(["claude", "codex"]),
+            type: AgentTypeEnum,
             sessionId: z.string().nullable(),
             error: z.string().nullable(),
             currentModeId: z.string().nullable(),
             availableModes: z.array(z.object({
               id: z.string(),
               name: z.string(),
-              description: z.string().optional(),
+              description: z.string().nullable().optional(),
             })).nullable(),
           })
         ),
@@ -435,14 +517,12 @@ export async function createAgentMcpServer(
     {
       title: "Set Agent Session Mode",
       description:
-        "Change the agent's session mode (e.g., from 'ask' to 'code', or 'architect' to 'code'). Each mode affects the agent's behavior - 'ask' mode requests permission before changes, 'code' mode writes code directly, 'architect' mode plans without implementation. The available modes depend on the specific agent. Use get_agent_status or list_agents to see available modes for each agent.",
+        "Change the agent's session mode. Claude Code supports 'plan' for step-by-step approvals and 'bypassPermissions' to auto-approve actions. Codex offers 'read-only', 'auto', and 'full-access' to control how freely it can modify the workspace or access the system. Use get_agent_status or list_agents to see which modes are currently available for each agent.",
       inputSchema: {
         agentId: z.string().describe("Agent ID to configure"),
-        modeId: z
-          .string()
-          .describe(
-            "The session mode to set (e.g., 'ask', 'code', 'architect'). Must be one of the agent's available modes."
-          ),
+        modeId: z.string().describe(
+          "The session mode to set. Mode is validated at runtime based on the agent's available modes. Check agent's availableModes from get_agent_status or list_agents to see valid options for the specific agent."
+        ),
       },
       outputSchema: {
         success: z.boolean().describe("Whether the mode change succeeded"),

@@ -88,13 +88,20 @@ async function testWorktreeAgent() {
 
     // Step 6: Send a prompt to verify it's working in the worktree
     console.log("Step 6: Sending test prompt to agent...");
-    const { didComplete } = await agentManager.sendPrompt(
+    await agentManager.sendPrompt(
       agentId,
       "Run pwd and git status to verify you're in a worktree. Reply with the output.",
-      { maxWait: 30000 }
     );
 
-    console.log(`  Prompt completed: ${didComplete}`);
+    let status = agentManager.getAgentStatus(agentId);
+    let attempts = 0;
+    while (status === "processing" && attempts < 60) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      status = agentManager.getAgentStatus(agentId);
+      attempts++;
+    }
+
+    console.log(`  Agent status after prompt: ${status}`);
 
     // Get agent updates to see the response
     const updates = agentManager.getAgentUpdates(agentId);

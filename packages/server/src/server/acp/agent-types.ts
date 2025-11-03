@@ -21,6 +21,11 @@ export interface AgentTypeDefinition {
 
 const CLAUDE_MODES: AgentModeDefinition[] = [
   {
+    id: "default",
+    name: "Default",
+    description: "Default Claude Code mode with standard permissions",
+  },
+  {
     id: "plan",
     name: "Plan",
     description: "Plan and design before implementing",

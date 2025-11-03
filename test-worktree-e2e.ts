@@ -116,13 +116,20 @@ async function testWorktreeE2E() {
 
     // Step 7: Test agent can run commands in worktree
     console.log("Step 7: Testing agent execution in worktree...");
-    const { didComplete } = await agentManager.sendPrompt(
+    await agentManager.sendPrompt(
       createdAgentId,
       "Run 'pwd' and 'git branch --show-current'. Just show me the output.",
-      { maxWait: 30000 }
     );
 
-    console.log(`  Prompt completed: ${didComplete}`);
+    let status = agentManager.getAgentStatus(createdAgentId);
+    let attempts = 0;
+    while (status === "processing" && attempts < 60) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      status = agentManager.getAgentStatus(createdAgentId);
+      attempts++;
+    }
+
+    console.log(`  Agent status after prompt: ${status}`);
 
     const updates = agentManager.getAgentUpdates(createdAgentId);
     const messageChunks = updates

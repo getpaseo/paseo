@@ -24,6 +24,7 @@
     "expo-audio": "~1.0.13",
     "expo-av": "^16.0.7",
     "expo-build-properties": "^1.0.9",
+    "expo-clipboard": "~6.0.3",
     "expo-constants": "~18.0.9",
     "expo-dev-client": "^6.0.15",
     "expo-file-system": "~19.0.17",

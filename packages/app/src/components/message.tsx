@@ -1,5 +1,5 @@
 import { View, Text, Pressable, Animated } from "react-native";
-import { useState, useEffect, useRef, memo, useMemo } from "react";
+import { useState, useEffect, useRef, memo, useMemo, useCallback } from "react";
 import Markdown from "react-native-markdown-display";
 import {
   Circle,
@@ -21,6 +21,7 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
+import * as Clipboard from "expo-clipboard";
 
 interface UserMessageProps {
   message: string;
@@ -47,17 +48,79 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     lineHeight: 24,
   },
+  bubblePressed: {
+    opacity: 0.85,
+  },
+  copiedTagContainer: {
+    marginTop: theme.spacing[1],
+    marginRight: theme.spacing[4],
+    alignSelf: "flex-end",
+    backgroundColor: theme.colors.secondary,
+    borderRadius: theme.borderRadius.base,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+  },
+  copiedTagText: {
+    color: theme.colors.secondaryForeground,
+    fontSize: theme.fontSize.xs,
+  },
 }));
 
 export const UserMessage = memo(function UserMessage({
   message,
   timestamp,
 }: UserMessageProps) {
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleLongPress = useCallback(async () => {
+    if (!message) {
+      return;
+    }
+
+    await Clipboard.setStringAsync(message);
+    setCopied(true);
+
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimeoutRef.current = null;
+    }, 1500);
+  }, [message]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <View style={userMessageStylesheet.container}>
-      <View style={userMessageStylesheet.bubble}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Copy message"
+        accessibilityHint="Long press to copy this message"
+        delayLongPress={250}
+        onLongPress={handleLongPress}
+        style={({ pressed }) => [
+          userMessageStylesheet.bubble,
+          pressed ? userMessageStylesheet.bubblePressed : null,
+        ]}
+      >
         <Text style={userMessageStylesheet.text}>{message}</Text>
-      </View>
+      </Pressable>
+      {copied && (
+        <View style={userMessageStylesheet.copiedTagContainer}>
+          <Text style={userMessageStylesheet.copiedTagText}>
+            Copied to clipboard
+          </Text>
+        </View>
+      )}
     </View>
   );
 });
