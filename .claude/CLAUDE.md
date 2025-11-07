@@ -23,9 +23,13 @@ We run the mobile app and server in the tmux session `voice-dev`:
 
 Don't run them anywhere else. Check logs there.
 
-## Andriod
+## Android
 
-Take screensots like this: `adb exec-out screencap -p > screenshot.png`
+Take screenshots like this: `adb exec-out screencap -p > screenshot.png`
+
+## Expo troubleshooting
+
+Run `npx expo-doctor` to diagnose version mismatches and native module issues.
 
 ## Asking Codex for a second opinion
 
