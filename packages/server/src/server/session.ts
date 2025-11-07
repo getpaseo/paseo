@@ -13,6 +13,7 @@ import {
 import type {
   SessionInboundMessage,
   SessionOutboundMessage,
+  FileExplorerRequest,
 } from "./messages.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
@@ -35,6 +36,10 @@ import {
   isTitleGeneratorInitialized,
 } from "../services/agent-title-generator.js";
 import { expandTilde } from "./terminal-mcp/tmux.js";
+import {
+  listDirectoryEntries,
+  readExplorerFile,
+} from "./file-explorer/service.js";
 
 const execAsync = promisify(exec);
 
@@ -521,6 +526,10 @@ export class Session {
 
         case "git_diff_request":
           await this.handleGitDiffRequest(msg.agentId);
+          break;
+
+        case "file_explorer_request":
+          await this.handleFileExplorerRequest(msg);
           break;
       }
     } catch (error: any) {
@@ -1070,6 +1079,91 @@ export class Session {
         payload: {
           agentId,
           diff: "",
+          error: error.message,
+        },
+      });
+    }
+  }
+
+  /**
+   * Handle read-only file explorer requests scoped to an agent's cwd
+   */
+  private async handleFileExplorerRequest(
+    request: FileExplorerRequest
+  ): Promise<void> {
+    const { agentId, path: requestedPath = ".", mode } = request;
+
+    console.log(
+      `[Session ${this.clientId}] Handling file explorer request for agent ${agentId} (${mode} ${requestedPath})`
+    );
+
+    try {
+      const agents = this.agentManager.listAgents();
+      const agent = agents.find((a) => a.id === agentId);
+
+      if (!agent) {
+        this.emit({
+          type: "file_explorer_response",
+          payload: {
+            agentId,
+            path: requestedPath,
+            mode,
+            directory: null,
+            file: null,
+            error: `Agent not found: ${agentId}`,
+          },
+        });
+        return;
+      }
+
+      if (mode === "list") {
+        const directory = await listDirectoryEntries({
+          root: agent.cwd,
+          relativePath: requestedPath,
+        });
+
+        this.emit({
+          type: "file_explorer_response",
+          payload: {
+            agentId,
+            path: directory.path,
+            mode,
+            directory,
+            file: null,
+            error: null,
+          },
+        });
+      } else {
+        const file = await readExplorerFile({
+          root: agent.cwd,
+          relativePath: requestedPath,
+        });
+
+        this.emit({
+          type: "file_explorer_response",
+          payload: {
+            agentId,
+            path: file.path,
+            mode,
+            directory: null,
+            file,
+            error: null,
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to fulfill file explorer request for agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "file_explorer_response",
+        payload: {
+          agentId,
+          path: requestedPath,
+          mode,
+          directory: null,
+          file: null,
           error: error.message,
         },
       });
