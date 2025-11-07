@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MoreVertical, GitBranch } from "lucide-react-native";
+import { MoreVertical, GitBranch, Folder } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -185,6 +185,13 @@ export default function AgentScreen() {
     }
   }, [id, router, handleCloseMenu]);
 
+  const handleBrowseFiles = useCallback(() => {
+    handleCloseMenu();
+    if (id) {
+      router.push(`/file-explorer?agentId=${id}`);
+    }
+  }, [handleCloseMenu, id, router]);
+
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -256,6 +263,10 @@ export default function AgentScreen() {
             <Pressable onPress={handleViewChanges} style={styles.menuItem}>
               <GitBranch size={20} color={theme.colors.foreground} />
               <Text style={styles.menuItemText}>View Changes</Text>
+            </Pressable>
+            <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
+              <Folder size={20} color={theme.colors.foreground} />
+              <Text style={styles.menuItemText}>Browse Files</Text>
             </Pressable>
           </View>
         </View>

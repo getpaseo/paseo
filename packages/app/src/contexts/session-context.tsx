@@ -81,6 +81,54 @@ export interface Command {
   exitCode: number | null;
 }
 
+export type ExplorerEntryKind = "file" | "directory";
+export type ExplorerFileKind = "text" | "image" | "binary";
+export type ExplorerEncoding = "utf-8" | "base64" | "none";
+
+export interface ExplorerEntry {
+  name: string;
+  path: string;
+  kind: ExplorerEntryKind;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface ExplorerFile {
+  path: string;
+  kind: ExplorerFileKind;
+  encoding: ExplorerEncoding;
+  content?: string;
+  mimeType?: string;
+  size: number;
+  modifiedAt: string;
+}
+
+interface ExplorerDirectory {
+  path: string;
+  entries: ExplorerEntry[];
+}
+
+interface ExplorerRequestState {
+  path: string;
+  mode: "list" | "file";
+}
+
+export interface AgentFileExplorerState {
+  directories: Map<string, ExplorerDirectory>;
+  files: Map<string, ExplorerFile>;
+  isLoading: boolean;
+  lastError: string | null;
+  pendingRequest: ExplorerRequestState | null;
+}
+
+const createExplorerState = (): AgentFileExplorerState => ({
+  directories: new Map(),
+  files: new Map(),
+  isLoading: false,
+  lastError: null,
+  pendingRequest: null,
+});
+
 
 interface SessionContextValue {
   // WebSocket
@@ -118,6 +166,11 @@ interface SessionContextValue {
   // Git diffs
   gitDiffs: Map<string, string>;
   requestGitDiff: (agentId: string) => void;
+
+  // File explorer
+  fileExplorer: Map<string, AgentFileExplorerState>;
+  requestDirectoryListing: (agentId: string, path: string) => void;
+  requestFilePreview: (agentId: string, path: string) => void;
 
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
@@ -172,6 +225,19 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(new Map());
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
+  const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
+
+  const updateExplorerState = useCallback(
+    (agentId: string, updater: (state: AgentFileExplorerState) => AgentFileExplorerState) => {
+      setFileExplorer((prev) => {
+        const next = new Map(prev);
+        const current = next.get(agentId) ?? createExplorerState();
+        next.set(agentId, updater(current));
+        return next;
+      });
+    },
+    []
+  );
 
   // WebSocket message handlers
   useEffect(() => {
@@ -613,6 +679,47 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       }
     });
 
+    const unsubFileExplorer = ws.on("file_explorer_response", (message) => {
+      if (message.type !== "file_explorer_response") {
+        return;
+      }
+      const { agentId, directory, file, mode, error } = message.payload;
+
+      console.log(
+        "[Session] File explorer response for agent:",
+        agentId,
+        mode,
+        error ? `(error: ${error})` : ""
+      );
+
+      updateExplorerState(agentId, (state) => {
+        const nextState: AgentFileExplorerState = {
+          ...state,
+          isLoading: false,
+          lastError: error ?? null,
+          pendingRequest: null,
+          directories: state.directories,
+          files: state.files,
+        };
+
+        if (!error) {
+          if (mode === "list" && directory) {
+            const directories = new Map(state.directories);
+            directories.set(directory.path, directory);
+            nextState.directories = directories;
+          }
+
+          if (mode === "file" && file) {
+            const files = new Map(state.files);
+            files.set(file.path, file);
+            nextState.files = files;
+          }
+        }
+
+        return nextState;
+      });
+    });
+
     return () => {
       unsubSessionState();
       unsubAgentCreated();
@@ -626,8 +733,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubChunk();
       unsubTranscription();
       unsubGitDiff();
+      unsubFileExplorer();
     };
-  }, [ws, audioPlayer, setIsPlayingAudio]);
+  }, [ws, audioPlayer, setIsPlayingAudio, updateExplorerState]);
 
   const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     setInitializingAgents((prev) => {
@@ -808,6 +916,48 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
+  const requestDirectoryListing = useCallback((agentId: string, path: string) => {
+    const normalizedPath = path && path.length > 0 ? path : ".";
+    updateExplorerState(agentId, (state) => ({
+      ...state,
+      isLoading: true,
+      lastError: null,
+      pendingRequest: { path: normalizedPath, mode: "list" },
+    }));
+
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "file_explorer_request",
+        agentId,
+        path: normalizedPath,
+        mode: "list",
+      },
+    };
+    ws.send(msg);
+  }, [updateExplorerState, ws]);
+
+  const requestFilePreview = useCallback((agentId: string, path: string) => {
+    const normalizedPath = path && path.length > 0 ? path : ".";
+    updateExplorerState(agentId, (state) => ({
+      ...state,
+      isLoading: true,
+      lastError: null,
+      pendingRequest: { path: normalizedPath, mode: "file" },
+    }));
+
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "file_explorer_request",
+        agentId,
+        path: normalizedPath,
+        mode: "file",
+      },
+    };
+    ws.send(msg);
+  }, [updateExplorerState, ws]);
+
   const value: SessionContextValue = {
     ws,
     audioPlayer,
@@ -831,6 +981,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setPendingPermissions,
     gitDiffs,
     requestGitDiff,
+    fileExplorer,
+    requestDirectoryListing,
+    requestFilePreview,
     initializeAgent,
     sendAgentMessage,
     sendAgentAudio,

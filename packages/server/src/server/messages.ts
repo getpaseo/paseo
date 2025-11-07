@@ -127,6 +127,36 @@ export const GitDiffRequestSchema = z.object({
   agentId: z.string(),
 });
 
+const FileExplorerEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  kind: z.enum(["file", "directory"]),
+  size: z.number(),
+  modifiedAt: z.string(),
+});
+
+const FileExplorerFileSchema = z.object({
+  path: z.string(),
+  kind: z.enum(["text", "image", "binary"]),
+  encoding: z.enum(["utf-8", "base64", "none"]),
+  content: z.string().optional(),
+  mimeType: z.string().optional(),
+  size: z.number(),
+  modifiedAt: z.string(),
+});
+
+const FileExplorerDirectorySchema = z.object({
+  path: z.string(),
+  entries: z.array(FileExplorerEntrySchema),
+});
+
+export const FileExplorerRequestSchema = z.object({
+  type: z.literal("file_explorer_request"),
+  agentId: z.string(),
+  path: z.string().optional(),
+  mode: z.enum(["list", "file"]),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   RealtimeAudioChunkMessageSchema,
@@ -143,6 +173,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
+  FileExplorerRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -336,6 +367,18 @@ export const GitDiffResponseSchema = z.object({
   }),
 });
 
+export const FileExplorerResponseSchema = z.object({
+  type: z.literal("file_explorer_response"),
+  payload: z.object({
+    agentId: z.string(),
+    path: z.string(),
+    mode: z.enum(["list", "file"]),
+    directory: FileExplorerDirectorySchema.nullable(),
+    file: FileExplorerFileSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -354,6 +397,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
   GitDiffResponseSchema,
+  FileExplorerResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -392,6 +436,8 @@ export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
+export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
+export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)
