@@ -119,6 +119,7 @@ export interface AgentFileExplorerState {
   isLoading: boolean;
   lastError: string | null;
   pendingRequest: ExplorerRequestState | null;
+  currentPath: string;
 }
 
 const createExplorerState = (): AgentFileExplorerState => ({
@@ -127,6 +128,7 @@ const createExplorerState = (): AgentFileExplorerState => ({
   isLoading: false,
   lastError: null,
   pendingRequest: null,
+  currentPath: ".",
 });
 
 
@@ -923,6 +925,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       isLoading: true,
       lastError: null,
       pendingRequest: { path: normalizedPath, mode: "list" },
+      currentPath: normalizedPath,
     }));
 
     const msg: WSInboundMessage = {

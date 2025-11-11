@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -20,11 +20,11 @@ export default function FileExplorerScreen() {
     requestDirectoryListing,
     requestFilePreview,
   } = useSession();
-  const [currentPath, setCurrentPath] = useState(".");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
 
   const agent = agentId ? agents.get(agentId) : undefined;
   const explorerState = agentId ? fileExplorer.get(agentId) : undefined;
+  const currentPath = explorerState?.currentPath ?? ".";
   const directory = explorerState?.directories.get(currentPath);
   const entries = directory?.entries ?? [];
   const isLoading = explorerState?.isLoading ?? false;
@@ -32,15 +32,32 @@ export default function FileExplorerScreen() {
   const preview = selectedEntryPath
     ? explorerState?.files.get(selectedEntryPath)
     : null;
+  const shouldShowPreview = Boolean(selectedEntryPath);
+
+  const initializedAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!agentId) {
+      initializedAgentRef.current = null;
       return;
     }
-    setCurrentPath(".");
+
+    if (initializedAgentRef.current === agentId) {
+      return;
+    }
+
+    initializedAgentRef.current = agentId;
     setSelectedEntryPath(null);
-    requestDirectoryListing(agentId, ".");
-  }, [agentId, requestDirectoryListing]);
+
+    const hasDirectory = explorerState?.directories.has(currentPath) ?? false;
+    if (!hasDirectory) {
+      requestDirectoryListing(agentId, currentPath);
+    }
+  }, [agentId, currentPath, explorerState, requestDirectoryListing]);
+
+  useEffect(() => {
+    setSelectedEntryPath(null);
+  }, [currentPath]);
 
   const parentPath = useMemo(() => {
     if (currentPath === ".") {
@@ -59,7 +76,6 @@ export default function FileExplorerScreen() {
       }
 
       if (entry.kind === "directory") {
-        setCurrentPath(entry.path);
         setSelectedEntryPath(null);
         requestDirectoryListing(agentId, entry.path);
         return;
@@ -75,7 +91,6 @@ export default function FileExplorerScreen() {
     if (!agentId || !parentPath) {
       return;
     }
-    setCurrentPath(parentPath);
     setSelectedEntryPath(null);
     requestDirectoryListing(agentId, parentPath);
   }, [agentId, parentPath, requestDirectoryListing]);
@@ -109,6 +124,50 @@ export default function FileExplorerScreen() {
       </View>
 
       <View style={styles.content}>
+        {shouldShowPreview && (
+          <View style={styles.previewSection}>
+            {isLoading && !preview ? (
+              <View style={styles.centerState}>
+                <ActivityIndicator size="small" />
+                <Text style={styles.loadingText}>Loading file...</Text>
+              </View>
+            ) : !preview ? (
+              <View style={styles.centerState}>
+                <Text style={styles.emptyText}>No preview available yet</Text>
+              </View>
+            ) : preview.kind === "text" ? (
+              <ScrollView
+                style={styles.textPreview}
+                horizontal={false}
+                contentContainerStyle={styles.textPreviewContent}
+              >
+                <ScrollView horizontal>
+                  <Text style={styles.codeText}>{preview.content}</Text>
+                </ScrollView>
+              </ScrollView>
+            ) : preview.kind === "image" && preview.content ? (
+              <View style={styles.imagePreviewContainer}>
+                <Image
+                  source={{
+                    uri: `data:${preview.mimeType ?? "image/png"};base64,${
+                      preview.content
+                    }`,
+                  }}
+                  style={styles.image}
+                  resizeMode="contain"
+                />
+              </View>
+            ) : (
+              <View style={styles.centerState}>
+                <Text style={styles.emptyText}>Binary preview unavailable</Text>
+                <Text style={styles.entryMeta}>
+                  {formatFileSize({ size: preview.size })}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={styles.listSection}>
           {error ? (
             <View style={styles.centerState}>
@@ -151,52 +210,6 @@ export default function FileExplorerScreen() {
                 </Pressable>
               ))}
             </ScrollView>
-          )}
-        </View>
-
-        <View style={styles.previewSection}>
-          {selectedEntryPath && isLoading && !preview ? (
-            <View style={styles.centerState}>
-              <ActivityIndicator size="small" />
-              <Text style={styles.loadingText}>Loading file...</Text>
-            </View>
-          ) : !selectedEntryPath ? (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>Select a file to preview</Text>
-            </View>
-          ) : !preview ? (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>No preview available yet</Text>
-            </View>
-          ) : preview.kind === "text" ? (
-            <ScrollView
-              style={styles.textPreview}
-              horizontal={false}
-              contentContainerStyle={styles.textPreviewContent}
-            >
-              <ScrollView horizontal>
-                <Text style={styles.codeText}>{preview.content}</Text>
-              </ScrollView>
-            </ScrollView>
-          ) : preview.kind === "image" && preview.content ? (
-            <View style={styles.imagePreviewContainer}>
-              <Image
-                source={{
-                  uri: `data:${preview.mimeType ?? "image/png"};base64,${
-                    preview.content
-                  }`,
-                }}
-                style={styles.image}
-                resizeMode="contain"
-              />
-            </View>
-          ) : (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>Binary preview unavailable</Text>
-              <Text style={styles.entryMeta}>
-                {formatFileSize({ size: preview.size })}
-              </Text>
-            </View>
           )}
         </View>
       </View>
