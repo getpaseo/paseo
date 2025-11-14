@@ -80,6 +80,18 @@ type PendingPermission = {
   cleanup?: () => void;
 };
 
+type ToolUseClassification = "generic" | "command" | "file_change";
+
+type ToolUseCacheEntry = {
+  id: string;
+  name: string;
+  server: string;
+  classification: ToolUseClassification;
+  started: boolean;
+  commandText?: string;
+  files?: { path: string; kind: string }[];
+};
+
 const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
 
 export class ClaudeAgentClient implements AgentClient {
@@ -128,7 +140,7 @@ class ClaudeAgentSession implements AgentSession {
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
   private availableModes: AgentMode[] = DEFAULT_MODES;
-  private toolUseCache = new Map<string, { name: string; server: string }>();
+  private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private pendingPermissions = new Map<string, PendingPermission>();
   private eventQueue: Pushable<AgentStreamEvent> | null = null;
   private persistedHistory: AgentTimelineItem[] = [];
@@ -439,6 +451,16 @@ class ClaudeAgentSession implements AgentSession {
           this.handleSystemMessage(message as SDKSystemMessage);
         }
         break;
+      case "user": {
+        const content = (message as SDKUserMessage).message?.content;
+        if (Array.isArray(content)) {
+          const timelineItems = this.mapBlocksToTimeline(content);
+          for (const item of timelineItems) {
+            events.push({ type: "timeline", item, provider: "claude" });
+          }
+        }
+        break;
+      }
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content);
         for (const item of timelineItems) {
@@ -717,22 +739,7 @@ class ClaudeAgentSession implements AgentSession {
         case "tool_use":
         case "server_tool_use":
         case "mcp_tool_use": {
-          const name = block.name ?? "tool";
-          const server = block.server ?? name;
-          this.toolUseCache.set(block.id, { name, server });
-          this.enqueueTimeline({
-            type: "command",
-            command: `permission:${name}`,
-            status: "granted",
-            raw: block,
-          });
-          items.push({
-            type: "mcp_tool",
-            server,
-            tool: name,
-            status: "pending",
-            raw: block,
-          });
+          this.handleToolUseStart(block, items);
           break;
         }
         case "tool_result":
@@ -742,21 +749,7 @@ class ClaudeAgentSession implements AgentSession {
         case "code_execution_tool_result":
         case "bash_code_execution_tool_result":
         case "text_editor_code_execution_tool_result": {
-          const cached = block.tool_use_id
-            ? this.toolUseCache.get(block.tool_use_id)
-            : undefined;
-          const server = cached?.server ?? block.server ?? "tool";
-          const tool = cached?.name ?? block.tool_name ?? "tool";
-          items.push({
-            type: "mcp_tool",
-            server,
-            tool,
-            status: block.is_error ? "failed" : "completed",
-            raw: block,
-          });
-          if (!block.is_error && block.tool_use_id) {
-            this.toolUseCache.delete(block.tool_use_id);
-          }
+          this.handleToolResult(block, items);
           break;
         }
         default:
@@ -764,6 +757,73 @@ class ClaudeAgentSession implements AgentSession {
       }
     }
     return items;
+  }
+
+  private handleToolUseStart(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
+    const entry = this.upsertToolUseEntry(block);
+    if (!entry) {
+      return;
+    }
+    if (entry.started) {
+      return;
+    }
+    entry.started = true;
+    this.toolUseCache.set(entry.id, entry);
+    this.enqueueTimeline({
+      type: "command",
+      command: `permission:${entry.name}`,
+      status: "granted",
+      raw: block,
+    });
+    if (entry.classification === "command") {
+      const commandText = entry.commandText ?? entry.name;
+      items.push({
+        type: "command",
+        command: commandText,
+        status: "running",
+        raw: block,
+      });
+    }
+    items.push({
+      type: "mcp_tool",
+      server: entry.server,
+      tool: entry.name,
+      status: "pending",
+      raw: block,
+    });
+  }
+
+  private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
+    const entry = typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
+    const server = entry?.server ?? block.server ?? "tool";
+    const tool = entry?.name ?? block.tool_name ?? "tool";
+    const status = block.is_error ? "failed" : "completed";
+    items.push({
+      type: "mcp_tool",
+      server,
+      tool,
+      status,
+      raw: block,
+    });
+    if (entry?.classification === "command") {
+      const commandText = entry.commandText ?? entry.name;
+      items.push({
+        type: "command",
+        command: commandText,
+        status,
+        raw: block,
+      });
+    }
+    if (!block.is_error && entry?.classification === "file_change" && entry.files?.length) {
+      items.push({
+        type: "file_change",
+        files: entry.files,
+        raw: { block, files: entry.files },
+      });
+    }
+    if (typeof block.tool_use_id === "string") {
+      this.toolUseCache.delete(block.tool_use_id);
+    }
   }
 
   private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {
@@ -775,6 +835,165 @@ class ClaudeAgentSession implements AgentSession {
       default:
         return [];
     }
+  }
+
+  private upsertToolUseEntry(block: ClaudeContentChunk): ToolUseCacheEntry | null {
+    const id = typeof block.id === "string" ? block.id : undefined;
+    if (!id) {
+      return null;
+    }
+    const existing =
+      this.toolUseCache.get(id) ??
+      ({
+        id,
+        name: typeof block.name === "string" && block.name.length > 0 ? block.name : "tool",
+        server:
+          typeof block.server === "string" && block.server.length > 0
+            ? block.server
+            : typeof block.name === "string" && block.name.length > 0
+              ? block.name
+              : "tool",
+        classification: "generic",
+        started: false,
+      } satisfies ToolUseCacheEntry);
+
+    if (typeof block.name === "string" && block.name.length > 0) {
+      existing.name = block.name;
+    }
+    if (typeof block.server === "string" && block.server.length > 0) {
+      existing.server = block.server;
+    } else if (!existing.server) {
+      existing.server = existing.name;
+    }
+
+    if (block.type === "tool_use") {
+      const input = this.normalizeToolInput(block.input);
+      if (input) {
+        if (this.isCommandTool(existing.name, input)) {
+          existing.classification = "command";
+          existing.commandText = this.extractCommandText(input) ?? existing.commandText;
+        } else {
+          const files = this.extractFileChanges(input);
+          if (files?.length) {
+            existing.classification = "file_change";
+            existing.files = files;
+          }
+        }
+      }
+    }
+
+    this.toolUseCache.set(id, existing);
+    return existing;
+  }
+
+  private normalizeToolInput(input: unknown): Record<string, unknown> | null {
+    if (!input || typeof input !== "object") {
+      return null;
+    }
+    return input as Record<string, unknown>;
+  }
+
+  private isCommandTool(name: string, input: Record<string, unknown>): boolean {
+    const normalized = name.toLowerCase();
+    if (normalized.includes("bash") || normalized.includes("shell") || normalized.includes("terminal") || normalized.includes("command")) {
+      return true;
+    }
+    if (typeof input.command === "string" || Array.isArray(input.command)) {
+      return true;
+    }
+    return false;
+  }
+
+  private extractCommandText(input: Record<string, unknown>): string | undefined {
+    const command = input.command;
+    if (typeof command === "string" && command.length > 0) {
+      return command;
+    }
+    if (Array.isArray(command)) {
+      const tokens = command.filter((value): value is string => typeof value === "string");
+      if (tokens.length > 0) {
+        return tokens.join(" ");
+      }
+    }
+    if (typeof input.description === "string" && input.description.length > 0) {
+      return input.description;
+    }
+    return undefined;
+  }
+
+  private extractFileChanges(input: Record<string, unknown>): { path: string; kind: string }[] | undefined {
+    if (typeof input.file_path === "string" && input.file_path.length > 0) {
+      const relative = this.relativizePath(input.file_path);
+      if (relative) {
+        return [{ path: relative, kind: this.detectFileKind(input.file_path) }];
+      }
+    }
+    if (typeof input.patch === "string" && input.patch.length > 0) {
+      const files = this.parsePatchFileList(input.patch);
+      if (files.length > 0) {
+        return files.map((entry) => ({
+          path: this.relativizePath(entry.path) ?? entry.path,
+          kind: entry.kind,
+        }));
+      }
+    }
+    if (Array.isArray(input.files)) {
+      const files: { path: string; kind: string }[] = [];
+      for (const value of input.files) {
+        if (typeof value === "string" && value.length > 0) {
+          files.push({ path: this.relativizePath(value) ?? value, kind: this.detectFileKind(value) });
+        }
+      }
+      if (files.length > 0) {
+        return files;
+      }
+    }
+    return undefined;
+  }
+
+  private detectFileKind(filePath: string): string {
+    try {
+      return fs.existsSync(filePath) ? "update" : "add";
+    } catch {
+      return "update";
+    }
+  }
+
+  private relativizePath(target?: string): string | undefined {
+    if (!target) {
+      return undefined;
+    }
+    const cwd = this.config.cwd;
+    if (cwd && target.startsWith(cwd)) {
+      const relative = path.relative(cwd, target);
+      return relative.length > 0 ? relative : path.basename(target);
+    }
+    return target;
+  }
+
+  private parsePatchFileList(patch: string): { path: string; kind: string }[] {
+    const files: { path: string; kind: string }[] = [];
+    const seen = new Set<string>();
+    for (const line of patch.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      let kind: string | null = null;
+      let parsedPath: string | null = null;
+      if (trimmed.startsWith("*** Add File:")) {
+        kind = "add";
+        parsedPath = trimmed.replace("*** Add File:", "").trim();
+      } else if (trimmed.startsWith("*** Delete File:")) {
+        kind = "delete";
+        parsedPath = trimmed.replace("*** Delete File:", "").trim();
+      } else if (trimmed.startsWith("*** Update File:")) {
+        kind = "update";
+        parsedPath = trimmed.replace("*** Update File:", "").trim();
+      }
+      if (kind && parsedPath && !seen.has(`${kind}:${parsedPath}`)) {
+        seen.add(`${kind}:${parsedPath}`);
+        files.push({ path: parsedPath, kind });
+      }
+    }
+    return files;
   }
 }
 

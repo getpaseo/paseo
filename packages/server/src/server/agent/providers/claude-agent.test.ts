@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ClaudeAgentClient } from "./claude-agent.js";
-import type { AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
@@ -112,9 +112,22 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       }
 
       const toolEvent = timeline.find((item) => item.type === "mcp_tool");
+      const commandEvents = timeline.filter(
+        (item): item is Extract<AgentTimelineItem, { type: "command" }> =>
+          item.type === "command" && typeof item.command === "string" && !item.command.startsWith("permission:")
+      );
+      const fileChangeEvent = timeline.find(
+        (item) =>
+          item.type === "file_change" &&
+          item.files.some((file) => file.path.includes("tool-test.txt"))
+      );
+
+      const sawPwdCommand = commandEvents.some((item) => item.command.toLowerCase().includes("pwd") && item.status === "completed");
 
       expect(completed).toBe(true);
       expect(toolEvent).toBeTruthy();
+      expect(sawPwdCommand).toBe(true);
+      expect(fileChangeEvent).toBeTruthy();
 
       const filePath = path.join(cwd, "tool-test.txt");
       expect(existsSync(filePath)).toBe(true);
