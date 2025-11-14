@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   query,
   type AgentDefinition,
@@ -77,6 +80,8 @@ type PendingPermission = {
   cleanup?: () => void;
 };
 
+const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -126,6 +131,8 @@ class ClaudeAgentSession implements AgentSession {
   private toolUseCache = new Map<string, { name: string; server: string }>();
   private pendingPermissions = new Map<string, PendingPermission>();
   private eventQueue: Pushable<AgentStreamEvent> | null = null;
+  private persistedHistory: AgentTimelineItem[] = [];
+  private historyPending = false;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -134,10 +141,13 @@ class ClaudeAgentSession implements AgentSession {
   ) {
     this.config = config;
     this.defaults = defaults;
-    this.claudeSessionId = handle?.sessionId ?? null;
+    this.claudeSessionId = handle?.sessionId ?? handle?.nativeHandle ?? null;
     this.pendingLocalId = this.claudeSessionId ?? `claude-${randomUUID()}`;
     this.persistence = handle ?? null;
     this.currentMode = (config.modeId as PermissionMode) ?? "default";
+    if (this.claudeSessionId) {
+      this.loadPersistedHistory(this.claudeSessionId);
+    }
   }
 
   get id(): string | null {
@@ -178,6 +188,13 @@ class ClaudeAgentSession implements AgentSession {
     const sdkMessage = this.toSdkUserMessage(prompt);
     const queue = new Pushable<AgentStreamEvent>();
     this.eventQueue = queue;
+    if (this.historyPending && this.persistedHistory.length > 0) {
+      for (const item of this.persistedHistory) {
+        queue.push({ type: "timeline", item, provider: "claude" });
+      }
+      this.historyPending = false;
+      this.persistedHistory = [];
+    }
     void this.forwardPromptEvents(sdkMessage, queue);
 
     try {
@@ -195,7 +212,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    // Claude Agent SDK does not provide a rollout replay API yet.
+    if (!this.historyPending || this.persistedHistory.length === 0) {
+      return;
+    }
+    const history = this.persistedHistory;
+    this.persistedHistory = [];
+    this.historyPending = false;
+    for (const item of history) {
+      yield { type: "timeline", item, provider: "claude" };
+    }
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
@@ -510,10 +535,40 @@ class ClaudeAgentSession implements AgentSession {
     this.pushEvent({ type: "permission_requested", provider: "claude", request });
 
     return await new Promise<PermissionResult>((resolve, reject) => {
-      let cleanup: (() => void) | undefined;
-      const abortHandler = () => {
-        cleanup?.();
+      const cleanupFns: Array<() => void> = [];
+      const cleanup = () => {
+        while (cleanupFns.length) {
+          const fn = cleanupFns.pop();
+          try {
+            fn?.();
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+      };
+      const timeout = setTimeout(() => {
         this.pendingPermissions.delete(requestId);
+        cleanup();
+        const error = new Error("Permission request timed out");
+        this.enqueueTimeline({
+          type: "command",
+          command: `permission:${toolName}`,
+          status: "denied",
+          raw: { reason: "timeout", toolName, input },
+        });
+        this.pushEvent({
+          type: "permission_resolved",
+          provider: "claude",
+          requestId,
+          resolution: { behavior: "deny", message: "timeout" },
+        });
+        reject(error);
+      }, DEFAULT_PERMISSION_TIMEOUT_MS);
+      cleanupFns.push(() => clearTimeout(timeout));
+
+      const abortHandler = () => {
+        this.pendingPermissions.delete(requestId);
+        cleanup();
         reject(new Error("Permission request aborted"));
       };
 
@@ -523,7 +578,7 @@ class ClaudeAgentSession implements AgentSession {
           return;
         }
         options.signal.addEventListener("abort", abortHandler, { once: true });
-        cleanup = () => options.signal?.removeEventListener("abort", abortHandler);
+        cleanupFns.push(() => options.signal?.removeEventListener("abort", abortHandler));
       }
 
       this.pendingPermissions.set(requestId, {
@@ -574,6 +629,66 @@ class ClaudeAgentSession implements AgentSession {
       pending.reject(error);
       this.pendingPermissions.delete(id);
     }
+  }
+
+  private loadPersistedHistory(sessionId: string) {
+    try {
+      const historyPath = this.resolveHistoryPath(sessionId);
+      if (!historyPath || !fs.existsSync(historyPath)) {
+        return;
+      }
+      const content = fs.readFileSync(historyPath, "utf8");
+      const timeline: AgentTimelineItem[] = [];
+      for (const line of content.split(/\n+/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const entry = JSON.parse(trimmed);
+          if (entry.isSidechain) {
+            continue;
+          }
+          const items = this.convertHistoryEntry(entry);
+          if (items.length > 0) {
+            timeline.push(...items);
+          }
+        } catch (error) {
+          // ignore malformed history line
+        }
+      }
+      if (timeline.length > 0) {
+        this.persistedHistory = timeline;
+        this.historyPending = true;
+      }
+    } catch (error) {
+      // ignore history load failures
+    }
+  }
+
+  private resolveHistoryPath(sessionId: string): string | null {
+    const cwd = this.config.cwd;
+    if (!cwd) return null;
+    const sanitized = cwd.replace(/[\\/]/g, "-").replace(/_/g, "-");
+    const dir = path.join(os.homedir(), ".claude", "projects", sanitized);
+    return path.join(dir, `${sessionId}.jsonl`);
+  }
+
+  private convertHistoryEntry(entry: any): AgentTimelineItem[] {
+    const message = entry?.message;
+    if (!message) {
+      return [];
+    }
+    if (entry.type === "assistant" && message.content) {
+      return this.mapBlocksToTimeline(message.content as ClaudeContentChunk[]);
+    }
+    if (Array.isArray(message.content)) {
+      const hasToolBlock = message.content.some((block: ClaudeContentChunk) =>
+        typeof block?.type === "string" && block.type.includes("tool")
+      );
+      if (hasToolBlock) {
+        return this.mapBlocksToTimeline(message.content as ClaudeContentChunk[]);
+      }
+    }
+    return [];
   }
 
   private mapBlocksToTimeline(content: string | ClaudeContentChunk[]): AgentTimelineItem[] {
