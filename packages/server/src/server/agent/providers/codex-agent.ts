@@ -198,6 +198,7 @@ class CodexAgentSession implements AgentSession {
   private readonly codexSessionDir: string | null;
   private rolloutPath: string | null;
   private historyEvents: AgentStreamEvent[] = [];
+  private pendingPermissions = new Map<string, AgentPermissionRequest>();
 
   constructor(codex: Codex, config: CodexAgentConfig, handle?: AgentPersistenceHandle) {
     this.codex = codex;
@@ -307,11 +308,35 @@ class CodexAgentSession implements AgentSession {
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return [];
+    return Array.from(this.pendingPermissions.values());
   }
 
-  async respondToPermission(_requestId: string, _response: AgentPermissionResponse): Promise<void> {
-    throw new Error("Codex permission responses are not implemented yet");
+  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+    const request = this.pendingPermissions.get(requestId);
+    if (!request) {
+      throw new Error(`No pending Codex permission request with id '${requestId}'`);
+    }
+
+    this.pendingPermissions.delete(requestId);
+
+    const status = response.behavior === "allow" ? "granted" : "denied";
+    this.enqueueHistoryEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "command",
+        command: `permission:${request.name}`,
+        status,
+        raw: { request, response },
+      },
+    });
+
+    this.enqueueHistoryEvent({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId,
+      resolution: response,
+    });
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -336,6 +361,7 @@ class CodexAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.thread = null;
+    this.pendingPermissions.clear();
   }
 
   private drainHistoryEvents(): AgentStreamEvent[] {
@@ -345,6 +371,10 @@ class CodexAgentSession implements AgentSession {
     const events = [...this.historyEvents];
     this.historyEvents = [];
     return events;
+  }
+
+  private enqueueHistoryEvent(event: AgentStreamEvent): void {
+    this.historyEvents.push(event);
   }
 
   private buildThreadOptions(modeId: string): ThreadOptions {
@@ -463,6 +493,14 @@ class CodexAgentSession implements AgentSession {
   private *translateEvent(event: ThreadEvent): Generator<AgentStreamEvent> {
     yield { type: "provider_event", provider: "codex", raw: event };
 
+    const permissionEvents = this.handlePermissionEvent(event);
+    if (permissionEvents) {
+      for (const permissionEvent of permissionEvents) {
+        yield permissionEvent;
+      }
+      return;
+    }
+
     switch (event.type) {
       case "thread.started":
         this.threadId = event.thread_id;
@@ -509,6 +547,148 @@ class CodexAgentSession implements AgentSession {
       default:
         break;
     }
+  }
+
+  private handlePermissionEvent(event: ThreadEvent): AgentStreamEvent[] | null {
+    const eventType = typeof (event as { type?: string }).type === "string" ? (event as { type?: string }).type : null;
+    if (!eventType) {
+      return null;
+    }
+
+    if (eventType === "exec_approval_request") {
+      const request = this.buildExecPermissionRequest(event as any);
+      return this.enqueuePermissionRequest(request);
+    }
+
+    if (eventType === "apply_patch_approval_request") {
+      const request = this.buildPatchPermissionRequest(event as any);
+      return this.enqueuePermissionRequest(request);
+    }
+
+    return null;
+  }
+
+  private enqueuePermissionRequest(request: AgentPermissionRequest | null): AgentStreamEvent[] | null {
+    if (!request) {
+      return null;
+    }
+
+    this.pendingPermissions.set(request.id, request);
+
+    const events: AgentStreamEvent[] = [
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "command",
+          command: `permission:${request.name}`,
+          status: "requested",
+          raw: request.raw,
+        },
+      },
+      { type: "permission_requested", provider: "codex", request },
+    ];
+
+    return events;
+  }
+
+  private buildExecPermissionRequest(raw: any): AgentPermissionRequest | null {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+
+    const commandParts: string[] = Array.isArray(raw.command)
+      ? raw.command.filter((entry: unknown) => typeof entry === "string")
+      : typeof raw.command === "string"
+        ? [raw.command]
+        : [];
+    const commandText = commandParts.join(" ").trim();
+    const cwd = typeof raw.cwd === "string" && raw.cwd.length ? raw.cwd : undefined;
+    const requestId = typeof raw.call_id === "string" && raw.call_id.length ? raw.call_id : randomUUID();
+    const reason = typeof raw.reason === "string" && raw.reason.length ? raw.reason : undefined;
+    const risk = raw.risk && typeof raw.risk === "object" ? raw.risk : undefined;
+    const parsedCommand = Array.isArray(raw.parsed_cmd) ? raw.parsed_cmd : undefined;
+
+    const metadata: Record<string, unknown> = {
+      callId: raw.call_id,
+      command: commandText || undefined,
+      cwd,
+      reason,
+    };
+    if (risk) {
+      metadata.risk = risk;
+    }
+    if (parsedCommand) {
+      metadata.parsedCommand = parsedCommand;
+    }
+
+    const description = reason ?? (risk?.description as string | undefined);
+
+    const request: AgentPermissionRequest = {
+      id: `permission-${requestId}`,
+      provider: "codex",
+      name: "exec_command",
+      kind: "tool",
+      title: commandText ? `Run command: ${commandText}` : "Run shell command",
+      description: description ?? undefined,
+      input: {
+        command: commandParts,
+        cwd,
+        reason,
+        risk,
+        parsedCommand,
+      },
+      metadata: sanitizeMetadata(metadata),
+      raw,
+    };
+
+    return request;
+  }
+
+  private buildPatchPermissionRequest(raw: any): AgentPermissionRequest | null {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+
+    const requestId = typeof raw.call_id === "string" && raw.call_id.length ? raw.call_id : randomUUID();
+    const changes = raw.changes && typeof raw.changes === "object" ? raw.changes : undefined;
+    const filePaths = changes ? Object.keys(changes) : [];
+    const grantRoot = typeof raw.grant_root === "string" && raw.grant_root.length ? raw.grant_root : undefined;
+    const reason = typeof raw.reason === "string" && raw.reason.length ? raw.reason : undefined;
+
+    const title =
+      filePaths.length > 0
+        ? `Apply patch to ${filePaths.length} file${filePaths.length === 1 ? "" : "s"}`
+        : "Apply patch";
+
+    const metadata: Record<string, unknown> = {
+      callId: raw.call_id,
+      files: filePaths.length ? filePaths : undefined,
+      grantRoot,
+      reason,
+    };
+
+    const input: Record<string, unknown> = {
+      changes,
+      files: filePaths,
+      grantRoot,
+      reason,
+    };
+
+    const request: AgentPermissionRequest = {
+      id: `permission-${requestId}`,
+      provider: "codex",
+      name: "apply_patch",
+      kind: "tool",
+      title,
+      description: reason ?? undefined,
+      input,
+      suggestions: grantRoot ? [{ grantRoot }] : undefined,
+      metadata: sanitizeMetadata(metadata),
+      raw,
+    };
+
+    return request;
   }
 
   private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
@@ -896,4 +1076,12 @@ function readMetadataString(handle: AgentPersistenceHandle | undefined, key: str
   }
   const value = (handle.metadata as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function sanitizeMetadata(metadata: Record<string, unknown>): Record<string, unknown> | undefined {
+  const entries = Object.entries(metadata).filter(([_, value]) => value !== undefined && value !== null);
+  if (!entries.length) {
+    return undefined;
+  }
+  return Object.fromEntries(entries);
 }

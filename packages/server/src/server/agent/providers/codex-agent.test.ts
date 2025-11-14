@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { CodexAgentClient } from "./codex-agent.js";
-import type { AgentSessionConfig, AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentSessionConfig, AgentStreamEvent, AgentPermissionRequest } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(os.tmpdir(), "codex-agent-e2e-"));
@@ -29,6 +29,38 @@ function useTempCodexSessionDir(): () => void {
 
 function log(message: string): void {
   console.info(`[CodexAgentTest] ${message}`);
+}
+
+function createStubCodexBinary(events: Record<string, unknown>[]): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "codex-stub-"));
+  const filePath = path.join(dir, "codex-stub.js");
+  const script = `#!/usr/bin/env node
+const events = ${JSON.stringify(events)};
+const emit = () => {
+  for (const event of events) {
+    process.stdout.write(JSON.stringify(event) + "\\n");
+  }
+};
+
+if (process.stdin.isTTY) {
+  emit();
+  process.exit(0);
+} else {
+  process.stdin.resume();
+  process.stdin.on("data", () => {});
+  process.stdin.on("end", () => {
+    emit();
+    process.exit(0);
+  });
+}`;
+  writeFileSync(filePath, script, "utf8");
+  chmodSync(filePath, 0o755);
+  return {
+    path: filePath,
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 describe("CodexAgentClient (SDK integration)", () => {
@@ -225,5 +257,71 @@ describe("CodexAgentClient (SDK integration)", () => {
       }
     },
     180_000
+  );
+
+  test(
+    "emits permission requests and resolves them when approvals are handled",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const events = [
+        { type: "thread.started", thread_id: "019a83a2-permission" },
+        { type: "turn.started" },
+        {
+          type: "exec_approval_request",
+          call_id: "call-permission-1",
+          command: ["bash", "-lc", "rm -rf /tmp/codex"],
+          cwd,
+          reason: "Requires elevated sandbox permissions",
+          risk: { description: "Deletes files", risk_level: "high" },
+        },
+        { type: "turn.failed", error: { message: "Approval required" } },
+      ];
+      const stub = createStubCodexBinary(events);
+      const client = new CodexAgentClient({ codexPathOverride: stub.path });
+      const config: AgentSessionConfig = { provider: "codex", cwd };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      try {
+        session = await client.createSession(config);
+        log("Processing synthetic permission request stream");
+
+        let captured: AgentPermissionRequest | null = null;
+        const streamed = session.stream("Trigger permission request");
+        for await (const event of streamed) {
+          if (event.type === "permission_requested") {
+            captured = event.request;
+          }
+          if (event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect(captured).not.toBeNull();
+        expect(session.getPendingPermissions()).toHaveLength(1);
+
+        await session.respondToPermission(captured!.id, { behavior: "allow" });
+
+        const replay: AgentStreamEvent[] = [];
+        for await (const event of session.streamHistory()) {
+          replay.push(event);
+        }
+
+        expect(
+          replay.some(
+            (event) =>
+              event.type === "permission_resolved" &&
+              event.requestId === captured!.id &&
+              event.resolution.behavior === "allow"
+          )
+        ).toBe(true);
+        expect(session.getPendingPermissions()).toHaveLength(0);
+      } finally {
+        await session?.close();
+        stub.cleanup();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    30_000
   );
 });
