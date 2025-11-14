@@ -7,13 +7,24 @@ import {
   Text,
   View,
 } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useLocalSearchParams } from "expo-router";
+import * as Clipboard from "expo-clipboard";
+import { Copy, Check, ArrowLeft } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSession, type ExplorerEntry } from "@/contexts/session-context";
 
 export default function FileExplorerScreen() {
-  const { agentId } = useLocalSearchParams<{ agentId: string }>();
+  const { theme } = useUnistyles();
+  const {
+    agentId,
+    path: pathParamRaw,
+    file: fileParamRaw,
+  } = useLocalSearchParams<{
+    agentId: string;
+    path?: string | string[];
+    file?: string | string[];
+  }>();
   const {
     agents,
     fileExplorer,
@@ -21,6 +32,17 @@ export default function FileExplorerScreen() {
     requestFilePreview,
   } = useSession();
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
+  const pendingPathParamRef = useRef<string | null>(null);
+  const pendingFileParamRef = useRef<string | null>(null);
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const normalizedPathParam = normalizePathParam(getFirstParam(pathParamRaw));
+  const normalizedFileParam = normalizeFileParam(getFirstParam(fileParamRaw));
+  const derivedDirectoryFromFile = normalizedFileParam
+    ? deriveDirectoryFromFile(normalizedFileParam)
+    : null;
+  const initialTargetDirectory = normalizedPathParam ?? derivedDirectoryFromFile ?? ".";
 
   const agent = agentId ? agents.get(agentId) : undefined;
   const explorerState = agentId ? fileExplorer.get(agentId) : undefined;
@@ -33,27 +55,6 @@ export default function FileExplorerScreen() {
     ? explorerState?.files.get(selectedEntryPath)
     : null;
   const shouldShowPreview = Boolean(selectedEntryPath);
-
-  const initializedAgentRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!agentId) {
-      initializedAgentRef.current = null;
-      return;
-    }
-
-    if (initializedAgentRef.current === agentId) {
-      return;
-    }
-
-    initializedAgentRef.current = agentId;
-    setSelectedEntryPath(null);
-
-    const hasDirectory = explorerState?.directories.has(currentPath) ?? false;
-    if (!hasDirectory) {
-      requestDirectoryListing(agentId, currentPath);
-    }
-  }, [agentId, currentPath, explorerState, requestDirectoryListing]);
 
   useEffect(() => {
     setSelectedEntryPath(null);
@@ -68,6 +69,53 @@ export default function FileExplorerScreen() {
     const nextPath = segments.join("/");
     return nextPath.length === 0 ? "." : nextPath;
   }, [currentPath]);
+
+  useEffect(() => {
+    setCopiedPath(null);
+  }, [currentPath]);
+
+  useEffect(() => {
+    if (!agentId || !initialTargetDirectory) {
+      pendingPathParamRef.current = null;
+      return;
+    }
+
+    if (pendingPathParamRef.current === initialTargetDirectory) {
+      return;
+    }
+
+    pendingPathParamRef.current = initialTargetDirectory;
+    requestDirectoryListing(agentId, initialTargetDirectory);
+  }, [agentId, initialTargetDirectory, requestDirectoryListing]);
+
+  useEffect(() => {
+    if (!agentId || !normalizedFileParam) {
+      pendingFileParamRef.current = null;
+      return;
+    }
+
+    pendingFileParamRef.current = normalizedFileParam;
+    requestFilePreview(agentId, normalizedFileParam);
+  }, [agentId, normalizedFileParam, requestFilePreview]);
+
+  useEffect(() => {
+    if (!agentId) {
+      return;
+    }
+
+    const targetFile = pendingFileParamRef.current;
+    if (!targetFile) {
+      return;
+    }
+
+    const hasEntry = entries.some((entry) => entry.path === targetFile);
+    if (!hasEntry) {
+      return;
+    }
+
+    setSelectedEntryPath(targetFile);
+    pendingFileParamRef.current = null;
+  }, [agentId, entries]);
 
   const handleEntryPress = useCallback(
     (entry: ExplorerEntry) => {
@@ -95,6 +143,26 @@ export default function FileExplorerScreen() {
     requestDirectoryListing(agentId, parentPath);
   }, [agentId, parentPath, requestDirectoryListing]);
 
+  const handleCopyPath = useCallback(async (path: string) => {
+    await Clipboard.setStringAsync(path);
+    setCopiedPath(path);
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopiedPath(null);
+      copyTimeoutRef.current = null;
+    }, 1500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -108,110 +176,109 @@ export default function FileExplorerScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title="Files" />
-      <View style={styles.headerRow}>
-        <View style={styles.breadcrumbs}>
-          <Text style={styles.breadcrumbLabel}>Path</Text>
-          <ScrollView horizontal>
-            <Text style={styles.breadcrumbText}>{currentPath}</Text>
-          </ScrollView>
-        </View>
-        {parentPath && (
-          <Pressable style={styles.upButton} onPress={handleNavigateUp}>
-            <Text style={styles.upButtonText}>Up</Text>
-          </Pressable>
-        )}
-      </View>
+      <BackHeader title={selectedEntryPath ?? currentPath || "."} />
 
       <View style={styles.content}>
-        {shouldShowPreview && (
-          <View style={styles.previewSection}>
-            {isLoading && !preview ? (
+        {shouldShowPreview ? (
+          <View style={styles.previewWrapper}>
+            <UpRow label="Back to directory" onPress={() => setSelectedEntryPath(null)} />
+            <View style={styles.previewSection}>
+              {isLoading && !preview ? (
+                <View style={styles.centerState}>
+                  <ActivityIndicator size="small" />
+                  <Text style={styles.loadingText}>Loading file...</Text>
+                </View>
+              ) : !preview ? (
+                <View style={styles.centerState}>
+                  <Text style={styles.emptyText}>No preview available yet</Text>
+                </View>
+              ) : preview.kind === "text" ? (
+                <ScrollView
+                  style={styles.textPreview}
+                  horizontal={false}
+                  contentContainerStyle={styles.textPreviewContent}
+                >
+                  <ScrollView horizontal>
+                    <Text style={styles.codeText}>{preview.content}</Text>
+                  </ScrollView>
+                </ScrollView>
+              ) : preview.kind === "image" && preview.content ? (
+                <View style={styles.imagePreviewContainer}>
+                  <Image
+                    source={{
+                      uri: `data:${preview.mimeType ?? "image/png"};base64,${
+                        preview.content
+                      }`,
+                    }}
+                    style={styles.image}
+                    resizeMode="contain"
+                  />
+                </View>
+              ) : (
+                <View style={styles.centerState}>
+                  <Text style={styles.emptyText}>Binary preview unavailable</Text>
+                  <Text style={styles.entryMeta}>
+                    {formatFileSize({ size: preview.size })}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.listSection}>
+            {error ? (
+              <View style={styles.centerState}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : isLoading && entries.length === 0 ? (
               <View style={styles.centerState}>
                 <ActivityIndicator size="small" />
-                <Text style={styles.loadingText}>Loading file...</Text>
+                <Text style={styles.loadingText}>Loading...</Text>
               </View>
-            ) : !preview ? (
+            ) : entries.length === 0 ? (
               <View style={styles.centerState}>
-                <Text style={styles.emptyText}>No preview available yet</Text>
-              </View>
-            ) : preview.kind === "text" ? (
-              <ScrollView
-                style={styles.textPreview}
-                horizontal={false}
-                contentContainerStyle={styles.textPreviewContent}
-              >
-                <ScrollView horizontal>
-                  <Text style={styles.codeText}>{preview.content}</Text>
-                </ScrollView>
-              </ScrollView>
-            ) : preview.kind === "image" && preview.content ? (
-              <View style={styles.imagePreviewContainer}>
-                <Image
-                  source={{
-                    uri: `data:${preview.mimeType ?? "image/png"};base64,${
-                      preview.content
-                    }`,
-                  }}
-                  style={styles.image}
-                  resizeMode="contain"
-                />
+                <Text style={styles.emptyText}>Directory is empty</Text>
               </View>
             ) : (
-              <View style={styles.centerState}>
-                <Text style={styles.emptyText}>Binary preview unavailable</Text>
-                <Text style={styles.entryMeta}>
-                  {formatFileSize({ size: preview.size })}
-                </Text>
-              </View>
+              <ScrollView contentContainerStyle={styles.entriesContent}>
+                {parentPath && <UpRow label=".." onPress={handleNavigateUp} />}
+                {entries.map((entry) => (
+                  <Pressable
+                    key={entry.path}
+                    style={[
+                      styles.entryRow,
+                      entry.kind === "directory"
+                        ? styles.directoryRow
+                        : styles.fileRow,
+                    ]}
+                    onPress={() => handleEntryPress(entry)}
+                  >
+                    <View style={styles.entryTextContainer}>
+                      <Text style={styles.entryName}>{entry.name}</Text>
+                      <Text style={styles.entryMeta}>
+                        {entry.kind.toUpperCase()} · {formatFileSize({ size: entry.size })} · {formatModifiedTime({ value: entry.modifiedAt })}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        handleCopyPath(entry.path);
+                      }}
+                      hitSlop={8}
+                      style={styles.copyButton}
+                    >
+                      {copiedPath === entry.path ? (
+                        <Check size={16} color={theme.colors.primary} />
+                      ) : (
+                        <Copy size={16} color={theme.colors.foreground} />
+                      )}
+                    </Pressable>
+                  </Pressable>
+                ))}
+              </ScrollView>
             )}
           </View>
         )}
-
-        <View style={styles.listSection}>
-          {error ? (
-            <View style={styles.centerState}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : isLoading && entries.length === 0 ? (
-            <View style={styles.centerState}>
-              <ActivityIndicator size="small" />
-              <Text style={styles.loadingText}>Loading...</Text>
-            </View>
-          ) : entries.length === 0 ? (
-            <View style={styles.centerState}>
-              <Text style={styles.emptyText}>Directory is empty</Text>
-            </View>
-          ) : (
-            <ScrollView>
-              {entries.map((entry) => (
-                <Pressable
-                  key={entry.path}
-                  style={[
-                    styles.entryRow,
-                    entry.kind === "directory"
-                      ? styles.directoryRow
-                      : styles.fileRow,
-                    selectedEntryPath === entry.path && styles.selectedRow,
-                  ]}
-                  onPress={() => handleEntryPress(entry)}
-                >
-                  <View style={styles.entryTextContainer}>
-                    <Text style={styles.entryName}>{entry.name}</Text>
-                    <Text style={styles.entryMeta}>
-                      {entry.kind.toUpperCase()} ·{" "}
-                      {formatFileSize({ size: entry.size })} ·{" "}
-                      {formatModifiedTime({ value: entry.modifiedAt })}
-                    </Text>
-                  </View>
-                  <Text style={styles.entryAction}>
-                    {entry.kind === "directory" ? "Open" : "Preview"}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          )}
-        </View>
       </View>
     </View>
   );
@@ -235,54 +302,76 @@ function formatModifiedTime({ value }: { value: string }): string {
   return date.toLocaleString();
 }
 
+function getFirstParam(value?: string | string[]): string | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+  return value ?? null;
+}
+
+function normalizePathParam(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.length) {
+    return ".";
+  }
+  return trimmed.replace(/\\/g, "/");
+}
+
+function normalizeFileParam(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.length) {
+    return null;
+  }
+  return trimmed.replace(/\\/g, "/");
+}
+
+function deriveDirectoryFromFile(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash === -1) {
+    return ".";
+  }
+  const directory = normalized.slice(0, lastSlash);
+  return directory.length > 0 ? directory : ".";
+}
+
+function UpRow({ label, onPress }: { label: string; onPress: () => void }) {
+  const { theme } = useUnistyles();
+  return (
+    <Pressable style={styles.upRow} onPress={onPress}>
+      <ArrowLeft size={16} color={theme.colors.foreground} />
+      <Text style={styles.upRowText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    gap: theme.spacing[3],
-  },
-  breadcrumbs: {
-    flex: 1,
-  },
-  breadcrumbLabel: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    marginBottom: theme.spacing[1],
-  },
-  breadcrumbText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontFamily: "monospace",
-  },
-  upButton: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.muted,
-  },
-  upButtonText: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
   content: {
     flex: 1,
     flexDirection: "column",
-    paddingHorizontal: theme.spacing[4],
-    paddingBottom: theme.spacing[4],
-    gap: theme.spacing[4],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[3],
+    gap: theme.spacing[3],
   },
   listSection: {
     flex: 1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[2],
+  },
+  entriesContent: {
+    paddingBottom: theme.spacing[4],
+  },
+  previewWrapper: {
+    flex: 1,
+    gap: theme.spacing[2],
   },
   previewSection: {
     flex: 1,
@@ -316,10 +405,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing[2],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    marginBottom: theme.spacing[1],
   },
   directoryRow: {
     backgroundColor: theme.colors.muted,
@@ -328,7 +419,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.card,
   },
   selectedRow: {
-    borderWidth: theme.borderWidth[2],
     borderColor: theme.colors.primary,
   },
   entryTextContainer: {
@@ -345,7 +435,25 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
-  entryAction: {
+  copyButton: {
+    width: 36,
+    height: 36,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  upRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  upRowText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,

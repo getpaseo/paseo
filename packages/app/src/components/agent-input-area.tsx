@@ -448,7 +448,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.muted,
     borderRadius: theme.borderRadius.lg,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.lg,
+    lineHeight: theme.fontSize.lg * 1.4,
   },
   buttonRow: {
     flexDirection: "row",

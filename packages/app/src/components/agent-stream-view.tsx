@@ -14,17 +14,20 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
+import { useRouter } from "expo-router";
 import {
   AssistantMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
   AgentThoughtMessage,
+  type InlinePathTarget,
 } from "./message";
 import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import type { StreamItem } from "@/types/stream";
 import type { SelectedToolCall, PendingPermission } from "@/types/shared";
 import type { Agent } from "@/contexts/session-context";
+import { useSession } from "@/contexts/session-context";
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -52,6 +55,8 @@ export function AgentStreamView({
   const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
+  const router = useRouter();
+  const { requestDirectoryListing, requestFilePreview } = useSession();
 
   useEffect(() => {
     hasScrolledInitially.current = false;
@@ -70,6 +75,40 @@ export function AgentStreamView({
   function handleBottomSheetDismiss() {
     setSelectedToolCall(null);
   }
+
+  const handleInlinePathPress = useCallback(
+    (target: InlinePathTarget) => {
+      if (!target.path) {
+        return;
+      }
+
+      const normalized = normalizeInlinePath(target.path);
+      if (!normalized) {
+        return;
+      }
+
+      requestDirectoryListing(agentId, normalized.directory);
+      if (normalized.file) {
+        requestFilePreview(agentId, normalized.file);
+      }
+
+      router.push({
+        pathname: "/file-explorer",
+        params: {
+          agentId,
+          path: normalized.directory,
+          ...(normalized.file ? { file: normalized.file } : {}),
+          ...(target.lineStart !== undefined
+            ? { lineStart: String(target.lineStart) }
+            : {}),
+          ...(target.lineEnd !== undefined
+            ? { lineEnd: String(target.lineEnd) }
+            : {}),
+        },
+      });
+    },
+    [agentId, requestDirectoryListing, requestFilePreview, router]
+  );
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -179,6 +218,7 @@ export function AgentStreamView({
           <AssistantMessage
             message={item.text}
             timestamp={item.timestamp.getTime()}
+            onInlinePathPress={handleInlinePathPress}
           />
         );
 
@@ -322,6 +362,48 @@ export function AgentStreamView({
       />
     </View>
   );
+}
+
+function normalizeInlinePath(rawPath: string):
+  | { directory: string; file?: string }
+  | null {
+  if (!rawPath) {
+    return null;
+  }
+
+  let value = rawPath.trim();
+  value = value.replace(/^['"`]/, "").replace(/['"`]$/, "");
+  if (!value) {
+    return null;
+  }
+
+  let normalized = value.replace(/\\/g, "/");
+  normalized = normalized.replace(/\/{2,}/g, "/");
+
+  if (normalized.startsWith("./")) {
+    normalized = normalized.slice(2) || ".";
+  }
+
+  if (!normalized.length) {
+    normalized = ".";
+  }
+
+  if (normalized === ".") {
+    return { directory: "." };
+  }
+
+  if (normalized.endsWith("/")) {
+    const dir = normalized.replace(/\/+$/, "");
+    return { directory: dir.length > 0 ? dir : "." };
+  }
+
+  const lastSlash = normalized.lastIndexOf("/");
+  const directory = lastSlash >= 0 ? normalized.slice(0, lastSlash) : ".";
+
+  return {
+    directory: directory.length > 0 ? directory : ".",
+    file: normalized,
+  };
 }
 
 // Permission Request Card Component

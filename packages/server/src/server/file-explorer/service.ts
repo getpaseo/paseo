@@ -101,8 +101,10 @@ export async function listDirectoryEntries({
   );
 
   entries.sort((a, b) => {
-    if (a.kind !== b.kind) {
-      return a.kind === "directory" ? -1 : 1;
+    const modifiedComparison =
+      new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+    if (modifiedComparison !== 0) {
+      return modifiedComparison;
     }
     return a.name.localeCompare(b.name);
   });

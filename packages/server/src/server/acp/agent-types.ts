@@ -71,12 +71,12 @@ const agentTypeDefinitions: Record<AgentType, AgentTypeDefinition> = {
   codex: {
     id: "codex",
     label: "Codex",
-    description: "Zed Codex ACP integration (no session resume)",
+    description: "Zed Codex ACP integration with session persistence",
     spawn: {
       command: "npx",
       args: ["@zed-industries/codex-acp"],
     },
-    supportsSessionPersistence: false,
+    supportsSessionPersistence: true,
     availableModes: CODEX_MODES,
     defaultModeId: "auto",
   },

@@ -1,6 +1,8 @@
 import { spawn } from "child_process";
 import { Writable, Readable } from "stream";
-import { access, constants } from "fs/promises";
+import { access, constants, mkdir } from "fs/promises";
+import os from "os";
+import path from "path";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -249,6 +251,16 @@ class ACPClient implements Client {
 export class AgentManager {
   private agents = new Map<string, ManagedAgent>();
   private persistence = new AgentPersistence();
+  private codexHomeDir: string;
+  private codexSessionDir: string;
+
+  constructor() {
+    const defaultCodexHome = path.join(os.homedir(), ".voice-dev", "codex");
+    this.codexHomeDir = process.env.CODEX_HOME ?? defaultCodexHome;
+    this.codexSessionDir =
+      process.env.CODEX_SESSION_DIR ??
+      path.join(this.codexHomeDir, "sessions");
+  }
 
   /**
    * Initialize the agent manager and load persisted agents
@@ -1088,9 +1100,21 @@ export class AgentManager {
     }
 
     const definition = getAgentTypeDefinition(agent.options.type);
-    const agentProcess = spawn(definition.spawn.command, definition.spawn.args, {
+    const spawnArgs = [...definition.spawn.args];
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
+
+    if (agent.options.type === "codex") {
+      await mkdir(this.codexSessionDir, { recursive: true });
+      spawnArgs.push("--session-persist", this.codexSessionDir);
+      spawnEnv.CODEX_HOME = this.codexHomeDir;
+      spawnEnv.CODEX_SESSION_PERSIST = "1";
+      spawnEnv.CODEX_SESSION_DIR = this.codexSessionDir;
+    }
+
+    const agentProcess = spawn(definition.spawn.command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd,
+      env: spawnEnv,
     });
 
     const input = Writable.toWeb(agentProcess.stdin);
