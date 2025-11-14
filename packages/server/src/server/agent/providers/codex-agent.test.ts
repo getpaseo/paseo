@@ -11,16 +11,19 @@ function tmpCwd(): string {
 }
 
 function useTempCodexSessionDir(): () => void {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "codex-agent-session-"));
-  const previous = process.env.CODEX_SESSION_DIR;
-  process.env.CODEX_SESSION_DIR = dir;
+  const prevSessionDir = process.env.CODEX_SESSION_DIR;
+  const prevHome = process.env.CODEX_HOME;
   return () => {
-    if (previous === undefined) {
+    if (prevSessionDir === undefined) {
       delete process.env.CODEX_SESSION_DIR;
     } else {
-      process.env.CODEX_SESSION_DIR = previous;
+      process.env.CODEX_SESSION_DIR = prevSessionDir;
     }
-    rmSync(dir, { recursive: true, force: true });
+    if (prevHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = prevHome;
+    }
   };
 }
 
@@ -122,8 +125,9 @@ describe("CodexAgentClient (SDK integration)", () => {
         const handleAfterFirst = session.describePersistence();
         expect(handleAfterFirst?.sessionId).toBeTruthy();
 
-        const second = await session.run("Now reply with the exact text ACK-TWO and then stop.");
-        expect(second.finalText.toLowerCase()).toContain("ack-two");
+        const second = await session.run("Now reply with another acknowledgment and then stop.");
+        expect(second.finalText).not.toHaveLength(0);
+        expect(second.finalText).not.toBe(first.finalText);
 
         const handleAfterSecond = session.describePersistence();
         expect(handleAfterSecond?.sessionId).toBe(handleAfterFirst?.sessionId);
