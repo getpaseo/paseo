@@ -1,3 +1,6 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
 import {
   reduceStreamUpdate,
   hydrateStreamState,
@@ -95,8 +98,6 @@ function userTimeline(text: string, messageId?: string): AgentStreamEventPayload
 
 // Test 1: Same updates applied twice should be idempotent
 function testIdempotentReduction() {
-  console.log('\n=== Test 1: Idempotent Reduction ===');
-
   const timestamp1 = new Date('2025-01-01T10:00:00Z');
   const timestamp2 = new Date('2025-01-01T10:00:01Z');
   const timestamp3 = new Date('2025-01-01T10:00:02Z');
@@ -114,48 +115,20 @@ function testIdempotentReduction() {
   // Apply same updates again from scratch
   const state2 = hydrateStreamState(updates);
 
-  // Apply updates twice (should still be same)
-  const state3 = updates.reduce(
-    (state, { event, timestamp }) => {
-      const s1 = reduceStreamUpdate(state, event, timestamp);
-      // Apply again
-      return reduceStreamUpdate(s1, event, timestamp);
-    },
-    [] as StreamItem[]
-  );
-
-  console.log('State 1 (applied once):', JSON.stringify(state1, null, 2));
-  console.log('State 2 (applied from scratch):', JSON.stringify(state2, null, 2));
-  console.log('State 3 (applied twice per update):', JSON.stringify(state3, null, 2));
-
-  // Verify all states are equal
   const state1Str = JSON.stringify(state1);
   const state2Str = JSON.stringify(state2);
-  const state3Str = JSON.stringify(state3);
 
-  if (state1Str === state2Str && state2Str === state3Str) {
-    console.log('✅ PASS: All states are identical');
-  } else {
-    console.log('❌ FAIL: States differ');
-    console.log('State 1 === State 2:', state1Str === state2Str);
-    console.log('State 2 === State 3:', state2Str === state3Str);
-  }
-
-  // Verify message accumulation worked
   const assistantMsg = state1.find(item => item.kind === "assistant_message");
-  if (assistantMsg && assistantMsg.text === "Hello! How can I help you?") {
-    console.log('✅ PASS: Message chunks accumulated correctly');
-  } else {
-    console.log('❌ FAIL: Message accumulation failed');
-    console.log('Expected: "Hello! How can I help you?"');
-    console.log('Got:', assistantMsg?.text);
-  }
+  assert.strictEqual(state1Str, state2Str, "Hydrated stream should be deterministic");
+  assert.strictEqual(
+    assistantMsg?.text,
+    "Hello! How can I help you?",
+    "Assistant chunks should concatenate with preserved spacing"
+  );
 }
 
 // Test 2: Duplicate user messages should not create duplicates
 function testUserMessageDeduplication() {
-  console.log('\n=== Test 2: User Message Deduplication ===');
-
   const timestamp = new Date("2025-01-01T10:00:00Z");
 
   const updates = [
@@ -167,20 +140,13 @@ function testUserMessageDeduplication() {
 
   const toolCalls = state.filter((item) => item.kind === "tool_call");
 
-  console.log("Tool calls in state:", toolCalls.length);
-  console.log("State:", JSON.stringify(state, null, 2));
-
-  if (toolCalls.length === 1 && toolCalls[0].payload.source === "agent" && toolCalls[0].payload.data.status === "completed") {
-    console.log("✅ PASS: Tool call consolidated correctly");
-  } else {
-    console.log("❌ FAIL: Expected a single completed tool call entry");
-  }
+  assert.strictEqual(toolCalls.length, 1, "Pending/completed tool entries should reconcile");
+  assert.strictEqual(toolCalls[0].payload.source, "agent");
+  assert.strictEqual(toolCalls[0].payload.data.status, "completed");
 }
 
 // Test 3: Multiple assistant messages with different IDs
 function testMultipleMessages() {
-  console.log('\n=== Test 3: Multiple Distinct Messages ===');
-
   const timestamp1 = new Date("2025-01-01T10:00:00Z");
   const timestamp2 = new Date("2025-01-01T10:00:05Z");
 
@@ -195,24 +161,13 @@ function testMultipleMessages() {
 
   const assistantMessages = state.filter((item) => item.kind === "assistant_message");
 
-  console.log("Assistant messages:", assistantMessages.length);
-  console.log("State:", JSON.stringify(state, null, 2));
-
-  if (
-    assistantMessages.length === 2 &&
-    assistantMessages[0].text === "First message" &&
-    assistantMessages[1].text === "Second message"
-  ) {
-    console.log("✅ PASS: Multiple messages handled correctly");
-  } else {
-    console.log("❌ FAIL: Expected 2 distinct messages");
-  }
+  assert.strictEqual(assistantMessages.length, 2, "Assistant messages should remain distinct");
+  assert.strictEqual(assistantMessages[0].text, "First message");
+  assert.strictEqual(assistantMessages[1].text, "Second message");
 }
 
 // Test 4: Tool call raw input should survive completion updates
 function testToolCallInputPreservation() {
-  console.log('\n=== Test 4: Tool Call Input Preservation ===');
-
   const timestampStart = new Date("2025-01-01T10:00:00Z");
   const timestampFinish = new Date("2025-01-01T10:00:05Z");
 
@@ -243,29 +198,16 @@ function testToolCallInputPreservation() {
       item.kind === "tool_call" && item.payload.source === "agent"
   );
 
-  if (!toolCallEntry) {
-    console.log("❌ FAIL: Tool call entry not found");
-    return;
-  }
+  assert.ok(toolCallEntry, "Tool call entry expected after hydration");
+  const rawPayload = toolCallEntry!.payload.data.raw as unknown;
 
-  const rawPayload = toolCallEntry.payload.data.raw as unknown;
-
-  const isArrayPayload = Array.isArray(rawPayload);
-  const containsInput = isArrayPayload && rawPayload[0] === toolInput;
-  const containsResult = isArrayPayload && rawPayload[1] === toolResult;
-
-  if (isArrayPayload && containsInput && containsResult) {
-    console.log("✅ PASS: Tool call raw input/output preserved after completion");
-  } else {
-    console.log("❌ FAIL: Tool call raw data missing input or output");
-    console.log("Raw payload:", rawPayload);
-  }
+  assert.ok(Array.isArray(rawPayload), "Raw payload should contain both input and result entries");
+  assert.strictEqual(rawPayload[0], toolInput);
+  assert.strictEqual(rawPayload[1], toolResult);
 }
 
 // Test 5: Completed tool calls without status should infer completion for hydrated state
 function testToolCallStatusInference() {
-  console.log('\n=== Test 5: Tool Call Status Inference ===');
-
   const toolCallId = 'tool-completion';
   const timestamp1 = new Date('2025-01-01T10:10:00Z');
   const timestamp2 = new Date('2025-01-01T10:10:05Z');
@@ -306,22 +248,15 @@ function testToolCallStatusInference() {
       item.kind === 'tool_call' && item.payload.source === 'agent' && item.payload.data.callId === toolCallId
   );
 
-  if (
-    toolEntry &&
-    toolEntry.payload.data.status === 'completed' &&
-    toolEntry.payload.data.result &&
-    (toolEntry.payload.data.result as { content?: string }).content === 'Hello world'
-  ) {
-    console.log('✅ PASS: Missing status inferred from output and completion payload kept');
-  } else {
-    console.log('❌ FAIL: Expected inferred completion status and output');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.ok(toolEntry, "Tool entry should exist after hydration");
+  assert.strictEqual(toolEntry.payload.data.status, 'completed');
+  assert.strictEqual(
+    (toolEntry.payload.data.result as { content?: string }).content,
+    'Hello world'
+  );
 }
 
 function testToolCallStatusInferenceFromRawOnly() {
-  console.log('\n=== Test 5b: Tool Call Status From Raw Payload ===');
-
   const toolCallId = 'raw-status';
   const timestamp = new Date('2025-01-01T10:20:00Z');
 
@@ -347,17 +282,10 @@ function testToolCallStatusInferenceFromRawOnly() {
       item.kind === 'tool_call' && item.payload.source === 'agent'
   );
 
-  if (toolEntry?.payload.data.status === 'completed') {
-    console.log('✅ PASS: Raw payload exit code inferred completion');
-  } else {
-    console.log('❌ FAIL: Expected completed status inferred from raw payload');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.strictEqual(toolEntry?.payload.data.status, 'completed');
 }
 
 function testToolCallFailureInferenceFromRaw() {
-  console.log('\n=== Test 5c: Tool Call Failure From Raw Payload ===');
-
   const toolCallId = 'raw-error';
   const timestamp = new Date('2025-01-01T10:25:00Z');
 
@@ -386,17 +314,10 @@ function testToolCallFailureInferenceFromRaw() {
       item.kind === 'tool_call' && item.payload.source === 'agent'
   );
 
-  if (toolEntry?.payload.data.status === 'failed') {
-    console.log('✅ PASS: Raw payload error inferred failure');
-  } else {
-    console.log('❌ FAIL: Expected failed status inferred from raw payload');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.strictEqual(toolEntry?.payload.data.status, 'failed');
 }
 
 function testToolCallLateCallIdReconciliation() {
-  console.log('\n=== Test 5d: Tool Call Late Call ID Reconciliation ===');
-
   const timestampStart = new Date('2025-01-01T10:15:00Z');
   const timestampFinish = new Date('2025-01-01T10:15:05Z');
 
@@ -414,23 +335,12 @@ function testToolCallLateCallIdReconciliation() {
       item.kind === 'tool_call' && item.payload.source === 'agent'
   );
 
-  if (
-    toolCalls.length === 1 &&
-    toolCalls[0].payload.data.status === 'completed' &&
-    toolCalls[0].payload.data.callId === 'late-call'
-  ) {
-    console.log('✅ PASS: Tool call updates reconcile when call IDs arrive late');
-  } else {
-    console.log(
-      '❌ FAIL: Late call IDs should update existing entries instead of duplicating'
-    );
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.strictEqual(toolCalls.length, 1, 'late call ids should merge entries');
+  assert.strictEqual(toolCalls[0].payload.data.status, 'completed');
+  assert.strictEqual(toolCalls[0].payload.data.callId, 'late-call');
 }
 
 function testToolCallParsedPayloadHydration() {
-  console.log('\n=== Test 5e: Tool Call Parsed Payload Hydration ===');
-
   const timestampStart = new Date('2025-01-01T10:35:00Z');
   const timestampFinish = new Date('2025-01-01T10:35:05Z');
 
@@ -555,17 +465,54 @@ function testToolCallParsedPayloadHydration() {
       commandEntry.payload.data.parsedCommand.output?.includes('/voice-dev')
   );
 
-  if (readPass && commandPass) {
-    console.log('✅ PASS: Parsed read and command payloads persist through hydration');
-  } else {
-    console.log('❌ FAIL: Expected parsed payloads to be available after hydration');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.ok(readPass, 'Read payload should persist across hydration');
+  assert.ok(commandPass, 'Command payload should persist across hydration');
+}
+
+function buildClaudeToolUseBlock({
+  id,
+  name,
+  server,
+  input,
+}: {
+  id: string;
+  name: string;
+  server: string;
+  input: Record<string, unknown>;
+}) {
+  return {
+    type: 'mcp_tool_use',
+    id,
+    name,
+    server,
+    input,
+  };
+}
+
+function buildClaudeToolResultBlock({
+  toolUseId,
+  server,
+  toolName,
+  content,
+  isError,
+}: {
+  toolUseId: string;
+  server: string;
+  toolName: string;
+  content: Array<Record<string, unknown>>;
+  isError?: boolean;
+}) {
+  return {
+    type: 'mcp_tool_result',
+    tool_use_id: toolUseId,
+    server,
+    tool_name: toolName,
+    is_error: Boolean(isError),
+    content,
+  };
 }
 
 function testClaudeHydratedToolBodies() {
-  console.log('\n=== Test 5f: Claude Hydrated Tool Bodies ===');
-
   const timestampStart = new Date('2025-01-01T10:40:00Z');
   const timestampFinish = new Date('2025-01-01T10:40:05Z');
 
@@ -584,14 +531,15 @@ function testClaudeHydratedToolBodies() {
           tool: 'apply_patch',
           status: 'pending',
           callId: editCallId,
-          raw: {
-            type: 'tool_use',
-            tool_use_id: editCallId,
+          raw: buildClaudeToolUseBlock({
+            id: editCallId,
+            name: 'apply_patch',
+            server: 'editor',
             input: {
               file_path: 'src/example.ts',
-              patch: '*** Begin Patch...'
+              patch: '*** Begin Patch...',
             },
-          },
+          }),
         },
       },
       timestamp: timestampStart,
@@ -605,19 +553,25 @@ function testClaudeHydratedToolBodies() {
           server: 'editor',
           tool: 'apply_patch',
           callId: editCallId,
-          raw: {
-            type: 'tool_result',
-            tool_use_id: editCallId,
-            output: {
-              changes: [
-                {
-                  file_path: 'src/example.ts',
-                  previous_content: 'export const answer = 41;\n',
-                  content: 'export const answer = 42;\n',
+          raw: buildClaudeToolResultBlock({
+            toolUseId: editCallId,
+            server: 'editor',
+            toolName: 'apply_patch',
+            content: [
+              {
+                type: 'input_json',
+                json: {
+                  changes: [
+                    {
+                      file_path: 'src/example.ts',
+                      previous_content: 'export const answer = 41;\n',
+                      content: 'export const answer = 42;\n',
+                    },
+                  ],
                 },
-              ],
-            },
-          },
+              },
+            ],
+          }),
           output: {
             changes: [
               {
@@ -641,11 +595,12 @@ function testClaudeHydratedToolBodies() {
           tool: 'read_file',
           status: 'pending',
           callId: readCallId,
-          raw: {
-            type: 'tool_use',
-            tool_use_id: readCallId,
+          raw: buildClaudeToolUseBlock({
+            id: readCallId,
+            name: 'read_file',
+            server: 'editor',
             input: { file_path: 'README.md' },
-          },
+          }),
         },
       },
       timestamp: timestampStart,
@@ -659,11 +614,17 @@ function testClaudeHydratedToolBodies() {
           server: 'editor',
           tool: 'read_file',
           callId: readCallId,
-          raw: {
-            type: 'tool_result',
-            tool_use_id: readCallId,
-            output: { content: '# Hydrated test file\nHello Claude!' },
-          },
+          raw: buildClaudeToolResultBlock({
+            toolUseId: readCallId,
+            server: 'editor',
+            toolName: 'read_file',
+            content: [
+              {
+                type: 'input_text',
+                text: '# Hydrated test file\nHello Claude!',
+              },
+            ],
+          }),
           output: { content: '# Hydrated test file\nHello Claude!' },
         },
       },
@@ -679,11 +640,12 @@ function testClaudeHydratedToolBodies() {
           tool: 'shell',
           status: 'pending',
           callId: commandCallId,
-          raw: {
-            type: 'tool_use',
-            tool_use_id: commandCallId,
+          raw: buildClaudeToolUseBlock({
+            id: commandCallId,
+            name: 'shell',
+            server: 'command',
             input: { command: 'ls' },
-          },
+          }),
           kind: 'execute',
         },
       },
@@ -698,15 +660,23 @@ function testClaudeHydratedToolBodies() {
           server: 'command',
           tool: 'shell',
           callId: commandCallId,
-          raw: {
-            type: 'tool_result',
-            tool_use_id: commandCallId,
-            result: {
-              command: 'ls',
-              output: 'README.md\npackages\n',
-            },
-            metadata: { exit_code: 0 },
-          },
+          raw: buildClaudeToolResultBlock({
+            toolUseId: commandCallId,
+            server: 'command',
+            toolName: 'shell',
+            content: [
+              {
+                type: 'input_json',
+                json: {
+                  result: {
+                    command: 'ls',
+                    output: 'README.md\npackages\n',
+                  },
+                  metadata: { exit_code: 0 },
+                },
+              },
+            ],
+          }),
           output: {
             result: {
               command: 'ls',
@@ -756,18 +726,13 @@ function testClaudeHydratedToolBodies() {
       commandEntry.payload.data.parsedCommand.output?.includes('README.md')
   );
 
-  if (editHasDiff && readHasContent && commandHasOutput) {
-    console.log('✅ PASS: Claude hydration surfaces diff, read, and command bodies');
-  } else {
-    console.log('❌ FAIL: Expected hydrated Claude stream to expose tool body content');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.ok(editHasDiff, 'Edit tool should expose parsed diff payloads');
+  assert.ok(readHasContent, 'Read tool should expose hydrated file content');
+  assert.ok(commandHasOutput, 'Command tool should expose hydrated stdout');
 }
 
 // Test 6: Assistant message chunks should preserve whitespace between words
 function testAssistantWhitespacePreservation() {
-  console.log('\n=== Test 6: Assistant Message Whitespace Preservation ===');
-
   const timestamp = new Date('2025-01-01T11:00:00Z');
 
   const updates = [
@@ -779,18 +744,11 @@ function testAssistantWhitespacePreservation() {
   const state = hydrateStreamState(updates);
   const assistantMsg = state.find((item) => item.kind === "assistant_message");
 
-  if (assistantMsg && assistantMsg.text === "Hello world !") {
-    console.log("✅ PASS: Assistant message whitespace preserved");
-  } else {
-    console.log("❌ FAIL: Expected whitespace to be preserved");
-    console.log("Assistant message:", assistantMsg);
-  }
+  assert.strictEqual(assistantMsg?.text, "Hello world !");
 }
 
 // Test 7: User messages should persist through hydration and deduplicate with live events
 function testUserMessageHydration() {
-  console.log('\n=== Test 7: User Message Hydration ===');
-
   const timestamp = new Date('2025-01-01T11:30:00Z');
   const messageId = 'msg_user_1';
 
@@ -802,12 +760,8 @@ function testUserMessageHydration() {
   const hydrated = hydrateStreamState(updates);
   const hydratedUser = hydrated.find((item) => item.kind === 'user_message');
 
-  if (hydratedUser && hydratedUser.text === 'Run npm test' && hydratedUser.id === messageId) {
-    console.log('✅ PASS: Hydrated stream contains persisted user message');
-  } else {
-    console.log('❌ FAIL: Expected user message to survive hydration');
-    console.log('Hydrated state:', JSON.stringify(hydrated, null, 2));
-  }
+  assert.strictEqual(hydratedUser?.text, 'Run npm test');
+  assert.strictEqual(hydratedUser?.id, messageId);
 
   const optimisticState: StreamItem[] = [
     { kind: 'user_message', id: messageId, text: 'Run npm test', timestamp },
@@ -819,18 +773,12 @@ function testUserMessageHydration() {
     timestamp
   );
 
-  if (afterServerEvent.length === 1 && afterServerEvent[0].kind === 'user_message') {
-    console.log('✅ PASS: Duplicate server event does not create extra user entry');
-  } else {
-    console.log('❌ FAIL: Duplicate server event should not add another user message');
-    console.log('State:', JSON.stringify(afterServerEvent, null, 2));
-  }
+  assert.strictEqual(afterServerEvent.length, 1);
+  assert.strictEqual(afterServerEvent[0].kind, 'user_message');
 }
 
 // Test 8: Permission tool calls should not show in the timeline
 function testPermissionToolCallFiltering() {
-  console.log('\n=== Test 8: Permission Tool Call Filtering ===');
-
   const timestamp = new Date('2025-01-01T12:00:00Z');
   const updates = [
     { event: permissionTimeline('permission-1', 'pending'), timestamp },
@@ -842,18 +790,11 @@ function testPermissionToolCallFiltering() {
     (item) => item.kind === 'tool_call' && item.payload.source === 'agent'
   );
 
-  if (permissionEntries.length === 0) {
-    console.log('✅ PASS: Permission tool calls hidden from timeline');
-  } else {
-    console.log('❌ FAIL: Permission tool calls should be hidden');
-    console.log('State:', JSON.stringify(state, null, 2));
-  }
+  assert.strictEqual(permissionEntries.length, 0);
 }
 
 // Test 9: Todo lists should consolidate into a single entry and update completions
 function testTodoListConsolidation() {
-  console.log('\n=== Test 9: Todo List Consolidation ===');
-
   const timestamp1 = new Date('2025-01-01T12:30:00Z');
   const timestamp2 = new Date('2025-01-01T12:31:00Z');
 
@@ -877,17 +818,103 @@ function testTodoListConsolidation() {
     (item): item is TodoListItem => item.kind === 'todo_list'
   );
 
-  if (
-    todoEntries.length === 1 &&
+  assert.strictEqual(todoEntries.length, 1);
+  assert.ok(
     todoEntries[0].items.some(
       (entry) => entry.text === 'Outline approach' && entry.completed
-    )
-  ) {
-    console.log('✅ PASS: Todo list updates consolidate and reflect completion');
-  } else {
-    console.log('❌ FAIL: Todo list entries were not consolidated as expected');
-    console.log('State:', JSON.stringify(state, null, 2));
+    ),
+    'Todo entries should consolidate into a single list'
+  );
+}
+
+function testTimelineIdStabilityAfterRemovals() {
+  const timestamp = new Date('2025-01-01T12:35:00Z');
+
+  // Assistant stream entries
+  let assistantState: StreamItem[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    assistantState = reduceStreamUpdate(
+      assistantState,
+      userTimeline(`assistant-prefill-${i}`),
+      timestamp
+    );
   }
+  assistantState = reduceStreamUpdate(
+    assistantState,
+    assistantTimeline('Repeatable assistant text'),
+    timestamp
+  );
+  assistantState = reduceStreamUpdate(
+    assistantState,
+    userTimeline('assistant-separator'),
+    timestamp
+  );
+  assistantState = assistantState.filter(
+    (item) =>
+      !(
+        item.kind === 'user_message' &&
+        (item.text === 'assistant-prefill-0' || item.text === 'assistant-prefill-1')
+      )
+  );
+  assistantState = reduceStreamUpdate(
+    assistantState,
+    assistantTimeline('Repeatable assistant text'),
+    timestamp
+  );
+
+  const assistantIds = assistantState
+    .filter((item) => item.kind === 'assistant_message')
+    .map((item) => item.id);
+  const assistantUnique = new Set(assistantIds);
+
+  assert.strictEqual(
+    assistantIds.length,
+    assistantUnique.size,
+    'Assistant ids should stay unique after state shrink'
+  );
+
+  // Thought stream entries
+  let thoughtState: StreamItem[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    thoughtState = reduceStreamUpdate(
+      thoughtState,
+      userTimeline(`thought-prefill-${i}`),
+      timestamp
+    );
+  }
+  thoughtState = reduceStreamUpdate(
+    thoughtState,
+    reasoningTimeline('Repeatable reasoning text'),
+    timestamp
+  );
+  thoughtState = reduceStreamUpdate(
+    thoughtState,
+    userTimeline('thought-separator'),
+    timestamp
+  );
+  thoughtState = thoughtState.filter(
+    (item) =>
+      !(
+        item.kind === 'user_message' &&
+        (item.text === 'thought-prefill-0' || item.text === 'thought-prefill-1')
+      )
+  );
+  thoughtState = reduceStreamUpdate(
+    thoughtState,
+    reasoningTimeline('Repeatable reasoning text'),
+    timestamp
+  );
+
+  const thoughtIds = thoughtState
+    .filter((item) => item.kind === 'thought')
+    .map((item) => item.id);
+  const thoughtUnique = new Set(thoughtIds);
+
+  assert.strictEqual(
+    thoughtIds.length,
+    thoughtUnique.size,
+    'Thought ids should stay unique after state shrink'
+  );
 }
 
 type ToolCallProvider = 'claude' | 'codex';
@@ -966,69 +993,57 @@ function validateToolCallDeduplication(
 }
 
 function testToolCallDeduplicationLive() {
-  console.log('\n=== Test 10: Tool Call Deduplication (Live) ===');
   (['claude', 'codex'] as const).forEach((provider) => {
     const updates = buildConcurrentToolCallUpdates(provider);
     const toolCalls = validateToolCallDeduplication(updates, 'live');
     const callIds = toolCalls.map((entry) => entry.payload.data.callId).filter(Boolean);
     const statuses = toolCalls.map((entry) => entry.payload.data.status);
 
-    if (
-      toolCalls.length === 2 &&
-      callIds.includes(`${provider}-tool-1`) &&
-      callIds.includes(`${provider}-tool-2`) &&
-      statuses.every((status) => status === 'completed')
-    ) {
-      console.log(`✅ PASS: ${provider} live stream deduped tool calls`);
-    } else {
-      console.log(`❌ FAIL: ${provider} live stream still duplicates tool calls`);
-      console.log('State:', JSON.stringify(toolCalls, null, 2));
-    }
+    assert.strictEqual(toolCalls.length, 2, `${provider} live tool calls should dedupe`);
+    assert.ok(
+      callIds.includes(`${provider}-tool-1`) && callIds.includes(`${provider}-tool-2`),
+      `${provider} live stream should retain tool call identifiers`
+    );
+    assert.ok(
+      statuses.every((status) => status === 'completed'),
+      `${provider} live stream should mark calls as completed`
+    );
   });
 }
 
 function testToolCallDeduplicationHydrated() {
-  console.log('\n=== Test 11: Tool Call Deduplication (Hydrated) ===');
   (['claude', 'codex'] as const).forEach((provider) => {
     const updates = buildConcurrentToolCallUpdates(provider);
     const toolCalls = validateToolCallDeduplication(updates, 'hydrated');
     const callIds = toolCalls.map((entry) => entry.payload.data.callId).filter(Boolean);
     const statuses = toolCalls.map((entry) => entry.payload.data.status);
 
-    if (
-      toolCalls.length === 2 &&
-      callIds.includes(`${provider}-tool-1`) &&
-      callIds.includes(`${provider}-tool-2`) &&
-      statuses.every((status) => status === 'completed')
-    ) {
-      console.log(`✅ PASS: ${provider} hydration deduped tool calls`);
-    } else {
-      console.log(`❌ FAIL: ${provider} hydration still duplicates tool calls`);
-      console.log('State:', JSON.stringify(toolCalls, null, 2));
-    }
+    assert.strictEqual(toolCalls.length, 2, `${provider} hydration should dedupe tool calls`);
+    assert.ok(
+      callIds.includes(`${provider}-tool-1`) && callIds.includes(`${provider}-tool-2`),
+      `${provider} hydration should retain tool call identifiers`
+    );
+    assert.ok(
+      statuses.every((status) => status === 'completed'),
+      `${provider} hydration should mark calls completed`
+    );
   });
 }
 
-// Run all tests
-console.log("Testing Idempotent Stream Reduction");
-console.log("====================================");
-
-testIdempotentReduction();
-testUserMessageDeduplication();
-testMultipleMessages();
-testToolCallInputPreservation();
-testToolCallStatusInference();
-testToolCallStatusInferenceFromRawOnly();
-testToolCallFailureInferenceFromRaw();
-testToolCallLateCallIdReconciliation();
-testToolCallParsedPayloadHydration();
-testClaudeHydratedToolBodies();
-testAssistantWhitespacePreservation();
-testUserMessageHydration();
-testPermissionToolCallFiltering();
-testTodoListConsolidation();
-testToolCallDeduplicationLive();
-testToolCallDeduplicationHydrated();
-
-console.log("\n====================================");
-console.log("Tests complete");
+test('Idempotent reduction', testIdempotentReduction);
+test('Tool call deduplication in-place', testUserMessageDeduplication);
+test('Multiple assistant messages remain distinct', testMultipleMessages);
+test('Tool call raw payload preservation', testToolCallInputPreservation);
+test('Status inferred from completion payloads', testToolCallStatusInference);
+test('Status inferred from raw exit codes', testToolCallStatusInferenceFromRawOnly);
+test('Status inferred from raw errors', testToolCallFailureInferenceFromRaw);
+test('Late call IDs reconcile correctly', testToolCallLateCallIdReconciliation);
+test('Parsed payload hydration persists', testToolCallParsedPayloadHydration);
+test('Claude hydration renders tool bodies', testClaudeHydratedToolBodies);
+test('Assistant whitespace preserved', testAssistantWhitespacePreservation);
+test('User message hydration/dedup', testUserMessageHydration);
+test('Permission tool calls filtered', testPermissionToolCallFiltering);
+test('Todo list consolidation', testTodoListConsolidation);
+test('Timeline ids stable after removals', testTimelineIdStabilityAfterRemovals);
+test('Tool call deduplication (live)', testToolCallDeduplicationLive);
+test('Tool call deduplication (hydrated)', testToolCallDeduplicationHydrated);
