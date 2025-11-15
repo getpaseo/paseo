@@ -54,7 +54,8 @@
 
 ## Voice Interruptions & Streaming
 
-- [ ] Wire interrupt signal on speech start so VAD immediately issues `abort_request` to the server before any audio segment is sent.
+- [x] Wire interrupt signal on speech start so VAD immediately issues `abort_request` to the server before any audio segment is sent.
+  - Realtime speech detection now sends a `session/abort_request` as soon as VAD confirms speech, ensuring any in-flight LLM turn is interrupted before the buffered audio is uploaded (implemented in `packages/app/src/contexts/realtime-context.tsx` with logging/error handling).
 - [ ] Abort server-side playback/LLM as soon as a realtime audio chunk arrives; set a speech-in-progress flag that pauses new TTS until the turn completes.
 - [ ] Interrupt the currently focused agent whenever a realtime user turn begins, ensuring the next prompt starts fresh.
 - [ ] Harden playback stop/queue clearing so speech detection purges suppressed audio and the server stops emitting TTS while the user is talking.

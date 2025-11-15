@@ -41,6 +41,19 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       if (isPlayingAudio) {
         audioPlayer.stop();
       }
+      // Abort any in-flight LLM turn before the new speech segment streams
+      try {
+        const abortMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "abort_request",
+          },
+        };
+        ws.send(abortMessage);
+        console.log("[Realtime] Sent abort_request before streaming audio");
+      } catch (error) {
+        console.error("[Realtime] Failed to send abort_request:", error);
+      }
     },
     onSpeechEnd: () => {
       console.log("[Realtime] Speech ended");
