@@ -856,7 +856,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   workingIndicatorText: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.semibold,
   },
   workingDotsRow: {
     flexDirection: "row",

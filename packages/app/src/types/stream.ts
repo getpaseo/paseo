@@ -90,20 +90,22 @@ export interface ThoughtItem {
   timestamp: Date;
 }
 
+export type ToolCallStatus = "executing" | "completed" | "failed";
+
 interface OrchestratorToolCallData {
   toolCallId: string;
   toolName: string;
   arguments: unknown;
   result?: unknown;
   error?: unknown;
-  status: "executing" | "completed" | "failed";
+  status: ToolCallStatus;
 }
 
 export interface AgentToolCallData {
   provider: AgentProvider;
   server: string;
   tool: string;
-  status: string;
+  status?: ToolCallStatus;
   raw?: unknown;
   callId?: string;
   displayName?: string;
@@ -126,9 +128,13 @@ export interface ToolCallItem {
   payload: ToolCallPayload;
 }
 
-type AgentToolCallItem = ToolCallItem & {
+export type AgentToolCallItem = ToolCallItem & {
   payload: { source: "agent"; data: AgentToolCallData };
 };
+
+export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem {
+  return item.kind === "tool_call" && item.payload.source === "agent";
+}
 
 type ActivityLogType = "system" | "info" | "success" | "error";
 
@@ -532,12 +538,6 @@ function findExistingAgentToolCallIndex(
     return matches.length > 0 ? matches : candidates;
   };
 
-  const byDisplayName = filterByComparableField(
-    fallbackCandidates,
-    (entry) => normalizeComparableString(entry.payload.data.displayName),
-    normalizedDisplayName
-  );
-
   const selectCandidate = (
     candidates: Array<{ index: number; item: AgentToolCallItem }>
   ): number => {
@@ -773,7 +773,7 @@ function normalizeToolCallStatus(
   result?: unknown,
   error?: unknown,
   raw?: unknown
-): "executing" | "completed" | "failed" {
+): ToolCallStatus {
   const normalizedFromStatus = normalizeStatusString(status);
   if (normalizedFromStatus === "failed") {
     return "failed";
@@ -798,9 +798,9 @@ function normalizeToolCallStatus(
 }
 
 function mergeToolCallStatus(
-  existing: "executing" | "completed" | "failed" | undefined,
-  incoming: "executing" | "completed" | "failed"
-): "executing" | "completed" | "failed" {
+  existing: ToolCallStatus | undefined,
+  incoming: ToolCallStatus
+): ToolCallStatus {
   if (existing === "failed" || incoming === "failed") {
     return "failed";
   }
@@ -938,7 +938,7 @@ export function reduceStreamUpdate(
               provider: event.provider,
               server: item.server,
               tool: item.tool,
-              status: item.status ?? "executing",
+              status: normalizeStatusString(item.status) ?? "executing",
               raw: rawPayload,
               callId: item.callId,
               displayName: item.displayName,

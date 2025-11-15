@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
-import { hydrateStreamState, type StreamItem, type ToolCallItem, type AgentToolCallData } from "../../../../../app/src/types/stream.js";
+import {
+  hydrateStreamState,
+  type StreamItem,
+  type AgentToolCallData,
+  isAgentToolCallItem,
+} from "../../../../../app/src/types/stream.js";
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
@@ -596,15 +601,10 @@ function stateIncludesUserMessage(state: StreamItem[], marker: string): boolean 
 }
 
 function extractAgentToolSnapshots(state: StreamItem[]): ToolSnapshot[] {
-  return state
-    .filter(
-      (item): item is ToolCallItem =>
-        item.kind === "tool_call" && item.payload.source === "agent"
-    )
-    .map((item) => ({
-      key: buildToolSnapshotKey(item.payload.data, item.id),
-      data: item.payload.data,
-    }));
+  return state.filter(isAgentToolCallItem).map((item) => ({
+    key: buildToolSnapshotKey(item.payload.data, item.id),
+    data: item.payload.data,
+  }));
 }
 
 function buildToolSnapshotKey(data: AgentToolCallData, fallbackId: string): string {

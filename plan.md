@@ -82,3 +82,8 @@
   - `packages/app/src/components/agent-input-area.tsx` now shows a lone Send control when text/images are queued while keeping Dictate + Realtime visible only when the input is empty or the agent is actively running.
 - [x] Remove the agent status pill next to the permission selector; instead show a “working” indicator inside the chat scroll view itself (three bouncing dots animation) whenever the agent is busy.
   - Dropped the old status dot from `AgentStatusBar` (the permission/mode selector now stands alone) and introduced an in-stream "Working" chip inside `AgentStreamView` that renders three bouncing dots via Reanimated whenever the agent reports `status === "running"`, so busy turns surface directly in the chat timeline.
+- [x] npm run typecheck and fix all problems
+  - Split the server build/typecheck configs so the typechecker can include the app stream helpers without breaking builds, added path aliases for `@server/*`, and tightened the shared stream types (status unions + `isAgentToolCallItem`) so the server e2e suites can import them safely. Cleaned up every failing app/server test by narrowing tool-call payloads via the helper, updated the harness + Codex/Claude specs, and re-ran `npm run typecheck` (app + server) to green.
+- [ ] audit codebase for unecessary untyped code, hacks, casts, and `any`, type things properly
+- [ ] audit codebase for duplicated code, clean it up
+- [ ] rename the project to Paseo, including the Expo app, package names etc.

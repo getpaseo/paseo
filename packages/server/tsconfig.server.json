@@ -4,6 +4,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2020"],
+    "baseUrl": "./src",
+    "paths": {
+      "@server/*": ["./*"]
+    },
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,

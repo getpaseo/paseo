@@ -7,10 +7,20 @@ import {
   type StreamItem,
   type ToolCallItem,
   type TodoListItem,
+  type AgentToolCallItem,
+  isAgentToolCallItem,
 } from "./stream";
 
 type AgentStreamEventPayload = Parameters<typeof reduceStreamUpdate>[1];
 type TestAgentProvider = "claude" | "codex";
+
+function expectAgentToolCallItem(
+  item: ToolCallItem | undefined,
+  message = "Expected agent tool call"
+): asserts item is AgentToolCallItem {
+  assert.ok(item, message);
+  assert.ok(isAgentToolCallItem(item), message);
+}
 
 function assistantTimeline(text: string, provider: TestAgentProvider = "claude"): AgentStreamEventPayload {
   return {
@@ -157,7 +167,7 @@ function testUserMessageDeduplication() {
 
   const state = hydrateStreamState(updates);
 
-  const toolCalls = state.filter((item) => item.kind === "tool_call");
+  const toolCalls = state.filter(isAgentToolCallItem);
 
   assert.strictEqual(toolCalls.length, 1, "Pending/completed tool entries should reconcile");
   assert.strictEqual(toolCalls[0].payload.source, "agent");
@@ -212,13 +222,12 @@ function testToolCallInputPreservation() {
   ];
 
   const state = hydrateStreamState(updates);
-  const toolCallEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === "tool_call" && item.payload.source === "agent"
+  const toolCallEntry = state.find((item): item is AgentToolCallItem =>
+    isAgentToolCallItem(item)
   );
 
-  assert.ok(toolCallEntry, "Tool call entry expected after hydration");
-  const rawPayload = toolCallEntry!.payload.data.raw as unknown;
+  expectAgentToolCallItem(toolCallEntry, "Tool call entry expected after hydration");
+  const rawPayload = toolCallEntry.payload.data.raw as unknown;
 
   assert.ok(Array.isArray(rawPayload), "Raw payload should contain both input and result entries");
   assert.strictEqual(rawPayload[0], toolInput);
@@ -263,8 +272,8 @@ function testToolCallStatusInference() {
   ]);
 
   const toolEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' && item.payload.source === 'agent' && item.payload.data.callId === toolCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === toolCallId
   );
 
   assert.ok(toolEntry, "Tool entry should exist after hydration");
@@ -296,10 +305,7 @@ function testToolCallStatusInferenceFromRawOnly() {
   };
 
   const state = hydrateStreamState([{ event: rawEvent, timestamp }]);
-  const toolEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
+  const toolEntry = state.find(isAgentToolCallItem);
 
   assert.strictEqual(toolEntry?.payload.data.status, 'completed');
 }
@@ -328,12 +334,9 @@ function testToolCallFailureInferenceFromRaw() {
   };
 
   const state = hydrateStreamState([{ event: rawEvent, timestamp }]);
-  const toolEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
-
-  assert.strictEqual(toolEntry?.payload.data.status, 'failed');
+  const toolEntry = state.find(isAgentToolCallItem);
+  expectAgentToolCallItem(toolEntry);
+  assert.strictEqual(toolEntry.payload.data.status, 'failed');
 }
 
 function testToolCallLateCallIdReconciliation() {
@@ -349,10 +352,7 @@ function testToolCallLateCallIdReconciliation() {
   ];
 
   const state = hydrateStreamState(updates);
-  const toolCalls = state.filter(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
+  const toolCalls = state.filter(isAgentToolCallItem);
 
   assert.strictEqual(toolCalls.length, 1, 'late call ids should merge entries');
   assert.strictEqual(toolCalls[0].payload.data.status, 'completed');
@@ -460,16 +460,12 @@ function testToolCallParsedPayloadHydration() {
 
   const state = hydrateStreamState(updates);
   const readEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === readCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === readCallId
   );
   const commandEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === commandCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === commandCallId
   );
 
   const readPass = Boolean(
@@ -711,22 +707,16 @@ function testClaudeHydratedToolBodies() {
 
   const state = hydrateStreamState(updates);
   const editEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === editCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === editCallId
   );
   const readEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === readCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === readCallId
   );
   const commandEntry = state.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === commandCallId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === commandCallId
   );
 
   const editHasDiff = Boolean(
@@ -838,9 +828,7 @@ function testPermissionToolCallFiltering() {
   ];
 
   const state = hydrateStreamState(updates);
-  const permissionEntries = state.filter(
-    (item) => item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
+  const permissionEntries = state.filter(isAgentToolCallItem);
 
   assert.strictEqual(permissionEntries.length, 0);
 }
@@ -1030,7 +1018,7 @@ function buildConcurrentToolCallUpdates(provider: ToolCallProvider) {
 function validateToolCallDeduplication(
   updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }>,
   mode: 'live' | 'hydrated'
-): ToolCallItem[] {
+): AgentToolCallItem[] {
   const finalState =
     mode === 'live'
       ? updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
@@ -1038,10 +1026,7 @@ function validateToolCallDeduplication(
         }, [])
       : hydrateStreamState(updates);
 
-  return finalState.filter(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
+  return finalState.filter(isAgentToolCallItem);
 }
 
 function testToolCallDeduplicationLive() {
@@ -1116,9 +1101,7 @@ function testOutOfOrderToolCallMergingLive() {
     const finalState = updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
       return reduceStreamUpdate(state, event, timestamp);
     }, []);
-    const toolCalls = finalState.filter(
-      (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
-    );
+    const toolCalls = finalState.filter(isAgentToolCallItem);
     assert.strictEqual(toolCalls.length, 1, `${provider} live stream should not duplicate out-of-order calls`);
     assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} live stream should keep completed status`);
   });
@@ -1128,9 +1111,7 @@ function testOutOfOrderToolCallMergingHydrated() {
   (['claude', 'codex'] as const).forEach((provider) => {
     const updates = buildOutOfOrderToolCallSequence(provider);
     const hydrated = hydrateStreamState(updates);
-    const toolCalls = hydrated.filter(
-      (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
-    );
+    const toolCalls = hydrated.filter(isAgentToolCallItem);
     assert.strictEqual(toolCalls.length, 1, `${provider} hydration should not duplicate out-of-order calls`);
     assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} hydration should keep completed status`);
   });
@@ -1178,7 +1159,7 @@ function buildMetadataReplaySequence(provider: ToolCallProvider) {
 function validateMetadataReplayDeduplication(
   updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }>,
   mode: 'live' | 'hydrated'
-) {
+): AgentToolCallItem[] {
   const finalState =
     mode === 'live'
       ? updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
@@ -1186,11 +1167,7 @@ function validateMetadataReplayDeduplication(
         }, [])
       : hydrateStreamState(updates);
 
-  const toolCalls = finalState.filter(
-    (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
-
-  return toolCalls;
+  return finalState.filter(isAgentToolCallItem);
 }
 
 function testMetadataReplayDeduplicationLive() {
@@ -1241,9 +1218,7 @@ function testFallbackToolCallIdsStayUnique() {
   ];
 
   const hydrated = hydrateStreamState(updates);
-  const toolCalls = hydrated.filter(
-    (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
-  );
+  const toolCalls = hydrated.filter(isAgentToolCallItem);
 
   assert.strictEqual(toolCalls.length, 2, 'Hydration should retain multiple fallback tool entries');
   const ids = toolCalls.map((item) => item.id);
@@ -1284,10 +1259,8 @@ function testCodexProviderEventsProduceToolCalls() {
   }, []);
 
   const commandTool = commandState.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === 'cmd-provider-1'
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === 'cmd-provider-1'
   );
 
   assert.ok(commandTool, 'Codex provider command events should create tool call entries');
@@ -1327,10 +1300,8 @@ function testCodexProviderEventsProduceToolCalls() {
   }, []);
 
   const mcpTool = mcpState.find(
-    (item): item is ToolCallItem =>
-      item.kind === 'tool_call' &&
-      item.payload.source === 'agent' &&
-      item.payload.data.callId === 'mcp-provider-1'
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === 'mcp-provider-1'
   );
 
   assert.ok(mcpTool, 'Codex provider MCP events should create tool call entries');
