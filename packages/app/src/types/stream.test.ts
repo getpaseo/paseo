@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { describe, it } from "vitest";
 
 import {
   reduceStreamUpdate,
@@ -7,22 +7,23 @@ import {
   type StreamItem,
   type ToolCallItem,
   type TodoListItem,
-} from "./packages/app/src/types/stream";
+} from "./stream";
 
 type AgentStreamEventPayload = Parameters<typeof reduceStreamUpdate>[1];
+type TestAgentProvider = "claude" | "codex";
 
-function assistantTimeline(text: string): AgentStreamEventPayload {
+function assistantTimeline(text: string, provider: TestAgentProvider = "claude"): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "claude",
+    provider,
     item: { type: "assistant_message", text },
   };
 }
 
-function reasoningTimeline(text: string): AgentStreamEventPayload {
+function reasoningTimeline(text: string, provider: TestAgentProvider = "claude"): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "claude",
+    provider,
     item: { type: "reasoning", text },
   };
 }
@@ -84,10 +85,10 @@ function todoTimeline(items: { text: string; completed: boolean }[]): AgentStrea
   };
 }
 
-function userTimeline(text: string, messageId?: string): AgentStreamEventPayload {
+function userTimeline(text: string, messageId?: string, provider: TestAgentProvider = "claude"): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "claude",
+    provider,
     item: {
       type: "user_message",
       text,
@@ -777,6 +778,39 @@ function testUserMessageHydration() {
   assert.strictEqual(afterServerEvent[0].kind, 'user_message');
 }
 
+function testHydratedUserMessagesPersist() {
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const snapshotTimestamp = new Date('2025-01-01T12:15:00Z');
+    const snapshot = [
+      { event: userTimeline('Tell me more', undefined, provider), timestamp: snapshotTimestamp },
+      { event: userTimeline('Tell me more', undefined, provider), timestamp: snapshotTimestamp },
+      { event: assistantTimeline('Sure thing', provider), timestamp: snapshotTimestamp },
+    ];
+
+    const hydrated = hydrateStreamState(snapshot);
+    const hydratedUsers = hydrated.filter((item) => item.kind === 'user_message');
+
+    assert.strictEqual(
+      hydratedUsers.length,
+      2,
+      `${provider} hydrated snapshots should retain duplicate-text user entries`
+    );
+
+    const replayed = reduceStreamUpdate(
+      hydrated,
+      assistantTimeline('Continuing after hydration', provider),
+      new Date('2025-01-01T12:16:00Z')
+    );
+    const replayedUsers = replayed.filter((item) => item.kind === 'user_message');
+
+    assert.strictEqual(
+      replayedUsers.length,
+      2,
+      `${provider} live updates should preserve hydrated user entries`
+    );
+  });
+}
+
 // Test 8: Permission tool calls should not show in the timeline
 function testPermissionToolCallFiltering() {
   const timestamp = new Date('2025-01-01T12:00:00Z');
@@ -1030,20 +1064,23 @@ function testToolCallDeduplicationHydrated() {
   });
 }
 
-test('Idempotent reduction', testIdempotentReduction);
-test('Tool call deduplication in-place', testUserMessageDeduplication);
-test('Multiple assistant messages remain distinct', testMultipleMessages);
-test('Tool call raw payload preservation', testToolCallInputPreservation);
-test('Status inferred from completion payloads', testToolCallStatusInference);
-test('Status inferred from raw exit codes', testToolCallStatusInferenceFromRawOnly);
-test('Status inferred from raw errors', testToolCallFailureInferenceFromRaw);
-test('Late call IDs reconcile correctly', testToolCallLateCallIdReconciliation);
-test('Parsed payload hydration persists', testToolCallParsedPayloadHydration);
-test('Claude hydration renders tool bodies', testClaudeHydratedToolBodies);
-test('Assistant whitespace preserved', testAssistantWhitespacePreservation);
-test('User message hydration/dedup', testUserMessageHydration);
-test('Permission tool calls filtered', testPermissionToolCallFiltering);
-test('Todo list consolidation', testTodoListConsolidation);
-test('Timeline ids stable after removals', testTimelineIdStabilityAfterRemovals);
-test('Tool call deduplication (live)', testToolCallDeduplicationLive);
-test('Tool call deduplication (hydrated)', testToolCallDeduplicationHydrated);
+describe('stream timeline reducers', () => {
+  it('produces deterministic hydration results', testIdempotentReduction);
+  it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
+  it('preserves distinct assistant messages', testMultipleMessages);
+  it('retains tool call raw payloads through completion', testToolCallInputPreservation);
+  it('infers completion from tool result payloads', testToolCallStatusInference);
+  it('infers completion from raw exit codes alone', testToolCallStatusInferenceFromRawOnly);
+  it('infers failure from raw error payloads', testToolCallFailureInferenceFromRaw);
+  it('reconciles late call IDs against pending entries', testToolCallLateCallIdReconciliation);
+  it('persists parsed read/edit/command payloads after hydration', testToolCallParsedPayloadHydration);
+  it('hydrates Claude tool bodies with parsed content', testClaudeHydratedToolBodies);
+  it('preserves whitespace in assistant chunk concatenation', testAssistantWhitespacePreservation);
+  it('hydrates user messages and deduplicates optimistic/live entries', testUserMessageHydration);
+  it('retains hydrated user messages across providers', testHydratedUserMessagesPersist);
+  it('filters permission tool calls from the stream', testPermissionToolCallFiltering);
+  it('consolidates todo list updates', testTodoListConsolidation);
+  it('keeps timeline ids stable after list shrinkage', testTimelineIdStabilityAfterRemovals);
+  it('deduplicates live tool call entries', testToolCallDeduplicationLive);
+  it('deduplicates hydrated tool call entries', testToolCallDeduplicationHydrated);
+});
