@@ -1,5 +1,7 @@
 import { View, Text, Pressable, Animated } from "react-native";
 import { useState, useEffect, useRef, memo, useMemo, useCallback } from "react";
+import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import Markdown from "react-native-markdown-display";
 import {
   Circle,
@@ -23,6 +25,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
+import type { TodoEntry } from "@/types/stream";
 
 interface UserMessageProps {
   message: string;
@@ -596,6 +599,180 @@ export const ActivityLog = memo(function ActivityLog({
         )}
       </View>
     </Pressable>
+  );
+});
+
+interface TodoListCardProps {
+  provider: AgentProvider;
+  timestamp: number;
+  items: TodoEntry[];
+}
+
+function formatPlanTimestamp(timestamp: number): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(new Date(timestamp));
+  } catch {
+    return new Date(timestamp).toLocaleTimeString();
+  }
+}
+
+const todoListCardStylesheet = StyleSheet.create((theme) => ({
+  container: {
+    marginHorizontal: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
+  card: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    padding: theme.spacing[3],
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[2],
+  },
+  headerMeta: {
+    flexDirection: "column",
+    gap: theme.spacing[0],
+  },
+  title: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  timestamp: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+  },
+  providerBadge: {
+    backgroundColor: "rgba(59, 130, 246, 0.15)",
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  providerText: {
+    color: "#93c5fd",
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  progressText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    marginBottom: theme.spacing[2],
+  },
+  list: {
+    gap: theme.spacing[2],
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.base,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  checkboxCompleted: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  itemText: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  itemTextCompleted: {
+    color: theme.colors.mutedForeground,
+    textDecorationLine: "line-through",
+  },
+  emptyText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontStyle: "italic",
+  },
+}));
+
+export const TodoListCard = memo(function TodoListCard({
+  provider,
+  timestamp,
+  items,
+}: TodoListCardProps) {
+  const providerLabel = useMemo(() => {
+    const definition = getAgentProviderDefinition(provider);
+    return definition?.label ?? provider;
+  }, [provider]);
+
+  const completedCount = useMemo(
+    () => items.filter((item) => item.completed).length,
+    [items]
+  );
+
+  const timestampLabel = useMemo(() => formatPlanTimestamp(timestamp), [timestamp]);
+
+  const iconColor = theme.colors.background;
+
+  return (
+    <View style={todoListCardStylesheet.container}>
+      <View style={todoListCardStylesheet.card}>
+        <View style={todoListCardStylesheet.header}>
+          <View style={todoListCardStylesheet.headerMeta}>
+            <Text style={todoListCardStylesheet.title}>Plan</Text>
+            <Text style={todoListCardStylesheet.timestamp}>{timestampLabel}</Text>
+          </View>
+          <View style={todoListCardStylesheet.providerBadge}>
+            <Text style={todoListCardStylesheet.providerText}>{providerLabel}</Text>
+          </View>
+        </View>
+        <Text style={todoListCardStylesheet.progressText}>
+          {items.length > 0
+            ? `${completedCount}/${items.length} completed`
+            : "Waiting for tasks..."}
+        </Text>
+        <View style={todoListCardStylesheet.list}>
+          {items.length === 0 ? (
+            <Text style={todoListCardStylesheet.emptyText}>
+              No todo items shared yet.
+            </Text>
+          ) : (
+            items.map((item, idx) => (
+              <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
+                <View
+                  style={[
+                    todoListCardStylesheet.checkbox,
+                    item.completed && todoListCardStylesheet.checkboxCompleted,
+                  ]}
+                >
+                  {item.completed && <Check size={14} color={iconColor} />}
+                </View>
+                <Text
+                  style={[
+                    todoListCardStylesheet.itemText,
+                    item.completed && todoListCardStylesheet.itemTextCompleted,
+                  ]}
+                >
+                  {item.text}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+      </View>
+    </View>
   );
 });
 
