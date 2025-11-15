@@ -14,7 +14,7 @@ import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import {
@@ -310,9 +310,47 @@ export function AgentStreamView({
     [pendingPermissions, agentId]
   );
 
+  const showWorkingIndicator = agent.status === "running";
+
+  const listHeaderComponent = useMemo(() => {
+    if (pendingPermissionItems.length === 0 && !showWorkingIndicator) {
+      return null;
+    }
+
+    return (
+      <View style={stylesheet.listHeaderContent}>
+        {pendingPermissionItems.length > 0 ? (
+          <View style={stylesheet.permissionsContainer}>
+            {pendingPermissionItems.map((permission) => (
+              <PermissionRequestCard
+                key={permission.key}
+                permission={permission}
+                onResponse={onPermissionResponse}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {showWorkingIndicator ? (
+          <View style={stylesheet.workingIndicatorWrapper}>
+            <WorkingIndicator />
+          </View>
+        ) : null}
+      </View>
+    );
+  }, [onPermissionResponse, pendingPermissionItems, showWorkingIndicator]);
+
   const flatListData = useMemo(() => {
     return [...streamItems].reverse();
   }, [streamItems]);
+
+  const flatListExtraData = useMemo(
+    () => ({
+      pendingPermissionCount: pendingPermissionItems.length,
+      showWorkingIndicator,
+    }),
+    [pendingPermissionItems.length, showWorkingIndicator]
+  );
 
   return (
     <View style={stylesheet.container}>
@@ -339,20 +377,8 @@ export function AgentStreamView({
             </Text>
           </View>
         }
-        ListHeaderComponent={
-          pendingPermissionItems.length > 0 ? (
-            <View style={stylesheet.permissionsContainer}>
-              {pendingPermissionItems.map((permission) => (
-                <PermissionRequestCard
-                  key={permission.key}
-                  permission={permission}
-                  onResponse={onPermissionResponse}
-                />
-              ))}
-            </View>
-          ) : null
-        }
-        extraData={pendingPermissionItems.length}
+        ListHeaderComponent={listHeaderComponent}
+        extraData={flatListExtraData}
         maintainVisibleContentPosition={{
           minIndexForVisible: 0,
           autoscrollToTopThreshold: 40,
@@ -430,6 +456,62 @@ function normalizeInlinePath(rawPath: string):
     directory: directory.length > 0 ? directory : ".",
     file: normalized,
   };
+}
+
+function WorkingIndicator() {
+  const dotOne = useSharedValue(0);
+  const dotTwo = useSharedValue(0);
+  const dotThree = useSharedValue(0);
+
+  useEffect(() => {
+    const sharedValues = [dotOne, dotTwo, dotThree];
+    sharedValues.forEach((value, index) => {
+      value.value = withDelay(
+        index * 120,
+        withRepeat(
+          withSequence(
+            withTiming(1, { duration: 320 }),
+            withTiming(0, { duration: 320 })
+          ),
+          -1,
+          true
+        )
+      );
+    });
+
+    return () => {
+      sharedValues.forEach((value) => {
+        cancelAnimation(value);
+        value.value = 0;
+      });
+    };
+  }, [dotOne, dotTwo, dotThree]);
+
+  const dotOneStyle = useAnimatedStyle(() => ({
+    opacity: 0.3 + dotOne.value * 0.7,
+    transform: [{ translateY: dotOne.value * -4 }],
+  }));
+
+  const dotTwoStyle = useAnimatedStyle(() => ({
+    opacity: 0.3 + dotTwo.value * 0.7,
+    transform: [{ translateY: dotTwo.value * -4 }],
+  }));
+
+  const dotThreeStyle = useAnimatedStyle(() => ({
+    opacity: 0.3 + dotThree.value * 0.7,
+    transform: [{ translateY: dotThree.value * -4 }],
+  }));
+
+  return (
+    <View style={stylesheet.workingIndicatorBubble}>
+      <Text style={stylesheet.workingIndicatorText}>Working</Text>
+      <View style={stylesheet.workingDotsRow}>
+        <Animated.View style={[stylesheet.workingDot, dotOneStyle]} />
+        <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
+        <Animated.View style={[stylesheet.workingDot, dotThreeStyle]} />
+      </View>
+    </View>
+  );
 }
 
 // Permission Request Card Component
@@ -753,6 +835,39 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   permissionsContainer: {
     gap: theme.spacing[2],
+  },
+  listHeaderContent: {
+    gap: theme.spacing[3],
+  },
+  workingIndicatorWrapper: {
+    alignItems: "center",
+  },
+  workingIndicatorBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.card,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  workingIndicatorText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  workingDotsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  workingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.mutedForeground,
   },
   invertedWrapper: {
     transform: [{ scaleY: -1 }],
