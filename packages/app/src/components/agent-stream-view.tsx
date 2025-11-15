@@ -333,13 +333,19 @@ export function AgentStreamView({
         ListHeaderComponent={
           pendingPermissionItems.length > 0 ? (
             <View style={stylesheet.permissionsContainer}>
-              {pendingPermissionItems.map((permission) => (
-                <PermissionRequestCard
-                  key={permission.request.id}
-                  permission={permission}
-                  onResponse={onPermissionResponse}
-                />
-              ))}
+              {pendingPermissionItems.map((permission, index) => {
+                const permissionKey = permission.request.id
+                  ? `${permission.agentId}:${permission.request.id}`
+                  : `${permission.agentId}:permission-${permission.request.name ?? permission.request.title ?? index}`;
+
+                return (
+                  <PermissionRequestCard
+                    key={permissionKey}
+                    permission={permission}
+                    onResponse={onPermissionResponse}
+                  />
+                );
+              })}
             </View>
           ) : null
         }
