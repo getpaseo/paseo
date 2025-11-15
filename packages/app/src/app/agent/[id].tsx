@@ -292,7 +292,7 @@ export default function AgentScreen() {
               >
                 <RotateCcw size={20} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>
-                  {isInitializing ? "Refreshing..." : "Refresh from disk"}
+                  {isInitializing ? "Refreshing..." : "Refresh"}
                 </Text>
                 {isInitializing && (
                   <ActivityIndicator
