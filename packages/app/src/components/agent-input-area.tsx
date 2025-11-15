@@ -242,7 +242,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const hasImages = selectedImages.length > 0;
   const hasSendableContent = hasText || hasImages;
   const shouldShowSendButton = !isAgentRunning && hasSendableContent;
-  const shouldShowDictateButton = !isAgentRunning && !hasSendableContent;
+  const shouldShowVoiceControls = !isAgentRunning && !hasSendableContent;
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -388,20 +388,17 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                   </Pressable>
                 </>
               ) : shouldShowSendButton ? (
-                <>
-                  <Pressable
-                    onPress={handleSendMessage}
-                    disabled={!ws.isConnected || isProcessing}
-                    style={[
-                      styles.sendButton,
-                      (!ws.isConnected || isProcessing) && styles.buttonDisabled,
-                    ]}
-                  >
-                    <ArrowUp size={20} color="white" />
-                  </Pressable>
-                  {realtimeButton}
-                </>
-              ) : shouldShowDictateButton ? (
+                <Pressable
+                  onPress={handleSendMessage}
+                  disabled={!ws.isConnected || isProcessing}
+                  style={[
+                    styles.sendButton,
+                    (!ws.isConnected || isProcessing) && styles.buttonDisabled,
+                  ]}
+                >
+                  <ArrowUp size={20} color="white" />
+                </Pressable>
+              ) : shouldShowVoiceControls ? (
                 <>
                   <Pressable
                     onPress={handleVoicePress}
