@@ -2067,6 +2067,10 @@ export class Session {
       return;
     }
 
+    const chunkReceivedAt = Date.now();
+    const phaseBeforeAbort = this.processingPhase;
+    const hadActiveStream = Boolean(this.currentStreamPromise);
+
     this.speechInProgress = true;
     console.log(
       `[Session ${this.clientId}] Realtime speech chunk detected – aborting playback and LLM`
@@ -2091,6 +2095,15 @@ export class Session {
 
     this.abortController.abort();
     await this.handleAbort();
+
+    const latencyMs = Date.now() - chunkReceivedAt;
+    console.log("[Telemetry] barge_in.llm_abort_latency", {
+      latencyMs,
+      conversationId: this.conversationId,
+      phaseBeforeAbort,
+      hadActiveStream,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   /**

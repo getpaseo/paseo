@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from "react";
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
 import { useSession } from "./session-context";
 import { generateMessageId } from "@/types/stream";
@@ -39,12 +39,16 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     setVoiceDetectionFlags,
   } = useSession();
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
+  const bargeInPlaybackStopRef = useRef<number | null>(null);
 
   const realtimeAudio = useSpeechmaticsAudio({
     onSpeechStart: () => {
       console.log("[Realtime] Speech detected");
       // Stop audio playback if playing
       if (isPlayingAudio) {
+        if (bargeInPlaybackStopRef.current === null) {
+          bargeInPlaybackStopRef.current = Date.now();
+        }
         audioPlayer.stop();
       }
 
@@ -111,6 +115,18 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   useEffect(() => {
     setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
   }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking, setVoiceDetectionFlags]);
+
+  useEffect(() => {
+    if (!isPlayingAudio && bargeInPlaybackStopRef.current !== null) {
+      const latencyMs = Date.now() - bargeInPlaybackStopRef.current;
+      console.log("[Telemetry] barge_in.playback_stop_latency", {
+        latencyMs,
+        startedAt: new Date(bargeInPlaybackStopRef.current).toISOString(),
+        completedAt: new Date().toISOString(),
+      });
+      bargeInPlaybackStopRef.current = null;
+    }
+  }, [isPlayingAudio]);
 
   const startRealtime = useCallback(async () => {
     try {
