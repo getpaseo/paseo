@@ -17,6 +17,11 @@
   - Updated the agent overflow menu label in `packages/app/src/app/agent/[id].tsx` so the refresh action now matches the desired wording while keeping the busy state text untouched; no additional changes were required.
 - [x] Are we filtering our own shats (already present in agents storage) from the resume agent list? We should if not.
   - Resume tab now filters out persisted sessions whose session ids match any active agent (live session id or persisted handle) to avoid duplicate entries; verified via `npm run typecheck --workspace=@voice-dev/app`.
-- [ ] Getting "two children with the same key" for "thoughts" and "assistant" review our keying strategy, and make it more robust and performant, and stable.
-- [ ] Hydrated session show previous tool calls as loading. At least for claude we're not loading the output Chekc Codex too.
-- [ ] Add agent type indicator in the agent list, so we can quickly identify the agent type (Claude, Codex, etc.). On the left of the status pill.
+- [x] Getting "two children with the same key" for "thoughts" and "assistant" review our keying strategy, and make it more robust and performant, and stable.
+  - Added deterministic per-entry suffixes when creating assistant and thought timeline ids so FlatList keys remain unique even when providers replay identical text chunks with the same timestamps; reran `npm run typecheck --workspace=@voice-dev/app`.
+- [x] Hydrated session show previous tool calls as loading. At least for claude we're not loading the output Chekc Codex too.
+  - Tool call snapshots now infer completed/failed states when historical events lacked an explicit status, and we accumulate every tool payload in `raw` so hydrated sessions expose prior diffs/reads/command output instead of staying in a loading state. Added regression coverage in `test-idempotent-stream.ts` and ran `npm run typecheck --workspace=@voice-dev/app`.
+- [x] Add agent type indicator in the agent list, so we can quickly identify the agent type (Claude, Codex, etc.). On the left of the status pill.
+  - Agent cards now include a provider badge left of the status pill by pulling provider labels from the manifest, with new styles to match the sidebar treatment; ran `npm run typecheck --workspace=@voice-dev/app`.
+- [x] Hydrated agents still show loading state for tool calls, check this properly, it's not fixed. I am also not seeing the tool call output in the agent stream, which is important.
+  - Tool snapshots now infer completed/failed states by walking the raw payload (exit codes, tool_result/error flags) when status/result/error are missing, and added regression coverage in `test-idempotent-stream.ts`. The agent stream cards now render command output/read content/diff previews inline plus show failures, and we pass result/error data through so hydrated tool calls immediately display their output. Verified with `npm run typecheck --workspace=@voice-dev/app` and `npx tsx test-idempotent-stream.ts`.

@@ -221,7 +221,12 @@ function appendAgentToolCall(
   data: AgentToolCallData,
   timestamp: Date
 ): StreamItem[] {
-  const normalizedStatus = normalizeToolCallStatus(data.status);
+  const normalizedStatus = normalizeToolCallStatus(
+    data.status,
+    data.result,
+    data.error,
+    data.raw
+  );
   const callId = data.callId ?? extractToolCallId(data.raw);
 
   const payloadData: AgentToolCallData = {
@@ -293,18 +298,138 @@ function isPermissionToolCall(raw: unknown): boolean {
   return candidate.server === "permission" || candidate.kind === "permission";
 }
 
-function normalizeToolCallStatus(status?: string): "executing" | "completed" | "failed" {
+const FAILED_STATUS_PATTERN = /fail|error|deny|reject|cancel|abort|exception|refus/;
+const COMPLETED_STATUS_PATTERN =
+  /complete|success|granted|applied|done|resolved|finish|succeed|ok/;
+
+function normalizeStatusString(
+  status?: string | null
+): "executing" | "completed" | "failed" | null {
   if (!status) {
-    return "executing";
+    return null;
   }
-  const normalized = status.toLowerCase();
-  if (/fail|error|deny|reject|cancel/.test(normalized)) {
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (FAILED_STATUS_PATTERN.test(normalized)) {
     return "failed";
   }
-  if (/complete|success|granted|applied|done|resolved/.test(normalized)) {
+  if (COMPLETED_STATUS_PATTERN.test(normalized)) {
     return "completed";
   }
   return "executing";
+}
+
+function hasValue(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+function inferStatusFromRaw(raw: unknown): "completed" | "failed" | null {
+  if (!hasValue(raw)) {
+    return null;
+  }
+
+  const queue: unknown[] = Array.isArray(raw) ? [...raw] : [raw];
+  const visited = new Set<object>();
+
+  while (queue.length > 0) {
+    const candidate = queue.shift();
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    if (visited.has(candidate as object)) {
+      continue;
+    }
+    visited.add(candidate as object);
+    const record = candidate as Record<string, unknown>;
+
+    if (record.is_error === true) {
+      return "failed";
+    }
+
+    const statusValue = normalizeStatusString(
+      typeof record.status === "string" ? record.status : undefined
+    );
+    if (statusValue === "failed") {
+      return "failed";
+    }
+    if (statusValue === "completed") {
+      return "completed";
+    }
+
+    if ("error" in record && hasValue(record.error)) {
+      return "failed";
+    }
+
+    if (typeof record.stderr === "string" && record.stderr.length > 0) {
+      return "failed";
+    }
+
+    const typeValue =
+      typeof record.type === "string" ? record.type.toLowerCase() : "";
+    if (typeValue) {
+      if (FAILED_STATUS_PATTERN.test(typeValue)) {
+        return "failed";
+      }
+      if (/result|response|output|success/.test(typeValue)) {
+        return "completed";
+      }
+    }
+
+    const exitCode =
+      typeof record.exitCode === "number"
+        ? record.exitCode
+        : typeof record.exit_code === "number"
+          ? record.exit_code
+          : null;
+    if (exitCode !== null) {
+      return exitCode === 0 ? "completed" : "failed";
+    }
+
+    const successValue =
+      typeof record.success === "boolean" ? record.success : null;
+    if (successValue !== null) {
+      return successValue ? "completed" : "failed";
+    }
+
+    for (const value of Object.values(record)) {
+      if (typeof value === "object" && value !== null) {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeToolCallStatus(
+  status?: string,
+  result?: unknown,
+  error?: unknown,
+  raw?: unknown
+): "executing" | "completed" | "failed" {
+  const normalizedFromStatus = normalizeStatusString(status);
+  if (normalizedFromStatus === "failed") {
+    return "failed";
+  }
+  if (normalizedFromStatus === "completed") {
+    return "completed";
+  }
+
+  if (hasValue(error)) {
+    return "failed";
+  }
+  if (hasValue(result)) {
+    return "completed";
+  }
+
+  const inferredFromRaw = inferStatusFromRaw(raw);
+  if (inferredFromRaw) {
+    return inferredFromRaw;
+  }
+
+  return normalizedFromStatus ?? "executing";
 }
 
 const TOOL_CALL_ID_KEYS = [

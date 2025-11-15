@@ -26,6 +26,12 @@ import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry } from "@/types/stream";
+import {
+  extractCommandDetails,
+  extractEditEntries,
+  extractReadEntries,
+} from "@/utils/tool-call-parsers";
+import { DiffViewer } from "./diff-viewer";
 
 interface UserMessageProps {
   message: string;
@@ -960,6 +966,26 @@ const toolKindIcons: Record<string, any> = {
   // Add more mappings as needed
 };
 
+function formatPreviewValue(value: unknown, limit = 800): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  let text: string;
+  if (typeof value === "string") {
+    text = value.trim();
+  } else {
+    try {
+      text = JSON.stringify(value, null, 2);
+    } catch {
+      text = String(value);
+    }
+  }
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit)}…`;
+}
+
 export const ToolCall = memo(function ToolCall({
   toolName,
   kind,
@@ -969,6 +995,22 @@ export const ToolCall = memo(function ToolCall({
   status,
   onOpenDetails,
 }: ToolCallProps) {
+  const editEntries = useMemo(() => extractEditEntries(args, result), [args, result]);
+  const readEntries = useMemo(() => extractReadEntries(result, args), [args, result]);
+  const commandDetails = useMemo(() => extractCommandDetails(args, result), [args, result]);
+
+  const primaryEditEntry = editEntries[0];
+  const primaryReadEntry = readEntries[0];
+  const genericResult =
+    result !== undefined &&
+    !commandDetails?.output &&
+    !primaryReadEntry &&
+    !primaryEditEntry
+      ? formatPreviewValue(result)
+      : null;
+  const formattedError =
+    error !== undefined ? formatPreviewValue(error ?? null, 600) : null;
+
   const spinAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -1055,6 +1097,128 @@ export const ToolCall = memo(function ToolCall({
             {toolName}
           </Text>
         </View>
+        {(commandDetails ||
+          primaryEditEntry ||
+          primaryReadEntry ||
+          genericResult ||
+          formattedError) && (
+          <View style={toolCallStylesheet.expandedContent}>
+            {commandDetails &&
+              (commandDetails.command ||
+                commandDetails.cwd ||
+                commandDetails.exitCode !== undefined ||
+                commandDetails.output) && (
+                <View style={toolCallStylesheet.section}>
+                  <Text style={toolCallStylesheet.sectionTitle}>Command</Text>
+                  <View style={toolCallStylesheet.sectionContent}>
+                    {commandDetails.command && (
+                      <Text
+                        style={toolCallStylesheet.sectionText}
+                        numberOfLines={2}
+                      >
+                        {commandDetails.command}
+                      </Text>
+                    )}
+                    {commandDetails.cwd && (
+                      <Text
+                        style={toolCallStylesheet.sectionText}
+                        numberOfLines={1}
+                      >
+                        {commandDetails.cwd}
+                      </Text>
+                    )}
+                    {commandDetails.exitCode !== undefined && (
+                      <Text style={toolCallStylesheet.sectionText}>
+                        Exit code:{" "}
+                        {commandDetails.exitCode === null
+                          ? "Unknown"
+                          : commandDetails.exitCode}
+                      </Text>
+                    )}
+                    {commandDetails.output && (
+                      <Text
+                        style={toolCallStylesheet.sectionText}
+                        numberOfLines={6}
+                      >
+                        {formatPreviewValue(commandDetails.output)}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              )}
+
+            {primaryReadEntry && (
+              <View style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>
+                  {primaryReadEntry.filePath
+                    ? `Read: ${primaryReadEntry.filePath}`
+                    : "Read Output"}
+                </Text>
+                <View style={toolCallStylesheet.sectionContent}>
+                  <Text
+                    style={toolCallStylesheet.sectionText}
+                    numberOfLines={6}
+                  >
+                    {formatPreviewValue(primaryReadEntry.content)}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {primaryEditEntry && (
+              <View style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>
+                  {primaryEditEntry.filePath
+                    ? `Diff: ${primaryEditEntry.filePath}`
+                    : "Diff"}
+                </Text>
+                <View style={toolCallStylesheet.sectionContent}>
+                  <DiffViewer diffLines={primaryEditEntry.diffLines} maxHeight={160} />
+                </View>
+              </View>
+            )}
+
+            {genericResult && (
+              <View style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>Result</Text>
+                <View style={toolCallStylesheet.sectionContent}>
+                  <Text style={toolCallStylesheet.sectionText} numberOfLines={6}>
+                    {genericResult}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {formattedError && (
+              <View style={toolCallStylesheet.section}>
+                <Text
+                  style={[
+                    toolCallStylesheet.sectionTitle,
+                    toolCallStylesheet.errorSectionTitle,
+                  ]}
+                >
+                  Error
+                </Text>
+                <View
+                  style={[
+                    toolCallStylesheet.sectionContent,
+                    toolCallStylesheet.errorSectionContent,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      toolCallStylesheet.sectionText,
+                      toolCallStylesheet.errorSectionTitle,
+                    ]}
+                    numberOfLines={6}
+                  >
+                    {formattedError}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
       </View>
     </Pressable>
   );

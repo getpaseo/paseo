@@ -253,9 +253,143 @@ function testToolCallInputPreservation() {
   }
 }
 
-// Test 5: Assistant message chunks should preserve whitespace between words
+// Test 5: Completed tool calls without status should infer completion for hydrated state
+function testToolCallStatusInference() {
+  console.log('\n=== Test 5: Tool Call Status Inference ===');
+
+  const toolCallId = 'tool-completion';
+  const timestamp1 = new Date('2025-01-01T10:10:00Z');
+  const timestamp2 = new Date('2025-01-01T10:10:05Z');
+
+  const startEvent: AgentStreamEventPayload = {
+    type: 'timeline',
+    provider: 'claude',
+    item: {
+      type: 'tool_call',
+      server: 'editor',
+      tool: 'read',
+      status: 'pending',
+      callId: toolCallId,
+      raw: { type: 'tool_use', tool_use_id: toolCallId, input: { file_path: 'README.md' } },
+    },
+  };
+
+  const completionEvent: AgentStreamEventPayload = {
+    type: 'timeline',
+    provider: 'claude',
+    item: {
+      type: 'tool_call',
+      server: 'editor',
+      tool: 'read',
+      callId: toolCallId,
+      raw: { type: 'tool_result', tool_use_id: toolCallId, output: { content: 'Hello world' } },
+      output: { content: 'Hello world' },
+    },
+  };
+
+  const state = hydrateStreamState([
+    { event: startEvent, timestamp: timestamp1 },
+    { event: completionEvent, timestamp: timestamp2 },
+  ]);
+
+  const toolEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' && item.payload.source === 'agent' && item.payload.data.callId === toolCallId
+  );
+
+  if (
+    toolEntry &&
+    toolEntry.payload.data.status === 'completed' &&
+    toolEntry.payload.data.result &&
+    (toolEntry.payload.data.result as { content?: string }).content === 'Hello world'
+  ) {
+    console.log('✅ PASS: Missing status inferred from output and completion payload kept');
+  } else {
+    console.log('❌ FAIL: Expected inferred completion status and output');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+// Test 5b: Completed tool calls should also infer status from raw payload
+function testToolCallStatusInferenceFromRawOnly() {
+  console.log('\n=== Test 5b: Tool Call Status From Raw Payload ===');
+
+  const toolCallId = 'raw-status';
+  const timestamp = new Date('2025-01-01T10:20:00Z');
+
+  const rawEvent: AgentStreamEventPayload = {
+    type: 'timeline',
+    provider: 'claude',
+    item: {
+      type: 'tool_call',
+      server: 'command',
+      tool: 'shell',
+      callId: toolCallId,
+      raw: {
+        type: 'mcp_tool_result',
+        tool_use_id: toolCallId,
+        result: { metadata: { exit_code: 0 } },
+      },
+    },
+  };
+
+  const state = hydrateStreamState([{ event: rawEvent, timestamp }]);
+  const toolEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  if (toolEntry?.payload.data.status === 'completed') {
+    console.log('✅ PASS: Raw payload exit code inferred completion');
+  } else {
+    console.log('❌ FAIL: Expected completed status inferred from raw payload');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+// Test 5c: Tool call failures should be inferred from raw payload errors
+function testToolCallFailureInferenceFromRaw() {
+  console.log('\n=== Test 5c: Tool Call Failure From Raw Payload ===');
+
+  const toolCallId = 'raw-error';
+  const timestamp = new Date('2025-01-01T10:25:00Z');
+
+  const rawEvent: AgentStreamEventPayload = {
+    type: 'timeline',
+    provider: 'claude',
+    item: {
+      type: 'tool_call',
+      server: 'command',
+      tool: 'shell',
+      callId: toolCallId,
+      raw: {
+        type: 'mcp_tool_result',
+        tool_use_id: toolCallId,
+        is_error: true,
+        error: {
+          message: 'Command failed',
+        },
+      },
+    },
+  };
+
+  const state = hydrateStreamState([{ event: rawEvent, timestamp }]);
+  const toolEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  if (toolEntry?.payload.data.status === 'failed') {
+    console.log('✅ PASS: Raw payload error inferred failure');
+  } else {
+    console.log('❌ FAIL: Expected failed status inferred from raw payload');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+// Test 6: Assistant message chunks should preserve whitespace between words
 function testAssistantWhitespacePreservation() {
-  console.log('\n=== Test 5: Assistant Message Whitespace Preservation ===');
+  console.log('\n=== Test 6: Assistant Message Whitespace Preservation ===');
 
   const timestamp = new Date('2025-01-01T11:00:00Z');
 
@@ -276,9 +410,9 @@ function testAssistantWhitespacePreservation() {
   }
 }
 
-// Test 6: User messages should persist through hydration and deduplicate with live events
+// Test 7: User messages should persist through hydration and deduplicate with live events
 function testUserMessageHydration() {
-  console.log('\n=== Test 6: User Message Hydration ===');
+  console.log('\n=== Test 7: User Message Hydration ===');
 
   const timestamp = new Date('2025-01-01T11:30:00Z');
   const messageId = 'msg_user_1';
@@ -316,9 +450,9 @@ function testUserMessageHydration() {
   }
 }
 
-// Test 7: Permission tool calls should not show in the timeline
+// Test 8: Permission tool calls should not show in the timeline
 function testPermissionToolCallFiltering() {
-  console.log('\n=== Test 7: Permission Tool Call Filtering ===');
+  console.log('\n=== Test 8: Permission Tool Call Filtering ===');
 
   const timestamp = new Date('2025-01-01T12:00:00Z');
   const updates = [
@@ -339,9 +473,9 @@ function testPermissionToolCallFiltering() {
   }
 }
 
-// Test 8: Todo lists should consolidate into a single entry and update completions
+// Test 9: Todo lists should consolidate into a single entry and update completions
 function testTodoListConsolidation() {
-  console.log('\n=== Test 8: Todo List Consolidation ===');
+  console.log('\n=== Test 9: Todo List Consolidation ===');
 
   const timestamp1 = new Date('2025-01-01T12:30:00Z');
   const timestamp2 = new Date('2025-01-01T12:31:00Z');
@@ -387,6 +521,9 @@ testIdempotentReduction();
 testUserMessageDeduplication();
 testMultipleMessages();
 testToolCallInputPreservation();
+testToolCallStatusInference();
+testToolCallStatusInferenceFromRawOnly();
+testToolCallFailureInferenceFromRaw();
 testAssistantWhitespacePreservation();
 testUserMessageHydration();
 testPermissionToolCallFiltering();

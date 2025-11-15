@@ -249,6 +249,8 @@ export function AgentStreamView({
               toolName={toolLabel}
               kind={data.kind}
               args={data.raw}
+              result={data.result}
+              error={data.error}
               status={data.status as "executing" | "completed" | "failed"}
               onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
