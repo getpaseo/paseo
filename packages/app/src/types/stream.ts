@@ -68,6 +68,11 @@ export interface AgentToolCallData {
   tool: string;
   status: string;
   raw?: unknown;
+  callId?: string;
+  displayName?: string;
+  kind?: string;
+  result?: unknown;
+  error?: unknown;
 }
 
 export type ToolCallPayload =
@@ -81,6 +86,10 @@ export interface ToolCallItem {
   payload: ToolCallPayload;
 }
 
+type AgentToolCallItem = ToolCallItem & {
+  payload: { source: "agent"; data: AgentToolCallData };
+};
+
 type ActivityLogType = "system" | "info" | "success" | "error";
 
 export interface ActivityLogItem {
@@ -92,12 +101,54 @@ export interface ActivityLogItem {
   metadata?: Record<string, unknown>;
 }
 
-type FileChangeEntry = { path: string; kind: string };
 type TodoEntry = { text: string; completed: boolean };
 
+function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
+  if (!text) {
+    return { chunk: "", hasContent: false };
+  }
+  const chunk = text.replace(/\r/g, "");
+  if (!chunk) {
+    return { chunk: "", hasContent: false };
+  }
+  return { chunk, hasContent: /\S/.test(chunk) };
+}
+
+function appendUserMessage(
+  state: StreamItem[],
+  text: string,
+  timestamp: Date,
+  messageId?: string
+): StreamItem[] {
+  const { chunk, hasContent } = normalizeChunk(text);
+  if (!hasContent) {
+    return state;
+  }
+
+  const entryId = messageId ?? createTimelineId("user", chunk.trim() || chunk, timestamp);
+  const existingIndex = state.findIndex(
+    (entry) => entry.kind === "user_message" && entry.id === entryId
+  );
+
+  const nextItem: UserMessageItem = {
+    kind: "user_message",
+    id: entryId,
+    text: chunk,
+    timestamp,
+  };
+
+  if (existingIndex >= 0) {
+    const next = [...state];
+    next[existingIndex] = nextItem;
+    return next;
+  }
+
+  return [...state, nextItem];
+}
+
 function appendAssistantMessage(state: StreamItem[], text: string, timestamp: Date): StreamItem[] {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const { chunk, hasContent } = normalizeChunk(text);
+  if (!chunk) {
     return state;
   }
 
@@ -105,24 +156,29 @@ function appendAssistantMessage(state: StreamItem[], text: string, timestamp: Da
   if (last && last.kind === "assistant_message") {
     const updated: AssistantMessageItem = {
       ...last,
-      text: `${last.text}${trimmed}`,
+      text: `${last.text}${chunk}`,
       timestamp,
     };
     return [...state.slice(0, -1), updated];
   }
 
+  if (!hasContent) {
+    return state;
+  }
+
+  const idSeed = chunk.trim() || chunk;
   const item: AssistantMessageItem = {
     kind: "assistant_message",
-    id: createTimelineId("assistant", trimmed, timestamp),
-    text: trimmed,
+    id: createTimelineId("assistant", idSeed, timestamp),
+    text: chunk,
     timestamp,
   };
   return [...state, item];
 }
 
 function appendThought(state: StreamItem[], text: string, timestamp: Date): StreamItem[] {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const { chunk, hasContent } = normalizeChunk(text);
+  if (!chunk) {
     return state;
   }
 
@@ -130,16 +186,21 @@ function appendThought(state: StreamItem[], text: string, timestamp: Date): Stre
   if (last && last.kind === "thought") {
     const updated: ThoughtItem = {
       ...last,
-      text: `${last.text}${trimmed}`,
+      text: `${last.text}${chunk}`,
       timestamp,
     };
     return [...state.slice(0, -1), updated];
   }
 
+  if (!hasContent) {
+    return state;
+  }
+
+  const idSeed = chunk.trim() || chunk;
   const item: ThoughtItem = {
     kind: "thought",
-    id: createTimelineId("thought", trimmed, timestamp),
-    text: trimmed,
+    id: createTimelineId("thought", idSeed, timestamp),
+    text: chunk,
     timestamp,
   };
   return [...state, item];
@@ -150,19 +211,56 @@ function appendAgentToolCall(
   data: AgentToolCallData,
   timestamp: Date
 ): StreamItem[] {
-  const status = data.status;
-  const id = createTimelineId(
-    "tool",
-    `${data.provider}:${data.server}:${data.tool}:${status}`,
-    timestamp
-  );
+  const normalizedStatus = normalizeToolCallStatus(data.status);
+  const callId = data.callId ?? extractToolCallId(data.raw);
 
-  const normalizedStatus: "executing" | "completed" | "failed" =
-    status === "completed"
-      ? "completed"
-      : status === "failed"
-      ? "failed"
-      : "executing";
+  const payloadData: AgentToolCallData = {
+    ...data,
+    status: normalizedStatus,
+    callId: callId ?? data.callId,
+  };
+
+  if (callId) {
+    const existingIndex = state.findIndex(
+      (entry) =>
+        entry.kind === "tool_call" &&
+        entry.payload.source === "agent" &&
+        entry.payload.data.callId === callId
+    );
+
+    if (existingIndex >= 0) {
+      const next = [...state];
+      const existing = next[existingIndex] as AgentToolCallItem;
+      const mergedRaw =
+        existing.payload.data.raw !== undefined && existing.payload.data.raw !== null
+          ? existing.payload.data.raw
+          : payloadData.raw;
+      next[existingIndex] = {
+        ...existing,
+        timestamp,
+        payload: {
+          source: "agent",
+          data: {
+            ...existing.payload.data,
+            ...payloadData,
+            raw: mergedRaw,
+            displayName: payloadData.displayName ?? existing.payload.data.displayName,
+            kind: payloadData.kind ?? existing.payload.data.kind,
+            callId,
+          },
+        },
+      };
+      return next;
+    }
+  }
+
+  const id = callId
+    ? `agent_tool_${callId}`
+    : createTimelineId(
+        "tool",
+        `${data.provider}:${data.server}:${data.tool}`,
+        timestamp
+      );
 
   const item: ToolCallItem = {
     kind: "tool_call",
@@ -170,19 +268,80 @@ function appendAgentToolCall(
     timestamp,
     payload: {
       source: "agent",
-      data: { ...data, status: normalizedStatus },
+      data: payloadData,
     },
   };
 
-  // Replace existing entry with same ID if present
-  const index = state.findIndex((entry) => entry.id === id);
-  if (index >= 0) {
-    const next = [...state];
-    next[index] = item;
-    return next;
-  }
-
   return [...state, item];
+}
+
+function isPermissionToolCall(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") {
+    return false;
+  }
+  const candidate = raw as { server?: string; kind?: string };
+  return candidate.server === "permission" || candidate.kind === "permission";
+}
+
+function normalizeToolCallStatus(status?: string): "executing" | "completed" | "failed" {
+  if (!status) {
+    return "executing";
+  }
+  const normalized = status.toLowerCase();
+  if (/fail|error|deny|reject|cancel/.test(normalized)) {
+    return "failed";
+  }
+  if (/complete|success|granted|applied|done|resolved/.test(normalized)) {
+    return "completed";
+  }
+  return "executing";
+}
+
+const TOOL_CALL_ID_KEYS = [
+  "toolCallId",
+  "tool_call_id",
+  "callId",
+  "call_id",
+  "tool_use_id",
+  "toolUseId",
+];
+
+function extractToolCallId(raw: unknown, depth = 0): string | null {
+  if (!raw || depth > 4) {
+    return null;
+  }
+  if (typeof raw === "string" || typeof raw === "number") {
+    return null;
+  }
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const nested = extractToolCallId(entry, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+  if (typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    for (const key of TOOL_CALL_ID_KEYS) {
+      const value = record[key];
+      if (typeof value === "string" && value.length > 0) {
+        return value;
+      }
+    }
+    const idValue = record.id;
+    if (typeof idValue === "string" && /tool|call/i.test(idValue)) {
+      return idValue;
+    }
+    for (const value of Object.values(record)) {
+      const nested = extractToolCallId(value, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return null;
 }
 
 function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
@@ -193,64 +352,6 @@ function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamI
     return next;
   }
   return [...state, entry];
-}
-
-function toHumanLabel(value?: string): string {
-  if (!value) {
-    return "";
-  }
-  return value
-    .replace(/[_-]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-function describeCommandStatus(status?: string): ActivityLogType {
-  if (!status) {
-    return "info";
-  }
-  const normalized = status.toLowerCase();
-  if (
-    normalized.includes("fail") ||
-    normalized.includes("error") ||
-    normalized.includes("deny") ||
-    normalized.includes("reject")
-  ) {
-    return "error";
-  }
-  if (
-    normalized.includes("success") ||
-    normalized.includes("complete") ||
-    normalized.includes("granted") ||
-    normalized.includes("applied")
-  ) {
-    return "success";
-  }
-  return "info";
-}
-
-function formatCommandMessage(command: string, status?: string): string {
-  const label = status ? toHumanLabel(status) : null;
-  const header = label ? `Command (${label})` : "Command";
-  return `${header}\n${command}`;
-}
-
-function formatFileChangeMessage(files: FileChangeEntry[]): string {
-  if (!files.length) {
-    return "File changes";
-  }
-  const header = files.length === 1 ? "File change" : `${files.length} file changes`;
-  const entries = files.map((file) => {
-    const kindLabel = file.kind ? toHumanLabel(file.kind) : "";
-    return `• ${kindLabel ? `[${kindLabel}] ` : ""}${file.path}`;
-  });
-  return [header, ...entries].join("\n");
-}
-
-function formatWebSearchMessage(query: string): string {
-  return `Web search\n"${query.trim()}"`;
 }
 
 function formatTodoMessage(items: TodoEntry[]): string {
@@ -278,55 +379,34 @@ export function reduceStreamUpdate(
     case "timeline": {
       const item = event.item;
       switch (item.type) {
+        case "user_message":
+          return appendUserMessage(state, item.text, timestamp, item.messageId);
         case "assistant_message":
           return appendAssistantMessage(state, item.text, timestamp);
         case "reasoning":
           return appendThought(state, item.text, timestamp);
-        case "mcp_tool":
+        case "tool_call": {
+          if (isPermissionToolCall(item)) {
+            return state;
+          }
+          const rawPayload =
+            item.raw ?? { input: item.input, output: item.output, error: item.error };
           return appendAgentToolCall(
             state,
             {
               provider: event.provider,
               server: item.server,
               tool: item.tool,
-              status: item.status,
-              raw: item.raw,
+              status: item.status ?? "executing",
+              raw: rawPayload,
+              callId: item.callId,
+              displayName: item.displayName,
+              kind: item.kind,
+              result: item.output,
+              error: item.error,
             },
             timestamp
           );
-        case "command": {
-          const activity: ActivityLogItem = {
-            kind: "activity_log",
-            id: createTimelineId("command", `${item.command}:${item.status ?? ""}`, timestamp),
-            timestamp,
-            activityType: describeCommandStatus(item.status),
-            message: formatCommandMessage(item.command, item.status),
-            metadata: item.raw ? { raw: item.raw } : undefined,
-          };
-          return appendActivityLog(state, activity);
-        }
-        case "file_change": {
-          const files = (item.files ?? []) as FileChangeEntry[];
-          const activity: ActivityLogItem = {
-            kind: "activity_log",
-            id: createTimelineId("file_change", JSON.stringify(files), timestamp),
-            timestamp,
-            activityType: "info",
-            message: formatFileChangeMessage(files),
-            metadata: files.length ? { files } : undefined,
-          };
-          return appendActivityLog(state, activity);
-        }
-        case "web_search": {
-          const activity: ActivityLogItem = {
-            kind: "activity_log",
-            id: createTimelineId("web_search", item.query ?? "", timestamp),
-            timestamp,
-            activityType: "info",
-            message: formatWebSearchMessage(item.query ?? ""),
-            metadata: item.raw ? { raw: item.raw } : { query: item.query },
-          };
-          return appendActivityLog(state, activity);
         }
         case "todo": {
           const items = (item.items ?? []) as TodoEntry[];

@@ -110,7 +110,7 @@ describe("CodexAgentClient (SDK integration)", () => {
           if (
             event.type === "timeline" &&
             event.provider === "codex" &&
-            (event.item.type === "file_change" || event.item.type === "command" || event.item.type === "mcp_tool")
+            event.item.type === "tool_call"
           ) {
             sawActivity = true;
           }

@@ -192,6 +192,40 @@ export class Session {
   }
 
   /**
+   * Interrupt the agent's active run so the next prompt starts a fresh turn.
+   * Returns once the manager confirms the stream has been cancelled.
+   */
+  private async interruptAgentIfRunning(agentId: string): Promise<void> {
+    const snapshot = this.agentManager.getAgent(agentId);
+    if (!snapshot) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    if (snapshot.status !== "running") {
+      return;
+    }
+
+    console.log(
+      `[Session ${this.clientId}] Interrupting active run for agent ${agentId}`
+    );
+
+    try {
+      const cancelled = await this.agentManager.cancelAgentRun(agentId);
+      if (!cancelled) {
+        console.warn(
+          `[Session ${this.clientId}] Agent ${agentId} reported running but no active run was cancelled`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to interrupt agent ${agentId}:`,
+        error
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Start streaming an agent run and forward results via the websocket broadcast
    */
   private startAgentStream(agentId: string, prompt: AgentPromptInput): void {
@@ -516,6 +550,14 @@ export class Session {
           await this.handleCreateAgentRequest(msg);
           break;
 
+        case "resume_agent_request":
+          await this.handleResumeAgentRequest(msg);
+          break;
+
+        case "refresh_agent_request":
+          await this.handleRefreshAgentRequest(msg);
+          break;
+
         case "initialize_agent_request":
           await this.handleInitializeAgentRequest(msg.agentId, msg.requestId);
           break;
@@ -538,6 +580,10 @@ export class Session {
 
         case "file_explorer_request":
           await this.handleFileExplorerRequest(msg);
+          break;
+
+        case "list_persisted_agents_request":
+          await this.handleListPersistedAgentsRequest(msg);
           break;
       }
     } catch (error: any) {
@@ -657,7 +703,7 @@ export class Session {
   private async handleSendAgentMessage(
     agentId: string,
     text: string,
-    _messageId?: string,
+    messageId?: string,
     images?: Array<{ data: string; mimeType: string }>
   ): Promise<void> {
     console.log(
@@ -666,7 +712,28 @@ export class Session {
       }] Sending text to agent ${agentId}: ${text.substring(0, 50)}...${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
     );
 
+    try {
+      await this.interruptAgentIfRunning(agentId);
+    } catch (error) {
+      this.handleAgentRunError(
+        agentId,
+        error,
+        "Failed to interrupt running agent before sending prompt"
+      );
+      return;
+    }
+
     const prompt = this.buildAgentPrompt(text, images);
+
+    try {
+      this.agentManager.recordUserMessage(agentId, text, { messageId });
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to record user message for agent ${agentId}:`,
+        error
+      );
+    }
+
     this.startAgentStream(agentId, prompt);
   }
 
@@ -721,6 +788,26 @@ export class Session {
           requestId,
         },
       });
+
+      try {
+        await this.interruptAgentIfRunning(agentId);
+      } catch (error) {
+        this.handleAgentRunError(
+          agentId,
+          error,
+          "Failed to interrupt running agent before sending audio prompt"
+        );
+        return;
+      }
+
+      try {
+        this.agentManager.recordUserMessage(agentId, transcriptText);
+      } catch (recordError) {
+        console.error(
+          `[Session ${this.clientId}] Failed to record transcribed user message for agent ${agentId}:`,
+          recordError
+        );
+      }
 
       // Send transcribed text to agent
       this.startAgentStream(agentId, transcriptText);
@@ -869,6 +956,103 @@ export class Session {
     }
   }
 
+  private async handleResumeAgentRequest(
+    msg: Extract<SessionInboundMessage, { type: "resume_agent_request" }>
+  ): Promise<void> {
+    const { handle, overrides, requestId } = msg;
+    if (!handle) {
+      console.warn(
+        `[Session ${this.clientId}] Resume request missing persistence handle`
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: "Unable to resume agent: missing persistence handle",
+        },
+      });
+      return;
+    }
+    console.log(
+      `[Session ${this.clientId}] Resuming agent ${handle.sessionId} (${handle.provider})`
+    );
+    try {
+      const snapshot = await this.agentManager.resumeAgent(handle, overrides);
+      this.setCachedTitle(snapshot.id, null);
+      await this.forwardAgentState(snapshot);
+      const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
+      if (requestId) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_resumed",
+            agentId: snapshot.id,
+            requestId,
+            timelineSize,
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to resume agent:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to resume agent: ${error.message}`,
+        },
+      });
+    }
+  }
+
+  private async handleRefreshAgentRequest(
+    msg: Extract<SessionInboundMessage, { type: "refresh_agent_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    console.log(
+      `[Session ${this.clientId}] Refreshing agent ${agentId} from persistence`
+    );
+
+    try {
+      const snapshot = await this.agentManager.refreshAgentFromPersistence(
+        agentId
+      );
+      await this.forwardAgentState(snapshot);
+      const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
+      if (requestId) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_refreshed",
+            agentId,
+            requestId,
+            timelineSize,
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to refresh agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to refresh agent: ${error.message}`,
+        },
+      });
+    }
+  }
+
   private async buildAgentSessionConfig(
     config: AgentSessionConfig,
     worktreeName?: string
@@ -891,6 +1075,47 @@ export class Session {
       ...config,
       cwd,
     };
+  }
+
+  private async handleListPersistedAgentsRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_persisted_agents_request" }>
+  ): Promise<void> {
+    const { provider, limit } = msg;
+    try {
+      const entries = await this.agentManager.listPersistedAgents({
+        provider,
+        limit,
+      });
+      this.emit({
+        type: "list_persisted_agents_response",
+        payload: {
+          items: entries.map((entry) => ({
+            provider: entry.provider,
+            sessionId: entry.sessionId,
+            cwd: entry.cwd,
+            title: entry.title ?? `Session ${entry.sessionId.slice(0, 8)}`,
+            lastActivityAt: entry.lastActivityAt.toISOString(),
+            persistence: entry.persistence,
+          })),
+        },
+      });
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to list persisted agents:`,
+        error
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to list saved agents: ${
+            (error as Error)?.message ?? error
+          }`,
+        },
+      });
+    }
   }
 
   /**
@@ -1154,10 +1379,6 @@ export class Session {
 
   private emitAgentTimelineSnapshot(agent: AgentSnapshot): number {
     const timeline = this.agentManager.getTimeline(agent.id);
-    if (timeline.length === 0) {
-      return 0;
-    }
-
     const events = timeline.map((item) => ({
       event: serializeAgentStreamEvent({
         type: "timeline",

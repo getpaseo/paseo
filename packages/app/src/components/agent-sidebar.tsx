@@ -15,6 +15,7 @@ import Animated, {
 } from "react-native-reanimated";
 import type { Agent } from "@/contexts/session-context";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
+import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 
 interface AgentSidebarProps {
   isOpen: boolean;
@@ -179,6 +180,7 @@ export function AgentSidebar({
               const isActive = agent.id === activeAgentId;
               const statusColor = getAgentStatusColor(agent.status);
               const statusLabel = getAgentStatusLabel(agent.status);
+              const providerLabel = getAgentProviderDefinition(agent.provider).label;
 
               return (
                 <Pressable
@@ -209,6 +211,18 @@ export function AgentSidebar({
                       </Text>
 
                       <View style={styles.statusBadge}>
+                        <View style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}>
+                          <Text
+                            style={[
+                              styles.providerText,
+                              { color: theme.colors.mutedForeground },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {providerLabel}
+                          </Text>
+                        </View>
+
                         <View
                           style={[styles.statusDot, { backgroundColor: statusColor }]}
                         />
@@ -308,6 +322,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+  },
+  providerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  providerText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   statusDot: {
     width: 6,

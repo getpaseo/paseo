@@ -34,6 +34,8 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  ListPersistedAgentsOptions,
+  PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 
 type CodexAgentConfig = AgentSessionConfig & { provider: "codex" };
@@ -96,6 +98,33 @@ const MODE_PRESETS: Record<
 type CodexOptionsOverrides = Partial<ThreadOptions> & { skipGitRepoCheck?: boolean };
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 5;
+type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+function createToolCallTimelineItem(
+  data: Omit<ToolCallTimelineItem, "type">
+): AgentTimelineItem {
+  return { type: "tool_call", ...data };
+}
+
+function buildCommandDisplayName(command?: unknown): string {
+  if (typeof command === "string") {
+    const trimmed = command.trim();
+    if (trimmed.length) {
+      return trimmed;
+    }
+  }
+  return "Command";
+}
+
+function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
+  if (!files.length) {
+    return "File change";
+  }
+  if (files.length === 1) {
+    return `${files[0].kind ?? "edit"}: ${files[0].path}`;
+  }
+  return `${files.length} file changes`;
+}
 
 function coerceSandboxMode(value?: string): SandboxMode | undefined {
   if (!value) return undefined;
@@ -164,6 +193,29 @@ export class CodexAgentClient implements AgentClient {
     const mergedConfig = { ...merged, provider: "codex" } as AgentSessionConfig;
     const codexConfig = this.assertConfig(mergedConfig);
     return CodexAgentSession.create(this.codex, codexConfig, handle);
+  }
+
+  async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
+    const sessionRoot = resolveCodexSessionRoot();
+    if (!sessionRoot) {
+      return [];
+    }
+    if (!(await fileExists(sessionRoot))) {
+      return [];
+    }
+    const limit = options?.limit ?? 20;
+    const candidates = await collectRecentRolloutFiles(sessionRoot, limit * 3);
+    const descriptors: PersistedAgentDescriptor[] = [];
+    for (const candidate of candidates) {
+      const descriptor = await parseRolloutDescriptor(candidate.path, candidate.mtime, sessionRoot);
+      if (descriptor) {
+        descriptors.push(descriptor);
+      }
+      if (descriptors.length >= limit) {
+        break;
+      }
+    }
+    return descriptors;
   }
 
   private assertConfig(config: AgentSessionConfig): CodexAgentConfig {
@@ -323,12 +375,16 @@ class CodexAgentSession implements AgentSession {
     this.enqueueHistoryEvent({
       type: "timeline",
       provider: "codex",
-      item: {
-        type: "command",
-        command: `permission:${request.name}`,
+      item: createToolCallTimelineItem({
+        server: "permission",
+        tool: request.name,
         status,
+        callId: request.id,
+        displayName: request.title ?? request.name,
+        kind: "permission",
+        input: request.input,
         raw: { request, response },
-      },
+      }),
     });
 
     this.enqueueHistoryEvent({
@@ -579,12 +635,16 @@ class CodexAgentSession implements AgentSession {
       {
         type: "timeline",
         provider: "codex",
-        item: {
-          type: "command",
-          command: `permission:${request.name}`,
+        item: createToolCallTimelineItem({
+          server: "permission",
+          tool: request.name,
           status: "requested",
+          callId: request.id,
+          displayName: request.title ?? request.name,
+          kind: "permission",
+          input: request.input,
           raw: request.raw,
-        },
+        }),
       },
       { type: "permission_requested", provider: "codex", request },
     ];
@@ -698,23 +758,54 @@ class CodexAgentSession implements AgentSession {
       case "reasoning":
         return { type: "reasoning", text: item.text, raw: item };
       case "command_execution":
-        return { type: "command", command: item.command, status: item.status, raw: item };
-      case "file_change":
-        return {
-          type: "file_change",
-          files: item.changes.map((change) => ({ path: change.path, kind: change.kind })),
+        return createToolCallTimelineItem({
+          server: "command",
+          tool: "shell",
+          status: item.status,
+          callId: (item as any)?.call_id,
+          displayName: buildCommandDisplayName(item.command),
+          kind: "execute",
+          input: { command: item.command, cwd: (item as any)?.cwd },
+          output: (item as any)?.output,
+          error: (item as any)?.error,
           raw: item,
-        };
+        });
+      case "file_change": {
+        const files = item.changes.map((change) => ({ path: change.path, kind: change.kind }));
+        return createToolCallTimelineItem({
+          server: "file_change",
+          tool: "apply_patch",
+          status: "completed",
+          callId: (item as any)?.call_id,
+          displayName: buildFileChangeSummary(files),
+          kind: "edit",
+          output: { files },
+          raw: item,
+        });
+      }
       case "mcp_tool_call":
-        return {
-          type: "mcp_tool",
+        return createToolCallTimelineItem({
           server: item.server,
           tool: item.tool,
           status: item.status,
+          callId: (item as any)?.call_id,
+          displayName: `${item.server}.${item.tool}`,
+          kind: "tool",
+          input: (item as any)?.input,
+          output: (item as any)?.output,
           raw: item,
-        };
+        });
       case "web_search":
-        return { type: "web_search", query: item.query, raw: item };
+        return createToolCallTimelineItem({
+          server: "web_search",
+          tool: "web_search",
+          status: (item as any)?.status ?? "completed",
+          callId: (item as any)?.call_id,
+          displayName: item.query ? `Web search: ${item.query}` : "Web search",
+          kind: "search",
+          input: { query: item.query },
+          raw: item,
+        });
       case "todo_list":
         return { type: "todo", items: item.items, raw: item };
       case "error":
@@ -894,13 +985,16 @@ function handleRolloutFunctionCall(
   events.push({
     type: "timeline",
     provider: "codex",
-    item: {
-      type: "mcp_tool",
+    item: createToolCallTimelineItem({
       server: "codex",
       tool: name,
       status: payload.status ?? "in_progress",
+      callId: typeof payload.call_id === "string" ? payload.call_id : undefined,
+      displayName: `${name}`,
+      kind: "tool",
+      input: safeJsonParse(payload.arguments),
       raw: payload,
-    },
+    }),
   });
 }
 
@@ -922,12 +1016,17 @@ function finalizeRolloutFunctionCall(
   events.push({
     type: "timeline",
     provider: "codex",
-    item: {
-      type: "command",
-      command: command.command,
+    item: createToolCallTimelineItem({
+      server: "command",
+      tool: "shell",
       status,
+      callId: payload.call_id,
+      displayName: buildCommandDisplayName(command.command),
+      kind: "execute",
+      input: { command: command.command },
+      output: result,
       raw: { payload, result },
-    },
+    }),
   });
   commandCalls.delete(payload.call_id);
 }
@@ -939,11 +1038,15 @@ function handleRolloutCustomToolCall(payload: any, events: AgentStreamEvent[]): 
       events.push({
         type: "timeline",
         provider: "codex",
-        item: {
-          type: "file_change",
-          files,
+        item: createToolCallTimelineItem({
+          server: "file_change",
+          tool: "apply_patch",
+          status: "completed",
+          displayName: buildFileChangeSummary(files),
+          kind: "edit",
+          output: { files },
           raw: payload,
-        },
+        }),
       });
     }
     return;
@@ -953,15 +1056,145 @@ function handleRolloutCustomToolCall(payload: any, events: AgentStreamEvent[]): 
     events.push({
       type: "timeline",
       provider: "codex",
-      item: {
-        type: "mcp_tool",
+      item: createToolCallTimelineItem({
         server: "codex",
         tool: payload.name,
         status: payload.status ?? "completed",
+        displayName: payload.name,
+        kind: "tool",
+        input: payload.input,
+        output: payload.output,
         raw: payload,
-      },
+      }),
     });
   }
+}
+
+type RolloutCandidate = {
+  path: string;
+  mtime: Date;
+};
+
+async function collectRecentRolloutFiles(rootDir: string, limit: number): Promise<RolloutCandidate[]> {
+  const candidates: RolloutCandidate[] = [];
+  async function traverse(dir: string): Promise<void> {
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const files = entries.filter(
+      (entry) =>
+        entry.isFile() &&
+        entry.name.startsWith("rollout-") &&
+        (entry.name.endsWith(".json") || entry.name.endsWith(".jsonl"))
+    );
+    for (const entry of files) {
+      const fullPath = path.join(dir, entry.name);
+      try {
+        const stat = await fs.stat(fullPath);
+        candidates.push({ path: fullPath, mtime: stat.mtime });
+      } catch {
+        // ignore stat failures
+      }
+    }
+    const directories = entries
+      .filter((entry) => entry.isDirectory())
+      .sort((a, b) => b.name.localeCompare(a.name));
+    for (const dirEntry of directories) {
+      await traverse(path.join(dir, dirEntry.name));
+    }
+  }
+  await traverse(rootDir);
+  return candidates
+    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+    .slice(0, limit);
+}
+
+async function parseRolloutDescriptor(
+  filePath: string,
+  mtime: Date,
+  sessionRoot: string
+): Promise<PersistedAgentDescriptor | null> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+
+  let sessionId: string | null = null;
+  let cwd: string | null = null;
+  let title: string | null = null;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!sessionId && entry?.type === "session_meta" && entry.payload) {
+      sessionId = typeof entry.payload.id === "string" ? entry.payload.id : null;
+      if (typeof entry.payload.cwd === "string" && entry.payload.cwd.length > 0) {
+        cwd = entry.payload.cwd;
+      }
+    } else if (!title && entry?.type === "response_item" && entry.payload?.role === "user") {
+      title = extractCodexUserPrompt(entry.payload);
+    }
+    if (sessionId && cwd && title) {
+      break;
+    }
+  }
+
+  if (!sessionId || !cwd) {
+    return null;
+  }
+
+  const persistence: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId,
+    nativeHandle: sessionId,
+    metadata: sanitizeMetadata({
+      provider: "codex",
+      cwd,
+      codexSessionDir: sessionRoot,
+      codexRolloutPath: filePath,
+    }),
+  };
+
+  return {
+    provider: "codex",
+    sessionId,
+    cwd,
+    title: (title ?? "").trim() || `Codex session ${sessionId.slice(0, 8)}`,
+    lastActivityAt: mtime,
+    persistence,
+  };
+}
+
+function extractCodexUserPrompt(payload: any): string | null {
+  const content = payload?.content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  for (const block of content) {
+    if (block && typeof block === "object" && typeof block.text === "string") {
+      return block.text.trim();
+    }
+  }
+  return null;
+}
+
+function resolveCodexSessionRoot(): string | null {
+  if (process.env.CODEX_SESSION_DIR) {
+    return process.env.CODEX_SESSION_DIR;
+  }
+  const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+  return path.join(codexHome, "sessions");
 }
 
 function extractMessageText(content: unknown): string {

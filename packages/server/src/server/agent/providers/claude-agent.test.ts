@@ -111,21 +111,33 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         }
       }
 
-      const toolEvent = timeline.find((item) => item.type === "mcp_tool");
-      const commandEvents = timeline.filter(
-        (item): item is Extract<AgentTimelineItem, { type: "command" }> =>
-          item.type === "command" && typeof item.command === "string" && !item.command.startsWith("permission:")
+      const toolCalls = timeline.filter(
+        (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
+          item.type === "tool_call"
       );
-      const fileChangeEvent = timeline.find(
+      const commandEvents = toolCalls.filter(
         (item) =>
-          item.type === "file_change" &&
-          item.files.some((file) => file.path.includes("tool-test.txt"))
+          (item.kind === "execute" || item.server === "command") &&
+          typeof item.displayName === "string" &&
+          !item.displayName.startsWith("permission:")
       );
+      const fileChangeEvent = toolCalls.find((item) => {
+        if (!item.output || typeof item.output !== "object") {
+          return false;
+        }
+        const files = (item.output as Record<string, unknown>).files;
+        if (!Array.isArray(files)) {
+          return false;
+        }
+        return files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"));
+      });
 
-      const sawPwdCommand = commandEvents.some((item) => item.command.toLowerCase().includes("pwd") && item.status === "completed");
+      const sawPwdCommand = commandEvents.some(
+        (item) => (item.displayName ?? "").toLowerCase().includes("pwd") && item.status === "completed"
+      );
 
       expect(completed).toBe(true);
-      expect(toolEvent).toBeTruthy();
+      expect(toolCalls.length).toBeGreaterThan(0);
       expect(sawPwdCommand).toBe(true);
       expect(fileChangeEvent).toBeTruthy();
 

@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import type { AgentSnapshot } from "./agent-manager.js";
@@ -51,13 +54,7 @@ export class AgentRegistry {
 
   constructor(filePath?: string) {
     this.filePath =
-      filePath ??
-      path.join(
-        process.cwd(),
-        "packages",
-        "server",
-        "agents.json"
-      );
+      filePath ?? path.join(resolveServerPackageRoot(), "agents.json");
   }
 
   async load(): Promise<StoredAgentRecord[]> {
@@ -66,22 +63,9 @@ export class AgentRegistry {
     }
     try {
       const content = await fs.readFile(this.filePath, "utf8");
-      const parsed = JSON.parse(content);
-      if (!Array.isArray(parsed)) {
-        throw new Error("Invalid agents.json format");
-      }
-      const records: StoredAgentRecord[] = [];
-      for (const entry of parsed) {
-        try {
-          const record = STORED_AGENT_SCHEMA.parse(entry);
-          records.push(record);
-          this.cache.set(record.id, record);
-        } catch (error) {
-          console.error("[AgentRegistry] Skipping invalid record:", error);
-        }
-      }
+      const parsed = await this.parseContent(content);
       this.loaded = true;
-      return records;
+      return parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.loaded = true;
@@ -194,7 +178,63 @@ export class AgentRegistry {
   private async flush(): Promise<void> {
     const payload = JSON.stringify(Array.from(this.cache.values()), null, 2);
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    await fs.writeFile(this.filePath, payload, "utf8");
+    await writeFileAtomically(this.filePath, payload);
+  }
+
+  private async parseContent(content: string): Promise<StoredAgentRecord[]> {
+    try {
+      return this.parseRecords(content);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        const recovered = await this.tryRecoverCorruptedContent(content);
+        if (recovered) {
+          return recovered;
+        }
+      }
+      throw error;
+    }
+  }
+
+  private parseRecords(content: string): StoredAgentRecord[] {
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Invalid agents.json format");
+    }
+    const records: StoredAgentRecord[] = [];
+    for (const entry of parsed) {
+      try {
+        const record = STORED_AGENT_SCHEMA.parse(entry);
+        records.push(record);
+        this.cache.set(record.id, record);
+      } catch (error) {
+        console.error("[AgentRegistry] Skipping invalid record:", error);
+      }
+    }
+    return records;
+  }
+
+  private async tryRecoverCorruptedContent(
+    content: string
+  ): Promise<StoredAgentRecord[] | null> {
+    const start = content.indexOf("[");
+    const end = content.lastIndexOf("]");
+    if (start === -1 || end === -1 || end <= start) {
+      return null;
+    }
+    const candidate = content.slice(start, end + 1);
+    try {
+      this.cache.clear();
+      const records = this.parseRecords(candidate);
+      console.warn(
+        "[AgentRegistry] Recovered corrupted agents.json payload; rewrote sanitized copy"
+      );
+      const sanitizedPayload = JSON.stringify(records, null, 2);
+      await writeFileAtomically(this.filePath, sanitizedPayload);
+      return records;
+    } catch (error) {
+      this.cache.clear();
+      return null;
+    }
   }
 }
 
@@ -209,4 +249,30 @@ function sanitizeConfig(
   if (config.model) cleaned.model = config.model;
   if (config.extra) cleaned.extra = JSON.parse(JSON.stringify(config.extra));
   return cleaned;
+}
+
+function resolveServerPackageRoot(): string {
+  let currentDir = path.dirname(fileURLToPath(import.meta.url));
+  while (true) {
+    if (existsSync(path.join(currentDir, "package.json"))) {
+      return currentDir;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(
+        "[AgentRegistry] Failed to locate server package root for agents.json"
+      );
+    }
+    currentDir = parentDir;
+  }
+}
+
+async function writeFileAtomically(targetPath: string, payload: string) {
+  const directory = path.dirname(targetPath);
+  const tempPath = path.join(
+    directory,
+    `.agents.json.tmp-${process.pid}-${Date.now()}-${randomUUID()}`
+  );
+  await fs.writeFile(tempPath, payload, "utf8");
+  await fs.rename(tempPath, targetPath);
 }

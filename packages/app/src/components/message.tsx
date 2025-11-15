@@ -17,6 +17,7 @@ import {
   Eye,
   SquareTerminal,
   Brain,
+  Search,
 } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
@@ -778,6 +779,7 @@ const toolKindIcons: Record<string, any> = {
   edit: Pencil,
   read: Eye,
   execute: SquareTerminal,
+  search: Search,
   // Add more mappings as needed
 };
 

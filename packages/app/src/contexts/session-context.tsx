@@ -210,9 +210,11 @@ interface SessionContextValue {
 
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
+  refreshAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
   createAgent: (options: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => void;
+  resumeAgent: (options: { handle: AgentPersistenceHandle; overrides?: Partial<AgentSessionConfig>; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }
@@ -729,6 +731,30 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
+  const refreshAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+    setInitializingAgents((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, true);
+      return next;
+    });
+
+    setAgentStreamState((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, []);
+      return next;
+    });
+
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "refresh_agent_request",
+        agentId,
+        requestId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
   const sendAgentMessage = useCallback(async (agentId: string, message: string, imageUris?: string[]) => {
     // Generate unique message ID for deduplication
     const messageId = generateMessageId();
@@ -826,6 +852,19 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         type: "create_agent_request",
         config,
         ...(worktreeName ? { worktreeName } : {}),
+        ...(requestId ? { requestId } : {}),
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const resumeAgent = useCallback(({ handle, overrides, requestId }: { handle: AgentPersistenceHandle; overrides?: Partial<AgentSessionConfig>; requestId?: string }) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "resume_agent_request",
+        handle,
+        ...(overrides ? { overrides } : {}),
         ...(requestId ? { requestId } : {}),
       },
     };
@@ -941,9 +980,11 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     requestDirectoryListing,
     requestFilePreview,
     initializeAgent,
+    refreshAgent,
     sendAgentMessage,
     sendAgentAudio,
     createAgent,
+    resumeAgent,
     setAgentMode,
     respondToPermission,
   };
