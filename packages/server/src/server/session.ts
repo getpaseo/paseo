@@ -2072,6 +2072,24 @@ export class Session {
       `[Session ${this.clientId}] Realtime speech chunk detected – aborting playback and LLM`
     );
     this.ttsManager.cancelPendingPlaybacks("realtime speech detected");
+
+    if (this.pendingAudioSegments.length > 0) {
+      console.log(
+        `[Session ${this.clientId}] Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to realtime speech`
+      );
+      this.pendingAudioSegments = [];
+    }
+
+    if (this.audioBuffer) {
+      console.log(
+        `[Session ${this.clientId}] Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s))`
+      );
+      this.audioBuffer = null;
+    }
+
+    this.clearBufferTimeout();
+
+    this.abortController.abort();
     await this.handleAbort();
   }
 
