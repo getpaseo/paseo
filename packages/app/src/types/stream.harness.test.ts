@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { hydrateStreamState, type StreamItem, type ToolCallItem } from "./stream";
+import {
+  hydrateStreamState,
+  type StreamItem,
+  type AgentToolCallItem,
+  type ToolCallStatus,
+  isAgentToolCallItem,
+} from "./stream";
 import type { AgentStreamEventPayload } from "@server/server/messages";
 
 type HarnessUpdate = { event: AgentStreamEventPayload; timestamp: Date };
@@ -200,14 +206,14 @@ function buildToolStartEvent({
   tool,
   input,
   kind,
-  status = "pending",
+  status = "executing",
 }: {
   callId: string;
   server: string;
   tool: string;
   input?: Record<string, unknown>;
   kind?: string;
-  status?: string;
+  status?: ToolCallStatus;
 }): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -260,14 +266,15 @@ function buildToolResultEvent({
   };
 }
 
-function extractHarnessSnapshots(state: StreamItem[]): Record<keyof typeof HARNESS_CALL_IDS, ToolCallItem | undefined> {
-  const lookup = Object.values(HARNESS_CALL_IDS).reduce<Record<string, ToolCallItem | undefined>>(
-    (acc, id) => {
-      acc[id] = findToolByCallId(state, id);
-      return acc;
-    },
-    {}
-  );
+function extractHarnessSnapshots(
+  state: StreamItem[]
+): Record<keyof typeof HARNESS_CALL_IDS, AgentToolCallItem | undefined> {
+  const lookup = Object.values(HARNESS_CALL_IDS).reduce<
+    Record<string, AgentToolCallItem | undefined>
+  >((acc, id) => {
+    acc[id] = findToolByCallId(state, id);
+    return acc;
+  }, {});
 
   return {
     command: lookup[HARNESS_CALL_IDS.command],
@@ -276,11 +283,9 @@ function extractHarnessSnapshots(state: StreamItem[]): Record<keyof typeof HARNE
   };
 }
 
-function findToolByCallId(state: StreamItem[], callId: string): ToolCallItem | undefined {
+function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallItem | undefined {
   return state.find(
-    (item): item is ToolCallItem =>
-      item.kind === "tool_call" &&
-      item.payload.source === "agent" &&
-      item.payload.data.callId === callId
+    (item): item is AgentToolCallItem =>
+      isAgentToolCallItem(item) && item.payload.data.callId === callId
   );
 }
