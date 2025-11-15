@@ -190,6 +190,8 @@ interface SessionContextValue {
   
   // Voice detection flags (updated by RealtimeContext)
   setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
+  focusedAgentId: string | null;
+  setFocusedAgentId: (agentId: string | null) => void;
 
   // Messages and stream state
   messages: MessageEntry[];
@@ -260,6 +262,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   });
 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
@@ -1073,6 +1076,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     isPlayingAudio,
     setIsPlayingAudio,
     setVoiceDetectionFlags,
+    focusedAgentId,
+    setFocusedAgentId,
     messages,
     setMessages,
     currentAssistantMessage,

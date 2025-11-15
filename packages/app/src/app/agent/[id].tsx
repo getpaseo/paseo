@@ -35,6 +35,7 @@ export default function AgentScreen() {
     respondToPermission,
     initializeAgent,
     refreshAgent,
+    setFocusedAgentId,
   } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -65,6 +66,18 @@ export default function AgentScreen() {
   const agentPermissions = new Map(
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
+
+  useEffect(() => {
+    if (!id) {
+      setFocusedAgentId(null);
+      return;
+    }
+
+    setFocusedAgentId(id);
+    return () => {
+      setFocusedAgentId(null);
+    };
+  }, [id, setFocusedAgentId]);
 
   const hasStreamState = id ? agentStreamState.has(id) : false;
   const initializationState = id ? initializingAgents.get(id) : undefined;

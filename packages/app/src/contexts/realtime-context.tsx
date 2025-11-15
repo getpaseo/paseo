@@ -31,7 +31,15 @@ interface RealtimeProviderProps {
 }
 
 export function RealtimeProvider({ children }: RealtimeProviderProps) {
-  const { ws, audioPlayer, isPlayingAudio, setMessages, setVoiceDetectionFlags } = useSession();
+  const {
+    ws,
+    audioPlayer,
+    isPlayingAudio,
+    setMessages,
+    setVoiceDetectionFlags,
+    cancelAgentRun,
+    focusedAgentId,
+  } = useSession();
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
 
   const realtimeAudio = useSpeechmaticsAudio({
@@ -40,6 +48,17 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       // Stop audio playback if playing
       if (isPlayingAudio) {
         audioPlayer.stop();
+      }
+
+      if (focusedAgentId) {
+        try {
+          cancelAgentRun(focusedAgentId);
+          console.log(
+            `[Realtime] Sent cancel_agent_request for agent ${focusedAgentId} before streaming audio`
+          );
+        } catch (error) {
+          console.error("[Realtime] Failed to cancel focused agent:", error);
+        }
       }
       // Abort any in-flight LLM turn before the new speech segment streams
       try {
