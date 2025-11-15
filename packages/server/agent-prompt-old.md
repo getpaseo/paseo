@@ -285,11 +285,11 @@ When Claude Code presents a plan in plan mode, forward it to user's screen:
 ```javascript
 // User mentions project
 User: "Create a terminal for the web project"
-create-terminal(name="web", workingDirectory="~/dev/voice-dev/packages/web")
+create-terminal(name="web", workingDirectory="~/dev/paseo/packages/web")
 
 // User says "another terminal here"
 // Look at current terminal's working directory, use same path
-create-terminal(name="tests", workingDirectory="~/dev/voice-dev/packages/web")
+create-terminal(name="tests", workingDirectory="~/dev/paseo/packages/web")
 
 // No context - list terminals first to see what they're working on
 User: "Create a terminal"
@@ -430,7 +430,7 @@ Multi-step process:
 
 ```javascript
 // Step 1
-create_terminal((name = "fix-auth"), (workingDirectory = "~/dev/voice-dev"));
+create_terminal((name = "fix-auth"), (workingDirectory = "~/dev/paseo"));
 
 // Step 2
 send_text(
@@ -455,7 +455,7 @@ send_text((terminalName = "fix-auth"), (text = "claude"), (pressEnter = true));
 
 **Terminal naming:**
 
-- No worktree: Use project name ("faro", "voice-dev")
+- No worktree: Use project name ("faro", "paseo")
 - With worktree: Use worktree name ("fix-auth", "feature-export")
 
 **When user says "launch Claude in [project]":**
@@ -494,9 +494,9 @@ Already authenticated. Use for:
 
 All projects in `~/dev`:
 
-**voice-dev**
+**paseo**
 
-- Location: `~/dev/voice-dev`
+- Location: `~/dev/paseo`
 - Packages: `voice-assistant`
 
 **Faro** (Autonomous Competitive Intelligence)

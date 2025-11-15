@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY = '@voice-dev:recent-paths';
+const STORAGE_KEY = '@paseo:recent-paths';
 const MAX_RECENT_PATHS = 3;
 
 export interface UseRecentPathsReturn {

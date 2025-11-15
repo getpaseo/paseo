@@ -441,14 +441,14 @@ function testToolCallParsedPayloadHydration() {
             tool_use_id: commandCallId,
             result: {
               command: 'pwd',
-              output: '/Users/dev/voice-dev',
+              output: '/Users/dev/paseo',
             },
             metadata: { exit_code: 0 },
           },
           output: {
             result: {
               command: 'pwd',
-              output: '/Users/dev/voice-dev',
+              output: '/Users/dev/paseo',
             },
             metadata: { exit_code: 0 },
           },
@@ -477,7 +477,7 @@ function testToolCallParsedPayloadHydration() {
   const commandPass = Boolean(
     commandEntry?.payload.data.parsedCommand &&
       commandEntry.payload.data.parsedCommand.command === 'pwd' &&
-      commandEntry.payload.data.parsedCommand.output?.includes('/voice-dev')
+      commandEntry.payload.data.parsedCommand.output?.includes('/paseo')
   );
 
   assert.ok(readPass, 'Read payload should persist across hydration');

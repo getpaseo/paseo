@@ -57,6 +57,16 @@ const ACTIVE_TITLE_GENERATIONS = new Set<string>();
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
 
+const PCM_SAMPLE_RATE = 16000;
+const PCM_CHANNELS = 1;
+const PCM_BITS_PER_SAMPLE = 16;
+const PCM_BYTES_PER_MS =
+  (PCM_SAMPLE_RATE * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)) / 1000;
+const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
+const MIN_STREAMING_SEGMENT_BYTES = Math.round(
+  PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
+);
+
 /**
  * Type for present_artifact tool arguments
  */
@@ -67,6 +77,42 @@ interface PresentArtifactArgs {
     | { type: "command_output"; command: string }
     | { type: "text"; text: string };
   title: string;
+}
+
+interface AudioBufferState {
+  chunks: Buffer[];
+  format: string;
+  isPCM: boolean;
+  totalPCMBytes: number;
+}
+
+function convertPCMToWavBuffer(
+  pcmBuffer: Buffer,
+  sampleRate: number,
+  channels: number,
+  bitsPerSample: number
+): Buffer {
+  const headerSize = 44;
+  const wavBuffer = Buffer.alloc(headerSize + pcmBuffer.length);
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+
+  wavBuffer.write("RIFF", 0);
+  wavBuffer.writeUInt32LE(36 + pcmBuffer.length, 4);
+  wavBuffer.write("WAVE", 8);
+  wavBuffer.write("fmt ", 12);
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20);
+  wavBuffer.writeUInt16LE(channels, 22);
+  wavBuffer.writeUInt32LE(sampleRate, 24);
+  wavBuffer.writeUInt32LE(byteRate, 28);
+  wavBuffer.writeUInt16LE(blockAlign, 32);
+  wavBuffer.writeUInt16LE(bitsPerSample, 34);
+  wavBuffer.write("data", 36);
+  wavBuffer.writeUInt32LE(pcmBuffer.length, 40);
+  pcmBuffer.copy(wavBuffer, 44);
+
+  return wavBuffer;
 }
 
 /**
@@ -91,7 +137,7 @@ export class Session {
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
   private bufferTimeout: NodeJS.Timeout | null = null;
-  private audioBuffer: { chunks: Buffer[]; format: string } | null = null;
+  private audioBuffer: AudioBufferState | null = null;
 
   // Conversation history
   private messages: ModelMessage[] = [];
@@ -1499,73 +1545,151 @@ export class Session {
   ): Promise<void> {
     await this.handleRealtimeSpeechStart();
 
-    // Decode base64
-    const audioBuffer = Buffer.from(msg.audio, "base64");
+    const chunkBuffer = Buffer.from(msg.audio, "base64");
+    const chunkFormat = msg.format || "audio/wav";
+    const isPCMChunk = chunkFormat.toLowerCase().includes("pcm");
 
-    if (!msg.isLast) {
-      // Buffer the chunk
-      if (!this.audioBuffer) {
-        this.audioBuffer = { chunks: [], format: msg.format };
-      }
-      this.audioBuffer.chunks.push(audioBuffer);
+    if (!this.audioBuffer) {
+      this.audioBuffer = {
+        chunks: [],
+        format: chunkFormat,
+        isPCM: isPCMChunk,
+        totalPCMBytes: 0,
+      };
+    }
+
+    // If the format changes mid-stream, flush what we have first
+    if (this.audioBuffer.isPCM !== isPCMChunk) {
       console.log(
-        `[Session ${this.clientId}] Buffered audio chunk (${audioBuffer.length} bytes, total: ${this.audioBuffer.chunks.length})`
+        `[Session ${this.clientId}] Audio format changed mid-stream (${this.audioBuffer.isPCM ? "pcm" : this.audioBuffer.format} → ${chunkFormat}), flushing current buffer`
+      );
+      const finalized = this.finalizeBufferedAudio();
+      if (finalized) {
+        await this.processCompletedAudio(finalized.audio, finalized.format);
+      }
+      this.audioBuffer = {
+        chunks: [],
+        format: chunkFormat,
+        isPCM: isPCMChunk,
+        totalPCMBytes: 0,
+      };
+    } else if (!this.audioBuffer.isPCM) {
+      // Keep latest format info for non-PCM blobs
+      this.audioBuffer.format = chunkFormat;
+    }
+
+    this.audioBuffer.chunks.push(chunkBuffer);
+    if (this.audioBuffer.isPCM) {
+      this.audioBuffer.totalPCMBytes += chunkBuffer.length;
+    }
+
+    console.log(
+      `[Session ${this.clientId}] Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
+    );
+
+    const reachedStreamingThreshold =
+      this.audioBuffer.isPCM &&
+      this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
+
+    if (!msg.isLast && !reachedStreamingThreshold) {
+      return;
+    }
+
+    const bufferedState = this.audioBuffer;
+    const finalized = this.finalizeBufferedAudio();
+    if (!finalized) {
+      return;
+    }
+
+    if (!msg.isLast && reachedStreamingThreshold) {
+      console.log(
+        `[Session ${this.clientId}] Minimum chunk duration reached (~${MIN_STREAMING_SEGMENT_DURATION_MS}ms, ${
+          bufferedState?.totalPCMBytes ?? 0
+        } PCM bytes) – triggering STT`
       );
     } else {
-      // Complete segment received
-      const allChunks = this.audioBuffer
-        ? [...this.audioBuffer.chunks, audioBuffer]
-        : [audioBuffer];
-      const format = this.audioBuffer?.format || msg.format;
-      const currentSegmentAudio = Buffer.concat(allChunks);
-
       console.log(
-        `[Session ${this.clientId}] Complete audio segment (${currentSegmentAudio.length} bytes, ${allChunks.length} chunks)`
+        `[Session ${this.clientId}] Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`
+      );
+    }
+
+    await this.processCompletedAudio(finalized.audio, finalized.format);
+  }
+
+  private finalizeBufferedAudio():
+    | { audio: Buffer; format: string }
+    | null {
+    if (!this.audioBuffer) {
+      return null;
+    }
+
+    const bufferState = this.audioBuffer;
+    this.audioBuffer = null;
+
+    if (bufferState.isPCM) {
+      const pcmBuffer = Buffer.concat(bufferState.chunks);
+      const wavBuffer = convertPCMToWavBuffer(
+        pcmBuffer,
+        PCM_SAMPLE_RATE,
+        PCM_CHANNELS,
+        PCM_BITS_PER_SAMPLE
+      );
+      return {
+        audio: wavBuffer,
+        format: "audio/wav",
+      };
+    }
+
+    return {
+      audio: Buffer.concat(bufferState.chunks),
+      format: bufferState.format,
+    };
+  }
+
+  private async processCompletedAudio(
+    audio: Buffer,
+    format: string
+  ): Promise<void> {
+    const shouldBuffer =
+      this.processingPhase === "transcribing" &&
+      this.pendingAudioSegments.length === 0;
+
+    if (shouldBuffer) {
+      console.log(
+        `[Session ${this.clientId}] Buffering audio segment (phase: ${this.processingPhase})`
+      );
+      this.pendingAudioSegments.push({
+        audio,
+        format,
+      });
+      this.setBufferTimeout();
+      return;
+    }
+
+    if (this.pendingAudioSegments.length > 0) {
+      this.pendingAudioSegments.push({
+        audio,
+        format,
+      });
+      console.log(
+        `[Session ${this.clientId}] Processing ${this.pendingAudioSegments.length} buffered segments together`
       );
 
-      // Clear chunk buffer
-      this.audioBuffer = null;
+      const pendingSegments = [...this.pendingAudioSegments];
+      this.pendingAudioSegments = [];
+      this.clearBufferTimeout();
 
-      // Decision: buffer or process?
-      const shouldBuffer =
-        this.processingPhase === "transcribing" &&
-        this.pendingAudioSegments.length === 0;
+      const combinedAudio = Buffer.concat(
+        pendingSegments.map((segment) => segment.audio)
+      );
+      const combinedFormat =
+        pendingSegments[pendingSegments.length - 1].format;
 
-      if (shouldBuffer) {
-        // Currently transcribing first segment - buffer this one
-        console.log(
-          `[Session ${this.clientId}] Buffering audio segment (phase: ${this.processingPhase})`
-        );
-        this.pendingAudioSegments.push({
-          audio: currentSegmentAudio,
-          format,
-        });
-        this.setBufferTimeout();
-      } else if (this.pendingAudioSegments.length > 0) {
-        // We have buffered segments - add this one and process all together
-        this.pendingAudioSegments.push({
-          audio: currentSegmentAudio,
-          format,
-        });
-        console.log(
-          `[Session ${this.clientId}] Processing ${this.pendingAudioSegments.length} buffered segments together`
-        );
-
-        // Clear pending segments and timeout
-        const pendingSegments = [...this.pendingAudioSegments];
-        this.pendingAudioSegments = [];
-        this.clearBufferTimeout();
-
-        // Concatenate all segments
-        const allSegmentAudios = pendingSegments.map((s) => s.audio);
-        const combinedAudio = Buffer.concat(allSegmentAudios);
-
-        await this.processAudio(combinedAudio, format);
-      } else {
-        // Normal flow - no buffering needed
-        await this.processAudio(currentSegmentAudio, format);
-      }
+      await this.processAudio(combinedAudio, combinedFormat);
+      return;
     }
+
+    await this.processAudio(audio, format);
   }
 
   /**
@@ -2086,7 +2210,11 @@ export class Session {
 
     if (this.audioBuffer) {
       console.log(
-        `[Session ${this.clientId}] Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s))`
+        `[Session ${this.clientId}] Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
+          this.audioBuffer.isPCM
+            ? `, ${this.audioBuffer.totalPCMBytes} PCM bytes`
+            : ""
+        })`
       );
       this.audioBuffer = null;
     }

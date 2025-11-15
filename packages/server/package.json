@@ -1,7 +1,7 @@
 {
-  "name": "@voice-dev/server",
+  "name": "@paseo/server",
   "version": "0.1.0",
-  "description": "Voice assistant backend server",
+  "description": "Paseo backend server",
   "type": "module",
   "scripts": {
     "dev": "NODE_ENV=development node --watch --import tsx src/server/index.ts",

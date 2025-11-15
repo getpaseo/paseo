@@ -1,5 +1,5 @@
 {
-  "name": "@voice-dev/app",
+  "name": "@paseo/app",
   "main": "index.ts",
   "version": "1.0.0",
   "scripts": {

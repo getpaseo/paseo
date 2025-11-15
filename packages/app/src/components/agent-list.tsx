@@ -129,7 +129,7 @@ export function AgentList({ agents }: AgentListProps) {
               {actionAgent?.title || "Delete agent"}
             </Text>
             <Text style={styles.sheetSubtitle}>
-              Removing this agent only deletes it from Voice Dev. Claude/Codex keeps the original project.
+              Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project.
             </Text>
             <Pressable
               style={[styles.sheetButton, styles.sheetDeleteButton]}

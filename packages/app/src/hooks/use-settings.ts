@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY = '@voice-dev:settings';
+const STORAGE_KEY = '@paseo:settings';
 
 export interface Settings {
   serverUrl: string;

@@ -9,7 +9,7 @@ import {
 } from "@boudra/expo-two-way-audio";
 
 export interface SpeechmaticsAudioConfig {
-  onAudioSegment?: (audioData: string) => void;
+  onAudioSegment?: (segment: { audioData: string; isLast: boolean }) => void;
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
   onError?: (error: Error) => void;
@@ -29,79 +29,6 @@ export interface SpeechmaticsAudio {
   isMuted: boolean;
   volume: number;
   segmentDuration: number;
-}
-
-/**
- * Convert raw PCM data to WAV format by adding WAV headers
- */
-function pcmToWav(
-  pcmBase64: string,
-  sampleRate: number = 16000,
-  channels: number = 1,
-  bitsPerSample: number = 16
-): string {
-  const pcmBinary = atob(pcmBase64);
-  const pcmLength = pcmBinary.length;
-
-  const byteRate = sampleRate * channels * (bitsPerSample / 8);
-  const blockAlign = channels * (bitsPerSample / 8);
-  const dataSize = pcmLength;
-  const fileSize = 44 + dataSize;
-
-  const wavBuffer = new Uint8Array(fileSize);
-  const view = new DataView(wavBuffer.buffer);
-
-  let offset = 0;
-
-  // RIFF chunk descriptor
-  writeString(view, offset, "RIFF");
-  offset += 4;
-  view.setUint32(offset, fileSize - 8, true);
-  offset += 4;
-  writeString(view, offset, "WAVE");
-  offset += 4;
-
-  // fmt sub-chunk
-  writeString(view, offset, "fmt ");
-  offset += 4;
-  view.setUint32(offset, 16, true);
-  offset += 4;
-  view.setUint16(offset, 1, true);
-  offset += 2;
-  view.setUint16(offset, channels, true);
-  offset += 2;
-  view.setUint32(offset, sampleRate, true);
-  offset += 4;
-  view.setUint32(offset, byteRate, true);
-  offset += 4;
-  view.setUint16(offset, blockAlign, true);
-  offset += 2;
-  view.setUint16(offset, bitsPerSample, true);
-  offset += 2;
-
-  // data sub-chunk
-  writeString(view, offset, "data");
-  offset += 4;
-  view.setUint32(offset, dataSize, true);
-  offset += 4;
-
-  // Copy PCM data
-  for (let i = 0; i < pcmLength; i++) {
-    wavBuffer[offset + i] = pcmBinary.charCodeAt(i);
-  }
-
-  // Convert to base64
-  let binary = "";
-  for (let i = 0; i < wavBuffer.length; i++) {
-    binary += String.fromCharCode(wavBuffer[i]);
-  }
-  return btoa(binary);
-}
-
-function writeString(view: DataView, offset: number, str: string): void {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i));
-  }
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -143,6 +70,38 @@ export function useSpeechmaticsAudio(
   const speechDetectionStartRef = useRef<number | null>(null);
   const speechConfirmedRef = useRef(false);
   const detectionSilenceStartRef = useRef<number | null>(null);
+  const bufferedBytesRef = useRef(0);
+
+  const PCM_SAMPLE_RATE = 16000;
+  const PCM_CHANNELS = 1;
+  const PCM_BITS_PER_SAMPLE = 16;
+  const PCM_BYTES_PER_MS =
+    (PCM_SAMPLE_RATE * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)) / 1000;
+  const MIN_CHUNK_DURATION_MS = 1000;
+  const MIN_CHUNK_BYTES = Math.round(
+    PCM_BYTES_PER_MS * MIN_CHUNK_DURATION_MS
+  );
+
+  const flushBufferedAudio = useCallback(
+    (isLast: boolean) => {
+      if (audioBufferRef.current.length === 0) {
+        bufferedBytesRef.current = 0;
+        return;
+      }
+
+      const combinedBinary = concatenateUint8Arrays(audioBufferRef.current);
+      const pcmBase64 = uint8ArrayToBase64(combinedBinary);
+
+      config.onAudioSegment?.({
+        audioData: pcmBase64,
+        isLast,
+      });
+
+      audioBufferRef.current = [];
+      bufferedBytesRef.current = 0;
+    },
+    [config]
+  );
 
   const VOLUME_THRESHOLD = config.volumeThreshold;
   const SILENCE_DURATION_MS = config.silenceDuration;
@@ -178,9 +137,17 @@ export function useSpeechmaticsAudio(
         // Start buffering from first spike to capture beginning of speech
         if (speechDetectionStartRef.current !== null || isSpeakingRef.current) {
           audioBufferRef.current.push(pcmData);
+          bufferedBytesRef.current += pcmData.length;
+
+          if (
+            speechConfirmedRef.current &&
+            bufferedBytesRef.current >= MIN_CHUNK_BYTES
+          ) {
+            flushBufferedAudio(false);
+          }
         }
       },
-      [isActive, isMuted]
+      [isActive, isMuted, flushBufferedAudio, MIN_CHUNK_BYTES]
     )
   );
 
@@ -215,6 +182,7 @@ export function useSpeechmaticsAudio(
             speechDetectionStartRef.current = Date.now();
             detectionSilenceStartRef.current = null;
             audioBufferRef.current = [];
+            bufferedBytesRef.current = 0;
             setIsDetecting(true);
           } else {
             // Volume is back above threshold - reset grace period
@@ -264,6 +232,7 @@ export function useSpeechmaticsAudio(
               speechDetectionStartRef.current = null;
               detectionSilenceStartRef.current = null;
               audioBufferRef.current = [];
+              bufferedBytesRef.current = 0;
               setIsDetecting(false);
             }
           }
@@ -292,15 +261,7 @@ export function useSpeechmaticsAudio(
               config.onSpeechEnd?.();
 
               // Send buffered audio segment
-              if (audioBufferRef.current.length > 0) {
-                const combinedBinary = concatenateUint8Arrays(
-                  audioBufferRef.current
-                );
-                const combinedPcmBase64 = uint8ArrayToBase64(combinedBinary);
-                const wavAudio = pcmToWav(combinedPcmBase64, 16000, 1, 16);
-                config.onAudioSegment?.(wavAudio);
-                audioBufferRef.current = [];
-              }
+              flushBufferedAudio(true);
             }
           }
         }
@@ -313,6 +274,7 @@ export function useSpeechmaticsAudio(
         SPEECH_CONFIRMATION_MS,
         DETECTION_GRACE_PERIOD_MS,
         config,
+        flushBufferedAudio,
       ]
     )
   );
@@ -365,6 +327,7 @@ export function useSpeechmaticsAudio(
 
     // Reset state
     audioBufferRef.current = [];
+    bufferedBytesRef.current = 0;
     isSpeakingRef.current = false;
     speechConfirmedRef.current = false;
     speechDetectionStartRef.current = null;
@@ -387,6 +350,7 @@ export function useSpeechmaticsAudio(
       if (newMuted) {
         // Clear any ongoing speech detection/speaking state
         audioBufferRef.current = [];
+        bufferedBytesRef.current = 0;
         isSpeakingRef.current = false;
         speechConfirmedRef.current = false;
         speechDetectionStartRef.current = null;

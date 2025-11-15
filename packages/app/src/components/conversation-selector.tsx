@@ -15,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StyleSheet } from "react-native-unistyles";
 import type { UseWebSocketReturn } from "../hooks/use-websocket";
 
-const STORAGE_KEY = "@voice-dev:conversation-id";
+const STORAGE_KEY = "@paseo:conversation-id";
 
 interface Conversation {
   id: string;

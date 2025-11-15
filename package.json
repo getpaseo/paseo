@@ -1,5 +1,5 @@
 {
-  "name": "voice-dev",
+  "name": "paseo",
   "version": "1.0.0",
   "private": true,
   "workspaces": [
@@ -7,20 +7,20 @@
     "packages/app"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@voice-dev/server",
-    "dev:app": "npm run start --workspace=@voice-dev/app",
+    "dev": "npm run dev --workspace=@paseo/server",
+    "dev:app": "npm run start --workspace=@paseo/app",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "start": "npm run start --workspace=@voice-dev/server",
-    "android": "npm run android --workspace=@voice-dev/app",
-    "ios": "npm run ios --workspace=@voice-dev/app",
-    "web": "npm run web --workspace=@voice-dev/app"
+    "start": "npm run start --workspace=@paseo/server",
+    "android": "npm run android --workspace=@paseo/app",
+    "ios": "npm run ios --workspace=@paseo/app",
+    "web": "npm run web --workspace=@paseo/app"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
   },
-  "description": "Voice-controlled development environment with OpenAI Realtime API",
+  "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
   "keywords": [
     "openai",
     "realtime",

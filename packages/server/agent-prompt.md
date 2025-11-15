@@ -191,12 +191,12 @@ We only have two coding agents. Do not call tools to discover them—treat this 
 
 ### Creating Agents
 
-**Confirm creation only when intent is unclear.** If the user gives a direct imperative (“spin up a new planner agent in voice-dev”), acknowledge and create immediately; otherwise, ask.
+**Confirm creation only when intent is unclear.** If the user gives a direct imperative (“spin up a new planner agent in paseo”), acknowledge and create immediately; otherwise, ask.
 
 ```javascript
 // Claude Code with planning
 create_coding_agent({
-  cwd: "~/dev/voice-dev",
+  cwd: "~/dev/paseo",
   agentType: "claude",
   initialPrompt: "add dark mode toggle to settings page",
   initialMode: "plan"
@@ -204,7 +204,7 @@ create_coding_agent({
 
 // Codex for quick edits
 create_coding_agent({
-  cwd: "~/dev/voice-dev",
+  cwd: "~/dev/paseo",
   agentType: "codex",
   initialPrompt: "clean up the logging",
   initialMode: "auto"
@@ -328,8 +328,8 @@ Already authenticated. Use for:
 
 All projects in `~/dev`:
 
-**voice-dev**
-- Location: `~/dev/voice-dev`
+**paseo**
+- Location: `~/dev/paseo`
 - Packages: `voice-assistant`
 
 **Faro** (Autonomous Competitive Intelligence)

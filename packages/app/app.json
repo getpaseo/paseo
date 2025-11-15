@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Voice Dev",
-    "slug": "voice-dev",
+    "name": "Paseo",
+    "slug": "paseo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "voicedev",
+    "scheme": "paseo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "runtimeVersion": {
@@ -19,7 +19,7 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to the microphone for voice commands."
       },
-      "bundleIdentifier": "com.moboudra.voicedev"
+      "bundleIdentifier": "com.moboudra.paseo"
     },
     "android": {
       "adaptiveIcon": {
@@ -34,7 +34,7 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
-      "package": "com.moboudra.voicedev"
+      "package": "com.moboudra.paseo"
     },
     "web": {
       "output": "static",

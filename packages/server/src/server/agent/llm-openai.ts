@@ -22,7 +22,7 @@ async function getTerminalMcpClient(): Promise<McpClient> {
   }
 
   // Create Terminal MCP server
-  const server = await createTerminalMcpServer({ sessionName: "__voice-dev" });
+  const server = await createTerminalMcpServer({ sessionName: "__paseo" });
 
   // Create linked transport pair
   const [clientTransport, serverTransport] =
