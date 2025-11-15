@@ -11,6 +11,7 @@ import {
   BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
 import type { SelectedToolCall } from "@/types/shared";
+import { z } from "zod";
 
 type DiffLine = {
   type: "add" | "remove" | "context" | "header";
@@ -20,6 +21,18 @@ type DiffLine = {
 type EditEntry = {
   filePath?: string;
   diffLines: DiffLine[];
+};
+
+type ReadEntry = {
+  filePath?: string;
+  content: string;
+};
+
+type CommandDetails = {
+  command?: string;
+  cwd?: string;
+  output?: string;
+  exitCode?: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -170,6 +183,523 @@ function deriveDiffLines({
   return [];
 }
 
+function looksLikePatch(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+  return /(\*\*\* Begin Patch|@@|diff --git|\+\+\+|--- )/.test(text);
+}
+
+function parsePatchText(text: string): DiffLine[] {
+  if (!text) {
+    return [];
+  }
+  return parseUnifiedDiff(text);
+}
+
+function getFilePathFromRecord(record: Record<string, unknown>): string | undefined {
+  return (
+    getString(record["file_path"]) ??
+    getString(record["filePath"]) ??
+    getString(record["path"]) ??
+    getString(record["target_path"]) ??
+    getString(record["targetPath"]) ??
+    undefined
+  );
+}
+
+const ChangeBlockSchema = z
+  .object({
+    unified_diff: z.string().optional(),
+    unifiedDiff: z.string().optional(),
+    diff: z.string().optional(),
+    patch: z.string().optional(),
+    old_content: z.string().optional(),
+    oldContent: z.string().optional(),
+    previous_content: z.string().optional(),
+    previousContent: z.string().optional(),
+    base_content: z.string().optional(),
+    baseContent: z.string().optional(),
+    old_string: z.string().optional(),
+    new_string: z.string().optional(),
+    new_content: z.string().optional(),
+    newContent: z.string().optional(),
+    replace_with: z.string().optional(),
+    replaceWith: z.string().optional(),
+    content: z.string().optional(),
+  })
+  .passthrough();
+
+function buildEditEntryFromBlock(
+  filePath: string | undefined,
+  blockValue: Record<string, unknown>
+): EditEntry | null {
+  const parsed = ChangeBlockSchema.safeParse(blockValue);
+  if (!parsed.success) {
+    return null;
+  }
+
+  const data = parsed.data;
+  const diffLines = deriveDiffLines({
+    unifiedDiff:
+      getString(
+        data.unified_diff ??
+          data.unifiedDiff ??
+          data.patch ??
+          data.diff
+      ) ?? undefined,
+    original:
+      getString(
+        data.old_string ??
+          data.old_content ??
+          data.oldContent ??
+          data.previous_content ??
+          data.previousContent ??
+          data.base_content ??
+          data.baseContent
+      ) ?? undefined,
+    updated:
+      getString(
+        data.new_string ??
+          data.new_content ??
+          data.newContent ??
+          data.replace_with ??
+          data.replaceWith ??
+          data.content
+      ) ?? undefined,
+  });
+
+  if (diffLines.length > 0) {
+    return {
+      filePath: filePath ?? getFilePathFromRecord(blockValue),
+      diffLines,
+    };
+  }
+
+  const patchCandidate =
+    getString(data.unified_diff ?? data.unifiedDiff ?? data.patch ?? data.diff) ??
+    undefined;
+  if (patchCandidate && looksLikePatch(patchCandidate)) {
+    const parsedLines = parsePatchText(patchCandidate);
+    if (parsedLines.length > 0) {
+      return {
+        filePath: filePath ?? getFilePathFromRecord(blockValue),
+        diffLines: parsedLines,
+      };
+    }
+  }
+
+  return null;
+}
+
+function mergeEditEntries(entries: EditEntry[]): EditEntry[] {
+  if (entries.length === 0) {
+    return [];
+  }
+  const seen = new Map<string, EditEntry>();
+  entries.forEach((entry) => {
+    if (!entry.diffLines.length) {
+      return;
+    }
+    const hash = `${entry.filePath ?? "unknown"}::${entry.diffLines
+      .map((line) => `${line.type}:${line.content}`)
+      .join("|")}`;
+    if (!seen.has(hash)) {
+      seen.set(hash, entry);
+    }
+  });
+  return Array.from(seen.values());
+}
+
+function parseEditArguments(value: unknown, depth = 0): EditEntry[] {
+  if (!value || depth > 5) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    if (looksLikePatch(value)) {
+      const diffLines = parsePatchText(value);
+      return diffLines.length ? [{ diffLines }] : [];
+    }
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return mergeEditEntries(
+      value.flatMap((entry) => parseEditArguments(entry, depth + 1))
+    );
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const entries: EditEntry[] = [];
+  const filePathHint = getFilePathFromRecord(value);
+
+  const changesParse = z.record(z.unknown()).safeParse(value["changes"]);
+  if (changesParse.success) {
+    for (const [filePath, changeValue] of Object.entries(changesParse.data)) {
+      const nested = parseEditArguments(changeValue, depth + 1);
+      entries.push(
+        ...nested.map((entry) => ({
+          ...entry,
+          filePath: entry.filePath ?? filePath ?? filePathHint,
+        }))
+      );
+    }
+  }
+
+  if (Array.isArray(value["files"])) {
+    for (const fileEntry of value["files"] as unknown[]) {
+      const nested = parseEditArguments(fileEntry, depth + 1);
+      const derivedFilePath = isRecord(fileEntry)
+        ? getFilePathFromRecord(fileEntry)
+        : undefined;
+      const resolvedFilePath = derivedFilePath ?? filePathHint;
+      entries.push(
+        ...nested.map((entry) => ({
+          ...entry,
+          filePath: entry.filePath ?? resolvedFilePath,
+        }))
+      );
+    }
+  }
+
+  const direct = buildEditEntryFromBlock(filePathHint, value);
+  if (direct) {
+    entries.push(direct);
+  } else {
+    const patchCandidates = [
+      getString(value["patch"]),
+      getString(value["diff"]),
+      getString(value["unified_diff"]),
+      getString(value["unifiedDiff"]),
+    ].filter(Boolean) as string[];
+    for (const patch of patchCandidates) {
+      if (patch && looksLikePatch(patch)) {
+        const diffLines = parsePatchText(patch);
+        if (diffLines.length) {
+          entries.push({ filePath: filePathHint, diffLines });
+          break;
+        }
+      }
+    }
+  }
+
+  const nestedKeys = [
+    "input",
+    "update",
+    "create",
+    "delete",
+    "raw",
+    "data",
+    "payload",
+    "arguments",
+    "result",
+  ] as const;
+  for (const key of nestedKeys) {
+    if (value[key] !== undefined) {
+      const nestedEntries = parseEditArguments(value[key], depth + 1);
+      entries.push(
+        ...nestedEntries.map((entry) => ({
+          ...entry,
+          filePath: entry.filePath ?? filePathHint,
+        }))
+      );
+    }
+  }
+
+  return mergeEditEntries(entries);
+}
+
+const ReadContainerSchema = z
+  .object({
+    filePath: z.string().optional(),
+    file_path: z.string().optional(),
+    path: z.string().optional(),
+    content: z.string().optional(),
+    text: z.string().optional(),
+    blob: z.string().optional(),
+    data: z
+      .object({
+        content: z.string().optional(),
+        text: z.string().optional(),
+      })
+      .optional(),
+    structuredContent: z
+      .object({
+        content: z.string().optional(),
+        text: z.string().optional(),
+        data: z
+          .object({
+            content: z.string().optional(),
+            text: z.string().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    structured_content: z
+      .object({
+        content: z.string().optional(),
+        text: z.string().optional(),
+      })
+      .optional(),
+    output: z
+      .object({
+        content: z.string().optional(),
+        text: z.string().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+function parseReadEntries(value: unknown, depth = 0): ReadEntry[] {
+  if (!value || depth > 4) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length ? [{ content: value }] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => parseReadEntries(entry, depth + 1));
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const parsed = ReadContainerSchema.safeParse(value);
+  if (parsed.success) {
+    const data = parsed.data;
+    const content =
+      getString(data.content) ??
+      getString(data.text) ??
+      getString(data.blob) ??
+      getString(data.data?.content) ??
+      getString(data.data?.text) ??
+      getString(data.structuredContent?.content) ??
+      getString(data.structuredContent?.text) ??
+      getString(data.structuredContent?.data?.content) ??
+      getString(data.structuredContent?.data?.text) ??
+      getString(data.structured_content?.content) ??
+      getString(data.structured_content?.text) ??
+      getString(data.output?.content) ??
+      getString(data.output?.text);
+    if (content) {
+      return [
+        {
+          filePath: data.filePath ?? data.file_path ?? data.path,
+          content,
+        },
+      ];
+    }
+  }
+
+  const nestedKeys = [
+    "output",
+    "result",
+    "structuredContent",
+    "structured_content",
+    "data",
+    "raw",
+    "value",
+    "content",
+  ] as const;
+  const entries: ReadEntry[] = [];
+  for (const key of nestedKeys) {
+    if (value[key] !== undefined) {
+      entries.push(...parseReadEntries(value[key], depth + 1));
+    }
+  }
+  return entries;
+}
+
+function mergeReadEntries(entries: ReadEntry[]): ReadEntry[] {
+  if (!entries.length) {
+    return [];
+  }
+  const seen = new Map<string, ReadEntry>();
+  entries.forEach((entry) => {
+    const hash = `${entry.filePath ?? "content"}::${entry.content}`;
+    if (!seen.has(hash)) {
+      seen.set(hash, entry);
+    }
+  });
+  return Array.from(seen.values());
+}
+
+const CommandRawSchema = z
+  .object({
+    type: z.string().optional(),
+    command: z.union([z.string(), z.array(z.string())]).optional(),
+    aggregated_output: z.string().optional(),
+    exit_code: z.number().optional(),
+    cwd: z.string().optional(),
+    directory: z.string().optional(),
+    metadata: z
+      .object({
+        exit_code: z.number().optional(),
+      })
+      .optional(),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
+  })
+  .passthrough();
+
+const CommandResultSchema = z
+  .object({
+    output: z.string().optional(),
+    exitCode: z.number().nullable().optional(),
+    structuredContent: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .optional(),
+    structured_content: z
+      .object({
+        output: z.string().optional(),
+        text: z.string().optional(),
+        content: z.string().optional(),
+      })
+      .optional(),
+    metadata: z
+      .object({
+        exit_code: z.number().optional(),
+      })
+      .optional(),
+    result: z.unknown().optional(),
+  })
+  .passthrough();
+
+function coerceCommandValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const tokens = value.filter((entry): entry is string => typeof entry === "string");
+    if (tokens.length) {
+      return tokens.join(" ");
+    }
+  }
+  return undefined;
+}
+
+function collectCommandDetails(
+  target: CommandDetails,
+  value: unknown,
+  depth = 0
+): void {
+  if (!value || depth > 4) {
+    return;
+  }
+
+  if (typeof value === "string") {
+    if (!target.output) {
+      target.output = value;
+    }
+    return;
+  }
+
+  if (!isRecord(value)) {
+    return;
+  }
+
+  const rawParsed = CommandRawSchema.safeParse(value);
+  if (rawParsed.success) {
+    const data = rawParsed.data;
+    const commandCandidate =
+      coerceCommandValue(data.command) ??
+      (isRecord(data.input) ? coerceCommandValue(data.input["command"]) : undefined);
+    if (!target.command && commandCandidate) {
+      target.command = commandCandidate;
+    }
+    const cwdCandidate =
+      getString(data.cwd ?? data.directory) ??
+      (isRecord(data.input)
+        ? getString(data.input["cwd"] ?? data.input["directory"])
+        : undefined);
+    if (!target.cwd && cwdCandidate) {
+      target.cwd = cwdCandidate;
+    }
+    const aggregatedOutput =
+      getString(data.aggregated_output) ??
+      (isRecord(data.output)
+        ? getString(
+            (data.output as Record<string, unknown>)["aggregated_output"] ??
+              (data.output as Record<string, unknown>)["output"] ??
+              (data.output as Record<string, unknown>)["text"]
+          )
+        : undefined);
+    if (!target.output && aggregatedOutput) {
+      target.output = aggregatedOutput;
+    }
+    const exitCandidate =
+      data.exit_code ??
+      (data.metadata ? data.metadata.exit_code : undefined) ??
+      (isRecord(data.output)
+        ? ((data.output as Record<string, unknown>)["exit_code"] as number | undefined) ??
+          ((data.output as Record<string, unknown>)["exitCode"] as number | undefined)
+        : undefined);
+    if ((typeof exitCandidate === "number" || exitCandidate === null) && target.exitCode === undefined) {
+      target.exitCode = exitCandidate ?? null;
+    }
+  }
+
+  const resultParsed = CommandResultSchema.safeParse(value);
+  if (resultParsed.success) {
+    const data = resultParsed.data;
+    const outputCandidate =
+      getString(data.output) ??
+      getString(data.structuredContent?.output) ??
+      getString(data.structuredContent?.text) ??
+      getString(data.structured_content?.output) ??
+      getString(data.structured_content?.text) ??
+      undefined;
+    if (!target.output && outputCandidate) {
+      target.output = outputCandidate;
+    }
+    const exitCandidate = data.exitCode ?? data.metadata?.exit_code;
+    if ((typeof exitCandidate === "number" || exitCandidate === null) && target.exitCode === undefined) {
+      target.exitCode = exitCandidate ?? null;
+    }
+    if (data.result !== undefined) {
+      collectCommandDetails(target, data.result, depth + 1);
+    }
+  }
+
+  const nestedKeys = [
+    "input",
+    "output",
+    "result",
+    "raw",
+    "data",
+    "payload",
+    "structuredContent",
+    "structured_content",
+  ] as const;
+  for (const key of nestedKeys) {
+    if (value[key] !== undefined) {
+      collectCommandDetails(target, value[key], depth + 1);
+    }
+  }
+}
+
+function parseCommandDetails(args: unknown, result: unknown): CommandDetails | null {
+  const details: CommandDetails = {};
+  collectCommandDetails(details, args);
+  collectCommandDetails(details, result);
+  if (details.command || details.output) {
+    return details;
+  }
+  return null;
+}
+
 interface ToolCallBottomSheetProps {
   bottomSheetRef: React.RefObject<BottomSheetModal | null>;
   selectedToolCall: SelectedToolCall | null;
@@ -229,108 +759,25 @@ export function ToolCallBottomSheet({
   }, [selectedToolCall]);
 
   const editEntries = useMemo(() => {
-    if (!args || !isRecord(args)) {
-      return [] as EditEntry[];
-    }
-
-    const rawArgs = args as Record<string, unknown>;
-    const changesValue = rawArgs["changes"];
-
-    if (isRecord(changesValue)) {
-      const changeEntries = Object.entries(
-        changesValue as Record<string, unknown>
-      );
-
-      return changeEntries
-        .map<EditEntry | null>(([filePath, value]) => {
-          if (!isRecord(value)) {
-            return null;
-          }
-
-          let changeBlock: Record<string, unknown> | null = null;
-          if (isRecord(value["update"])) {
-            changeBlock = value["update"] as Record<string, unknown>;
-          } else if (isRecord(value["create"])) {
-            changeBlock = value["create"] as Record<string, unknown>;
-          } else if (isRecord(value["delete"])) {
-            changeBlock = value["delete"] as Record<string, unknown>;
-          } else {
-            changeBlock = value;
-          }
-
-          if (!changeBlock) {
-            return null;
-          }
-
-          const diffLines = deriveDiffLines({
-            unifiedDiff: getString(
-              changeBlock["unified_diff"] ??
-                changeBlock["diff"] ??
-                changeBlock["patch"] ??
-                changeBlock["unifiedDiff"]
-            ),
-            original:
-              getString(
-                changeBlock["old_content"] ??
-                  changeBlock["oldContent"] ??
-                  changeBlock["old_string"] ??
-                  changeBlock["previous_content"] ??
-                  changeBlock["previousContent"] ??
-                  changeBlock["base_content"] ??
-                  changeBlock["baseContent"]
-              ) ?? undefined,
-            updated:
-              getString(
-                changeBlock["new_content"] ??
-                  changeBlock["newContent"] ??
-                  changeBlock["new_string"] ??
-                  changeBlock["content"] ??
-                  changeBlock["replace_with"] ??
-                  changeBlock["replaceWith"]
-              ) ?? undefined,
-          });
-
-          return {
-            filePath,
-            diffLines,
-          };
-        })
-        .filter((entry): entry is EditEntry => Boolean(entry));
-    }
-
-    const filePath =
-      getString(
-        rawArgs["file_path"] ?? rawArgs["filePath"] ?? rawArgs["path"]
-      ) || undefined;
-    const diffLines = deriveDiffLines({
-      original:
-        getString(
-          rawArgs["old_string"] ??
-            rawArgs["oldString"] ??
-            rawArgs["old_content"] ??
-            rawArgs["previous_content"] ??
-            rawArgs["base_content"]
-        ) ?? undefined,
-      updated:
-        getString(
-          rawArgs["new_string"] ??
-            rawArgs["newString"] ??
-            rawArgs["new_content"] ??
-            rawArgs["content"]
-        ) ?? undefined,
-    });
-
-    if (!filePath && diffLines.length === 0) {
-      return [];
-    }
-
-    return [
-      {
-        filePath,
-        diffLines,
-      },
+    const entries = [
+      ...parseEditArguments(args),
+      ...parseEditArguments(result),
     ];
-  }, [args]);
+    return mergeEditEntries(entries);
+  }, [args, result]);
+
+  const readEntries = useMemo(() => {
+    const entries = [
+      ...parseReadEntries(result),
+      ...parseReadEntries(args),
+    ];
+    return mergeReadEntries(entries);
+  }, [args, result]);
+
+  const commandDetails = useMemo(() => parseCommandDetails(args, result), [
+    args,
+    result,
+  ]);
 
   return (
     <BottomSheetModal
@@ -414,6 +861,69 @@ export function ToolCallBottomSheet({
               </View>
             </View>
           ))}
+
+        {readEntries.length > 0 &&
+          readEntries.map((entry, index) => (
+            <View key={`${entry.filePath ?? "read"}-${index}`} style={styles.section}>
+              <Text style={styles.sectionTitle}>Read Result</Text>
+              {entry.filePath && (
+                <View style={styles.fileInfoContainer}>
+                  <Text style={styles.fileInfoText}>{entry.filePath}</Text>
+                </View>
+              )}
+              <ScrollView
+                style={styles.contentScroll}
+                contentContainerStyle={styles.contentContainer}
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={true}
+              >
+                <Text style={styles.contentText}>{entry.content}</Text>
+              </ScrollView>
+            </View>
+          ))}
+
+        {commandDetails && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Command Output</Text>
+            {commandDetails.command && (
+              <View style={styles.commandMetaContainer}>
+                <Text style={styles.commandMetaLabel}>Command</Text>
+                <ScrollView horizontal nestedScrollEnabled={true} showsHorizontalScrollIndicator={true}>
+                  <Text style={styles.commandMetaValue}>{commandDetails.command}</Text>
+                </ScrollView>
+              </View>
+            )}
+            {commandDetails.cwd && (
+              <View style={styles.commandMetaContainer}>
+                <Text style={styles.commandMetaLabel}>Directory</Text>
+                <ScrollView horizontal nestedScrollEnabled={true} showsHorizontalScrollIndicator={true}>
+                  <Text style={styles.commandMetaValue}>{commandDetails.cwd}</Text>
+                </ScrollView>
+              </View>
+            )}
+            {commandDetails.exitCode !== undefined && (
+              <View style={styles.commandMetaContainer}>
+                <Text style={styles.commandMetaLabel}>Exit Code</Text>
+                <Text style={styles.commandMetaValue}>
+                  {commandDetails.exitCode === null ? "Unknown" : commandDetails.exitCode}
+                </Text>
+              </View>
+            )}
+            {commandDetails.output && (
+              <View style={styles.commandOutputContainer}>
+                <Text style={styles.commandOutputLabel}>Output</Text>
+                <ScrollView
+                  style={styles.contentScroll}
+                  contentContainerStyle={styles.contentContainer}
+                  nestedScrollEnabled={true}
+                  showsVerticalScrollIndicator={true}
+                >
+                  <Text style={styles.contentText}>{commandDetails.output}</Text>
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Content sections */}
         {args !== undefined && (
@@ -601,11 +1111,52 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 20,
     // Text maintains whitespace and formatting
   },
+  contentScroll: {
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    maxHeight: 280,
+  },
+  contentContainer: {
+    padding: theme.spacing[3],
+  },
+  contentText: {
+    fontFamily: "monospace",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    lineHeight: 20,
+  },
   errorContainer: {
     borderColor: theme.colors.destructive,
     backgroundColor: theme.colors.background,
   },
   errorText: {
     color: theme.colors.destructive,
+  },
+  commandMetaContainer: {
+    marginBottom: theme.spacing[2],
+  },
+  commandMetaLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    marginBottom: theme.spacing[1],
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+  },
+  commandMetaValue: {
+    fontFamily: "monospace",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+  },
+  commandOutputContainer: {
+    marginTop: theme.spacing[3],
+  },
+  commandOutputLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    marginBottom: theme.spacing[1],
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
   },
 }));
