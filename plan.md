@@ -27,6 +27,7 @@
 - [x] Do not mark the Claude hydration fix complete until there’s an end-to-end test that (1) runs Claude, (2) executes tool calls, (3) persists the conversation under `~/.claude/projects/...`, and (4) hydrates from disk verifying the tool call results render. No test, no checkbox.
   - Strengthened `packages/server/src/server/agent/providers/claude-agent.test.ts` so the existing e2e hydration suite now asserts the live stream parses command/edit/read payloads and that the resumed stream reproduces those parsed diffs/reads/command outputs from `~/.claude/projects`, guaranteeing the UI pills render identical results after hydration.
 - [x] ERROR Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. .$tool_1763217454926_uyr9rm
+
   - `Stream` now generates fallback tool ids via `createUniqueTimelineId`, ensuring hydrated/past tool calls without callIds never reuse the same key even when their metadata matches; added `testFallbackToolCallIdsStayUnique` in `packages/app/src/types/stream.test.ts` to cover the regression and verified via `npx vitest packages/app/src/types/stream.test.ts`.
 
   ```tsx
@@ -40,7 +41,8 @@
     322 |         renderItem={renderStreamItem}
   ```
 
-- [ ] `npm test` currently fails in `packages/app` with Vitest throwing `Unexpected call to process.send` / `ERR_INVALID_ARG_TYPE` before any tests run. Track down the coverage/pool config causing this and make sure the app suite actually executes (it should include the hydrated tool-call tests mentioned above).
+- [x] `npm test` currently fails in `packages/app` with Vitest throwing `Unexpected call to process.send` / `ERR_INVALID_ARG_TYPE` before any tests run. Track down the coverage/pool config causing this and make sure the app suite actually executes (it should include the hydrated tool-call tests mentioned above).
+  - Forced the app Vitest config to use the `forks` pool (keeps `process.send` intact for Expo/xcode helpers) so the suite boots reliably; `npm test --workspace=@voice-dev/app` now runs the harness tests and reproduces the expected hydration failure instead of crashing ahead of collection.
 - [ ] WARN [expo-image-picker] `ImagePicker.MediaTypeOptions` have been deprecated. Use `ImagePicker.MediaType` or an array of `ImagePicker.MediaType` instead.
 - [ ] Update the AgentInput controls so the buttons reflect agent state: when idle show `Dictate` + `Realtime` by default (switch to `Send` when the text box has content); when an agent is running show `Realtime` + `Cancel` regardless of input so you can interrupt without typing. Realtime toggle must remain available in both states.
 - Implement long press on the agent list item to opena a light bottom sheet with some actions, for now: "Delete agent" all this will do is remove it from our own persistence, but the agent will still exist in the claude/codex persistance and thats out of scope to remove. Its esentially just to remove it from the list, disown it.
