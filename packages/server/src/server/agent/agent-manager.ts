@@ -285,6 +285,23 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  async cancelAgentRun(agentId: string): Promise<boolean> {
+    const agent = this.requireAgent(agentId);
+    if (!agent.pendingRun || typeof agent.pendingRun.return !== "function") {
+      return false;
+    }
+    try {
+      await agent.pendingRun.return(undefined as unknown as AgentStreamEvent);
+      return true;
+    } catch (error) {
+      console.error(
+        `[AgentManager] Failed to cancel run for agent ${agentId}:`,
+        error
+      );
+      throw error;
+    }
+  }
+
   getPendingPermissions(agentId: string): AgentPermissionRequest[] {
     const agent = this.requireAgent(agentId);
     return Array.from(agent.pendingPermissions.values());

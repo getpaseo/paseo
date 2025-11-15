@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { Server as HTTPServer } from "http";
+import type { IncomingMessage } from "http";
 import { parse as parseUrl } from "url";
 import {
   WSInboundMessageSchema,
@@ -9,7 +10,8 @@ import {
 } from "./messages.js";
 import { Session } from "./session.js";
 import { loadConversation } from "./persistence.js";
-import { AgentManager } from "./acp/agent-manager.js";
+import { AgentManager } from "./agent/agent-manager.js";
+import { AgentRegistry } from "./agent/agent-registry.js";
 
 /**
  * WebSocket server that routes messages between clients and their sessions.
@@ -21,9 +23,15 @@ export class VoiceAssistantWebSocketServer {
   private conversationIdToWs: Map<string, WebSocket> = new Map();
   private clientIdCounter: number = 0;
   private agentManager: AgentManager;
+  private agentRegistry: AgentRegistry;
 
-  constructor(server: HTTPServer, agentManager: AgentManager) {
+  constructor(
+    server: HTTPServer,
+    agentManager: AgentManager,
+    agentRegistry: AgentRegistry
+  ) {
     this.agentManager = agentManager;
+    this.agentRegistry = agentRegistry;
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", (ws, request) => {
@@ -36,7 +44,7 @@ export class VoiceAssistantWebSocketServer {
   /**
    * Handle new WebSocket connection
    */
-  private async handleConnection(ws: WebSocket, request: any): Promise<void> {
+  private async handleConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
     // Generate unique client ID
     const clientId = `client-${++this.clientIdCounter}`;
 
@@ -70,6 +78,7 @@ export class VoiceAssistantWebSocketServer {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
       this.agentManager,
+      this.agentRegistry,
       {
         conversationId,
         initialMessages: initialMessages || undefined,
@@ -163,8 +172,8 @@ export class VoiceAssistantWebSocketServer {
             // Debug: Log create_agent_request details
             if (sessionMessage.type === "create_agent_request") {
               console.log("[WS] create_agent_request details:", {
-                cwd: sessionMessage.cwd,
-                initialMode: sessionMessage.initialMode,
+                cwd: sessionMessage.config.cwd,
+                initialMode: sessionMessage.config.modeId,
                 worktreeName: sessionMessage.worktreeName,
                 requestId: sessionMessage.requestId,
               });
@@ -179,8 +188,9 @@ export class VoiceAssistantWebSocketServer {
           }
           return;
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[WS] Failed to parse/handle message:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
       // Send error to client
       this.sendToClient(
         ws,
@@ -188,7 +198,7 @@ export class VoiceAssistantWebSocketServer {
           type: "status",
           payload: {
             status: "error",
-            message: `Invalid message: ${error.message}`,
+            message: `Invalid message: ${errorMessage}`,
           },
         })
       );

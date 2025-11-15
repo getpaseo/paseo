@@ -176,7 +176,7 @@ export default function FileExplorerScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title={selectedEntryPath ?? currentPath || "."} />
+      <BackHeader title={selectedEntryPath ?? (currentPath || ".")} />
 
       <View style={styles.content}>
         {shouldShowPreview ? (

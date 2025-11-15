@@ -1,6 +1,4 @@
-import type { SessionNotification } from '@agentclientprotocol/sdk';
-
-/**
+/** 
  * Discriminated union types for session updates
  */
 export type SessionUpdate =
@@ -117,86 +115,6 @@ export interface MergedToolCall {
   locations?: unknown[];
   startTimestamp: Date;
   endTimestamp: Date;
-}
-
-/**
- * Parse SessionNotification into typed SessionUpdate
- */
-export function parseSessionUpdate(notification: SessionNotification): SessionUpdate | null {
-  const update = (notification as any).update;
-
-  if (!update || !update.sessionUpdate) {
-    return null;
-  }
-
-  const kind = update.sessionUpdate;
-
-  switch (kind) {
-    case 'user_message_chunk':
-      return {
-        kind: 'user_message_chunk',
-        content: update.content,
-      };
-
-    case 'agent_message_chunk':
-      return {
-        kind: 'agent_message_chunk',
-        content: update.content,
-      };
-
-    case 'agent_thought_chunk':
-      return {
-        kind: 'agent_thought_chunk',
-        content: update.content,
-      };
-
-    case 'tool_call':
-      return {
-        kind: 'tool_call',
-        toolCallId: update.toolCallId,
-        title: update.title,
-        status: update.status,
-        toolKind: update.kind,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-        content: update.content,
-        locations: update.locations,
-      };
-
-    case 'tool_call_update':
-      return {
-        kind: 'tool_call_update',
-        toolCallId: update.toolCallId,
-        title: update.title,
-        status: update.status,
-        toolKind: update.kind,
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-        content: update.content,
-        locations: update.locations,
-      };
-
-    case 'plan':
-      return {
-        kind: 'plan',
-        entries: update.entries,
-      };
-
-    case 'available_commands_update':
-      return {
-        kind: 'available_commands_update',
-        availableCommands: update.availableCommands,
-      };
-
-    case 'current_mode_update':
-      return {
-        kind: 'current_mode_update',
-        currentModeId: update.currentModeId,
-      };
-
-    default:
-      return null;
-  }
 }
 
 /**

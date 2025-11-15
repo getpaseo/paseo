@@ -1,15 +1,9 @@
-import { View, Text, Pressable, ScrollView } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import type { AgentStatus } from '@server/server/acp/types';
+import { View, Text, Pressable, ScrollView } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import type { Agent } from "@/contexts/session-context";
 
 export interface ActiveProcessesProps {
-  agents: Array<{
-    id: string;
-    status: AgentStatus;
-    type: 'claude';
-    currentModeId?: string;
-    availableModes?: Array<{ id: string; name: string; description?: string | null }>;
-  }>;
+  agents: Agent[];
   commands: Array<{
     id: string;
     name: string;
@@ -18,46 +12,44 @@ export interface ActiveProcessesProps {
     isDead: boolean;
     exitCode: number | null;
   }>;
-  viewMode: 'orchestrator' | 'agent';
+  viewMode: "orchestrator" | "agent";
   activeAgentId: string | null;
   onSelectAgent: (id: string) => void;
   onSelectOrchestrator: () => void;
 }
 
-function getAgentStatusColor(status: AgentStatus): string {
+function getAgentStatusColor(status: Agent["status"]): string {
   switch (status) {
-    case 'initializing':
-      return '#f59e0b'; // orange
-    case 'ready':
-      return '#3b82f6'; // blue
-    case 'processing':
-      return '#fbbf24'; // yellow
-    case 'completed':
-      return '#22c55e'; // green
-    case 'failed':
-      return '#ef4444'; // red
-    case 'killed':
-      return '#9ca3af'; // gray
+    case "initializing":
+      return "#f59e0b";
+    case "idle":
+      return "#22c55e";
+    case "running":
+      return "#3b82f6";
+    case "error":
+      return "#ef4444";
+    case "closed":
+      return "#9ca3af";
     default:
-      return '#9ca3af';
+      return "#9ca3af";
   }
 }
 
-function getModeName(modeId?: string, availableModes?: Array<{ id: string; name: string }>): string {
-  if (!modeId) return 'unknown';
+function getModeName(modeId?: string, availableModes?: Agent["availableModes"]): string {
+  if (!modeId) return "unknown";
   const mode = availableModes?.find((m) => m.id === modeId);
-  return mode?.name || modeId;
+  return mode?.label || modeId;
 }
 
 function getModeColor(modeId?: string): string {
-  if (!modeId) return '#9ca3af'; // gray
+  if (!modeId) return "#9ca3af"; // gray
 
   // Color based on common mode types
-  if (modeId.includes('ask')) return '#f59e0b'; // orange - asks permission
-  if (modeId.includes('code')) return '#22c55e'; // green - writes code
-  if (modeId.includes('architect') || modeId.includes('plan')) return '#3b82f6'; // blue - plans
+  if (modeId.includes("ask")) return "#f59e0b"; // orange - asks permission
+  if (modeId.includes("code")) return "#22c55e"; // green - writes code
+  if (modeId.includes("architect") || modeId.includes("plan")) return "#3b82f6"; // blue - plans
 
-  return '#9ca3af'; // gray - unknown
+  return "#9ca3af"; // gray - unknown
 }
 
 const styles = StyleSheet.create((theme) => ({

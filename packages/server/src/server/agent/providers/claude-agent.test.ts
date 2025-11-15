@@ -94,7 +94,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         "First run a Bash command to print the working directory, then use your editor tools (not the shell) to create a file named tool-test.txt in the current directory that contains exactly the text 'hello world'. Report 'done' after the write finishes."
       );
 
-      const timeline: any[] = [];
+      const timeline: AgentTimelineItem[] = [];
       let completed = false;
 
       for await (const event of events) {

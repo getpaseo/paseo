@@ -231,8 +231,8 @@ export default function AgentScreen() {
               agent={agent}
               streamItems={streamItems}
               pendingPermissions={agentPermissions}
-              onPermissionResponse={(requestId, optionId) =>
-                respondToPermission(requestId, id!, agent.sessionId || "", [optionId])
+              onPermissionResponse={(agentId, requestId, response) =>
+                respondToPermission(agentId, requestId, response)
               }
             />
           )}

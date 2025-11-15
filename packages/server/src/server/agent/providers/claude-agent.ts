@@ -94,6 +94,10 @@ type ToolUseCacheEntry = {
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -374,8 +378,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     const result: Record<string, ClaudeMcpServerConfig> = {};
     for (const [name, config] of Object.entries(servers)) {
-      if (!config) continue;
-      if ("type" in config || "command" in (config as any) || "url" in (config as any)) {
+      if (!isRecord(config)) continue;
+      if ("type" in config || "command" in config || "url" in config) {
         result[name] = config as ClaudeMcpServerConfig;
       }
     }

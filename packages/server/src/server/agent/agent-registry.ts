@@ -3,11 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { AgentSnapshot } from "./agent-manager.js";
-import type {
-  AgentPersistenceHandle,
-  AgentProvider,
-  AgentSessionConfig,
-} from "./agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -103,6 +99,11 @@ export class AgentRegistry {
     return this.load();
   }
 
+  async get(agentId: string): Promise<StoredAgentRecord | null> {
+    await this.load();
+    return this.cache.get(agentId) ?? null;
+  }
+
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     this.cache.set(record.id, record);
@@ -124,6 +125,12 @@ export class AgentRegistry {
     await this.load();
     const now = new Date().toISOString();
     const existing = this.cache.get(agentId);
+    const sanitizedConfig = config ? sanitizeConfig(config) : existing?.config;
+    const nextModeId =
+      config?.modeId ??
+      existing?.lastModeId ??
+      sanitizedConfig?.modeId ??
+      null;
     const updated: StoredAgentRecord = {
       id: agentId,
       provider,
@@ -132,8 +139,8 @@ export class AgentRegistry {
       updatedAt: now,
       title: existing?.title ?? null,
       lastStatus: existing?.lastStatus ?? null,
-      lastModeId: existing?.lastModeId ?? null,
-      config: config ? sanitizeConfig(config) : existing?.config,
+      lastModeId: nextModeId,
+      config: sanitizedConfig,
       persistence: existing?.persistence ?? null,
     };
     this.cache.set(agentId, updated);

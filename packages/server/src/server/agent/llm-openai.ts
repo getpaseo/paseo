@@ -1,24 +1,22 @@
-import { tool, experimental_createMCPClient } from "ai";
+import { tool, experimental_createMCPClient, type ToolSet } from "ai";
 import { z } from "zod";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createTerminalMcpServer } from "../terminal-mcp/index.js";
 
+type McpClient = Awaited<ReturnType<typeof experimental_createMCPClient>>;
+
 /**
  * Singleton MCP clients
  */
-let terminalMcpClient: Awaited<
-  ReturnType<typeof experimental_createMCPClient>
-> | null = null;
+let terminalMcpClient: McpClient | null = null;
 
-let playwrightMcpClient: Awaited<
-  ReturnType<typeof experimental_createMCPClient>
-> | null = null;
+let playwrightMcpClient: McpClient | null = null;
 
 /**
  * Get or create Terminal MCP client (singleton)
  */
-async function getTerminalMcpClient() {
+async function getTerminalMcpClient(): Promise<McpClient> {
   if (terminalMcpClient) {
     return terminalMcpClient;
   }
@@ -46,7 +44,7 @@ async function getTerminalMcpClient() {
 /**
  * Get or create Playwright MCP client (singleton)
  */
-async function getPlaywrightMcpClient() {
+async function getPlaywrightMcpClient(): Promise<McpClient> {
   if (playwrightMcpClient) {
     return playwrightMcpClient;
   }
@@ -68,10 +66,10 @@ async function getPlaywrightMcpClient() {
 /**
  * Cache for merged MCP tools
  */
-let mcpToolsCache: Record<string, any> | null = null;
-let mcpToolsPromise: Promise<Record<string, any>> | null = null;
+let mcpToolsCache: ToolSet | null = null;
+let mcpToolsPromise: Promise<ToolSet> | null = null;
 
-async function getMcpTools(): Promise<Record<string, any>> {
+async function getMcpTools(): Promise<ToolSet> {
   if (mcpToolsCache) {
     return mcpToolsCache;
   }
@@ -89,12 +87,12 @@ async function getMcpTools(): Promise<Record<string, any>> {
       }),
     ]);
 
-    const terminalTools = await terminalClient.tools();
-    const playwrightTools = playwrightClient
-      ? await playwrightClient.tools()
+    const terminalTools = (await terminalClient.tools()) as ToolSet;
+    const playwrightTools: ToolSet = playwrightClient
+      ? ((await playwrightClient.tools()) as ToolSet)
       : {};
 
-    const mergedTools = {
+    const mergedTools: ToolSet = {
       ...terminalTools,
       ...playwrightTools,
     };
@@ -111,7 +109,7 @@ async function getMcpTools(): Promise<Record<string, any>> {
 /**
  * Manual tools that aren't MCP-based
  */
-const manualTools = {
+const manualTools: ToolSet = {
   present_artifact: tool({
     description:
       "Present an artifact (plan, diff, screenshot, etc.) to the user for review. Use this when you need to show information that's hard to convey via TTS, such as markdown plans, code diffs, or visual content",
@@ -156,9 +154,9 @@ const manualTools = {
  * @param agentTools - Optional agent tools (per-session).
  */
 export async function getAllTools(
-  terminalTools?: Record<string, any>,
-  agentTools?: Record<string, any>
-): Promise<Record<string, any>> {
+  terminalTools?: ToolSet,
+  agentTools?: ToolSet
+): Promise<ToolSet> {
   if (terminalTools) {
     // Use provided terminal tools (per-session) and merge with Playwright and agent tools
     const playwrightClient = await getPlaywrightMcpClient().catch((error) => {
@@ -166,25 +164,28 @@ export async function getAllTools(
       return null;
     });
 
-    const playwrightTools = playwrightClient
-      ? await playwrightClient.tools()
+    const playwrightTools: ToolSet = playwrightClient
+      ? ((await playwrightClient.tools()) as ToolSet)
       : {};
 
-    return {
+    const combinedTools: ToolSet = {
       ...terminalTools,
       ...playwrightTools,
-      ...(agentTools || {}),
+      ...(agentTools ?? {}),
       ...manualTools,
     };
+
+    return combinedTools;
   }
 
   // Fallback to global singleton tools
   const mcpTools = await getMcpTools();
-  return {
+  const combinedMcpTools: ToolSet = {
     ...mcpTools,
-    ...(agentTools || {}),
+    ...(agentTools ?? {}),
     ...manualTools,
   };
+  return combinedMcpTools;
 }
 
 /**

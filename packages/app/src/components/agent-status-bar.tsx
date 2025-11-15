@@ -2,6 +2,7 @@ import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import { useSession } from "@/contexts/session-context";
+import type { Agent } from "@/contexts/session-context";
 import { useState } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
 
@@ -24,35 +25,18 @@ export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
     setAgentMode(agentId, modeId);
   }
 
-  function getStatusLabel(status: string): string {
+  function getStatusColor(status: Agent["status"]): string {
     switch (status) {
-      case "ready":
-        return "Ready";
-      case "processing":
-        return "Working";
-      case "completed":
-        return "Completed";
-      case "failed":
-        return "Failed";
-      case "killed":
-        return "Stopped";
-      default:
-        return status;
-    }
-  }
-
-  function getStatusColor(status: string): string {
-    switch (status) {
-      case "ready":
-        return theme.colors.palette.green[500];
-      case "processing":
-        return theme.colors.palette.blue[500];
-      case "completed":
-        return theme.colors.palette.gray[500];
-      case "failed":
-        return theme.colors.palette.red[500];
-      case "killed":
+      case "initializing":
         return theme.colors.palette.orange[500];
+      case "idle":
+        return theme.colors.palette.green[500];
+      case "running":
+        return theme.colors.palette.blue[500];
+      case "error":
+        return theme.colors.palette.red[500];
+      case "closed":
+        return theme.colors.palette.gray[500];
       default:
         return theme.colors.mutedForeground;
     }
@@ -70,7 +54,7 @@ export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
           ]}
         >
           <Text style={styles.modeBadgeText}>
-            {agent.availableModes?.find((m) => m.id === agent.currentModeId)?.name ||
+            {agent.availableModes?.find((m) => m.id === agent.currentModeId)?.label ||
               agent.currentModeId ||
               "default"}
           </Text>

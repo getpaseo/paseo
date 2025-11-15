@@ -1,51 +1,32 @@
-/**
- * Test script to verify idempotent stream reduction
- *
- * This tests that applying the same session updates multiple times
- * or in different orders produces identical results.
- */
+import { reduceStreamUpdate, hydrateStreamState, type StreamItem } from "./packages/app/src/types/stream";
 
-import { reduceStreamUpdate, hydrateStreamState, type StreamItem } from './packages/app/src/types/stream';
-import type { SessionNotification } from '@agentclientprotocol/sdk';
+type AgentStreamEventPayload = Parameters<typeof reduceStreamUpdate>[1];
 
-// Helper to create enriched notifications with messageId
-function createAgentMessageChunk(text: string, messageId: string): any {
+function assistantTimeline(text: string): AgentStreamEventPayload {
   return {
-    update: {
-      sessionUpdate: 'agent_message_chunk',
-      content: { text },
-      messageId,
-    },
+    type: "timeline",
+    provider: "claude",
+    item: { type: "assistant_message", text },
   };
 }
 
-function createAgentThoughtChunk(text: string, messageId: string): any {
+function reasoningTimeline(text: string): AgentStreamEventPayload {
   return {
-    update: {
-      sessionUpdate: 'agent_thought_chunk',
-      content: { text },
-      messageId,
-    },
+    type: "timeline",
+    provider: "claude",
+    item: { type: "reasoning", text },
   };
 }
 
-function createUserMessageChunk(text: string, messageId: string): any {
+function toolTimeline(id: string, status: string): AgentStreamEventPayload {
   return {
-    update: {
-      sessionUpdate: 'user_message_chunk',
-      content: { text },
-      messageId,
-    },
-  };
-}
-
-function createToolCall(toolCallId: string, title: string): any {
-  return {
-    update: {
-      sessionUpdate: 'tool_call',
-      toolCallId,
-      title,
-      status: 'pending',
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "mcp_tool",
+      server: "terminal",
+      tool: id,
+      status,
     },
   };
 }
@@ -60,11 +41,9 @@ function testIdempotentReduction() {
 
   // Create a sequence of updates
   const updates = [
-    { notification: createUserMessageChunk('Hello', 'user-msg-1'), timestamp: timestamp1 },
-    { notification: createAgentMessageChunk('Hello! ', 'asst-msg-1'), timestamp: timestamp2 },
-    { notification: createAgentMessageChunk('How can I ', 'asst-msg-1'), timestamp: timestamp2 },
-    { notification: createAgentMessageChunk('help you?', 'asst-msg-1'), timestamp: timestamp2 },
-    { notification: createAgentThoughtChunk('Thinking...', 'thought-1'), timestamp: timestamp3 },
+    { event: assistantTimeline("Hello! "), timestamp: timestamp2 },
+    { event: assistantTimeline("How can I help you?"), timestamp: timestamp2 },
+    { event: reasoningTimeline("Thinking..."), timestamp: timestamp3 },
   ];
 
   // Apply updates once
@@ -75,10 +54,10 @@ function testIdempotentReduction() {
 
   // Apply updates twice (should still be same)
   const state3 = updates.reduce(
-    (state, { notification, timestamp }) => {
-      const s1 = reduceStreamUpdate(state, notification, timestamp);
+    (state, { event, timestamp }) => {
+      const s1 = reduceStreamUpdate(state, event, timestamp);
       // Apply again
-      return reduceStreamUpdate(s1, notification, timestamp);
+      return reduceStreamUpdate(s1, event, timestamp);
     },
     [] as StreamItem[]
   );
@@ -101,8 +80,8 @@ function testIdempotentReduction() {
   }
 
   // Verify message accumulation worked
-  const assistantMsg = state1.find(item => item.kind === 'assistant_message');
-  if (assistantMsg && assistantMsg.text === 'Hello! How can I help you?') {
+  const assistantMsg = state1.find(item => item.kind === "assistant_message");
+  if (assistantMsg && assistantMsg.text === "Hello! How can I help you?") {
     console.log('✅ PASS: Message chunks accumulated correctly');
   } else {
     console.log('❌ FAIL: Message accumulation failed');
@@ -115,25 +94,24 @@ function testIdempotentReduction() {
 function testUserMessageDeduplication() {
   console.log('\n=== Test 2: User Message Deduplication ===');
 
-  const timestamp = new Date('2025-01-01T10:00:00Z');
+  const timestamp = new Date("2025-01-01T10:00:00Z");
 
-  // Same user message sent twice (simulating reconnection)
   const updates = [
-    { notification: createUserMessageChunk('Test message', 'user-msg-1'), timestamp },
-    { notification: createUserMessageChunk('Test message', 'user-msg-1'), timestamp },
+    { event: toolTimeline("tool-1", "pending"), timestamp },
+    { event: toolTimeline("tool-1", "completed"), timestamp },
   ];
 
   const state = hydrateStreamState(updates);
 
-  const userMessages = state.filter(item => item.kind === 'user_message');
+  const toolCalls = state.filter((item) => item.kind === "tool_call");
 
-  console.log('User messages in state:', userMessages.length);
-  console.log('State:', JSON.stringify(state, null, 2));
+  console.log("Tool calls in state:", toolCalls.length);
+  console.log("State:", JSON.stringify(state, null, 2));
 
-  if (userMessages.length === 1) {
-    console.log('✅ PASS: User message deduplicated correctly');
+  if (toolCalls.length === 1 && toolCalls[0].payload.source === "agent" && toolCalls[0].payload.data.status === "completed") {
+    console.log("✅ PASS: Tool call consolidated correctly");
   } else {
-    console.log('❌ FAIL: Expected 1 user message, got', userMessages.length);
+    console.log("❌ FAIL: Expected a single completed tool call entry");
   }
 }
 
@@ -141,41 +119,41 @@ function testUserMessageDeduplication() {
 function testMultipleMessages() {
   console.log('\n=== Test 3: Multiple Distinct Messages ===');
 
-  const timestamp1 = new Date('2025-01-01T10:00:00Z');
-  const timestamp2 = new Date('2025-01-01T10:00:05Z');
+  const timestamp1 = new Date("2025-01-01T10:00:00Z");
+  const timestamp2 = new Date("2025-01-01T10:00:05Z");
 
-  // Two separate assistant messages (new turn resets message ID)
   const updates = [
-    { notification: createAgentMessageChunk('First ', 'msg-1'), timestamp: timestamp1 },
-    { notification: createAgentMessageChunk('message', 'msg-1'), timestamp: timestamp1 },
-    { notification: createToolCall('tool-1', 'Read file'), timestamp: timestamp1 },
-    { notification: createAgentMessageChunk('Second ', 'msg-2'), timestamp: timestamp2 },
-    { notification: createAgentMessageChunk('message', 'msg-2'), timestamp: timestamp2 },
+    { event: assistantTimeline("First message"), timestamp: timestamp1 },
+    { event: toolTimeline("tool-2", "pending"), timestamp: timestamp1 },
+    { event: toolTimeline("tool-2", "failed"), timestamp: timestamp1 },
+    { event: assistantTimeline("Second message"), timestamp: timestamp2 },
   ];
 
   const state = hydrateStreamState(updates);
 
-  const assistantMessages = state.filter(item => item.kind === 'assistant_message');
+  const assistantMessages = state.filter((item) => item.kind === "assistant_message");
 
-  console.log('Assistant messages:', assistantMessages.length);
-  console.log('State:', JSON.stringify(state, null, 2));
+  console.log("Assistant messages:", assistantMessages.length);
+  console.log("State:", JSON.stringify(state, null, 2));
 
-  if (assistantMessages.length === 2 &&
-      assistantMessages[0].text === 'First message' &&
-      assistantMessages[1].text === 'Second message') {
-    console.log('✅ PASS: Multiple messages handled correctly');
+  if (
+    assistantMessages.length === 2 &&
+    assistantMessages[0].text === "First message" &&
+    assistantMessages[1].text === "Second message"
+  ) {
+    console.log("✅ PASS: Multiple messages handled correctly");
   } else {
-    console.log('❌ FAIL: Expected 2 distinct messages');
+    console.log("❌ FAIL: Expected 2 distinct messages");
   }
 }
 
 // Run all tests
-console.log('Testing Idempotent Stream Reduction');
-console.log('====================================');
+console.log("Testing Idempotent Stream Reduction");
+console.log("====================================");
 
 testIdempotentReduction();
 testUserMessageDeduplication();
 testMultipleMessages();
 
-console.log('\n====================================');
-console.log('Tests complete');
+console.log("\n====================================");
+console.log("Tests complete");

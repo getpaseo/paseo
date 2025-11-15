@@ -5,12 +5,16 @@ import { createServer as createHTTPServer } from "http";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { initializeSTT } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
-import {
-  listConversations,
-  deleteConversation,
-} from "./persistence.js";
-import { AgentManager } from "./acp/agent-manager.js";
+import { listConversations, deleteConversation } from "./persistence.js";
+import { AgentManager } from "./agent/agent-manager.js";
+import { AgentRegistry } from "./agent/agent-registry.js";
+import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
+import { CodexAgentClient } from "./agent/providers/codex-agent.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
+import {
+  attachAgentRegistryPersistence,
+  restorePersistedAgents,
+} from "./persistence-hooks.js";
 
 function createServer() {
   const app = express();
@@ -66,13 +70,26 @@ async function main() {
   const app = createServer();
   const httpServer = createHTTPServer(app);
 
-  // Initialize global agent manager
-  const agentManager = new AgentManager();
-  await agentManager.initialize(); // Load persisted agents
+  // Initialize global agent manager + registry
+  const agentRegistry = new AgentRegistry();
+  const agentManager = new AgentManager({
+    clients: {
+      claude: new ClaudeAgentClient(),
+      codex: new CodexAgentClient(),
+    },
+  });
+
+  attachAgentRegistryPersistence(agentManager, agentRegistry);
+
+  await restorePersistedAgents(agentManager, agentRegistry);
   console.log("✓ Global agent manager initialized with persisted agents");
 
   // Initialize WebSocket server
-  const wsServer = new VoiceAssistantWebSocketServer(httpServer, agentManager);
+  const wsServer = new VoiceAssistantWebSocketServer(
+    httpServer,
+    agentManager,
+    agentRegistry
+  );
 
   // Initialize OpenAI client
   const apiKey = process.env.OPENAI_API_KEY;
@@ -124,7 +141,7 @@ async function main() {
     console.log(`\n${signal} received, shutting down gracefully...`);
 
     // Wait for agents to finish work
-    await agentManager.shutdown();
+    await closeAllAgents(agentManager);
 
     // Close WebSocket and HTTP servers
     wsServer.close();
@@ -146,3 +163,19 @@ async function main() {
 }
 
 main();
+
+async function closeAllAgents(agentManager: AgentManager): Promise<void> {
+  const agents = agentManager.listAgents();
+  for (const agent of agents) {
+    try {
+      await agentManager.closeAgent(agent.id);
+    } catch (error) {
+      console.error(
+        `[Agents] Failed to close agent ${agent.id}:`,
+        error
+      );
+    }
+  }
+
+  // All agents have been asked to stop; let the caller finish shutdown
+}

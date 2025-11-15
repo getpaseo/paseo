@@ -1,34 +1,267 @@
 import { z } from "zod";
-import type { AgentType } from "./acp/agent-types.js";
-import { listAgentTypeDefinitions } from "./acp/agent-types.js";
+import type { AgentSnapshot } from "./agent/agent-manager.js";
+import type {
+  AgentCapabilityFlags,
+  AgentMode,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentPersistenceHandle,
+  AgentProvider,
+  AgentStreamEvent,
+  AgentTimelineItem,
+  AgentUsage,
+} from "./agent/agent-sdk-types.js";
 
-const AgentModeSchema = z.object({
+type ProviderEventPayload = Extract<
+  AgentStreamEvent,
+  { type: "provider_event" }
+>;
+
+export type AgentSnapshotPayload = Omit<
+  AgentSnapshot,
+  "createdAt" | "updatedAt"
+> & {
+  createdAt: string;
+  updatedAt: string;
+  title: string | null;
+};
+
+const AGENT_PROVIDERS: [AgentProvider, AgentProvider] = ["claude", "codex"];
+const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
+
+const AGENT_LIFECYCLE_STATUSES = [
+  "initializing",
+  "idle",
+  "running",
+  "error",
+  "closed",
+] as const;
+const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
+
+const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   id: z.string(),
-  name: z.string(),
-  description: z.string().nullable().optional(),
+  label: z.string(),
+  description: z.string().optional(),
 });
 
-const agentTypes = listAgentTypeDefinitions().map((definition) => definition.id);
+const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
+  supportsStreaming: z.boolean(),
+  supportsSessionPersistence: z.boolean(),
+  supportsDynamicModes: z.boolean(),
+  supportsMcpServers: z.boolean(),
+  supportsReasoningStream: z.boolean(),
+  supportsToolInvocations: z.boolean(),
+});
 
-const AgentInfoSchema = z.object({
-  id: z.string(),
-  status: z.string(),
-  createdAt: z.date(),
-  lastActivityAt: z.date(),
-  type: z.enum(agentTypes as [AgentType, ...AgentType[]]),
-  sessionId: z.string().nullable(),
-  error: z.string().nullable(),
-  currentModeId: z.string().nullable(),
-  availableModes: z.array(AgentModeSchema).nullable(),
-  title: z.string().nullable(),
+const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
+  inputTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  totalCostUsd: z.number().optional(),
+});
+
+const AgentSessionConfigSchema = z.object({
+  provider: AgentProviderSchema,
   cwd: z.string(),
+  modeId: z.string().optional(),
+  model: z.string().optional(),
+  approvalPolicy: z.string().optional(),
+  sandboxMode: z.string().optional(),
+  networkAccess: z.boolean().optional(),
+  webSearch: z.boolean().optional(),
+  reasoningEffort: z.string().optional(),
+  extra: z
+    .object({
+      codex: z.record(z.unknown()).optional(),
+      claude: z.record(z.unknown()).optional(),
+    })
+    .partial()
+    .optional(),
+  mcpServers: z.record(z.unknown()).optional(),
 });
 
-const AgentUpdatePayloadSchema = z.object({
-  agentId: z.string(),
-  timestamp: z.date(),
-  notification: z.any(),
+const AgentPermissionUpdateSchema = z.record(z.unknown());
+
+export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
+  z.union([
+    z.object({
+      behavior: z.literal("allow"),
+      updatedInput: z.record(z.unknown()).optional(),
+      updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
+    }),
+    z.object({
+      behavior: z.literal("deny"),
+      message: z.string().optional(),
+      interrupt: z.boolean().optional(),
+    }),
+  ]);
+
+export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionRequest> =
+  z.object({
+    id: z.string(),
+    provider: AgentProviderSchema,
+    name: z.string(),
+    kind: z.enum(["tool", "plan", "mode", "other"]),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    input: z.record(z.unknown()).optional(),
+    suggestions: z.array(AgentPermissionUpdateSchema).optional(),
+    metadata: z.record(z.unknown()).optional(),
+    raw: z.unknown().optional(),
+  });
+
+export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("assistant_message"),
+      text: z.string(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("reasoning"),
+      text: z.string(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("command"),
+      command: z.string(),
+      status: z.string(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("file_change"),
+      files: z.array(
+        z.object({
+          path: z.string(),
+          kind: z.string(),
+        })
+      ),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("mcp_tool"),
+      server: z.string(),
+      tool: z.string(),
+      status: z.string(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("web_search"),
+      query: z.string(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("todo"),
+      items: z.array(
+        z.object({
+          text: z.string(),
+          completed: z.boolean(),
+        })
+      ),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
+      type: z.literal("error"),
+      message: z.string(),
+      raw: z.unknown().optional(),
+    }),
+  ]);
+
+const ProviderEventPayloadSchema = z.object({
+  type: z.literal("provider_event"),
+  provider: AgentProviderSchema,
+  raw: z.custom<ProviderEventPayload["raw"]>(),
 });
+
+export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("thread_started"),
+      sessionId: z.string(),
+      provider: AgentProviderSchema,
+    }),
+    z.object({
+      type: z.literal("turn_started"),
+      provider: AgentProviderSchema,
+    }),
+    z.object({
+      type: z.literal("turn_completed"),
+      provider: AgentProviderSchema,
+      usage: AgentUsageSchema.optional(),
+    }),
+    z.object({
+      type: z.literal("turn_failed"),
+      provider: AgentProviderSchema,
+      error: z.string(),
+    }),
+    z.object({
+      type: z.literal("timeline"),
+      provider: AgentProviderSchema,
+      item: AgentTimelineItemPayloadSchema,
+    }),
+    ProviderEventPayloadSchema,
+    z.object({
+      type: z.literal("permission_requested"),
+      provider: AgentProviderSchema,
+      request: AgentPermissionRequestPayloadSchema,
+    }),
+    z.object({
+      type: z.literal("permission_resolved"),
+      provider: AgentProviderSchema,
+      requestId: z.string(),
+      resolution: AgentPermissionResponseSchema,
+    }),
+]);
+
+const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> =
+  z
+    .object({
+      provider: AgentProviderSchema,
+      sessionId: z.string(),
+      nativeHandle: z.any().optional(),
+      metadata: z.record(z.unknown()).optional(),
+    })
+    .nullable();
+
+export const AgentSnapshotPayloadSchema = z.object({
+  id: z.string(),
+  provider: AgentProviderSchema,
+  cwd: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  status: AgentStatusSchema,
+  sessionId: z.string().nullable(),
+  capabilities: AgentCapabilityFlagsSchema,
+  currentModeId: z.string().nullable(),
+  availableModes: z.array(AgentModeSchema),
+  pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
+  persistence: AgentPersistenceHandleSchema.nullable(),
+  lastUsage: AgentUsageSchema.optional(),
+  lastError: z.string().optional(),
+  title: z.string().nullable(),
+});
+
+export type AgentStreamEventPayload = z.infer<
+  typeof AgentStreamEventPayloadSchema
+>;
+
+export function serializeAgentSnapshot(
+  snapshot: AgentSnapshot,
+  options?: { title?: string | null }
+): AgentSnapshotPayload {
+  const { createdAt, updatedAt, ...rest } = snapshot;
+  return {
+    ...rest,
+    createdAt: createdAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
+    title: options?.title ?? null,
+  };
+}
+
+export function serializeAgentStreamEvent(
+  event: AgentStreamEvent
+): AgentStreamEventPayload {
+  return event as AgentStreamEventPayload;
+}
 
 // ============================================================================
 // Session Inbound Messages (Session receives these)
@@ -96,10 +329,8 @@ export const SendAgentAudioSchema = z.object({
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
-  cwd: z.string(),
-  initialMode: z.string().optional(),
+  config: AgentSessionConfigSchema,
   worktreeName: z.string().optional(),
-  agentType: z.enum(agentTypes as [AgentType, ...AgentType[]]).optional(),
   requestId: z.string().optional(),
 });
 
@@ -119,7 +350,7 @@ export const AgentPermissionResponseMessageSchema = z.object({
   type: z.literal("agent_permission_response"),
   agentId: z.string(),
   requestId: z.string(),
-  optionId: z.string(),
+  response: AgentPermissionResponseSchema,
 });
 
 export const GitDiffRequestSchema = z.object({
@@ -257,23 +488,31 @@ export const ConversationLoadedMessageSchema = z.object({
   }),
 });
 
-export const AgentCreatedMessageSchema = z.object({
-  type: z.literal("agent_created"),
+export const AgentStateMessageSchema = z.object({
+  type: z.literal("agent_state"),
+  payload: AgentSnapshotPayloadSchema,
+});
+
+export const AgentStreamMessageSchema = z.object({
+  type: z.literal("agent_stream"),
   payload: z.object({
     agentId: z.string(),
-    status: z.string(),
-    type: z.enum(agentTypes as [AgentType, ...AgentType[]]),
-    currentModeId: z.string().optional(),
-    availableModes: z.array(AgentModeSchema).optional(),
-    title: z.string().optional(),
-    cwd: z.string(),
-    requestId: z.string().optional(),
+    event: AgentStreamEventPayloadSchema,
+    timestamp: z.string(),
   }),
 });
 
-export const AgentUpdateMessageSchema = z.object({
-  type: z.literal("agent_update"),
-  payload: AgentUpdatePayloadSchema,
+export const AgentStreamSnapshotMessageSchema = z.object({
+  type: z.literal("agent_stream_snapshot"),
+  payload: z.object({
+    agentId: z.string(),
+    events: z.array(
+      z.object({
+        event: AgentStreamEventPayloadSchema,
+        timestamp: z.string(),
+      })
+    ),
+  }),
 });
 
 export const AgentStatusMessageSchema = z.object({
@@ -281,14 +520,14 @@ export const AgentStatusMessageSchema = z.object({
   payload: z.object({
     agentId: z.string(),
     status: z.string(),
-    info: AgentInfoSchema,
+    info: AgentSnapshotPayloadSchema,
   }),
 });
 
 export const SessionStateMessageSchema = z.object({
   type: z.literal("session_state"),
   payload: z.object({
-    agents: z.array(AgentInfoSchema),
+    agents: z.array(AgentSnapshotPayloadSchema),
     commands: z.array(
       z.object({
         id: z.string(),
@@ -299,16 +538,6 @@ export const SessionStateMessageSchema = z.object({
         exitCode: z.number().nullable(),
       })
     ),
-  }),
-});
-
-export const AgentInitializedMessageSchema = z.object({
-  type: z.literal("agent_initialized"),
-  payload: z.object({
-    agentId: z.string(),
-    info: AgentInfoSchema,
-    updates: z.array(AgentUpdatePayloadSchema),
-    requestId: z.string().optional(),
   }),
 });
 
@@ -338,14 +567,7 @@ export const AgentPermissionRequestMessageSchema = z.object({
   type: z.literal("agent_permission_request"),
   payload: z.object({
     agentId: z.string(),
-    requestId: z.string(),
-    sessionId: z.string(),
-    toolCall: z.any(), // ToolCallUpdate from ACP SDK - complex type with flexible rawInput
-    options: z.array(z.object({
-      kind: z.enum(["allow_always", "allow_once", "reject_once", "reject_always"]),
-      name: z.string(),
-      optionId: z.string(),
-    })),
+    request: AgentPermissionRequestPayloadSchema,
   }),
 });
 
@@ -354,7 +576,7 @@ export const AgentPermissionResolvedMessageSchema = z.object({
   payload: z.object({
     agentId: z.string(),
     requestId: z.string(),
-    optionId: z.string(),
+    resolution: AgentPermissionResponseSchema,
   }),
 });
 
@@ -387,11 +609,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   StatusMessageSchema,
   ArtifactMessageSchema,
   ConversationLoadedMessageSchema,
-  AgentCreatedMessageSchema,
-  AgentUpdateMessageSchema,
+  AgentStateMessageSchema,
+  AgentStreamMessageSchema,
+  AgentStreamSnapshotMessageSchema,
   AgentStatusMessageSchema,
   SessionStateMessageSchema,
-  AgentInitializedMessageSchema,
   ListConversationsResponseMessageSchema,
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
@@ -412,11 +634,13 @@ export type TranscriptionResultMessage = z.infer<typeof TranscriptionResultMessa
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type ConversationLoadedMessage = z.infer<typeof ConversationLoadedMessageSchema>;
-export type AgentCreatedMessage = z.infer<typeof AgentCreatedMessageSchema>;
-export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
+export type AgentStateMessage = z.infer<typeof AgentStateMessageSchema>;
+export type AgentStreamMessage = z.infer<typeof AgentStreamMessageSchema>;
+export type AgentStreamSnapshotMessage = z.infer<
+  typeof AgentStreamSnapshotMessageSchema
+>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
-export type AgentInitializedMessage = z.infer<typeof AgentInitializedMessageSchema>;
 export type ListConversationsResponseMessage = z.infer<typeof ListConversationsResponseMessageSchema>;
 export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;

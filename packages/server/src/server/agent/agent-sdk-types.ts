@@ -2,9 +2,7 @@ import type { ThreadEvent as CodexThreadEvent } from "@openai/codex-sdk";
 import type {
   Options as ClaudeAgentOptions,
   SDKMessage as ClaudeStreamMessage,
-  McpServerConfig as ClaudeMcpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 export type AgentProvider = "codex" | "claude";
 
@@ -121,7 +119,7 @@ export type AgentSessionConfig = {
     codex?: Record<string, unknown>;
     claude?: Partial<ClaudeAgentOptions>;
   };
-  mcpServers?: Record<string, ClaudeMcpServerConfig | McpServer | { handler: () => Promise<unknown> }>;
+  mcpServers?: Record<string, unknown>;
 };
 
 export interface AgentSession {

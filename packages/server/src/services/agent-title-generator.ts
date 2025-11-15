@@ -1,8 +1,8 @@
 import { generateObject } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
-import type { AgentUpdate } from "../server/acp/types.js";
-import { curateAgentActivity } from "../server/acp/activity-curator.js";
+import type { AgentTimelineItem } from "../server/agent/agent-sdk-types.js";
+import { curateAgentActivity } from "../server/agent/activity-curator.js";
 
 let openai: ReturnType<typeof createOpenAI> | null = null;
 
@@ -20,18 +20,18 @@ export function isTitleGeneratorInitialized(): boolean {
  * Returns a 3-5 word title similar to ChatGPT/Claude.ai
  */
 export async function generateAgentTitle(
-  agentUpdates: AgentUpdate[],
+  timeline: AgentTimelineItem[],
   cwd: string
 ): Promise<string> {
   if (!openai) {
     throw new Error("Title generator not initialized");
   }
 
-  if (agentUpdates.length === 0) {
+  if (timeline.length === 0) {
     return "New Agent";
   }
 
-  const activityContext = curateAgentActivity(agentUpdates);
+  const activityContext = curateAgentActivity(timeline);
 
   if (!activityContext.trim() || activityContext === "No activity to display.") {
     return "New Agent";

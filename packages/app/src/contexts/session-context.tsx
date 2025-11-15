@@ -1,16 +1,28 @@
 import { createContext, useContext, useState, useRef, ReactNode, useCallback, useEffect } from "react";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
-import { reduceStreamUpdate, generateMessageId, type StreamItem } from "@/types/stream";
+import { reduceStreamUpdate, generateMessageId, hydrateStreamState, type StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type {
   ActivityLogPayload,
+  AgentSnapshotPayload,
+  AgentStreamEventPayload,
   SessionInboundMessage,
   WSInboundMessage,
 } from "@server/server/messages";
-import type { AgentStatus, AgentUpdate, AgentNotification } from "@server/server/acp/types";
-import type { AgentType } from "@server/server/acp/agent-types";
-import { parseSessionUpdate } from "@/types/agent-activity";
+import type {
+  AgentLifecycleStatus,
+} from "@server/server/agent/agent-manager";
+import type {
+  AgentPermissionResponse,
+  AgentSessionConfig,
+  AgentProvider,
+  AgentPermissionRequest,
+  AgentMode,
+  AgentCapabilityFlags,
+  AgentUsage,
+  AgentPersistenceHandle,
+} from "@server/server/agent/agent-sdk-types";
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
 
@@ -56,18 +68,19 @@ export type MessageEntry =
 
 export interface Agent {
   id: string;
-  status: AgentStatus;
+  provider: AgentProvider;
+  status: AgentLifecycleStatus;
   createdAt: Date;
+  updatedAt: Date;
   lastActivityAt: Date;
-  type: AgentType;
   sessionId: string | null;
-  error: string | null;
+  capabilities: AgentCapabilityFlags;
   currentModeId: string | null;
-  availableModes: Array<{
-    id: string;
-    name: string;
-    description?: string | null;
-  }> | null;
+  availableModes: AgentMode[];
+  pendingPermissions: AgentPermissionRequest[];
+  persistence: AgentPersistenceHandle | null;
+  lastUsage?: AgentUsage;
+  lastError?: string | null;
   title: string | null;
   cwd: string;
 }
@@ -131,6 +144,29 @@ const createExplorerState = (): AgentFileExplorerState => ({
   currentPath: ".",
 });
 
+function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
+  const createdAt = new Date(snapshot.createdAt);
+  const updatedAt = new Date(snapshot.updatedAt);
+  return {
+    id: snapshot.id,
+    provider: snapshot.provider,
+    status: snapshot.status as AgentLifecycleStatus,
+    createdAt,
+    updatedAt,
+    lastActivityAt: updatedAt,
+    sessionId: snapshot.sessionId,
+    capabilities: snapshot.capabilities,
+    currentModeId: snapshot.currentModeId,
+    availableModes: snapshot.availableModes ?? [],
+    pendingPermissions: snapshot.pendingPermissions ?? [],
+    persistence: snapshot.persistence ?? null,
+    lastUsage: snapshot.lastUsage,
+    lastError: snapshot.lastError ?? null,
+    title: snapshot.title ?? null,
+    cwd: snapshot.cwd,
+  };
+}
+
 
 interface SessionContextValue {
   // WebSocket
@@ -158,8 +194,6 @@ interface SessionContextValue {
   setAgents: (agents: Map<string, Agent> | ((prev: Map<string, Agent>) => Map<string, Agent>)) => void;
   commands: Map<string, Command>;
   setCommands: (commands: Map<string, Command> | ((prev: Map<string, Command>) => Map<string, Command>)) => void;
-  agentUpdates: Map<string, AgentUpdate[]>;
-  setAgentUpdates: (updates: Map<string, AgentUpdate[]> | ((prev: Map<string, AgentUpdate[]>) => Map<string, AgentUpdate[]>)) => void;
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
@@ -178,15 +212,9 @@ interface SessionContextValue {
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
-  createAgent: (options: {
-    cwd: string;
-    agentType: AgentType;
-    initialMode?: string;
-    worktreeName?: string;
-    requestId?: string;
-  }) => void;
+  createAgent: (options: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
-  respondToPermission: (requestId: string, agentId: string, sessionId: string, selectedOptionIds: string[]) => void;
+  respondToPermission: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -224,7 +252,6 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
-  const [agentUpdates, setAgentUpdates] = useState<Map<string, AgentUpdate[]>>(new Map());
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
@@ -250,212 +277,151 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       console.log("[Session] Session state:", agentsList.length, "agents,", commandsList.length, "commands");
 
-      setAgents(
-        new Map(
-          agentsList.map((agentInfo) => {
-            const createdAt = new Date(agentInfo.createdAt);
-            const lastActivityAt = agentInfo.lastActivityAt 
-              ? new Date(agentInfo.lastActivityAt) 
-              : createdAt;
-            return [
-              agentInfo.id,
-              {
-                id: agentInfo.id,
-                status: agentInfo.status as AgentStatus,
-                type: agentInfo.type,
-                createdAt,
-                lastActivityAt,
-                title: agentInfo.title ?? null,
-                cwd: agentInfo.cwd,
-                sessionId: agentInfo.sessionId ?? null,
-                error: agentInfo.error ?? null,
-                currentModeId: agentInfo.currentModeId ?? null,
-                availableModes: agentInfo.availableModes ?? null,
-              } satisfies Agent,
-            ];
-          })
-        )
-      );
+      const nextAgents = new Map<string, Agent>();
+      const nextPermissions = new Map<string, PendingPermission>();
 
+      for (const snapshot of agentsList) {
+        const agent = normalizeAgentSnapshot(snapshot);
+        nextAgents.set(agent.id, agent);
+        for (const request of agent.pendingPermissions) {
+          nextPermissions.set(request.id, { agentId: agent.id, request });
+        }
+      }
+
+      setAgents(nextAgents);
+      setPendingPermissions(nextPermissions);
       setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
-      setAgentStreamState(new Map());
-      setAgentUpdates(new Map());
+      setAgentStreamState(() => {
+        const next = new Map<string, StreamItem[]>();
+        for (const snapshot of agentsList) {
+          next.set(snapshot.id, []);
+        }
+        return next;
+      });
       setInitializingAgents(new Map());
     });
 
-    // Agent created
-    const unsubAgentCreated = ws.on("agent_created", (message) => {
-      if (message.type !== "agent_created") return;
-      const { agentId, status, type, currentModeId, availableModes, title, cwd } = message.payload;
+    const unsubAgentState = ws.on("agent_state", (message) => {
+      if (message.type !== "agent_state") return;
+      const snapshot = message.payload;
+      const agent = normalizeAgentSnapshot(snapshot);
 
-      console.log("[Session] Agent created:", agentId);
-
-      const now = new Date();
-      const agent: Agent = {
-        id: agentId,
-        status: status as AgentStatus,
-        type,
-        createdAt: now,
-        lastActivityAt: now,
-        title: title ?? null,
-        cwd,
-        sessionId: null,
-        error: null,
-        currentModeId: currentModeId ?? null,
-        availableModes: availableModes ?? null,
-      };
-
-      setAgents((prev) => new Map(prev).set(agentId, agent));
-      setAgentStreamState((prev) => new Map(prev).set(agentId, []));
-    });
-
-    // Agent initialized - receive full history on demand
-    const unsubAgentInitialized = ws.on("agent_initialized", (message) => {
-      if (message.type !== "agent_initialized") return;
-      const { agentId, info, updates } = message.payload;
-
-      console.log(
-        "[Session] Agent initialized:",
-        agentId,
-        "updates:",
-        updates.length
-      );
+      console.log("[Session] Agent state update:", agent.id, agent.status);
 
       setAgents((prev) => {
         const next = new Map(prev);
-        const createdAt = new Date(info.createdAt);
-        const lastActivityAt = info.lastActivityAt 
-          ? new Date(info.lastActivityAt) 
-          : createdAt;
-        const existing = next.get(agentId);
-
-        const normalizedAgent: Agent = {
-          id: info.id,
-          status: info.status as AgentStatus,
-          type: info.type,
-          createdAt,
-          lastActivityAt,
-          title: info.title ?? null,
-          cwd: info.cwd,
-          sessionId: info.sessionId ?? null,
-          error: info.error ?? null,
-          currentModeId: info.currentModeId ?? null,
-          availableModes: info.availableModes ?? null,
-        };
-
-        next.set(
-          agentId,
-          existing
-            ? {
-                ...existing,
-                ...normalizedAgent,
-              }
-            : normalizedAgent
-        );
+        next.set(agent.id, agent);
         return next;
       });
 
-      const normalizedUpdates: AgentUpdate[] = updates.map((update) => ({
-        agentId: update.agentId,
-        timestamp: new Date(update.timestamp),
-        notification: update.notification,
-      }));
+      setPendingPermissions((prev) => {
+        const next = new Map(prev);
+        for (const [key, pending] of Array.from(next.entries())) {
+          if (pending.agentId === agent.id) {
+            next.delete(key);
+          }
+        }
+        for (const request of agent.pendingPermissions) {
+          next.set(request.id, { agentId: agent.id, request });
+        }
+        return next;
+      });
+    });
 
-      setAgentUpdates((prev) => new Map(prev).set(agentId, normalizedUpdates));
+    const unsubAgentStream = ws.on("agent_stream", (message) => {
+      if (message.type !== "agent_stream") return;
+      const { agentId, event, timestamp } = message.payload;
+      const parsedTimestamp = new Date(timestamp);
 
       setAgentStreamState((prev) => {
-        const reconstructedStream = normalizedUpdates.reduce<StreamItem[]>(
-          (acc, update) => reduceStreamUpdate(acc, update.notification, update.timestamp),
-          []
+        const currentStream = prev.get(agentId) || [];
+        const newStream = reduceStreamUpdate(
+          currentStream,
+          event as AgentStreamEventPayload,
+          parsedTimestamp
         );
-        return new Map(prev).set(agentId, reconstructedStream);
+        const next = new Map(prev);
+        next.set(agentId, newStream);
+        return next;
+      });
+
+      setAgents((prev) => {
+        const existing = prev.get(agentId);
+        if (!existing) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(agentId, {
+          ...existing,
+          lastActivityAt: parsedTimestamp,
+          updatedAt: parsedTimestamp,
+        });
+        return next;
+      });
+    });
+
+    const unsubAgentStreamSnapshot = ws.on("agent_stream_snapshot", (message) => {
+      if (message.type !== "agent_stream_snapshot") return;
+      const { agentId, events } = message.payload;
+
+      const hydrated = hydrateStreamState(
+        events.map(({ event, timestamp }) => ({
+          event: event as AgentStreamEventPayload,
+          timestamp: new Date(timestamp),
+        }))
+      );
+
+      setAgentStreamState((prev) => {
+        const next = new Map(prev);
+        next.set(agentId, hydrated);
+        return next;
       });
 
       setInitializingAgents((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
         const next = new Map(prev);
         next.set(agentId, false);
         return next;
       });
     });
 
-    // Agent status update (mode changes, title changes, etc.)
-    const unsubAgentStatus = ws.on("agent_status", (message) => {
-      if (message.type !== "agent_status") return;
-      const { agentId, info } = message.payload;
-
-      console.log("[Session] Agent status update:", agentId, "mode:", info.currentModeId);
-
-      setAgents((prev) => {
-        const existingAgent = prev.get(agentId);
-        if (!existingAgent) return prev;
-
-        const lastActivityAt = info.lastActivityAt 
-          ? new Date(info.lastActivityAt) 
-          : existingAgent.lastActivityAt;
-
-        const updatedAgent: Agent = {
-          ...existingAgent,
-          status: info.status as AgentStatus,
-          sessionId: info.sessionId ?? null,
-          error: info.error ?? null,
-          currentModeId: info.currentModeId ?? null,
-          availableModes: info.availableModes ?? null,
-          title: info.title ?? null,
-          cwd: info.cwd,
-          lastActivityAt,
-        };
-
-        return new Map(prev).set(agentId, updatedAgent);
-      });
-    });
-
-    // Agent update
-    const unsubAgentUpdate = ws.on("agent_update", (message) => {
-      if (message.type !== "agent_update") return;
-      const { agentId, notification, timestamp: rawTimestamp } = message.payload;
-      const timestamp = new Date(rawTimestamp);
-
-      const update: AgentUpdate = {
-        agentId,
-        timestamp,
-        notification,
-      };
-
-      setAgentUpdates((prev) => {
-        const agentHistory = prev.get(agentId) || [];
-        return new Map(prev).set(agentId, [...agentHistory, update]);
-      });
-
-      // Update stream state using reducer
-      setAgentStreamState((prev) => {
-        const currentStream = prev.get(agentId) || [];
-        const newStream = reduceStreamUpdate(currentStream, notification, timestamp);
-        return new Map(prev).set(agentId, newStream);
-      });
+    const unsubStatus = ws.on("status", (message) => {
+      if (message.type !== "status") return;
+      const status = message.payload.status;
+      if (status === "agent_initialized" && "agentId" in message.payload) {
+        const agentId = (message.payload as any).agentId as string | undefined;
+        if (agentId) {
+          setInitializingAgents((prev) => {
+            const next = new Map(prev);
+            next.set(agentId, false);
+            return next;
+          });
+        }
+      }
     });
 
     // Permission request
     const unsubPermissionRequest = ws.on("agent_permission_request", (message) => {
       if (message.type !== "agent_permission_request") return;
-      const { agentId, requestId, sessionId, toolCall, options } = message.payload;
+      const { agentId, request } = message.payload;
 
-      console.log("[Session] Permission request:", requestId, "for agent:", agentId);
+      console.log("[Session] Permission request:", request.id, "for agent:", agentId);
 
-      setPendingPermissions((prev) => new Map(prev).set(requestId, {
-        agentId,
-        requestId,
-        sessionId,
-        toolCall,
-        options,
-      }));
+      setPendingPermissions((prev) => {
+        const next = new Map(prev);
+        next.set(request.id, { agentId, request });
+        return next;
+      });
     });
 
     // Permission resolved - remove from pending
     const unsubPermissionResolved = ws.on("agent_permission_resolved", (message) => {
       if (message.type !== "agent_permission_resolved") return;
-      const { requestId, agentId, optionId } = message.payload;
+      const { requestId, agentId } = message.payload;
 
-      console.log("[Session] Permission resolved:", requestId, "for agent:", agentId, "with option:", optionId);
+      console.log("[Session] Permission resolved:", requestId, "for agent:", agentId);
 
       setPendingPermissions((prev) => {
         const next = new Map(prev);
@@ -724,10 +690,10 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
     return () => {
       unsubSessionState();
-      unsubAgentCreated();
-      unsubAgentInitialized();
-      unsubAgentStatus();
-      unsubAgentUpdate();
+      unsubAgentState();
+      unsubAgentStream();
+      unsubAgentStreamSnapshot();
+      unsubStatus();
       unsubPermissionRequest();
       unsubPermissionResolved();
       unsubAudioOutput();
@@ -743,6 +709,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setInitializingAgents((prev) => {
       const next = new Map(prev);
       next.set(agentId, true);
+      return next;
+    });
+
+    setAgentStreamState((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, []);
       return next;
     });
 
@@ -764,25 +736,14 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     // Optimistically add user message to stream
     setAgentStreamState((prev) => {
       const currentStream = prev.get(agentId) || [];
-
-      // Create AgentNotification structure that matches server format
-      const notification: AgentNotification = {
-        type: 'session',
-        notification: {
-          sessionId: '',
-          update: {
-            sessionUpdate: "user_message_chunk",
-            content: { type: 'text', text: message },
-            messageId,
-          },
-        },
+      const nextItem: StreamItem = {
+        kind: "user_message",
+        id: messageId,
+        text: message,
+        timestamp: new Date(),
       };
-
-      // Use reduceStreamUpdate to properly create the StreamItem
-      const newStream = reduceStreamUpdate(currentStream, notification, new Date());
-
       const updated = new Map(prev);
-      updated.set(agentId, newStream);
+      updated.set(agentId, [...currentStream, nextItem]);
       return updated;
     });
 
@@ -858,12 +819,14 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     }
   }, [ws]);
 
-  const createAgent = useCallback((options: { cwd: string; agentType: AgentType; initialMode?: string; worktreeName?: string; requestId?: string }) => {
+  const createAgent = useCallback(({ config, worktreeName, requestId }: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => {
     const msg: WSInboundMessage = {
       type: "session",
       message: {
         type: "create_agent_request",
-        ...options,
+        config,
+        ...(worktreeName ? { worktreeName } : {}),
+        ...(requestId ? { requestId } : {}),
       },
     };
     ws.send(msg);
@@ -881,25 +844,17 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const respondToPermission = useCallback((
-    requestId: string,
-    agentId: string,
-    sessionId: string,
-    selectedOptionIds: string[]
-  ) => {
+  const respondToPermission = useCallback((agentId: string, requestId: string, response: AgentPermissionResponse) => {
     const msg: WSInboundMessage = {
       type: "session",
       message: {
         type: "agent_permission_response",
         agentId,
         requestId,
-        optionId: selectedOptionIds[0],
+        response,
       },
     };
     ws.send(msg);
-
-    // Don't remove from pending here - wait for server confirmation via agent_permission_resolved
-    // This ensures UI stays in sync whether permission is accepted via UI or MCP
   }, [ws]);
 
   const setVoiceDetectionFlags = useCallback((isDetecting: boolean, isSpeaking: boolean) => {
@@ -978,8 +933,6 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setAgents,
     commands,
     setCommands,
-    agentUpdates,
-    setAgentUpdates,
     pendingPermissions,
     setPendingPermissions,
     gitDiffs,

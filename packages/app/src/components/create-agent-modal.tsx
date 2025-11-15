@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import type { ReactElement } from "react";
 import {
   View,
   Text,
@@ -28,30 +29,24 @@ import { useSession } from "@/contexts/session-context";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
 import {
-  listAgentTypeDefinitions,
-  type AgentType,
-  type AgentTypeDefinition,
-  type AgentModeDefinition,
-} from "@server/server/acp/agent-types";
+  AGENT_PROVIDER_DEFINITIONS,
+  type AgentProviderDefinition,
+} from "@server/server/agent/provider-manifest";
+import type { AgentProvider, AgentMode, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
   onClose: () => void;
 }
 
-const agentTypeDefinitions = listAgentTypeDefinitions();
+const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
+const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
+  providerDefinitions.map((definition) => [definition.id, definition])
+);
 
-const agentTypeDefinitionMap: Record<AgentType, AgentTypeDefinition> =
-  {} as Record<AgentType, AgentTypeDefinition>;
-for (const definition of agentTypeDefinitions) {
-  agentTypeDefinitionMap[definition.id] = definition;
-}
-
-const fallbackDefinition = agentTypeDefinitionMap.claude ?? agentTypeDefinitions[0];
-const DEFAULT_AGENT_TYPE: AgentType = fallbackDefinition
-  ? fallbackDefinition.id
-  : "claude";
-const DEFAULT_MODE_FOR_DEFAULT_AGENT = fallbackDefinition?.defaultModeId ?? "";
+const fallbackDefinition = providerDefinitions[0];
+const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
+const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
 
 export function CreateAgentModal({
@@ -71,10 +66,10 @@ export function CreateAgentModal({
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
-  const [selectedAgentType, setSelectedAgentType] = useState<AgentType>(
-    DEFAULT_AGENT_TYPE
+  const [selectedProvider, setSelectedProvider] = useState<AgentProvider>(
+    DEFAULT_PROVIDER
   );
-  const [selectedMode, setSelectedMode] = useState(DEFAULT_MODE_FOR_DEFAULT_AGENT);
+  const [selectedMode, setSelectedMode] = useState(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
   const [worktreeName, setWorktreeName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -82,8 +77,8 @@ export function CreateAgentModal({
 
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
 
-  const agentDefinition = agentTypeDefinitionMap[selectedAgentType];
-  const modeOptions = agentDefinition?.availableModes ?? [];
+  const agentDefinition = providerDefinitionMap.get(selectedProvider);
+  const modeOptions = agentDefinition?.modes ?? [];
 
   useEffect(() => {
     if (!agentDefinition) {
@@ -109,8 +104,8 @@ export function CreateAgentModal({
   const resetFormState = useCallback(() => {
     setWorkingDir("");
     setWorktreeName("");
-    setSelectedAgentType(DEFAULT_AGENT_TYPE);
-    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_AGENT);
+    setSelectedProvider(DEFAULT_PROVIDER);
+    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
     setErrorMessage("");
     setIsLoading(false);
     setPendingRequestId(null);
@@ -293,14 +288,17 @@ export function CreateAgentModal({
     setPendingRequestId(requestId);
     setErrorMessage("");
 
-    const modeId =
-      modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+    const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+
+    const config: AgentSessionConfig = {
+      provider: selectedProvider,
+      cwd: trimmedPath,
+      ...(modeId ? { modeId } : {}),
+    };
 
     try {
       createAgent({
-        cwd: trimmedPath,
-        agentType: selectedAgentType,
-        initialMode: modeId,
+        config,
         worktreeName: worktree || undefined,
         requestId,
       });
@@ -314,8 +312,8 @@ export function CreateAgentModal({
     workingDir,
     worktreeName,
     selectedMode,
-    selectedAgentType,
     modeOptions,
+    selectedProvider,
     isLoading,
     validateWorktreeName,
     addRecentPath,
@@ -327,20 +325,22 @@ export function CreateAgentModal({
       return;
     }
 
-    const unsubscribe = ws.on("agent_created", (message) => {
-      if (message.type !== "agent_created") {
+    const unsubscribe = ws.on("status", (message) => {
+      if (message.type !== "status") {
         return;
       }
-
-      const { agentId, requestId } = message.payload;
-
-      if (requestId === pendingRequestId) {
-        console.log("[CreateAgentModal] Agent created:", agentId);
-        setIsLoading(false);
-        setPendingRequestId(null);
-        pendingNavigationAgentIdRef.current = agentId;
-        handleClose();
+      const payload = message.payload as { status: string; agentId?: string; requestId?: string };
+      if (payload.status !== "agent_created") {
+        return;
       }
+      if (payload.requestId !== pendingRequestId || !payload.agentId) {
+        return;
+      }
+      console.log("[CreateAgentModal] Agent created:", payload.agentId);
+      setIsLoading(false);
+      setPendingRequestId(null);
+      pendingNavigationAgentIdRef.current = payload.agentId;
+      handleClose();
     });
 
     return () => {
@@ -427,11 +427,11 @@ export function CreateAgentModal({
                 ]}
               >
                 <AssistantSelector
-                  agentTypeDefinitions={agentTypeDefinitions}
+                  providerDefinitions={providerDefinitions}
                   disabled={isLoading}
                   isStacked={isCompactLayout}
-                  selectedAgentType={selectedAgentType}
-                  onSelect={setSelectedAgentType}
+                  selectedProvider={selectedProvider}
+                  onSelect={setSelectedProvider}
                 />
                 <ModeSelector
                   disabled={isLoading}
@@ -496,12 +496,12 @@ interface ModalHeaderProps {
   onClose: () => void;
 }
 
-function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose }: ModalHeaderProps): JSX.Element {
+function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose }: ModalHeaderProps): ReactElement {
   return (
     <View style={[styles.header, { paddingTop, paddingLeft, paddingRight }]}>
       <Text style={styles.headerTitle}>Create New Agent</Text>
       <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
-        <X size={20} style={styles.closeIcon} />
+        <X size={20} color={defaultTheme.colors.mutedForeground} />
       </Pressable>
     </View>
   );
@@ -521,7 +521,7 @@ function WorkingDirectorySection({
   errorMessage,
   recentPaths,
   onChangeWorkingDir,
-}: WorkingDirectorySectionProps): JSX.Element {
+}: WorkingDirectorySectionProps): ReactElement {
   return (
     <View style={styles.formSection}>
       <Text style={styles.label}>Working Directory</Text>
@@ -557,26 +557,26 @@ function WorkingDirectorySection({
 }
 
 interface AssistantSelectorProps {
-  agentTypeDefinitions: AgentTypeDefinition[];
-  selectedAgentType: AgentType;
+  providerDefinitions: AgentProviderDefinition[];
+  selectedProvider: AgentProvider;
   disabled: boolean;
   isStacked: boolean;
-  onSelect: (agentType: AgentType) => void;
+  onSelect: (provider: AgentProvider) => void;
 }
 
 function AssistantSelector({
-  agentTypeDefinitions,
-  selectedAgentType,
+  providerDefinitions,
+  selectedProvider,
   disabled,
   isStacked,
   onSelect,
-}: AssistantSelectorProps): JSX.Element {
+}: AssistantSelectorProps): ReactElement {
   return (
     <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
       <Text style={styles.label}>Assistant</Text>
       <View style={styles.optionGroup}>
-        {agentTypeDefinitions.map((definition) => {
-          const isSelected = selectedAgentType === definition.id;
+        {providerDefinitions.map((definition) => {
+          const isSelected = selectedProvider === definition.id;
           return (
             <Pressable
               key={definition.id}
@@ -608,7 +608,7 @@ function AssistantSelector({
 }
 
 interface ModeSelectorProps {
-  modeOptions: AgentModeDefinition[];
+  modeOptions: AgentMode[];
   selectedMode: string;
   disabled: boolean;
   isStacked: boolean;
@@ -621,7 +621,7 @@ function ModeSelector({
   disabled,
   isStacked,
   onSelect,
-}: ModeSelectorProps): JSX.Element {
+}: ModeSelectorProps): ReactElement {
   return (
     <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
       <Text style={styles.label}>Permissions</Text>
@@ -652,7 +652,7 @@ function ModeSelector({
                     {isSelected ? <View style={styles.radioInner} /> : null}
                   </View>
                   <View style={styles.modeTextContainer}>
-                    <Text style={styles.optionLabel}>{mode.name}</Text>
+                    <Text style={styles.optionLabel}>{mode.label}</Text>
                     {mode.description ? <Text style={styles.modeDescription}>{mode.description}</Text> : null}
                   </View>
                 </View>
@@ -671,7 +671,7 @@ interface WorktreeSectionProps {
   onChange: (value: string) => void;
 }
 
-function WorktreeSection({ value, isLoading, onChange }: WorktreeSectionProps): JSX.Element {
+function WorktreeSection({ value, isLoading, onChange }: WorktreeSectionProps): ReactElement {
   return (
     <View style={styles.formSection}>
       <Text style={styles.label}>Worktree Name (Optional)</Text>
@@ -741,9 +741,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  closeIcon: {
-    color: theme.colors.mutedForeground,
   },
   scroll: {
     flex: 1,

@@ -17,13 +17,10 @@
     "test:e2e:mobile": "playwright test --project='Mobile Chrome'"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.4.9",
     "@ai-sdk/openai": "^2.0.52",
-    "@boudra/claude-code-acp": "^0.8.5",
     "@deepgram/sdk": "^3.4.0",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@openrouter/ai-sdk-provider": "^1.2.0",
-    "@zed-industries/codex-acp": "^0.4.0",
     "ai": "^5.0.76",
     "dotenv": "^17.2.3",
     "express": "^4.18.2",

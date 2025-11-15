@@ -26,6 +26,7 @@ import {
 import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import type { StreamItem } from "@/types/stream";
 import type { SelectedToolCall, PendingPermission } from "@/types/shared";
+import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSession } from "@/contexts/session-context";
 
@@ -34,7 +35,7 @@ export interface AgentStreamViewProps {
   agent: Agent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
-  onPermissionResponse: (requestId: string, optionId: string) => void;
+  onPermissionResponse: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }
 
 export function AgentStreamView({
@@ -232,30 +233,18 @@ export function AgentStreamView({
       case "tool_call": {
         const { payload } = item;
 
-        // Extract data based on source
-        if (payload.source === "acp") {
+        if (payload.source === "agent") {
           const data = payload.data;
-          // Map ACP status to display status
-          const toolStatus =
-            data.status === "pending" || data.status === "in_progress"
-              ? ("executing" as const)
-              : data.status === "completed"
-              ? ("completed" as const)
-              : ("failed" as const);
-
           return (
             <ToolCall
-              toolName={data.title ?? "Unknown Tool"}
-              kind={data.kind}
-              args={data.rawInput}
-              result={data.rawOutput}
-              status={toolStatus}
+              toolName={`${data.server}/${data.tool}`}
+              args={data.raw}
+              status={data.status as "executing" | "completed" | "failed"}
               onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
           );
         }
 
-        // Orchestrator tool call
         const data = payload.data;
         return (
           <ToolCall
@@ -268,9 +257,16 @@ export function AgentStreamView({
         );
       }
 
-      case "plan":
       case "activity_log":
-      case "artifact":
+        return (
+          <ActivityLog
+            type={item.activityType}
+            message={item.message}
+            timestamp={item.timestamp.getTime()}
+            metadata={item.metadata}
+          />
+        );
+
       default:
         return null;
     }
@@ -318,7 +314,7 @@ export function AgentStreamView({
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
                 <PermissionRequestCard
-                  key={permission.requestId}
+                  key={permission.request.id}
                   permission={permission}
                   onResponse={onPermissionResponse}
                 />
@@ -411,75 +407,17 @@ function PermissionRequestCard({
   permission,
   onResponse,
 }: {
-  permission: {
-    requestId: string;
-    toolCall: any;
-    options: Array<{
-      kind: string;
-      name: string;
-      optionId: string;
-    }>;
-  };
-  onResponse: (requestId: string, optionId: string) => void;
+  permission: PendingPermission;
+  onResponse: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }) {
   const { theme } = useUnistyles();
 
-  // Determine permission type and content based on toolCall
-  const getPermissionInfo = () => {
-    const rawInput = permission.toolCall?.rawInput || {};
-    const toolCallId = permission.toolCall?.toolCallId || "";
-
-    console.log("[PermissionCard] Tool call details:", {
-      toolCallId,
-      rawInputKeys: Object.keys(rawInput),
-      rawInput,
-    });
-
-    // Check if this is a plan (ExitPlanMode)
-    if (rawInput.plan) {
-      return {
-        title: "Plan Ready for Review",
-        content: rawInput.plan,
-        type: "plan" as const,
-      };
-    }
-
-    // Check if this is a file operation (Write, Edit, etc.)
-    if (rawInput.file_path) {
-      const operation = toolCallId.includes("Write") ? "Create" : "Edit";
-      const fileContent = rawInput.content || rawInput.new_string || "";
-      const preview =
-        fileContent.length > 500
-          ? fileContent.slice(0, 500) + "\n\n... (truncated)"
-          : fileContent;
-
-      return {
-        title: `${operation} File Permission`,
-        content: `File: ${rawInput.file_path}\n\n${preview || "(empty file)"}`,
-        type: "file" as const,
-      };
-    }
-
-    // Check if this is a command (Bash)
-    if (rawInput.command) {
-      return {
-        title: "Run Command Permission",
-        content: `Command: ${rawInput.command}\n\nDescription: ${
-          rawInput.description || "No description"
-        }`,
-        type: "command" as const,
-      };
-    }
-
-    // Fallback - show whatever is in rawInput
-    return {
-      title: "Permission Required",
-      content: JSON.stringify(rawInput, null, 2),
-      type: "unknown" as const,
-    };
-  };
-
-  const permissionInfo = getPermissionInfo();
+  const { request } = permission;
+  const title = request.title ?? request.name ?? "Permission Required";
+  const description = request.description ?? "";
+  const inputPreview = request.input
+    ? JSON.stringify(request.input, null, 2)
+    : null;
 
   return (
     <View
@@ -491,26 +429,25 @@ function PermissionRequestCard({
         },
       ]}
     >
-      <Text
-        style={[permissionStyles.title, { color: theme.colors.foreground }]}
-      >
-        {permissionInfo.title}
+      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>
+        {title}
       </Text>
 
-      {permissionInfo.content && (
+      {description ? (
+        <Text style={[permissionStyles.planText, { color: theme.colors.mutedForeground }]}>
+          {description}
+        </Text>
+      ) : null}
+
+      {inputPreview && (
         <View
           style={[
             permissionStyles.planContainer,
             { backgroundColor: theme.colors.background },
           ]}
         >
-          <Text
-            style={[
-              permissionStyles.planText,
-              { color: theme.colors.foreground },
-            ]}
-          >
-            {permissionInfo.content}
+          <Text style={[permissionStyles.planText, { color: theme.colors.foreground }]}>
+            {inputPreview}
           </Text>
         </View>
       )}
@@ -525,29 +462,45 @@ function PermissionRequestCard({
       </Text>
 
       <View style={permissionStyles.optionsContainer}>
-        {permission.options.map((option) => (
-          <Pressable
-            key={option.optionId}
+        <Pressable
+          style={[
+            permissionStyles.optionButton,
+            { backgroundColor: theme.colors.primary },
+          ]}
+          onPress={() =>
+            onResponse(permission.agentId, request.id, { behavior: "allow" })
+          }
+        >
+          <Text
             style={[
-              permissionStyles.optionButton,
-              {
-                backgroundColor: option.kind.includes("reject")
-                  ? theme.colors.destructive
-                  : theme.colors.primary,
-              },
+              permissionStyles.optionText,
+              { color: theme.colors.primaryForeground },
             ]}
-            onPress={() => onResponse(permission.requestId, option.optionId)}
           >
-            <Text
-              style={[
-                permissionStyles.optionText,
-                { color: theme.colors.primaryForeground },
-              ]}
-            >
-              {option.name}
-            </Text>
-          </Pressable>
-        ))}
+            Allow
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            permissionStyles.optionButton,
+            { backgroundColor: theme.colors.destructive },
+          ]}
+          onPress={() =>
+            onResponse(permission.agentId, request.id, {
+              behavior: "deny",
+              message: "Denied by user",
+            })
+          }
+        >
+          <Text
+            style={[
+              permissionStyles.optionText,
+              { color: theme.colors.primaryForeground },
+            ]}
+          >
+            Deny
+          </Text>
+        </Pressable>
       </View>
     </View>
   );

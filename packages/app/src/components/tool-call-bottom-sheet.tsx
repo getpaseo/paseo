@@ -209,34 +209,23 @@ export function ToolCallBottomSheet({
 
     const { payload } = selectedToolCall;
 
-    if (payload.source === "acp") {
-      const data = payload.data;
-
-      const content = data.content
-        ?.flatMap((item) => {
-          if (item.type === "content" && item.content.type === "text") {
-            return [item.content.text];
-          }
-          return [];
-        })
-        .join("\n");
-
-      return {
-        toolName: data.kind ?? "Unknown Tool",
-        args: data.rawInput,
-        result: content,
-        error: undefined, // ACP doesn't have a separate error field
-      };
-    } else {
-      // Orchestrator tool call
+    if (payload.source === "agent") {
       const data = payload.data;
       return {
-        toolName: data.toolName,
-        args: data.arguments,
-        result: data.result,
-        error: data.error,
+        toolName: `${data.server}/${data.tool}`,
+        args: data.raw,
+        result: undefined,
+        error: undefined,
       };
     }
+
+    const data = payload.data;
+    return {
+      toolName: data.toolName,
+      args: data.arguments,
+      result: data.result,
+      error: data.error,
+    };
   }, [selectedToolCall]);
 
   const editEntries = useMemo(() => {

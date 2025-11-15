@@ -13,14 +13,8 @@ import Animated, {
   Easing,
   type SharedValue,
 } from "react-native-reanimated";
-import type { AgentStatus } from "@server/server/acp/types";
-
-interface Agent {
-  id: string;
-  status: AgentStatus;
-  title?: string;
-  cwd: string;
-}
+import type { Agent } from "@/contexts/session-context";
+import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 
 interface AgentSidebarProps {
   isOpen: boolean;
@@ -30,44 +24,6 @@ interface AgentSidebarProps {
   onSelectAgent: (agentId: string) => void;
   onNewAgent: () => void;
   edgeSwipeTranslateX?: SharedValue<number> | null;
-}
-
-function getStatusColor(status: AgentStatus): string {
-  switch (status) {
-    case "initializing":
-      return "#FFA500";
-    case "ready":
-      return "#2563EB";
-    case "processing":
-      return "#FACC15";
-    case "completed":
-      return "#10B981";
-    case "failed":
-      return "#EF4444";
-    case "killed":
-      return "#6B7280";
-    default:
-      return "#6B7280";
-  }
-}
-
-function getStatusLabel(status: AgentStatus): string {
-  switch (status) {
-    case "initializing":
-      return "Initializing";
-    case "ready":
-      return "Ready";
-    case "processing":
-      return "Processing";
-    case "completed":
-      return "Completed";
-    case "failed":
-      return "Failed";
-    case "killed":
-      return "Killed";
-    default:
-      return "Unknown";
-  }
 }
 
 export function AgentSidebar({
@@ -221,8 +177,8 @@ export function AgentSidebar({
           <ScrollView style={styles.agentList} showsVerticalScrollIndicator={false}>
             {agents.map((agent) => {
               const isActive = agent.id === activeAgentId;
-              const statusColor = getStatusColor(agent.status);
-              const statusLabel = getStatusLabel(agent.status);
+              const statusColor = getAgentStatusColor(agent.status);
+              const statusLabel = getAgentStatusLabel(agent.status);
 
               return (
                 <Pressable

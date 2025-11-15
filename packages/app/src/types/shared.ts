@@ -1,5 +1,5 @@
-import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import type { ToolCallPayload } from './stream';
+import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
+import type { ToolCallPayload } from "./stream";
 
 /**
  * Generic tool call selection for bottom sheet
@@ -15,10 +15,7 @@ export interface SelectedToolCall {
  */
 export interface PendingPermission {
   agentId: string;
-  requestId: string;
-  sessionId: string;
-  toolCall: RequestPermissionRequest['toolCall'];
-  options: RequestPermissionRequest['options'];
+  request: AgentPermissionRequest;
 }
 
 // Agent info interface is provided by SessionContext's Agent type

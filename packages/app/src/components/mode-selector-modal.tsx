@@ -46,7 +46,7 @@ export function ModeSelectorModal({
                     isActive && styles.modeNameActive,
                   ]}
                 >
-                  {mode.name}
+                  {mode.label}
                 </Text>
                 {mode.description && (
                   <Text
