@@ -28,7 +28,7 @@ function toolTimeline(
   id: string,
   status: string,
   raw?: unknown,
-  options?: { callId?: string | null }
+  options?: { callId?: string | null; provider?: "claude" | "codex"; server?: string; tool?: string; displayName?: string; kind?: string }
 ): AgentStreamEventPayload {
   const explicitCallIdProvided =
     options && Object.prototype.hasOwnProperty.call(options, "callId");
@@ -37,17 +37,18 @@ function toolTimeline(
       ? undefined
       : options?.callId
     : id;
+  const provider = options?.provider ?? "claude";
   return {
     type: "timeline",
-    provider: "claude",
+    provider,
     item: {
       type: "tool_call",
-      server: "terminal",
-      tool: id,
+      server: options?.server ?? "terminal",
+      tool: options?.tool ?? id,
       status,
       callId: callIdValue,
-      displayName: id,
-      kind: "execute",
+      displayName: options?.displayName ?? id,
+      kind: options?.kind ?? "execute",
       raw,
     },
   };
@@ -889,6 +890,125 @@ function testTodoListConsolidation() {
   }
 }
 
+type ToolCallProvider = 'claude' | 'codex';
+
+function buildConcurrentToolCallUpdates(provider: ToolCallProvider) {
+  const timestamps = [
+    new Date('2025-01-01T12:40:00Z'),
+    new Date('2025-01-01T12:40:05Z'),
+    new Date('2025-01-01T12:40:10Z'),
+    new Date('2025-01-01T12:40:15Z'),
+  ];
+
+  const baseOptions = {
+    provider,
+    server: 'command',
+    tool: 'shell',
+    displayName: 'Run command',
+    kind: 'execute',
+  } as const;
+
+  return [
+    {
+      event: toolTimeline(
+        'shell',
+        'executing',
+        { type: 'tool_use', provider, step: 'start-1' },
+        { ...baseOptions, callId: null }
+      ),
+      timestamp: timestamps[0],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'executing',
+        { type: 'tool_use', provider, step: 'start-2' },
+        { ...baseOptions, callId: null }
+      ),
+      timestamp: timestamps[1],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'completed',
+        { type: 'tool_result', provider, step: 'finish-1' },
+        { ...baseOptions, callId: `${provider}-tool-1` }
+      ),
+      timestamp: timestamps[2],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'completed',
+        { type: 'tool_result', provider, step: 'finish-2' },
+        { ...baseOptions, callId: `${provider}-tool-2` }
+      ),
+      timestamp: timestamps[3],
+    },
+  ];
+}
+
+function validateToolCallDeduplication(
+  updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }>,
+  mode: 'live' | 'hydrated'
+): ToolCallItem[] {
+  const finalState =
+    mode === 'live'
+      ? updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
+          return reduceStreamUpdate(state, event, timestamp);
+        }, [])
+      : hydrateStreamState(updates);
+
+  return finalState.filter(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+}
+
+function testToolCallDeduplicationLive() {
+  console.log('\n=== Test 10: Tool Call Deduplication (Live) ===');
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const updates = buildConcurrentToolCallUpdates(provider);
+    const toolCalls = validateToolCallDeduplication(updates, 'live');
+    const callIds = toolCalls.map((entry) => entry.payload.data.callId).filter(Boolean);
+    const statuses = toolCalls.map((entry) => entry.payload.data.status);
+
+    if (
+      toolCalls.length === 2 &&
+      callIds.includes(`${provider}-tool-1`) &&
+      callIds.includes(`${provider}-tool-2`) &&
+      statuses.every((status) => status === 'completed')
+    ) {
+      console.log(`✅ PASS: ${provider} live stream deduped tool calls`);
+    } else {
+      console.log(`❌ FAIL: ${provider} live stream still duplicates tool calls`);
+      console.log('State:', JSON.stringify(toolCalls, null, 2));
+    }
+  });
+}
+
+function testToolCallDeduplicationHydrated() {
+  console.log('\n=== Test 11: Tool Call Deduplication (Hydrated) ===');
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const updates = buildConcurrentToolCallUpdates(provider);
+    const toolCalls = validateToolCallDeduplication(updates, 'hydrated');
+    const callIds = toolCalls.map((entry) => entry.payload.data.callId).filter(Boolean);
+    const statuses = toolCalls.map((entry) => entry.payload.data.status);
+
+    if (
+      toolCalls.length === 2 &&
+      callIds.includes(`${provider}-tool-1`) &&
+      callIds.includes(`${provider}-tool-2`) &&
+      statuses.every((status) => status === 'completed')
+    ) {
+      console.log(`✅ PASS: ${provider} hydration deduped tool calls`);
+    } else {
+      console.log(`❌ FAIL: ${provider} hydration still duplicates tool calls`);
+      console.log('State:', JSON.stringify(toolCalls, null, 2));
+    }
+  });
+}
+
 // Run all tests
 console.log("Testing Idempotent Stream Reduction");
 console.log("====================================");
@@ -907,6 +1027,8 @@ testAssistantWhitespacePreservation();
 testUserMessageHydration();
 testPermissionToolCallFiltering();
 testTodoListConsolidation();
+testToolCallDeduplicationLive();
+testToolCallDeduplicationHydrated();
 
 console.log("\n====================================");
 console.log("Tests complete");

@@ -1,5 +1,13 @@
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { AgentStreamEventPayload } from "@server/server/messages";
+import {
+  extractCommandDetails,
+  extractEditEntries,
+  extractReadEntries,
+  type CommandDetails,
+  type EditEntry,
+  type ReadEntry,
+} from "../utils/tool-call-parsers";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -23,6 +31,17 @@ export function generateMessageId(): string {
 
 function createTimelineId(prefix: string, text: string, timestamp: Date): string {
   return `${prefix}_${timestamp.getTime()}_${simpleHash(text)}`;
+}
+
+function createUniqueTimelineId(
+  state: StreamItem[],
+  prefix: "assistant" | "thought",
+  text: string,
+  timestamp: Date
+): string {
+  const base = createTimelineId(prefix, text, timestamp);
+  const suffixSeed = state.length.toString(36);
+  return `${base}_${suffixSeed}`;
 }
 
 export type StreamItem =
@@ -74,6 +93,9 @@ export interface AgentToolCallData {
   kind?: string;
   result?: unknown;
   error?: unknown;
+  parsedEdits?: EditEntry[];
+  parsedReads?: ReadEntry[];
+  parsedCommand?: CommandDetails | null;
 }
 
 export type ToolCallPayload =
@@ -179,7 +201,7 @@ function appendAssistantMessage(state: StreamItem[], text: string, timestamp: Da
   const idSeed = chunk.trim() || chunk;
   const item: AssistantMessageItem = {
     kind: "assistant_message",
-    id: createTimelineId("assistant", idSeed, timestamp),
+    id: createUniqueTimelineId(state, "assistant", idSeed, timestamp),
     text: chunk,
     timestamp,
   };
@@ -209,11 +231,129 @@ function appendThought(state: StreamItem[], text: string, timestamp: Date): Stre
   const idSeed = chunk.trim() || chunk;
   const item: ThoughtItem = {
     kind: "thought",
-    id: createTimelineId("thought", idSeed, timestamp),
+    id: createUniqueTimelineId(state, "thought", idSeed, timestamp),
     text: chunk,
     timestamp,
   };
   return [...state, item];
+}
+
+function mergeToolCallRaw(existingRaw: unknown, nextRaw: unknown): unknown {
+  if (existingRaw === undefined || existingRaw === null) {
+    return nextRaw;
+  }
+  if (nextRaw === undefined || nextRaw === null) {
+    return existingRaw;
+  }
+  if (Array.isArray(existingRaw)) {
+    return [...existingRaw, nextRaw];
+  }
+  return [existingRaw, nextRaw];
+}
+
+function computeParsedToolPayload(
+  raw: unknown,
+  result: unknown
+): {
+  parsedEdits?: EditEntry[];
+  parsedReads?: ReadEntry[];
+  parsedCommand?: CommandDetails | null;
+} {
+  const edits = extractEditEntries(raw, result);
+  const reads = extractReadEntries(result, raw);
+  const command = extractCommandDetails(raw, result);
+
+  return {
+    parsedEdits: edits.length > 0 ? edits : undefined,
+    parsedReads: reads.length > 0 ? reads : undefined,
+    parsedCommand: command ?? undefined,
+  };
+}
+
+function normalizeComparableString(value?: string | null): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length ? trimmed : null;
+}
+
+function findExistingAgentToolCallIndex(
+  state: StreamItem[],
+  callId: string | null,
+  data: AgentToolCallData
+): number {
+  const normalizedCallId = normalizeComparableString(callId);
+  if (normalizedCallId) {
+    const existingIndex = state.findIndex(
+      (entry) =>
+        entry.kind === "tool_call" &&
+        entry.payload.source === "agent" &&
+        normalizeComparableString(entry.payload.data.callId) === normalizedCallId
+    );
+    if (existingIndex >= 0) {
+      return existingIndex;
+    }
+  }
+
+  const fallbackCandidates: Array<{ index: number; item: AgentToolCallItem }> = [];
+  for (let i = 0; i < state.length; i += 1) {
+    const entry = state[i];
+    if (entry.kind !== "tool_call" || entry.payload.source !== "agent") {
+      continue;
+    }
+    const payload = entry.payload.data;
+    if (payload.callId) {
+      continue;
+    }
+    if (payload.status !== "executing") {
+      continue;
+    }
+    if (
+      payload.provider === data.provider &&
+      payload.server === data.server &&
+      payload.tool === data.tool
+    ) {
+      fallbackCandidates.push({ index: i, item: entry as AgentToolCallItem });
+    }
+  }
+
+  if (!fallbackCandidates.length) {
+    return -1;
+  }
+
+  const normalizedDisplayName = normalizeComparableString(data.displayName);
+  const normalizedKind = normalizeComparableString(data.kind);
+
+  const filterByComparableField = (
+    candidates: Array<{ index: number; item: AgentToolCallItem }>,
+    selector: (entry: AgentToolCallItem) => string | null,
+    value: string | null
+  ): Array<{ index: number; item: AgentToolCallItem }> => {
+    if (!value) {
+      return candidates;
+    }
+    const matches = candidates.filter((candidate) => selector(candidate.item) === value);
+    if (matches.length === 1) {
+      return matches;
+    }
+    return matches.length > 0 ? matches : candidates;
+  };
+
+  const byDisplayName = filterByComparableField(
+    fallbackCandidates,
+    (entry) => normalizeComparableString(entry.payload.data.displayName),
+    normalizedDisplayName
+  );
+
+  const byKind = filterByComparableField(
+    byDisplayName,
+    (entry) => normalizeComparableString(entry.payload.data.kind),
+    normalizedKind
+  );
+
+  // Fall back to the oldest candidate (FIFO) to avoid duplicating the initial "executing" pill.
+  return byKind[0]?.index ?? -1;
 }
 
 function appendAgentToolCall(
@@ -235,38 +375,42 @@ function appendAgentToolCall(
     callId: callId ?? data.callId,
   };
 
-  if (callId) {
-    const existingIndex = state.findIndex(
-      (entry) =>
-        entry.kind === "tool_call" &&
-        entry.payload.source === "agent" &&
-        entry.payload.data.callId === callId
-    );
+  const existingIndex = findExistingAgentToolCallIndex(state, callId, payloadData);
 
-    if (existingIndex >= 0) {
-      const next = [...state];
-      const existing = next[existingIndex] as AgentToolCallItem;
-      const mergedRaw =
-        existing.payload.data.raw !== undefined && existing.payload.data.raw !== null
-          ? existing.payload.data.raw
-          : payloadData.raw;
-      next[existingIndex] = {
-        ...existing,
-        timestamp,
-        payload: {
-          source: "agent",
-          data: {
-            ...existing.payload.data,
-            ...payloadData,
-            raw: mergedRaw,
-            displayName: payloadData.displayName ?? existing.payload.data.displayName,
-            kind: payloadData.kind ?? existing.payload.data.kind,
-            callId,
-          },
+  if (existingIndex >= 0) {
+    const next = [...state];
+    const existing = next[existingIndex] as AgentToolCallItem;
+    const mergedRaw = mergeToolCallRaw(existing.payload.data.raw, payloadData.raw);
+    const mergedResult =
+      payloadData.result !== undefined
+        ? payloadData.result
+        : existing.payload.data.result;
+    const mergedError =
+      payloadData.error !== undefined
+        ? payloadData.error
+        : existing.payload.data.error;
+    const parsed = computeParsedToolPayload(mergedRaw, mergedResult);
+    next[existingIndex] = {
+      ...existing,
+      timestamp,
+      payload: {
+        source: "agent",
+        data: {
+          ...existing.payload.data,
+          ...payloadData,
+          raw: mergedRaw,
+          result: mergedResult,
+          error: mergedError,
+          displayName: payloadData.displayName ?? existing.payload.data.displayName,
+          kind: payloadData.kind ?? existing.payload.data.kind,
+          callId: payloadData.callId ?? existing.payload.data.callId,
+          parsedEdits: parsed.parsedEdits ?? existing.payload.data.parsedEdits,
+          parsedReads: parsed.parsedReads ?? existing.payload.data.parsedReads,
+          parsedCommand: parsed.parsedCommand ?? existing.payload.data.parsedCommand,
         },
-      };
-      return next;
-    }
+      },
+    };
+    return next;
   }
 
   const id = callId
@@ -283,7 +427,10 @@ function appendAgentToolCall(
     timestamp,
     payload: {
       source: "agent",
-      data: payloadData,
+      data: {
+        ...payloadData,
+        ...computeParsedToolPayload(payloadData.raw, payloadData.result),
+      },
     },
   };
 
