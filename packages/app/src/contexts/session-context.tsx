@@ -262,7 +262,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   });
 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
+  const [focusedAgentOverride, setFocusedAgentOverride] = useState<string | null>(null);
+  const [orchestratorFocusedAgentId, setOrchestratorFocusedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
@@ -274,6 +275,39 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
+
+  const focusedAgentId = focusedAgentOverride ?? orchestratorFocusedAgentId;
+  const setFocusedAgentId = useCallback((agentId: string | null) => {
+    setFocusedAgentOverride(agentId);
+  }, []);
+
+  useEffect(() => {
+    if (focusedAgentOverride) {
+      if (orchestratorFocusedAgentId !== null) {
+        setOrchestratorFocusedAgentId(null);
+      }
+      return;
+    }
+
+    let latestRunningAgentId: string | null = null;
+    let latestActivityTimestamp = -Infinity;
+
+    for (const agent of agents.values()) {
+      if (agent.status !== "running") {
+        continue;
+      }
+
+      const activityTimestamp = agent.lastActivityAt?.getTime() ?? agent.updatedAt.getTime();
+      if (activityTimestamp > latestActivityTimestamp) {
+        latestActivityTimestamp = activityTimestamp;
+        latestRunningAgentId = agent.id;
+      }
+    }
+
+    if (latestRunningAgentId !== orchestratorFocusedAgentId) {
+      setOrchestratorFocusedAgentId(latestRunningAgentId);
+    }
+  }, [agents, focusedAgentOverride, orchestratorFocusedAgentId]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: AgentFileExplorerState) => AgentFileExplorerState) => {
