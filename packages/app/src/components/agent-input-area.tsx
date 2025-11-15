@@ -377,12 +377,14 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                   <Pressable
                     onPress={handleCancelAgent}
                     disabled={!ws.isConnected}
+                    accessibilityLabel="Stop agent"
+                    accessibilityRole="button"
                     style={[
                       styles.cancelButton,
                       !ws.isConnected && styles.buttonDisabled,
                     ]}
                   >
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                    <Square size={18} color={theme.colors.background} fill={theme.colors.background} />
                   </Pressable>
                 </>
               ) : shouldShowSendButton ? (
@@ -553,18 +555,12 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.blue[600],
   },
   cancelButton: {
-    minWidth: 92,
-    paddingHorizontal: theme.spacing[4],
+    width: 40,
     height: 40,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.red[500],
     alignItems: "center",
     justifyContent: "center",
-  },
-  cancelButtonText: {
-    color: theme.colors.background,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
   buttonDisabled: {
     opacity: 0.5,
