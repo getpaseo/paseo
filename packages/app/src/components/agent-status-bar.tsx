@@ -2,7 +2,6 @@ import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import { useSession } from "@/contexts/session-context";
-import type { Agent } from "@/contexts/session-context";
 import { useState } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
 
@@ -25,23 +24,6 @@ export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
     setAgentMode(agentId, modeId);
   }
 
-  function getStatusColor(status: Agent["status"]): string {
-    switch (status) {
-      case "initializing":
-        return theme.colors.palette.orange[500];
-      case "idle":
-        return theme.colors.palette.green[500];
-      case "running":
-        return theme.colors.palette.blue[500];
-      case "error":
-        return theme.colors.palette.red[500];
-      case "closed":
-        return theme.colors.palette.gray[500];
-      default:
-        return theme.colors.mutedForeground;
-    }
-  }
-
   return (
     <View style={styles.container}>
       {/* Agent Mode Badge */}
@@ -61,14 +43,6 @@ export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
           <ChevronDown size={14} color={theme.colors.mutedForeground} />
         </Pressable>
       )}
-
-      {/* Agent Status Indicator - just a dot */}
-      <View
-        style={[
-          styles.statusDot,
-          { backgroundColor: getStatusColor(agent.status) },
-        ]}
-      />
 
       {/* Mode selector modal */}
       <ModeSelectorModal
@@ -104,20 +78,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     textTransform: "capitalize",
-  },
-  statusIndicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
   },
 }));
