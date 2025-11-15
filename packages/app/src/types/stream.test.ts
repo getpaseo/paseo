@@ -1118,6 +1118,87 @@ function testOutOfOrderToolCallMergingHydrated() {
   });
 }
 
+function buildMetadataReplaySequence(provider: ToolCallProvider) {
+  const timestamps = [
+    new Date('2025-01-01T14:00:00Z'),
+    new Date('2025-01-01T14:00:02Z'),
+    new Date('2025-01-01T14:00:04Z'),
+  ];
+  const firstCallId = `${provider}-metadata-1`;
+  const secondCallId = `${provider}-metadata-2`;
+  return [
+    {
+      event: toolTimeline(
+        'shell',
+        'completed',
+        { type: 'tool_result', provider, tool_call_id: firstCallId },
+        { provider, server: 'command', tool: 'shell', callId: firstCallId, displayName: 'Run first' }
+      ),
+      timestamp: timestamps[0],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'completed',
+        { type: 'tool_result', provider, tool_call_id: secondCallId },
+        { provider, server: 'command', tool: 'shell', callId: secondCallId, displayName: 'Run second' }
+      ),
+      timestamp: timestamps[1],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'executing',
+        { type: 'tool_use', provider },
+        { provider, server: 'command', tool: 'shell', callId: null, displayName: 'Run first', kind: 'execute' }
+      ),
+      timestamp: timestamps[2],
+    },
+  ];
+}
+
+function validateMetadataReplayDeduplication(
+  updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }>,
+  mode: 'live' | 'hydrated'
+) {
+  const finalState =
+    mode === 'live'
+      ? updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
+          return reduceStreamUpdate(state, event, timestamp);
+        }, [])
+      : hydrateStreamState(updates);
+
+  const toolCalls = finalState.filter(
+    (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  return toolCalls;
+}
+
+function testMetadataReplayDeduplicationLive() {
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const toolCalls = validateMetadataReplayDeduplication(
+      buildMetadataReplaySequence(provider),
+      'live'
+    );
+    assert.strictEqual(toolCalls.length, 2, `${provider} live replay should not add duplicate tool pills`);
+    assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} live replay should keep the original completion status`);
+    assert.strictEqual(toolCalls[1]?.payload.data.status, 'completed', `${provider} live replay should keep later completion intact`);
+  });
+}
+
+function testMetadataReplayDeduplicationHydrated() {
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const toolCalls = validateMetadataReplayDeduplication(
+      buildMetadataReplaySequence(provider),
+      'hydrated'
+    );
+    assert.strictEqual(toolCalls.length, 2, `${provider} hydration replay should not add duplicate tool pills`);
+    assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} hydration replay should keep the original completion status`);
+    assert.strictEqual(toolCalls[1]?.payload.data.status, 'completed', `${provider} hydration replay should keep later completion intact`);
+  });
+}
+
 describe('stream timeline reducers', () => {
   it('produces deterministic hydration results', testIdempotentReduction);
   it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
@@ -1139,4 +1220,6 @@ describe('stream timeline reducers', () => {
   it('deduplicates hydrated tool call entries', testToolCallDeduplicationHydrated);
   it('merges out-of-order tool call updates without duplicating entries (live)', testOutOfOrderToolCallMergingLive);
   it('merges out-of-order tool call updates without duplicating entries (hydrated)', testOutOfOrderToolCallMergingHydrated);
+  it('replays metadata-only tool calls without duplicating entries (live)', testMetadataReplayDeduplicationLive);
+  it('replays metadata-only tool calls without duplicating entries (hydrated)', testMetadataReplayDeduplicationHydrated);
 });

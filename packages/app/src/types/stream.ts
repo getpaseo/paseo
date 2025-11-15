@@ -341,10 +341,6 @@ function findExistingAgentToolCallIndex(
     }
   }
 
-  if (!fallbackCandidates.length) {
-    return -1;
-  }
-
   const normalizedDisplayName = normalizeComparableString(data.displayName);
   const normalizedKind = normalizeComparableString(data.kind);
 
