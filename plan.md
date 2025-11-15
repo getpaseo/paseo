@@ -84,6 +84,7 @@
   - Dropped the old status dot from `AgentStatusBar` (the permission/mode selector now stands alone) and introduced an in-stream "Working" chip inside `AgentStreamView` that renders three bouncing dots via Reanimated whenever the agent reports `status === "running"`, so busy turns surface directly in the chat timeline.
 - [x] npm run typecheck and fix all problems
   - Split the server build/typecheck configs so the typechecker can include the app stream helpers without breaking builds, added path aliases for `@server/*`, and tightened the shared stream types (status unions + `isAgentToolCallItem`) so the server e2e suites can import them safely. Cleaned up every failing app/server test by narrowing tool-call payloads via the helper, updated the harness + Codex/Claude specs, and re-ran `npm run typecheck` (app + server) to green.
-- [ ] audit codebase for unecessary untyped code, hacks, casts, and `any`, type things properly
+- [x] audit codebase for unecessary untyped code, hacks, casts, and `any`, type things properly
+  - Tightened the Codex rollout parser typings so permission requests, rollout/event payloads, plan arguments, and JSON helpers all operate on well-defined TypeScript structures instead of `any`. Added explicit payload/entry guards, removed unsafe casts throughout `packages/server/src/server/agent/providers/codex-agent.ts`, and re-ran `npm run typecheck --workspace=@voice-dev/server` to validate the stricter typing.
 - [ ] audit codebase for duplicated code, clean it up
 - [ ] rename the project to Paseo, including the Expo app, package names etc.

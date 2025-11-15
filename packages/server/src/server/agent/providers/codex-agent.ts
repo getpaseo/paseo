@@ -100,6 +100,24 @@ type CodexOptionsOverrides = Partial<ThreadOptions> & { skipGitRepoCheck?: boole
 const MAX_ROLLOUT_SEARCH_DEPTH = 5;
 type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
+type ExecPermissionRequestPayload = {
+  call_id?: string;
+  command?: string | string[];
+  cwd?: string;
+  reason?: string;
+  risk?: { description?: string } & Record<string, unknown>;
+  parsed_cmd?: string[];
+  [key: string]: unknown;
+};
+
+type PatchPermissionRequestPayload = {
+  call_id?: string;
+  changes?: Record<string, unknown>;
+  grant_root?: string;
+  reason?: string;
+  [key: string]: unknown;
+};
+
 function createToolCallTimelineItem(
   data: Omit<ToolCallTimelineItem, "type">
 ): AgentTimelineItem {
@@ -612,12 +630,12 @@ class CodexAgentSession implements AgentSession {
     }
 
     if (eventType === "exec_approval_request") {
-      const request = this.buildExecPermissionRequest(event as any);
+      const request = this.buildExecPermissionRequest(event);
       return this.enqueuePermissionRequest(request);
     }
 
     if (eventType === "apply_patch_approval_request") {
-      const request = this.buildPatchPermissionRequest(event as any);
+      const request = this.buildPatchPermissionRequest(event);
       return this.enqueuePermissionRequest(request);
     }
 
@@ -652,10 +670,11 @@ class CodexAgentSession implements AgentSession {
     return events;
   }
 
-  private buildExecPermissionRequest(raw: any): AgentPermissionRequest | null {
-    if (!raw || typeof raw !== "object") {
+  private buildExecPermissionRequest(rawInput: unknown): AgentPermissionRequest | null {
+    if (!rawInput || typeof rawInput !== "object") {
       return null;
     }
+    const raw = rawInput as ExecPermissionRequestPayload;
 
     const commandParts: string[] = Array.isArray(raw.command)
       ? raw.command.filter((entry: unknown) => typeof entry === "string")
@@ -705,10 +724,11 @@ class CodexAgentSession implements AgentSession {
     return request;
   }
 
-  private buildPatchPermissionRequest(raw: any): AgentPermissionRequest | null {
-    if (!raw || typeof raw !== "object") {
+  private buildPatchPermissionRequest(rawInput: unknown): AgentPermissionRequest | null {
+    if (!rawInput || typeof rawInput !== "object") {
       return null;
     }
+    const raw = rawInput as PatchPermissionRequestPayload;
 
     const requestId = typeof raw.call_id === "string" && raw.call_id.length ? raw.call_id : randomUUID();
     const changes = raw.changes && typeof raw.changes === "object" ? raw.changes : undefined;
@@ -883,17 +903,17 @@ async function parseRolloutFile(filePath: string, threadId: string): Promise<Age
   return events;
 }
 
-function parseRolloutEntry(line: string): { type: string; payload?: any } | null {
+function parseRolloutEntry(line: string): RolloutEntry | null {
   if (!line) {
     return null;
   }
   try {
     const parsed = JSON.parse(line);
-    if (parsed && typeof parsed === "object" && "type" in parsed) {
-      return parsed as { type: string; payload?: any };
+    if (isRolloutEntry(parsed)) {
+      return parsed;
     }
-    if (parsed && typeof parsed === "object" && typeof (parsed as any).output === "string") {
-      return parseRolloutEntry((parsed as any).output);
+    if (parsed && typeof parsed === "object" && typeof (parsed as { output?: unknown }).output === "string") {
+      return parseRolloutEntry((parsed as { output: string }).output);
     }
   } catch {
     return null;
@@ -901,8 +921,28 @@ function parseRolloutEntry(line: string): { type: string; payload?: any } | null
   return null;
 }
 
+function isRolloutEntry(value: unknown): value is RolloutEntry {
+  if (!value || typeof value !== "object" || !("type" in value)) {
+    return false;
+  }
+  const type = (value as { type?: unknown }).type;
+  return type === "response_item" || type === "event_msg";
+}
+
+function isSessionMetaEntry(value: unknown): value is SessionMetaEntry {
+  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "session_meta");
+}
+
+function isResponseItemEntry(value: unknown): value is ResponseItemEntry {
+  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "response_item");
+}
+
+function isRolloutMessagePayload(payload: RolloutResponsePayload | undefined): payload is RolloutMessagePayload {
+  return Boolean(payload && payload.type === "message");
+}
+
 function handleRolloutResponseItem(
-  payload: any,
+  payload: RolloutResponsePayload | undefined,
   events: AgentStreamEvent[],
   commandCalls: Map<string, { command: string }>
 ): void {
@@ -946,7 +986,7 @@ function handleRolloutResponseItem(
   }
 }
 
-function handleRolloutEventMessage(payload: any, events: AgentStreamEvent[]): void {
+function handleRolloutEventMessage(payload: RolloutEventPayload | undefined, events: AgentStreamEvent[]): void {
   if (!payload || typeof payload !== "object") {
     return;
   }
@@ -956,7 +996,7 @@ function handleRolloutEventMessage(payload: any, events: AgentStreamEvent[]): vo
 }
 
 function handleRolloutFunctionCall(
-  payload: any,
+  payload: RolloutFunctionCallPayload,
   events: AgentStreamEvent[],
   commandCalls: Map<string, { command: string }>
 ): void {
@@ -966,7 +1006,7 @@ function handleRolloutFunctionCall(
   }
 
   if (name === "shell") {
-    const args = safeJsonParse(payload.arguments);
+    const args = safeJsonParse<Record<string, unknown>>(payload.arguments);
     const command = formatCommand(args);
     if (command && typeof payload.call_id === "string") {
       commandCalls.set(payload.call_id, { command });
@@ -975,7 +1015,7 @@ function handleRolloutFunctionCall(
   }
 
   if (name === "update_plan") {
-    const args = safeJsonParse(payload.arguments);
+    const args = safeJsonParse<{ plan?: unknown }>(payload.arguments);
     const planItems = parsePlanItems(args);
     if (planItems.length) {
       events.push({ type: "timeline", provider: "codex", item: { type: "todo", items: planItems, raw: payload } });
@@ -1000,7 +1040,7 @@ function handleRolloutFunctionCall(
 }
 
 function finalizeRolloutFunctionCall(
-  payload: any,
+  payload: RolloutFunctionCallOutputPayload,
   events: AgentStreamEvent[],
   commandCalls: Map<string, { command: string }>
 ): void {
@@ -1011,7 +1051,7 @@ function finalizeRolloutFunctionCall(
   if (!command) {
     return;
   }
-  const result = safeJsonParse(payload.output);
+  const result = safeJsonParse<CommandExecutionResult>(payload.output);
   const exitCode = result?.metadata?.exit_code;
   const status = exitCode === undefined || exitCode === 0 ? "completed" : "failed";
   events.push({
@@ -1032,7 +1072,7 @@ function finalizeRolloutFunctionCall(
   commandCalls.delete(payload.call_id);
 }
 
-function handleRolloutCustomToolCall(payload: any, events: AgentStreamEvent[]): void {
+function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, events: AgentStreamEvent[]): void {
   if (payload?.name === "apply_patch" && typeof payload.input === "string") {
     const files = parsePatchFiles(payload.input);
     if (files.length) {
@@ -1074,6 +1114,91 @@ function handleRolloutCustomToolCall(payload: any, events: AgentStreamEvent[]): 
 type RolloutCandidate = {
   path: string;
   mtime: Date;
+};
+
+type RolloutContentBlock = {
+  text?: string;
+  message?: string;
+  [key: string]: unknown;
+};
+
+type RolloutMessagePayload = {
+  type: "message";
+  role?: string;
+  content?: RolloutContentBlock[];
+};
+
+type RolloutReasoningSummary = {
+  text?: string;
+};
+
+type RolloutReasoningPayload = {
+  type: "reasoning";
+  summary?: RolloutReasoningSummary[];
+  text?: string;
+};
+
+type RolloutFunctionCallPayload = {
+  type: "function_call";
+  name?: string;
+  arguments?: string;
+  call_id?: string;
+  status?: string;
+};
+
+type RolloutFunctionCallOutputPayload = {
+  type: "function_call_output";
+  call_id?: string;
+  output?: string;
+};
+
+type RolloutCustomToolCallPayload = {
+  type: "custom_tool_call";
+  name?: string;
+  status?: string;
+  input?: string | Record<string, unknown>;
+  output?: unknown;
+};
+
+type RolloutResponsePayload =
+  | RolloutMessagePayload
+  | RolloutReasoningPayload
+  | RolloutFunctionCallPayload
+  | RolloutFunctionCallOutputPayload
+  | RolloutCustomToolCallPayload;
+
+type RolloutEventPayload = {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+};
+
+type RolloutEntry =
+  | { type: "response_item"; payload?: RolloutResponsePayload }
+  | { type: "event_msg"; payload?: RolloutEventPayload };
+
+type CommandExecutionResult = {
+  metadata?: {
+    exit_code?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+type SessionMetaPayload = {
+  id?: string;
+  cwd?: string;
+  [key: string]: unknown;
+};
+
+type SessionMetaEntry = {
+  type: "session_meta";
+  payload?: SessionMetaPayload;
+};
+
+type ResponseItemEntry = {
+  type: "response_item";
+  payload?: RolloutResponsePayload;
 };
 
 async function collectRecentRolloutFiles(rootDir: string, limit: number): Promise<RolloutCandidate[]> {
@@ -1132,18 +1257,23 @@ async function parseRolloutDescriptor(
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    let entry: any;
+    let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
       continue;
     }
-    if (!sessionId && entry?.type === "session_meta" && entry.payload) {
+    if (!sessionId && isSessionMetaEntry(entry) && entry.payload) {
       sessionId = typeof entry.payload.id === "string" ? entry.payload.id : null;
       if (typeof entry.payload.cwd === "string" && entry.payload.cwd.length > 0) {
         cwd = entry.payload.cwd;
       }
-    } else if (!title && entry?.type === "response_item" && entry.payload?.role === "user") {
+    } else if (
+      !title &&
+      isResponseItemEntry(entry) &&
+      isRolloutMessagePayload(entry.payload) &&
+      entry.payload.role === "user"
+    ) {
       title = extractCodexUserPrompt(entry.payload);
     }
     if (sessionId && cwd && title) {
@@ -1177,12 +1307,11 @@ async function parseRolloutDescriptor(
   };
 }
 
-function extractCodexUserPrompt(payload: any): string | null {
-  const content = payload?.content;
-  if (!Array.isArray(content)) {
+function extractCodexUserPrompt(payload: RolloutMessagePayload): string | null {
+  if (!Array.isArray(payload.content)) {
     return null;
   }
-  for (const block of content) {
+  for (const block of payload.content) {
     if (block && typeof block === "object" && typeof block.text === "string") {
       return block.text.trim();
     }
@@ -1207,12 +1336,13 @@ function extractMessageText(content: unknown): string {
     if (!block || typeof block !== "object") {
       continue;
     }
-    const text = typeof (block as any).text === "string" ? (block as any).text : undefined;
+    const record = block as Record<string, unknown>;
+    const text = typeof record.text === "string" ? record.text : undefined;
     if (text && text.trim()) {
       parts.push(text.trim());
       continue;
     }
-    const message = typeof (block as any).message === "string" ? (block as any).message : undefined;
+    const message = typeof record.message === "string" ? record.message : undefined;
     if (message && message.trim()) {
       parts.push(message.trim());
     }
@@ -1220,10 +1350,10 @@ function extractMessageText(content: unknown): string {
   return parts.join("\n").trim();
 }
 
-function extractReasoningText(payload: any): string {
+function extractReasoningText(payload: RolloutReasoningPayload): string {
   if (Array.isArray(payload?.summary)) {
     const text = payload.summary
-      .map((item: any) => (typeof item?.text === "string" ? item.text : ""))
+      .map((item) => (item && typeof item.text === "string" ? item.text : ""))
       .filter(Boolean)
       .join("\n")
       .trim();
@@ -1237,18 +1367,20 @@ function extractReasoningText(payload: any): string {
   return "";
 }
 
-function parsePlanItems(args: any): { text: string; completed: boolean }[] {
-  const plan = Array.isArray(args?.plan) ? args.plan : [];
+function parsePlanItems(args: unknown): { text: string; completed: boolean }[] {
+  const planValue = typeof args === "object" && args ? (args as { plan?: unknown }).plan : undefined;
+  const plan = Array.isArray(planValue) ? planValue : [];
   const items: { text: string; completed: boolean }[] = [];
   for (const step of plan) {
     if (!step || typeof step !== "object") {
       continue;
     }
-    const text = typeof step.step === "string" ? step.step : typeof step.text === "string" ? step.text : "";
+    const record = step as { step?: unknown; text?: unknown; status?: unknown };
+    const text = typeof record.step === "string" ? record.step : typeof record.text === "string" ? record.text : "";
     if (!text) {
       continue;
     }
-    const status = typeof step.status === "string" ? step.status : "";
+    const status = typeof record.status === "string" ? record.status : "";
     items.push({ text, completed: status === "completed" });
   }
   return items;
@@ -1280,7 +1412,7 @@ function parsePatchFiles(patch: string): { path: string; kind: string }[] {
   return files;
 }
 
-function safeJsonParse<T = any>(value: unknown): T | null {
+function safeJsonParse<T = unknown>(value: unknown): T | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -1291,15 +1423,16 @@ function safeJsonParse<T = any>(value: unknown): T | null {
   }
 }
 
-function formatCommand(args: any): string | null {
-  if (!args) {
+function formatCommand(args: unknown): string | null {
+  if (!args || typeof args !== "object") {
     return null;
   }
-  if (Array.isArray(args.command)) {
-    return args.command.join(" ");
+  const record = args as { command?: unknown };
+  if (Array.isArray(record.command)) {
+    return record.command.join(" ");
   }
-  if (typeof args.command === "string") {
-    return args.command;
+  if (typeof record.command === "string") {
+    return record.command;
   }
   return null;
 }
