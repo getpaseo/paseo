@@ -5,13 +5,11 @@ import {
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
   Image,
-  Alert,
   Platform,
 } from "react-native";
 import { useState, useEffect, useRef } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, AudioLines, Square, Paperclip, X } from "lucide-react-native";
-import * as ImagePicker from "expo-image-picker";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -27,6 +25,7 @@ import { VoiceNoteRecordingOverlay } from "./voice-note-recording-overlay";
 import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
+import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 
 interface AgentInputAreaProps {
   agentId: string;
@@ -57,6 +56,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const overlayTransition = useSharedValue(0);
+  const { pickImages } = useImageAttachmentPicker();
   
   const audioRecorder = useAudioRecorder({
     onAudioLevel: (level) => {
@@ -85,31 +85,16 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   }
 
   async function handlePickImage() {
-    try {
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (!permissionResult.granted) {
-        Alert.alert("Permission required", "Please allow access to your photo library to attach images.");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: "images",
-        allowsMultipleSelection: true,
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets.length > 0) {
-        const newImages = result.assets.map(asset => ({
-          uri: asset.uri,
-          mimeType: asset.mimeType || "image/jpeg",
-        }));
-        setSelectedImages(prev => [...prev, ...newImages]);
-      }
-    } catch (error) {
-      console.error("[AgentInput] Failed to pick image:", error);
-      Alert.alert("Error", "Failed to select image");
+    const result = await pickImages();
+    if (!result?.assets?.length) {
+      return;
     }
+
+    const newImages = result.assets.map(asset => ({
+      uri: asset.uri,
+      mimeType: asset.mimeType || "image/jpeg",
+    }));
+    setSelectedImages(prev => [...prev, ...newImages]);
   }
 
   function handleRemoveImage(index: number) {
