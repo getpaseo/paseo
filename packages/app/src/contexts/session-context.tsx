@@ -273,6 +273,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
+  const activeAudioGroupsRef = useRef<Set<string>>(new Set());
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: AgentFileExplorerState) => AgentFileExplorerState) => {
@@ -463,10 +464,14 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     const unsubAudioOutput = ws.on("audio_output", async (message) => {
       if (message.type !== "audio_output") return;
       const data = message.payload;
+      const playbackGroupId = data.groupId ?? data.id;
+      const isFinalChunk = data.isLastChunk ?? true;
+      activeAudioGroupsRef.current.add(playbackGroupId);
+      setIsPlayingAudio(true);
+
+      let playbackFailed = false;
 
       try {
-        setIsPlayingAudio(true);
-
         // Create blob-like object with correct mime type (React Native compatible)
         const mimeType =
           data.format === "mp3" ? "audio/mpeg" : `audio/${data.format}`;
@@ -499,11 +504,9 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           },
         };
         ws.send(confirmMessage);
-
-        setIsPlayingAudio(false);
       } catch (error: any) {
+        playbackFailed = true;
         console.error("[Session] Audio playback error:", error);
-        setIsPlayingAudio(false);
 
         // Still send confirmation even on error to prevent server from waiting
         const confirmMessage: WSInboundMessage = {
@@ -514,6 +517,13 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           },
         };
         ws.send(confirmMessage);
+      } finally {
+        if (isFinalChunk || playbackFailed) {
+          activeAudioGroupsRef.current.delete(playbackGroupId);
+        }
+        if (activeAudioGroupsRef.current.size === 0) {
+          setIsPlayingAudio(false);
+        }
       }
     });
 

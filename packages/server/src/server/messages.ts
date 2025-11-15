@@ -472,6 +472,9 @@ export const AudioOutputMessageSchema = z.object({
     format: z.string(),
     id: z.string(),
     isRealtimeMode: z.boolean(), // Mode when audio was generated (for drift protection)
+    groupId: z.string().optional(), // Logical utterance id
+    chunkIndex: z.number().int().nonnegative().optional(),
+    isLastChunk: z.boolean().optional(),
   }),
 });
 

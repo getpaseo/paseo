@@ -5,6 +5,8 @@ import type { SessionOutboundMessage } from "../messages.js";
 interface PendingPlayback {
   resolve: () => void;
   reject: (error: Error) => void;
+  pendingChunks: number;
+  streamEnded: boolean;
 }
 
 /**
@@ -36,8 +38,8 @@ export class TTSManager {
       return;
     }
 
-    // Generate TTS audio
-    const { audio, format } = await synthesizeSpeech(text);
+    // Generate TTS audio stream
+    const { stream, format } = await synthesizeSpeech(text);
 
     if (abortSignal.aborted) {
       console.log(
@@ -46,58 +48,129 @@ export class TTSManager {
       return;
     }
 
-    // Create unique ID for this audio segment
     const audioId = uuidv4();
+    let playbackResolve!: () => void;
+    let playbackReject!: (error: Error) => void;
 
-    // Store abort handler reference outside Promise constructor
-    let onAbort: (() => void) | undefined;
-
-    // Create promise that will be resolved when client confirms playback
     const playbackPromise = new Promise<void>((resolve, reject) => {
-      // Store handlers (no timeout - will resolve when client confirms or connection closes)
-      this.pendingPlaybacks.set(audioId, { resolve, reject });
-
-      // Handle abort signal
-      onAbort = () => {
-        console.log(
-          `[TTS-Manager ${this.sessionId}] Aborted while waiting for playback`
-        );
-        // Clean up pending playback
-        this.pendingPlaybacks.delete(audioId);
-        // Reject with abort error
-        resolve();
-      };
-
-      // Listen for abort (once: true for auto-cleanup if abort fires)
-      abortSignal.addEventListener("abort", onAbort, { once: true });
+      playbackResolve = resolve;
+      playbackReject = reject;
     });
 
-    // Clean up abort listener when promise settles (in case abort never fires)
-    if (onAbort) {
-      playbackPromise.finally(() => {
-        abortSignal!.removeEventListener("abort", onAbort!);
-      });
+    const pendingPlayback: PendingPlayback = {
+      resolve: playbackResolve,
+      reject: playbackReject,
+      pendingChunks: 0,
+      streamEnded: false,
+    };
+
+    this.pendingPlaybacks.set(audioId, pendingPlayback);
+
+    let onAbort: (() => void) | undefined;
+    const destroyStream = () => {
+      if (typeof stream.destroy === "function" && !stream.destroyed) {
+        stream.destroy();
+      }
+    };
+
+    onAbort = () => {
+      console.log(
+        `[TTS-Manager ${this.sessionId}] Aborted while waiting for playback`
+      );
+      pendingPlayback.streamEnded = true;
+      pendingPlayback.pendingChunks = 0;
+      this.pendingPlaybacks.delete(audioId);
+      playbackResolve();
+      destroyStream();
+    };
+
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      const iterator = stream[Symbol.asyncIterator]();
+      let chunkIndex = 0;
+      let current = await iterator.next();
+
+      if (!current.done) {
+        let next = await iterator.next();
+
+        while (true) {
+          if (abortSignal.aborted) {
+            console.log(
+              `[TTS-Manager ${this.sessionId}] Aborted during stream emission`
+            );
+            break;
+          }
+
+          const chunkBuffer = Buffer.isBuffer(current.value)
+            ? current.value
+            : Buffer.from(current.value);
+
+          const chunkId = `${audioId}:${chunkIndex}`;
+          pendingPlayback.pendingChunks += 1;
+
+          emitMessage({
+            type: "audio_output",
+            payload: {
+              id: chunkId,
+              groupId: audioId,
+              chunkIndex,
+              isLastChunk: next.done,
+              audio: chunkBuffer.toString("base64"),
+              format,
+              isRealtimeMode,
+            },
+          });
+
+          console.log(
+            `[TTS-Manager ${this.sessionId}] ${new Date().toISOString()} Sent audio chunk ${chunkId}${
+              next.done ? " (last)" : ""
+            }`
+          );
+
+          chunkIndex += 1;
+
+          if (next.done) {
+            break;
+          }
+
+          current = next;
+          next = await iterator.next();
+        }
+      }
+
+      pendingPlayback.streamEnded = true;
+
+      if (pendingPlayback.pendingChunks === 0) {
+        this.pendingPlaybacks.delete(audioId);
+        playbackResolve();
+      }
+
+      await playbackPromise;
+    } catch (error) {
+      if (abortSignal.aborted) {
+        console.log(
+          `[TTS-Manager ${this.sessionId}] Audio stream closed after abort`
+        );
+      } else {
+        console.error(
+          `[TTS-Manager ${this.sessionId}] Error streaming audio`,
+          error
+        );
+        this.pendingPlaybacks.delete(audioId);
+        pendingPlayback.reject(error as Error);
+        throw error;
+      }
+    } finally {
+      if (onAbort) {
+        abortSignal.removeEventListener("abort", onAbort);
+      }
+      destroyStream();
     }
 
-    // Emit audio output message (include mode for drift protection)
-    emitMessage({
-      type: "audio_output",
-      payload: {
-        id: audioId,
-        audio: audio.toString("base64"),
-        format,
-        isRealtimeMode,
-      },
-    });
-
-    console.log(
-      `[TTS-Manager ${
-        this.sessionId
-      }] ${new Date().toISOString()} Sent audio ${audioId}, waiting for playback...`
-    );
-
-    // Wait for playback confirmation
-    await playbackPromise;
+    if (abortSignal.aborted) {
+      return;
+    }
 
     console.log(
       `[TTS-Manager ${
@@ -110,19 +183,25 @@ export class TTSManager {
    * Called when client confirms audio playback completed
    * Resolves the corresponding promise
    */
-  public confirmAudioPlayed(audioId: string): void {
+  public confirmAudioPlayed(chunkId: string): void {
+    const [audioId] = chunkId.includes(":")
+      ? chunkId.split(":")
+      : [chunkId];
     const pending = this.pendingPlaybacks.get(audioId);
 
     if (!pending) {
       console.warn(
-        `[TTS-Manager ${this.sessionId}] Received confirmation for unknown audio ID: ${audioId}`
+        `[TTS-Manager ${this.sessionId}] Received confirmation for unknown audio ID: ${chunkId}`
       );
       return;
     }
 
-    // Resolve promise and cleanup
-    pending.resolve();
-    this.pendingPlaybacks.delete(audioId);
+    pending.pendingChunks = Math.max(0, pending.pendingChunks - 1);
+
+    if (pending.pendingChunks === 0 && pending.streamEnded) {
+      pending.resolve();
+      this.pendingPlaybacks.delete(audioId);
+    }
   }
 
   /**
