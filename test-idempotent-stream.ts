@@ -24,7 +24,19 @@ function reasoningTimeline(text: string): AgentStreamEventPayload {
   };
 }
 
-function toolTimeline(id: string, status: string, raw?: unknown): AgentStreamEventPayload {
+function toolTimeline(
+  id: string,
+  status: string,
+  raw?: unknown,
+  options?: { callId?: string | null }
+): AgentStreamEventPayload {
+  const explicitCallIdProvided =
+    options && Object.prototype.hasOwnProperty.call(options, "callId");
+  const callIdValue = explicitCallIdProvided
+    ? options?.callId === null
+      ? undefined
+      : options?.callId
+    : id;
   return {
     type: "timeline",
     provider: "claude",
@@ -33,7 +45,7 @@ function toolTimeline(id: string, status: string, raw?: unknown): AgentStreamEve
       server: "terminal",
       tool: id,
       status,
-      callId: id,
+      callId: callIdValue,
       displayName: id,
       kind: "execute",
       raw,
@@ -235,20 +247,16 @@ function testToolCallInputPreservation() {
     return;
   }
 
-  const rawPayload = toolCallEntry.payload.data.raw as Record<string, unknown> | undefined;
+  const rawPayload = toolCallEntry.payload.data.raw as unknown;
 
-  const hasInput =
-    !!rawPayload &&
-    typeof rawPayload === "object" &&
-    rawPayload !== null &&
-    "input" in rawPayload;
+  const isArrayPayload = Array.isArray(rawPayload);
+  const containsInput = isArrayPayload && rawPayload[0] === toolInput;
+  const containsResult = isArrayPayload && rawPayload[1] === toolResult;
 
-  const preservedOriginal = rawPayload === toolInput;
-
-  if (hasInput && preservedOriginal) {
-    console.log("✅ PASS: Tool call raw input preserved after completion");
+  if (isArrayPayload && containsInput && containsResult) {
+    console.log("✅ PASS: Tool call raw input/output preserved after completion");
   } else {
-    console.log("❌ FAIL: Tool call input was lost or replaced");
+    console.log("❌ FAIL: Tool call raw data missing input or output");
     console.log("Raw payload:", rawPayload);
   }
 }
@@ -310,7 +318,6 @@ function testToolCallStatusInference() {
   }
 }
 
-// Test 5b: Completed tool calls should also infer status from raw payload
 function testToolCallStatusInferenceFromRawOnly() {
   console.log('\n=== Test 5b: Tool Call Status From Raw Payload ===');
 
@@ -347,7 +354,6 @@ function testToolCallStatusInferenceFromRawOnly() {
   }
 }
 
-// Test 5c: Tool call failures should be inferred from raw payload errors
 function testToolCallFailureInferenceFromRaw() {
   console.log('\n=== Test 5c: Tool Call Failure From Raw Payload ===');
 
@@ -383,6 +389,376 @@ function testToolCallFailureInferenceFromRaw() {
     console.log('✅ PASS: Raw payload error inferred failure');
   } else {
     console.log('❌ FAIL: Expected failed status inferred from raw payload');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+function testToolCallLateCallIdReconciliation() {
+  console.log('\n=== Test 5d: Tool Call Late Call ID Reconciliation ===');
+
+  const timestampStart = new Date('2025-01-01T10:15:00Z');
+  const timestampFinish = new Date('2025-01-01T10:15:05Z');
+
+  const updates = [
+    {
+      event: toolTimeline('late-call', 'pending', { foo: 'bar' }, { callId: null }),
+      timestamp: timestampStart,
+    },
+    { event: toolTimeline('late-call', 'completed'), timestamp: timestampFinish },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const toolCalls = state.filter(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  if (
+    toolCalls.length === 1 &&
+    toolCalls[0].payload.data.status === 'completed' &&
+    toolCalls[0].payload.data.callId === 'late-call'
+  ) {
+    console.log('✅ PASS: Tool call updates reconcile when call IDs arrive late');
+  } else {
+    console.log(
+      '❌ FAIL: Late call IDs should update existing entries instead of duplicating'
+    );
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+function testToolCallParsedPayloadHydration() {
+  console.log('\n=== Test 5e: Tool Call Parsed Payload Hydration ===');
+
+  const timestampStart = new Date('2025-01-01T10:35:00Z');
+  const timestampFinish = new Date('2025-01-01T10:35:05Z');
+
+  const readCallId = 'parsed-read';
+  const commandCallId = 'parsed-command';
+
+  const updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }> = [
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'read_file',
+          status: 'pending',
+          callId: readCallId,
+          raw: {
+            type: 'tool_use',
+            tool_use_id: readCallId,
+            input: { file_path: 'README.md' },
+          },
+          input: { file_path: 'README.md' },
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'read_file',
+          callId: readCallId,
+          raw: {
+            type: 'tool_result',
+            tool_use_id: readCallId,
+            output: { content: 'Hello world' },
+          },
+          output: { content: 'Hello world' },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'command',
+          tool: 'shell',
+          status: 'pending',
+          callId: commandCallId,
+          raw: {
+            type: 'tool_use',
+            tool_use_id: commandCallId,
+            input: { command: 'pwd' },
+          },
+          input: { command: 'pwd' },
+          kind: 'execute',
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'command',
+          tool: 'shell',
+          callId: commandCallId,
+          raw: {
+            type: 'tool_result',
+            tool_use_id: commandCallId,
+            result: {
+              command: 'pwd',
+              output: '/Users/dev/voice-dev',
+            },
+            metadata: { exit_code: 0 },
+          },
+          output: {
+            result: {
+              command: 'pwd',
+              output: '/Users/dev/voice-dev',
+            },
+            metadata: { exit_code: 0 },
+          },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const readEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === readCallId
+  );
+  const commandEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === commandCallId
+  );
+
+  const readPass = Boolean(
+    readEntry?.payload.data.parsedReads &&
+      readEntry.payload.data.parsedReads.length === 1 &&
+      readEntry.payload.data.parsedReads[0]?.content.includes('Hello world')
+  );
+
+  const commandPass = Boolean(
+    commandEntry?.payload.data.parsedCommand &&
+      commandEntry.payload.data.parsedCommand.command === 'pwd' &&
+      commandEntry.payload.data.parsedCommand.output?.includes('/voice-dev')
+  );
+
+  if (readPass && commandPass) {
+    console.log('✅ PASS: Parsed read and command payloads persist through hydration');
+  } else {
+    console.log('❌ FAIL: Expected parsed payloads to be available after hydration');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
+function testClaudeHydratedToolBodies() {
+  console.log('\n=== Test 5f: Claude Hydrated Tool Bodies ===');
+
+  const timestampStart = new Date('2025-01-01T10:40:00Z');
+  const timestampFinish = new Date('2025-01-01T10:40:05Z');
+
+  const editCallId = 'claude-edit-hydration';
+  const readCallId = 'claude-read-hydration';
+  const commandCallId = 'claude-command-hydration';
+
+  const updates: Array<{ event: AgentStreamEventPayload; timestamp: Date }> = [
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'apply_patch',
+          status: 'pending',
+          callId: editCallId,
+          raw: {
+            type: 'tool_use',
+            tool_use_id: editCallId,
+            input: {
+              file_path: 'src/example.ts',
+              patch: '*** Begin Patch...'
+            },
+          },
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'apply_patch',
+          callId: editCallId,
+          raw: {
+            type: 'tool_result',
+            tool_use_id: editCallId,
+            output: {
+              changes: [
+                {
+                  file_path: 'src/example.ts',
+                  previous_content: 'export const answer = 41;\n',
+                  content: 'export const answer = 42;\n',
+                },
+              ],
+            },
+          },
+          output: {
+            changes: [
+              {
+                file_path: 'src/example.ts',
+                previous_content: 'export const answer = 41;\n',
+                content: 'export const answer = 42;\n',
+              },
+            ],
+          },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'read_file',
+          status: 'pending',
+          callId: readCallId,
+          raw: {
+            type: 'tool_use',
+            tool_use_id: readCallId,
+            input: { file_path: 'README.md' },
+          },
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'editor',
+          tool: 'read_file',
+          callId: readCallId,
+          raw: {
+            type: 'tool_result',
+            tool_use_id: readCallId,
+            output: { content: '# Hydrated test file\nHello Claude!' },
+          },
+          output: { content: '# Hydrated test file\nHello Claude!' },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'command',
+          tool: 'shell',
+          status: 'pending',
+          callId: commandCallId,
+          raw: {
+            type: 'tool_use',
+            tool_use_id: commandCallId,
+            input: { command: 'ls' },
+          },
+          kind: 'execute',
+        },
+      },
+      timestamp: timestampStart,
+    },
+    {
+      event: {
+        type: 'timeline',
+        provider: 'claude',
+        item: {
+          type: 'tool_call',
+          server: 'command',
+          tool: 'shell',
+          callId: commandCallId,
+          raw: {
+            type: 'tool_result',
+            tool_use_id: commandCallId,
+            result: {
+              command: 'ls',
+              output: 'README.md\npackages\n',
+            },
+            metadata: { exit_code: 0 },
+          },
+          output: {
+            result: {
+              command: 'ls',
+              output: 'README.md\npackages\n',
+            },
+            metadata: { exit_code: 0 },
+          },
+        },
+      },
+      timestamp: timestampFinish,
+    },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const editEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === editCallId
+  );
+  const readEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === readCallId
+  );
+  const commandEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === commandCallId
+  );
+
+  const editHasDiff = Boolean(
+    editEntry?.payload.data.parsedEdits &&
+      editEntry.payload.data.parsedEdits.length > 0 &&
+      editEntry.payload.data.parsedEdits[0]?.diffLines.length
+  );
+  const readHasContent = Boolean(
+    readEntry?.payload.data.parsedReads &&
+      readEntry.payload.data.parsedReads.length > 0 &&
+      readEntry.payload.data.parsedReads[0]?.content.includes('Hydrated test file')
+  );
+  const commandHasOutput = Boolean(
+    commandEntry?.payload.data.parsedCommand &&
+      commandEntry.payload.data.parsedCommand.command === 'ls' &&
+      commandEntry.payload.data.parsedCommand.output?.includes('README.md')
+  );
+
+  if (editHasDiff && readHasContent && commandHasOutput) {
+    console.log('✅ PASS: Claude hydration surfaces diff, read, and command bodies');
+  } else {
+    console.log('❌ FAIL: Expected hydrated Claude stream to expose tool body content');
     console.log('State:', JSON.stringify(state, null, 2));
   }
 }
@@ -524,6 +900,9 @@ testToolCallInputPreservation();
 testToolCallStatusInference();
 testToolCallStatusInferenceFromRawOnly();
 testToolCallFailureInferenceFromRaw();
+testToolCallLateCallIdReconciliation();
+testToolCallParsedPayloadHydration();
+testClaudeHydratedToolBodies();
 testAssistantWhitespacePreservation();
 testUserMessageHydration();
 testPermissionToolCallFiltering();
