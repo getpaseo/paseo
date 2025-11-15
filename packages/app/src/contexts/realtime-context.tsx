@@ -37,8 +37,6 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     isPlayingAudio,
     setMessages,
     setVoiceDetectionFlags,
-    cancelAgentRun,
-    focusedAgentId,
   } = useSession();
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
 
@@ -50,17 +48,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         audioPlayer.stop();
       }
 
-      if (focusedAgentId) {
-        try {
-          cancelAgentRun(focusedAgentId);
-          console.log(
-            `[Realtime] Sent cancel_agent_request for agent ${focusedAgentId} before streaming audio`
-          );
-        } catch (error) {
-          console.error("[Realtime] Failed to cancel focused agent:", error);
-        }
-      }
-      // Abort any in-flight LLM turn before the new speech segment streams
+      // Abort any in-flight orchestrator turn before the new speech segment streams
       try {
         const abortMessage: WSInboundMessage = {
           type: "session",
@@ -77,8 +65,13 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     onSpeechEnd: () => {
       console.log("[Realtime] Speech ended");
     },
-    onAudioSegment: (base64Audio: string) => {
-      console.log("[Realtime] Sending audio segment, length:", base64Audio.length);
+    onAudioSegment: ({ audioData, isLast }) => {
+      console.log(
+        "[Realtime] Sending audio segment, length:",
+        audioData.length,
+        "isLast:",
+        isLast
+      );
 
       // Send audio segment to server (realtime always goes to orchestrator)
       try {
@@ -86,9 +79,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
           type: "session",
           message: {
             type: "realtime_audio_chunk",
-            audio: base64Audio,
-            format: "audio/wav",
-            isLast: true, // Complete segment
+            audio: audioData,
+            format: "audio/pcm;rate=16000;bits=16",
+            isLast,
           },
         });
       } catch (error) {
