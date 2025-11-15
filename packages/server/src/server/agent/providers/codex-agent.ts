@@ -912,12 +912,13 @@ function handleRolloutResponseItem(
 
   switch (payload.type) {
     case "message": {
-      if (payload.role !== "assistant") {
-        return;
-      }
       const text = extractMessageText(payload.content);
       if (text) {
-        events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text, raw: payload } });
+        if (payload.role === "assistant") {
+          events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text, raw: payload } });
+        } else if (payload.role === "user") {
+          events.push({ type: "timeline", provider: "codex", item: { type: "user_message", text, raw: payload } });
+        }
       }
       break;
     }
@@ -1203,8 +1204,17 @@ function extractMessageText(content: unknown): string {
   }
   const parts: string[] = [];
   for (const block of content) {
-    if (block && typeof block === "object" && (block as any).type === "output_text" && typeof (block as any).text === "string") {
-      parts.push((block as any).text);
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const text = typeof (block as any).text === "string" ? (block as any).text : undefined;
+    if (text && text.trim()) {
+      parts.push(text.trim());
+      continue;
+    }
+    const message = typeof (block as any).message === "string" ? (block as any).message : undefined;
+    if (message && message.trim()) {
+      parts.push(message.trim());
     }
   }
   return parts.join("\n").trim();

@@ -26,50 +26,50 @@ export async function createTerminalMcpServer(
 
   // COMMAND-BASED TOOLS
 
-  // Tool: execute_command
-  server.registerTool(
-    "execute_command",
-    {
-      title: "Execute Command",
-      description:
-        "Execute a shell command in a specified directory. Commands are wrapped in bash -c, so you can use pipes, operators, redirects, and all bash features. The command runs until completion or until output stabilizes (for interactive processes). Returns command ID for follow-up interactions, output, exit code (if finished), and whether the process is still running. Windows remain after command exits for inspection.",
-      inputSchema: {
-        command: z
-          .string()
-          .describe(
-            "The command to execute. Can include pipes (|), operators (&&, ||, ;), redirects (>, >>), and any bash syntax. Examples: 'npm test', 'ls | grep foo', 'cd src && npm run build'"
-          ),
-        directory: z
-          .string()
-          .describe(
-            "Absolute path to the working directory. Can use ~ for home directory."
-          ),
-        maxWait: z
-          .number()
-          .optional()
-          .describe(
-            "Maximum milliseconds to wait for command completion or output stability (default: 120000 = 2 minutes). For interactive commands, returns when output stabilizes. For one-shot commands, returns when command exits."
-          ),
-      },
-      outputSchema: {
-        commandId: z.string(),
-        output: z.string(),
-        exitCode: z.number().nullable(),
-        isDead: z.boolean(),
-      },
-    },
-    async ({ command, directory, maxWait }) => {
-      const result = await terminalManager.executeCommand(
-        command,
-        directory,
-        maxWait
-      );
-      return {
-        content: [],
-        structuredContent: result,
-      };
-    }
-  );
+  // Tool: execute_command (disabled – commands must be run through coding agents)
+  // server.registerTool(
+  //   "execute_command",
+  //   {
+  //     title: "Execute Command",
+  //     description:
+  //       "Execute a shell command in a specified directory. Commands are wrapped in bash -c, so you can use pipes, operators, redirects, and all bash features. The command runs until completion or until output stabilizes (for interactive processes). Returns command ID for follow-up interactions, output, exit code (if finished), and whether the process is still running. Windows remain after command exits for inspection.",
+  //     inputSchema: {
+  //       command: z
+  //         .string()
+  //         .describe(
+  //           "The command to execute. Can include pipes (|), operators (&&, ||, ;), redirects (>, >>), and any bash syntax. Examples: 'npm test', 'ls | grep foo', 'cd src && npm run build'"
+  //         ),
+  //       directory: z
+  //         .string()
+  //         .describe(
+  //           "Absolute path to the working directory. Can use ~ for home directory."
+  //         ),
+  //       maxWait: z
+  //         .number()
+  //         .optional()
+  //         .describe(
+  //           "Maximum milliseconds to wait for command completion or output stability (default: 120000 = 2 minutes). For interactive commands, returns when output stabilizes. For one-shot commands, returns when command exits."
+  //         ),
+  //     },
+  //     outputSchema: {
+  //       commandId: z.string(),
+  //       output: z.string(),
+  //       exitCode: z.number().nullable(),
+  //       isDead: z.boolean(),
+  //     },
+  //   },
+  //   async ({ command, directory, maxWait }) => {
+  //     const result = await terminalManager.executeCommand(
+  //       command,
+  //       directory,
+  //       maxWait
+  //     );
+  //     return {
+  //       content: [],
+  //       structuredContent: result,
+  //     };
+  //   }
+  // );
 
   // Tool: list_commands
   server.registerTool(

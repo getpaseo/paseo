@@ -6,7 +6,7 @@ import path from "node:path";
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
 import { hydrateStreamState, type StreamItem, type ToolCallItem, type AgentToolCallData } from "../../../../../app/src/types/stream.js";
 import type { AgentStreamEventPayload } from "../../messages.js";
-import type { AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
@@ -376,13 +376,117 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           hydratedSnapshots.map((entry) => [entry.key, entry.data])
         );
 
-        assertHydratedReplica(commandTool!, hydratedMap, (data) => rawContainsText(data.raw, cwd));
-        assertHydratedReplica(editTool!, hydratedMap, (data) =>
-          rawContainsText(data.raw, "hydrate-proof.txt")
+        assertHydratedReplica(
+          commandTool!,
+          hydratedMap,
+          (data) => (data.parsedCommand?.output ?? "").includes(cwd),
+          ({ live, hydrated }) => {
+            expect((live.parsedCommand?.command ?? "").toLowerCase()).toContain("pwd");
+            expect(live.parsedCommand?.output ?? "").toContain(cwd);
+            expect((hydrated.parsedCommand?.command ?? "").toLowerCase()).toContain("pwd");
+            expect(hydrated.parsedCommand?.output ?? "").toContain(cwd);
+          }
         );
-        assertHydratedReplica(readTool!, hydratedMap, (data) =>
-          rawContainsText(data.raw, "HYDRATION_PROOF_LINE_TWO")
+        assertHydratedReplica(
+          editTool!,
+          hydratedMap,
+          (data) =>
+            Array.isArray(data.parsedEdits) &&
+            data.parsedEdits.some(
+              (entry) =>
+                (entry.filePath ?? "").includes("hydrate-proof.txt") &&
+                entry.diffLines.some((line) => line.content.includes("HYDRATION_PROOF_LINE_TWO"))
+            ),
+          ({ live, hydrated }) => {
+            const liveDiff = JSON.stringify(live.parsedEdits ?? []);
+            const hydratedDiff = JSON.stringify(hydrated.parsedEdits ?? []);
+            expect(liveDiff).toContain("HYDRATION_PROOF_LINE_ONE");
+            expect(liveDiff).toContain("HYDRATION_PROOF_LINE_TWO");
+            expect(hydratedDiff).toContain("HYDRATION_PROOF_LINE_ONE");
+            expect(hydratedDiff).toContain("HYDRATION_PROOF_LINE_TWO");
+          }
         );
+        assertHydratedReplica(
+          readTool!,
+          hydratedMap,
+          (data) =>
+            Array.isArray(data.parsedReads) &&
+            data.parsedReads.some(
+              (entry) =>
+                (entry.filePath ?? "").includes("hydrate-proof.txt") &&
+                entry.content.includes("HYDRATION_PROOF_LINE_TWO")
+            ),
+          ({ live, hydrated }) => {
+            const liveReads = JSON.stringify(live.parsedReads ?? []);
+            const hydratedReads = JSON.stringify(hydrated.parsedReads ?? []);
+            expect(liveReads).toContain("HYDRATION_PROOF_LINE_ONE");
+            expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_ONE");
+            expect(liveReads).toContain("HYDRATION_PROOF_LINE_TWO");
+            expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_TWO");
+          }
+        );
+      } finally {
+        cleanupClaudeHistory(cwd);
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    240_000
+  );
+
+  test(
+    "hydrates user messages from persisted history",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        extra: { claude: { maxThinkingTokens: 1024 } },
+      };
+
+      const promptMarker = `HYDRATED_USER_${Date.now().toString(36)}`;
+      const prompt = `Reply with the exact text ${promptMarker} and then stop.`;
+      const liveTimelineUpdates: StreamHydrationUpdate[] = [
+        buildUserMessageUpdate("claude", prompt, "msg-claude-hydrated-user"),
+      ];
+
+      try {
+        const session = await client.createSession(config);
+        const events = session.stream(prompt);
+        try {
+          for await (const event of events) {
+            recordTimelineUpdate(liveTimelineUpdates, event);
+            if (event.type === "turn_completed" || event.type === "turn_failed") {
+              break;
+            }
+          }
+        } finally {
+          await session.close();
+        }
+
+        const handle = session.describePersistence();
+        expect(handle).toBeTruthy();
+        const sessionId = handle?.sessionId ?? handle?.nativeHandle;
+        expect(typeof sessionId).toBe("string");
+
+        const historyPaths = getClaudeHistoryPaths(cwd, sessionId!);
+        expect(await waitForHistoryFile(historyPaths)).toBe(true);
+
+        const resumed = await client.resumeSession(handle!, { cwd });
+        const hydrationUpdates: StreamHydrationUpdate[] = [];
+        try {
+          for await (const event of resumed.streamHistory()) {
+            recordTimelineUpdate(hydrationUpdates, event);
+          }
+        } finally {
+          await resumed.close();
+        }
+
+        const liveState = hydrateStreamState(liveTimelineUpdates);
+        const hydratedState = hydrateStreamState(hydrationUpdates);
+
+        expect(stateIncludesUserMessage(liveState, promptMarker)).toBe(true);
+        expect(stateIncludesUserMessage(hydratedState, promptMarker)).toBe(true);
       } finally {
         cleanupClaudeHistory(cwd);
         rmSync(cwd, { recursive: true, force: true });
@@ -466,6 +570,31 @@ function recordTimelineUpdate(target: StreamHydrationUpdate[], event: AgentStrea
   });
 }
 
+function buildUserMessageUpdate(
+  provider: AgentProvider,
+  text: string,
+  messageId: string
+): StreamHydrationUpdate {
+  return {
+    event: {
+      type: "timeline",
+      provider,
+      item: {
+        type: "user_message",
+        text,
+        messageId,
+      },
+    },
+    timestamp: new Date(),
+  };
+}
+
+function stateIncludesUserMessage(state: StreamItem[], marker: string): boolean {
+  return state.some(
+    (item) => item.kind === "user_message" && item.text.toLowerCase().includes(marker.toLowerCase())
+  );
+}
+
 function extractAgentToolSnapshots(state: StreamItem[]): ToolSnapshot[] {
   return state
     .filter(
@@ -490,7 +619,8 @@ function buildToolSnapshotKey(data: AgentToolCallData, fallbackId: string): stri
 function assertHydratedReplica(
   liveSnapshot: ToolSnapshot,
   hydratedMap: Map<string, AgentToolCallData>,
-  predicate: (data: AgentToolCallData) => boolean
+  predicate: (data: AgentToolCallData) => boolean,
+  extraAssertions?: (ctx: { live: AgentToolCallData; hydrated: AgentToolCallData }) => void
 ) {
   expect(predicate(liveSnapshot.data)).toBe(true);
   const hydrated = hydratedMap.get(liveSnapshot.key);
@@ -500,6 +630,9 @@ function assertHydratedReplica(
   expect(hydrated?.tool).toBe(liveSnapshot.data.tool);
   expect(hydrated?.displayName).toBe(liveSnapshot.data.displayName);
   expect(predicate(hydrated!)).toBe(true);
+  if (hydrated && extraAssertions) {
+    extraAssertions({ live: liveSnapshot.data, hydrated });
+  }
 }
 
 function sanitizeClaudeProjectName(cwd: string): string {

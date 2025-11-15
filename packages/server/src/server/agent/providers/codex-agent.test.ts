@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { CodexAgentClient } from "./codex-agent.js";
-import type { AgentSessionConfig, AgentStreamEvent, AgentPermissionRequest } from "../agent-sdk-types.js";
+import { hydrateStreamState, type StreamItem } from "../../../../../app/src/types/stream.js";
+import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentPermissionRequest } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(os.tmpdir(), "codex-agent-e2e-"));
@@ -324,4 +325,97 @@ describe("CodexAgentClient (SDK integration)", () => {
     },
     30_000
   );
+
+  test(
+    "hydrates user messages from persisted history",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = { provider: "codex", cwd };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      let resumed: Awaited<ReturnType<typeof client.resumeSession>> | null = null;
+
+      const promptMarker = `CODEX_USER_${Date.now().toString(36)}`;
+      const prompt = `Reply only with ${promptMarker} and stop.`;
+      const liveTimelineUpdates: StreamHydrationUpdate[] = [
+        buildUserMessageUpdate("codex", prompt, "msg-codex-hydrated-user"),
+      ];
+
+      try {
+        session = await client.createSession(config);
+        const events = session.stream(prompt);
+        for await (const event of events) {
+          recordTimelineUpdate(liveTimelineUpdates, event);
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        const handle = session.describePersistence();
+        expect(handle).toBeTruthy();
+
+        await session.close();
+        session = null;
+
+        resumed = await client.resumeSession(handle!);
+        const hydrationUpdates: StreamHydrationUpdate[] = [];
+        for await (const event of resumed.streamHistory()) {
+          recordTimelineUpdate(hydrationUpdates, event);
+        }
+
+        const liveState = hydrateStreamState(liveTimelineUpdates);
+        const hydratedState = hydrateStreamState(hydrationUpdates);
+
+        expect(stateIncludesUserMessage(liveState, promptMarker)).toBe(true);
+        expect(stateIncludesUserMessage(hydratedState, promptMarker)).toBe(true);
+      } finally {
+        await session?.close();
+        await resumed?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
 });
+
+type StreamHydrationUpdate = {
+  event: Extract<AgentStreamEvent, { type: "timeline" }>;
+  timestamp: Date;
+};
+
+function recordTimelineUpdate(target: StreamHydrationUpdate[], event: AgentStreamEvent) {
+  if (event.type !== "timeline") {
+    return;
+  }
+  target.push({
+    event: event as StreamHydrationUpdate["event"],
+    timestamp: new Date(),
+  });
+}
+
+function buildUserMessageUpdate(
+  provider: AgentProvider,
+  text: string,
+  messageId: string
+): StreamHydrationUpdate {
+  return {
+    event: {
+      type: "timeline",
+      provider,
+      item: {
+        type: "user_message",
+        text,
+        messageId,
+      },
+    },
+    timestamp: new Date(),
+  };
+}
+
+function stateIncludesUserMessage(state: StreamItem[], marker: string): boolean {
+  return state.some(
+    (item) => item.kind === "user_message" && item.text.toLowerCase().includes(marker.toLowerCase())
+  );
+}
