@@ -15,6 +15,8 @@
   - Normalized `todo` timeline entries into a dedicated `todo_list` stream item, rendered them with a new plan card in the agent stream (provider badge, completion status, checkboxes), and added consolidation logic plus regression coverage in `test-idempotent-stream.ts`. Ran `npm run typecheck --workspace=@voice-dev/app`.
 - [x] Change "Refresh from disk" to "Refresh" in the agent three dot menu
   - Updated the agent overflow menu label in `packages/app/src/app/agent/[id].tsx` so the refresh action now matches the desired wording while keeping the busy state text untouched; no additional changes were required.
-- [ ] Are we filtering our own shats (already present in agents storage) from the resume agent list? We should if not.
+- [x] Are we filtering our own shats (already present in agents storage) from the resume agent list? We should if not.
+  - Resume tab now filters out persisted sessions whose session ids match any active agent (live session id or persisted handle) to avoid duplicate entries; verified via `npm run typecheck --workspace=@voice-dev/app`.
 - [ ] Getting "two children with the same key" for "thoughts" and "assistant" review our keying strategy, and make it more robust and performant, and stable.
 - [ ] Hydrated session show previous tool calls as loading. At least for claude we're not loading the output Chekc Codex too.
+- [ ] Add agent type indicator in the agent list, so we can quickly identify the agent type (Claude, Codex, etc.). On the left of the status pill.
