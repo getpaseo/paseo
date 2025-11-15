@@ -30,6 +30,9 @@ import {
   extractCommandDetails,
   extractEditEntries,
   extractReadEntries,
+  type CommandDetails,
+  type EditEntry,
+  type ReadEntry,
 } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
 
@@ -862,6 +865,9 @@ interface ToolCallProps {
   result?: any;
   error?: any;
   status: "executing" | "completed" | "failed";
+  parsedEditEntries?: EditEntry[];
+  parsedReadEntries?: ReadEntry[];
+  parsedCommandDetails?: CommandDetails | null;
   onOpenDetails?: () => void;
 }
 
@@ -869,10 +875,16 @@ const toolCallStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     marginHorizontal: theme.spacing[2],
     marginBottom: theme.spacing[2],
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.secondary,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
+    borderColor: "transparent",
     overflow: "hidden",
+    shadowColor: theme.colors.palette.black,
+    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 16,
+    elevation: 4,
   },
   pressableActive: {
     opacity: 0.8,
@@ -993,11 +1005,17 @@ export const ToolCall = memo(function ToolCall({
   result,
   error,
   status,
+  parsedEditEntries,
+  parsedReadEntries,
+  parsedCommandDetails,
   onOpenDetails,
 }: ToolCallProps) {
-  const editEntries = useMemo(() => extractEditEntries(args, result), [args, result]);
-  const readEntries = useMemo(() => extractReadEntries(result, args), [args, result]);
-  const commandDetails = useMemo(() => extractCommandDetails(args, result), [args, result]);
+  const fallbackEditEntries = useMemo(() => extractEditEntries(args, result), [args, result]);
+  const editEntries = parsedEditEntries ?? fallbackEditEntries;
+  const fallbackReadEntries = useMemo(() => extractReadEntries(result, args), [args, result]);
+  const readEntries = parsedReadEntries ?? fallbackReadEntries;
+  const fallbackCommandDetails = useMemo(() => extractCommandDetails(args, result), [args, result]);
+  const commandDetails = parsedCommandDetails ?? fallbackCommandDetails;
 
   const primaryEditEntry = editEntries[0];
   const primaryReadEntry = readEntries[0];
