@@ -235,9 +235,11 @@ export function AgentStreamView({
 
         if (payload.source === "agent") {
           const data = payload.data;
+          const toolLabel = data.displayName ?? `${data.server}/${data.tool}`;
           return (
             <ToolCall
-              toolName={`${data.server}/${data.tool}`}
+              toolName={toolLabel}
+              kind={data.kind}
               args={data.raw}
               status={data.status as "executing" | "completed" | "failed"}
               onOpenDetails={() => handleOpenToolCallDetails({ payload })}

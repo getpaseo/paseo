@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
+  FlatList,
+  Image as RNImage,
+  ListRenderItemInfo,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   ScrollView,
   Text,
@@ -10,7 +14,15 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
-import { Copy, Check, ArrowLeft } from "lucide-react-native";
+import {
+  Copy,
+  Check,
+  ArrowLeft,
+  File,
+  FileText,
+  Folder,
+  Image as ImageIcon,
+} from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSession, type ExplorerEntry } from "@/contexts/session-context";
 
@@ -36,6 +48,8 @@ export default function FileExplorerScreen() {
   const pendingFileParamRef = useRef<string | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listScrollRef = useRef<FlatList<ExplorerEntry> | null>(null);
+  const listScrollOffsetRef = useRef(0);
 
   const normalizedPathParam = normalizePathParam(getFirstParam(pathParamRaw));
   const normalizedFileParam = normalizeFileParam(getFirstParam(fileParamRaw));
@@ -47,9 +61,21 @@ export default function FileExplorerScreen() {
   const agent = agentId ? agents.get(agentId) : undefined;
   const explorerState = agentId ? fileExplorer.get(agentId) : undefined;
   const currentPath = explorerState?.currentPath ?? ".";
-  const directory = explorerState?.directories.get(currentPath);
+  const pendingRequest = explorerState?.pendingRequest ?? null;
+  const isExplorerLoading = explorerState?.isLoading ?? false;
+  const isListingLoading = Boolean(
+    isExplorerLoading && pendingRequest?.mode === "list"
+  );
+  const pendingDirectoryPath =
+    isListingLoading && pendingRequest ? pendingRequest.path : null;
+  const activePath = pendingDirectoryPath ?? currentPath;
+  const directory = explorerState?.directories.get(activePath);
   const entries = directory?.entries ?? [];
-  const isLoading = explorerState?.isLoading ?? false;
+  const showInitialListLoading = isListingLoading && entries.length === 0;
+  const showListLoadingBanner = isListingLoading && entries.length > 0;
+  const isPreviewLoading = Boolean(
+    isExplorerLoading && pendingRequest?.mode === "file"
+  );
   const error = explorerState?.lastError ?? null;
   const preview = selectedEntryPath
     ? explorerState?.files.get(selectedEntryPath)
@@ -58,21 +84,39 @@ export default function FileExplorerScreen() {
 
   useEffect(() => {
     setSelectedEntryPath(null);
-  }, [currentPath]);
+  }, [activePath]);
+
+  useEffect(() => {
+    if (shouldShowPreview) {
+      return;
+    }
+
+    const targetOffset = listScrollOffsetRef.current;
+    if (!listScrollRef.current) {
+      return;
+    }
+
+    listScrollRef.current.scrollToOffset({ offset: targetOffset, animated: false });
+  }, [shouldShowPreview]);
+
+  useEffect(() => {
+    listScrollOffsetRef.current = 0;
+    listScrollRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [activePath]);
 
   const parentPath = useMemo(() => {
-    if (currentPath === ".") {
+    if (activePath === ".") {
       return null;
     }
-    const segments = currentPath.split("/");
+    const segments = activePath.split("/");
     segments.pop();
     const nextPath = segments.join("/");
     return nextPath.length === 0 ? "." : nextPath;
-  }, [currentPath]);
+  }, [activePath]);
 
   useEffect(() => {
     setCopiedPath(null);
-  }, [currentPath]);
+  }, [activePath]);
 
   useEffect(() => {
     if (!agentId || !initialTargetDirectory) {
@@ -163,6 +207,76 @@ export default function FileExplorerScreen() {
     };
   }, []);
 
+  const handleListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      listScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+    },
+    []
+  );
+
+  const renderEntry = useCallback(
+    ({ item }: ListRenderItemInfo<ExplorerEntry>) => {
+      const displayKind = getEntryDisplayKind(item);
+      return (
+        <Pressable
+          style={[
+            styles.entryRow,
+            item.kind === "directory" ? styles.directoryRow : styles.fileRow,
+          ]}
+          onPress={() => handleEntryPress(item)}
+        >
+          <View style={styles.entryInfo}>
+            <View style={styles.entryIcon}>
+              {renderEntryIcon(displayKind, theme.colors)}
+            </View>
+            <View style={styles.entryTextContainer}>
+              <Text style={styles.entryName}>{item.name}</Text>
+              <Text style={styles.entryMeta}>
+                {item.kind.toUpperCase()} · {formatFileSize({ size: item.size })} ·{" "}
+                {formatModifiedTime({ value: item.modifiedAt })}
+              </Text>
+            </View>
+          </View>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              handleCopyPath(item.path);
+            }}
+            hitSlop={8}
+            style={styles.copyButton}
+          >
+            {copiedPath === item.path ? (
+              <Check size={16} color={theme.colors.primary} />
+            ) : (
+              <Copy size={16} color={theme.colors.foreground} />
+            )}
+          </Pressable>
+        </Pressable>
+      );
+    },
+    [copiedPath, handleCopyPath, handleEntryPress, theme.colors]
+  );
+
+  const listHeaderComponent = useMemo(() => {
+    if (!parentPath && !showListLoadingBanner) {
+      return null;
+    }
+
+    return (
+      <View style={styles.headerContainer}>
+        {parentPath && <UpRow label=".." onPress={handleNavigateUp} />}
+        {showListLoadingBanner && (
+          <View style={styles.loadingBanner}>
+            <ActivityIndicator size="small" />
+            <Text style={styles.loadingBannerText}>
+              Loading {formatDirectoryLabel(activePath)}...
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }, [activePath, handleNavigateUp, parentPath, showListLoadingBanner]);
+
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -176,14 +290,14 @@ export default function FileExplorerScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title={selectedEntryPath ?? (currentPath || ".")} />
+      <BackHeader title={selectedEntryPath ?? (activePath || ".")} />
 
       <View style={styles.content}>
         {shouldShowPreview ? (
           <View style={styles.previewWrapper}>
             <UpRow label="Back to directory" onPress={() => setSelectedEntryPath(null)} />
             <View style={styles.previewSection}>
-              {isLoading && !preview ? (
+              {isPreviewLoading && !preview ? (
                 <View style={styles.centerState}>
                   <ActivityIndicator size="small" />
                   <Text style={styles.loadingText}>Loading file...</Text>
@@ -204,7 +318,7 @@ export default function FileExplorerScreen() {
                 </ScrollView>
               ) : preview.kind === "image" && preview.content ? (
                 <View style={styles.imagePreviewContainer}>
-                  <Image
+                  <RNImage
                     source={{
                       uri: `data:${preview.mimeType ?? "image/png"};base64,${
                         preview.content
@@ -230,58 +344,40 @@ export default function FileExplorerScreen() {
               <View style={styles.centerState}>
                 <Text style={styles.errorText}>{error}</Text>
               </View>
-            ) : isLoading && entries.length === 0 ? (
+            ) : showInitialListLoading ? (
               <View style={styles.centerState}>
                 <ActivityIndicator size="small" />
-                <Text style={styles.loadingText}>Loading...</Text>
+                <Text style={styles.loadingText}>Loading directory...</Text>
               </View>
             ) : entries.length === 0 ? (
               <View style={styles.centerState}>
                 <Text style={styles.emptyText}>Directory is empty</Text>
               </View>
             ) : (
-              <ScrollView contentContainerStyle={styles.entriesContent}>
-                {parentPath && <UpRow label=".." onPress={handleNavigateUp} />}
-                {entries.map((entry) => (
-                  <Pressable
-                    key={entry.path}
-                    style={[
-                      styles.entryRow,
-                      entry.kind === "directory"
-                        ? styles.directoryRow
-                        : styles.fileRow,
-                    ]}
-                    onPress={() => handleEntryPress(entry)}
-                  >
-                    <View style={styles.entryTextContainer}>
-                      <Text style={styles.entryName}>{entry.name}</Text>
-                      <Text style={styles.entryMeta}>
-                        {entry.kind.toUpperCase()} · {formatFileSize({ size: entry.size })} · {formatModifiedTime({ value: entry.modifiedAt })}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        handleCopyPath(entry.path);
-                      }}
-                      hitSlop={8}
-                      style={styles.copyButton}
-                    >
-                      {copiedPath === entry.path ? (
-                        <Check size={16} color={theme.colors.primary} />
-                      ) : (
-                        <Copy size={16} color={theme.colors.foreground} />
-                      )}
-                    </Pressable>
-                  </Pressable>
-                ))}
-              </ScrollView>
+              <FlatList
+                ref={listScrollRef}
+                data={entries}
+                renderItem={renderEntry}
+                keyExtractor={(item) => item.path}
+                contentContainerStyle={styles.entriesContent}
+                onScroll={handleListScroll}
+                scrollEventThrottle={16}
+                ListHeaderComponent={listHeaderComponent}
+                extraData={copiedPath}
+                initialNumToRender={20}
+                maxToRenderPerBatch={30}
+                windowSize={10}
+              />
             )}
           </View>
         )}
       </View>
     </View>
   );
+}
+
+function formatDirectoryLabel(path: string): string {
+  return path === "." ? "workspace root" : path;
 }
 
 function formatFileSize({ size }: { size: number }): string {
@@ -351,6 +447,104 @@ function UpRow({ label, onPress }: { label: string; onPress: () => void }) {
   );
 }
 
+type EntryDisplayKind = "directory" | "image" | "text" | "other";
+
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "bmp",
+  "svg",
+  "webp",
+  "ico",
+]);
+
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "markdown",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "json",
+  "yml",
+  "yaml",
+  "toml",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "c",
+  "cpp",
+  "cc",
+  "h",
+  "hpp",
+  "cs",
+  "swift",
+  "php",
+  "html",
+  "css",
+  "scss",
+  "less",
+  "xml",
+  "sh",
+  "bash",
+  "zsh",
+  "ini",
+  "cfg",
+  "conf",
+]);
+
+function renderEntryIcon(
+  kind: EntryDisplayKind,
+  colors: { foreground: string; primary: string }
+) {
+  const color = colors.foreground;
+  switch (kind) {
+    case "directory":
+      return <Folder size={18} color={colors.primary} />;
+    case "image":
+      return <ImageIcon size={18} color={color} />;
+    case "text":
+      return <FileText size={18} color={color} />;
+    default:
+      return <File size={18} color={color} />;
+  }
+}
+
+function getEntryDisplayKind(entry: ExplorerEntry): EntryDisplayKind {
+  if (entry.kind === "directory") {
+    return "directory";
+  }
+
+  const extension = getExtension(entry.name);
+  if (extension === null) {
+    return "other";
+  }
+
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (TEXT_EXTENSIONS.has(extension)) {
+    return "text";
+  }
+
+  return "other";
+}
+
+function getExtension(name: string): string | null {
+  const index = name.lastIndexOf(".");
+  if (index === -1 || index === name.length - 1) {
+    return null;
+  }
+  return name.slice(index + 1).toLowerCase();
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -368,6 +562,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   entriesContent: {
     paddingBottom: theme.spacing[4],
+  },
+  headerContainer: {
+    gap: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+  },
+  loadingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+  },
+  loadingBannerText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
   },
   previewWrapper: {
     flex: 1,
@@ -421,9 +630,19 @@ const styles = StyleSheet.create((theme) => ({
   selectedRow: {
     borderColor: theme.colors.primary,
   },
+  entryInfo: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    columnGap: theme.spacing[2],
+    marginRight: theme.spacing[3],
+  },
+  entryIcon: {
+    width: 28,
+    alignItems: "center",
+  },
   entryTextContainer: {
     flex: 1,
-    marginRight: theme.spacing[3],
   },
   entryName: {
     color: theme.colors.foreground,

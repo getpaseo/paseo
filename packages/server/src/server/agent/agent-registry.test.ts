@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 
 import { AgentRegistry } from "./agent-registry.js";
 import type { AgentSnapshot } from "./agent-manager.js";
@@ -112,5 +112,34 @@ describe("AgentRegistry", () => {
 
     const record = await registry.get("agent-3");
     expect(record?.lastModeId).toBe("plan");
+  });
+
+  test("recovers from trailing garbage in agents.json", async () => {
+    const payload = [
+      {
+        id: "agent-4",
+        provider: "claude",
+        cwd: "/tmp/project",
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+        title: "Recovered agent",
+        lastStatus: "idle",
+        lastModeId: "plan",
+        config: null,
+        persistence: null,
+      },
+    ];
+    writeFileSync(
+      filePath,
+      `${JSON.stringify(payload, null, 2)}\nGARBAGE-TRAILING`
+    );
+
+    const reloaded = new AgentRegistry(filePath);
+    const result = await reloaded.list();
+    expect(result).toHaveLength(1);
+    expect(result[0]?.title).toBe("Recovered agent");
+
+    const sanitized = readFileSync(filePath, "utf8");
+    expect(sanitized.includes("GARBAGE-TRAILING")).toBe(false);
   });
 });

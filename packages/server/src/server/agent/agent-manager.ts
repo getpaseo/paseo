@@ -16,6 +16,8 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  ListPersistedAgentsOptions,
+  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 
 export type AgentLifecycleStatus =
@@ -51,6 +53,10 @@ export type AgentSubscriber = (event: AgentManagerEvent) => void;
 export type SubscribeOptions = {
   agentId?: string;
   replayState?: boolean;
+};
+
+export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
+  provider?: AgentProvider;
 };
 
 export type AgentManagerOptions = {
@@ -143,6 +149,44 @@ export class AgentManager {
     );
   }
 
+  async listPersistedAgents(
+    options?: PersistedAgentQueryOptions
+  ): Promise<PersistedAgentDescriptor[]> {
+    if (options?.provider) {
+      const client = this.requireClient(options.provider);
+      if (!client.listPersistedAgents) {
+        return [];
+      }
+      return client.listPersistedAgents({ limit: options.limit });
+    }
+
+    const descriptors: PersistedAgentDescriptor[] = [];
+    for (const [provider, client] of this.clients.entries()) {
+      if (!client.listPersistedAgents) {
+        continue;
+      }
+      try {
+        const entries = await client.listPersistedAgents({
+          limit: options?.limit,
+        });
+        descriptors.push(...entries);
+      } catch (error) {
+        console.warn(
+          `[AgentManager] Failed to list persisted agents for provider '${provider}':`,
+          error
+        );
+      }
+    }
+
+    const limit = options?.limit ?? 20;
+    return descriptors
+      .sort(
+        (a, b) =>
+          b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
+      )
+      .slice(0, limit);
+  }
+
   getAgent(id: string): AgentSnapshot | null {
     const agent = this.agents.get(id);
     return agent ? this.toSnapshot(agent) : null;
@@ -180,6 +224,37 @@ export class AgentManager {
       mergedConfig,
       agentId ?? this.idFactory()
     );
+  }
+
+  async refreshAgentFromPersistence(agentId: string): Promise<AgentSnapshot> {
+    const existing = this.requireAgent(agentId);
+    const handle = existing.persistence;
+    if (!handle) {
+      throw new Error(
+        `Agent ${agentId} cannot be refreshed because it has no persistence handle`
+      );
+    }
+
+    const client = this.requireClient(handle.provider);
+    const overrides = {
+      ...existing.config,
+      provider: handle.provider,
+    };
+
+    const session = await client.resumeSession(handle, overrides);
+
+    // Remove the existing agent entry before swapping sessions
+    this.agents.delete(agentId);
+    try {
+      await existing.session.close();
+    } catch (error) {
+      console.warn(
+        `[AgentManager] Failed to close previous session for agent ${agentId} during refresh:`,
+        error
+      );
+    }
+
+    return this.registerSession(session, overrides, agentId);
   }
 
   async closeAgent(agentId: string): Promise<void> {
@@ -227,6 +302,27 @@ export class AgentManager {
       usage,
       timeline,
     };
+  }
+
+  recordUserMessage(
+    agentId: string,
+    text: string,
+    options?: { messageId?: string; raw?: unknown }
+  ): void {
+    const agent = this.requireAgent(agentId);
+    const item: AgentTimelineItem = {
+      type: "user_message",
+      text,
+      messageId: options?.messageId,
+      raw: options?.raw,
+    };
+    agent.updatedAt = new Date();
+    this.recordTimeline(agent, item);
+    this.dispatchStream(agentId, {
+      type: "timeline",
+      item,
+      provider: agent.provider,
+    });
   }
 
   streamAgent(

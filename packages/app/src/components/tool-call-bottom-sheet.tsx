@@ -212,10 +212,10 @@ export function ToolCallBottomSheet({
     if (payload.source === "agent") {
       const data = payload.data;
       return {
-        toolName: `${data.server}/${data.tool}`,
+        toolName: data.displayName ?? `${data.server}/${data.tool}`,
         args: data.raw,
-        result: undefined,
-        error: undefined,
+        result: data.result,
+        error: data.error,
       };
     }
 

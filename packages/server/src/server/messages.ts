@@ -113,6 +113,12 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
   z.discriminatedUnion("type", [
     z.object({
+      type: z.literal("user_message"),
+      text: z.string(),
+      messageId: z.string().optional(),
+      raw: z.unknown().optional(),
+    }),
+    z.object({
       type: z.literal("assistant_message"),
       text: z.string(),
       raw: z.unknown().optional(),
@@ -123,31 +129,16 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
       raw: z.unknown().optional(),
     }),
     z.object({
-      type: z.literal("command"),
-      command: z.string(),
-      status: z.string(),
-      raw: z.unknown().optional(),
-    }),
-    z.object({
-      type: z.literal("file_change"),
-      files: z.array(
-        z.object({
-          path: z.string(),
-          kind: z.string(),
-        })
-      ),
-      raw: z.unknown().optional(),
-    }),
-    z.object({
-      type: z.literal("mcp_tool"),
+      type: z.literal("tool_call"),
       server: z.string(),
       tool: z.string(),
-      status: z.string(),
-      raw: z.unknown().optional(),
-    }),
-    z.object({
-      type: z.literal("web_search"),
-      query: z.string(),
+      status: z.string().optional(),
+      callId: z.string().optional(),
+      displayName: z.string().optional(),
+      kind: z.string().optional(),
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
+      error: z.unknown().optional(),
       raw: z.unknown().optional(),
     }),
     z.object({
@@ -334,6 +325,25 @@ export const CreateAgentRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const ResumeAgentRequestMessageSchema = z.object({
+  type: z.literal("resume_agent_request"),
+  handle: AgentPersistenceHandleSchema,
+  overrides: AgentSessionConfigSchema.partial().optional(),
+  requestId: z.string().optional(),
+});
+
+export const RefreshAgentRequestMessageSchema = z.object({
+  type: z.literal("refresh_agent_request"),
+  agentId: z.string(),
+  requestId: z.string().optional(),
+});
+
+export const ListPersistedAgentsRequestMessageSchema = z.object({
+  type: z.literal("list_persisted_agents_request"),
+  provider: AgentProviderSchema.optional(),
+  limit: z.number().int().positive().optional(),
+});
+
 export const InitializeAgentRequestMessageSchema = z.object({
   type: z.literal("initialize_agent_request"),
   agentId: z.string(),
@@ -400,11 +410,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SendAgentMessageSchema,
   SendAgentAudioSchema,
   CreateAgentRequestMessageSchema,
+  ResumeAgentRequestMessageSchema,
+  RefreshAgentRequestMessageSchema,
   InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   FileExplorerRequestSchema,
+  ListPersistedAgentsRequestMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -580,6 +593,24 @@ export const AgentPermissionResolvedMessageSchema = z.object({
   }),
 });
 
+const PersistedAgentDescriptorPayloadSchema = z.object({
+  provider: AgentProviderSchema,
+  sessionId: z.string(),
+  cwd: z.string(),
+  title: z.string(),
+  lastActivityAt: z.string(),
+  persistence: AgentPersistenceHandleSchema,
+});
+
+export type PersistedAgentDescriptorPayload = z.infer<typeof PersistedAgentDescriptorPayloadSchema>;
+
+export const ListPersistedAgentsResponseSchema = z.object({
+  type: z.literal("list_persisted_agents_response"),
+  payload: z.object({
+    items: z.array(PersistedAgentDescriptorPayloadSchema),
+  }),
+});
+
 export const GitDiffResponseSchema = z.object({
   type: z.literal("git_diff_response"),
   payload: z.object({
@@ -618,6 +649,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
+  ListPersistedAgentsResponseSchema,
   GitDiffResponseSchema,
   FileExplorerResponseSchema,
 ]);
@@ -645,6 +677,7 @@ export type ListConversationsResponseMessage = z.infer<typeof ListConversationsR
 export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
+export type ListPersistedAgentsResponseMessage = z.infer<typeof ListPersistedAgentsResponseSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
@@ -655,6 +688,8 @@ export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessage
 export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
 export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
+export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
+export type ListPersistedAgentsRequestMessage = z.infer<typeof ListPersistedAgentsRequestMessageSchema>;
 export type InitializeAgentRequestMessage = z.infer<typeof InitializeAgentRequestMessageSchema>;
 export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;

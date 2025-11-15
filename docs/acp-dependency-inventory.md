@@ -128,8 +128,7 @@ Files:
 - Update `reduceStreamUpdate` to consume `AgentStreamEvent` timeline entries:
   - `timeline.item.type === "assistant_message"` → assistant bubble.
   - `timeline.item.type === "reasoning"` → `thought`.
-  - `timeline.item.type === "mcp_tool"` → `tool_call` entry with `payload.source === "agent"`, containing the normalized server/tool/status.
-  - `timeline.item.type === "command"` / `file_change` feed the activity log or tool call detail panes.
+  - `timeline.item.type === "tool_call"` → `tool_call` entry with `payload.source === "agent"`, containing the normalized server/tool/status + input/output.
 - Tool call bottom sheet should render the normalized timeline payload rather than ACP's nested `content`.
 - Create agent modal should source provider/mode metadata from a new exported manifest (e.g., `packages/server/src/server/agent/providers`) instead of ACP spawn definitions.
 - Permission cards should follow the new message contract: websocket `agent_permission_request` payload should contain the serialized `AgentPermissionRequest` (structured `input`, `suggestions`, metadata) rather than ACP's `toolCall` blob + option ids.

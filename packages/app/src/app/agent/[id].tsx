@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MoreVertical, GitBranch, Folder } from "lucide-react-native";
+import { MoreVertical, GitBranch, Folder, RotateCcw } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -34,6 +34,7 @@ export default function AgentScreen() {
     pendingPermissions,
     respondToPermission,
     initializeAgent,
+    refreshAgent,
   } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -192,6 +193,18 @@ export default function AgentScreen() {
     }
   }, [handleCloseMenu, id, router]);
 
+  const handleRefreshAgent = useCallback(() => {
+    if (!id) {
+      return;
+    }
+    if (!agent?.persistence) {
+      handleCloseMenu();
+      return;
+    }
+    handleCloseMenu();
+    refreshAgent({ agentId: id });
+  }, [agent?.persistence, handleCloseMenu, id, refreshAgent]);
+
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -268,6 +281,28 @@ export default function AgentScreen() {
               <Folder size={20} color={theme.colors.foreground} />
               <Text style={styles.menuItemText}>Browse Files</Text>
             </Pressable>
+            {agent.persistence && (
+              <Pressable
+                onPress={handleRefreshAgent}
+                style={[
+                  styles.menuItem,
+                  isInitializing ? styles.menuItemDisabled : null,
+                ]}
+                disabled={isInitializing}
+              >
+                <RotateCcw size={20} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>
+                  {isInitializing ? "Refreshing..." : "Refresh from disk"}
+                </Text>
+                {isInitializing && (
+                  <ActivityIndicator
+                    size="small"
+                    color={theme.colors.primary}
+                    style={styles.menuItemSpinner}
+                  />
+                )}
+              </Pressable>
+            )}
           </View>
         </View>
       </Modal>
@@ -333,6 +368,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
+  },
+  menuItemDisabled: {
+    opacity: 0.6,
+  },
+  menuItemSpinner: {
+    marginLeft: "auto",
   },
   menuItemText: {
     fontSize: theme.fontSize.base,

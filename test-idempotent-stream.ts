@@ -1,4 +1,4 @@
-import { reduceStreamUpdate, hydrateStreamState, type StreamItem } from "./packages/app/src/types/stream";
+import { reduceStreamUpdate, hydrateStreamState, type StreamItem, type ToolCallItem } from "./packages/app/src/types/stream";
 
 type AgentStreamEventPayload = Parameters<typeof reduceStreamUpdate>[1];
 
@@ -18,15 +18,47 @@ function reasoningTimeline(text: string): AgentStreamEventPayload {
   };
 }
 
-function toolTimeline(id: string, status: string): AgentStreamEventPayload {
+function toolTimeline(id: string, status: string, raw?: unknown): AgentStreamEventPayload {
   return {
     type: "timeline",
     provider: "claude",
     item: {
-      type: "mcp_tool",
+      type: "tool_call",
       server: "terminal",
       tool: id,
       status,
+      callId: id,
+      displayName: id,
+      kind: "execute",
+      raw,
+    },
+  };
+}
+
+function permissionTimeline(id: string, status: string): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "tool_call",
+      server: "permission",
+      tool: "permission_request",
+      status,
+      callId: id,
+      displayName: "Permission",
+      kind: "permission",
+    },
+  };
+}
+
+function userTimeline(text: string, messageId?: string): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "user_message",
+      text,
+      messageId,
     },
   };
 }
@@ -147,6 +179,149 @@ function testMultipleMessages() {
   }
 }
 
+// Test 4: Tool call raw input should survive completion updates
+function testToolCallInputPreservation() {
+  console.log('\n=== Test 4: Tool Call Input Preservation ===');
+
+  const timestampStart = new Date("2025-01-01T10:00:00Z");
+  const timestampFinish = new Date("2025-01-01T10:00:05Z");
+
+  const toolCallId = "tool-raw-test";
+  const toolInput = {
+    type: "mcp_tool_use",
+    tool_use_id: toolCallId,
+    input: {
+      command: "pwd",
+    },
+  };
+  const toolResult = {
+    type: "mcp_tool_result",
+    tool_use_id: toolCallId,
+    output: {
+      stdout: "/tmp",
+    },
+  };
+
+  const updates = [
+    { event: toolTimeline(toolCallId, "pending", toolInput), timestamp: timestampStart },
+    { event: toolTimeline(toolCallId, "completed", toolResult), timestamp: timestampFinish },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const toolCallEntry = state.find(
+    (item): item is ToolCallItem =>
+      item.kind === "tool_call" && item.payload.source === "agent"
+  );
+
+  if (!toolCallEntry) {
+    console.log("❌ FAIL: Tool call entry not found");
+    return;
+  }
+
+  const rawPayload = toolCallEntry.payload.data.raw as Record<string, unknown> | undefined;
+
+  const hasInput =
+    !!rawPayload &&
+    typeof rawPayload === "object" &&
+    rawPayload !== null &&
+    "input" in rawPayload;
+
+  const preservedOriginal = rawPayload === toolInput;
+
+  if (hasInput && preservedOriginal) {
+    console.log("✅ PASS: Tool call raw input preserved after completion");
+  } else {
+    console.log("❌ FAIL: Tool call input was lost or replaced");
+    console.log("Raw payload:", rawPayload);
+  }
+}
+
+// Test 5: Assistant message chunks should preserve whitespace between words
+function testAssistantWhitespacePreservation() {
+  console.log('\n=== Test 5: Assistant Message Whitespace Preservation ===');
+
+  const timestamp = new Date('2025-01-01T11:00:00Z');
+
+  const updates = [
+    { event: assistantTimeline("Hello "), timestamp },
+    { event: assistantTimeline("world"), timestamp },
+    { event: assistantTimeline(" !"), timestamp },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const assistantMsg = state.find((item) => item.kind === "assistant_message");
+
+  if (assistantMsg && assistantMsg.text === "Hello world !") {
+    console.log("✅ PASS: Assistant message whitespace preserved");
+  } else {
+    console.log("❌ FAIL: Expected whitespace to be preserved");
+    console.log("Assistant message:", assistantMsg);
+  }
+}
+
+// Test 6: User messages should persist through hydration and deduplicate with live events
+function testUserMessageHydration() {
+  console.log('\n=== Test 6: User Message Hydration ===');
+
+  const timestamp = new Date('2025-01-01T11:30:00Z');
+  const messageId = 'msg_user_1';
+
+  const updates = [
+    { event: userTimeline('Run npm test', messageId), timestamp },
+    { event: assistantTimeline('On it!'), timestamp },
+  ];
+
+  const hydrated = hydrateStreamState(updates);
+  const hydratedUser = hydrated.find((item) => item.kind === 'user_message');
+
+  if (hydratedUser && hydratedUser.text === 'Run npm test' && hydratedUser.id === messageId) {
+    console.log('✅ PASS: Hydrated stream contains persisted user message');
+  } else {
+    console.log('❌ FAIL: Expected user message to survive hydration');
+    console.log('Hydrated state:', JSON.stringify(hydrated, null, 2));
+  }
+
+  const optimisticState: StreamItem[] = [
+    { kind: 'user_message', id: messageId, text: 'Run npm test', timestamp },
+  ];
+
+  const afterServerEvent = reduceStreamUpdate(
+    optimisticState,
+    userTimeline('Run npm test', messageId),
+    timestamp
+  );
+
+  if (afterServerEvent.length === 1 && afterServerEvent[0].kind === 'user_message') {
+    console.log('✅ PASS: Duplicate server event does not create extra user entry');
+  } else {
+    console.log('❌ FAIL: Duplicate server event should not add another user message');
+    console.log('State:', JSON.stringify(afterServerEvent, null, 2));
+  }
+}
+
+// Test 7: Permission tool calls should not show in the timeline
+function testPermissionToolCallFiltering() {
+  console.log('\n=== Test 7: Permission Tool Call Filtering ===');
+
+  const timestamp = new Date('2025-01-01T12:00:00Z');
+  const updates = [
+    { event: permissionTimeline('permission-1', 'pending'), timestamp },
+    { event: permissionTimeline('permission-1', 'granted'), timestamp },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const permissionEntries = state.filter(
+    (item) => item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  if (permissionEntries.length === 0) {
+    console.log('✅ PASS: Permission tool calls hidden from timeline');
+  } else {
+    console.log('❌ FAIL: Permission tool calls should be hidden');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
 // Run all tests
 console.log("Testing Idempotent Stream Reduction");
 console.log("====================================");
@@ -154,6 +329,10 @@ console.log("====================================");
 testIdempotentReduction();
 testUserMessageDeduplication();
 testMultipleMessages();
+testToolCallInputPreservation();
+testAssistantWhitespacePreservation();
+testUserMessageHydration();
+testPermissionToolCallFiltering();
 
 console.log("\n====================================");
 console.log("Tests complete");

@@ -5,12 +5,14 @@ import {
   Text,
   Pressable,
   ScrollView,
+  FlatList,
   ActivityIndicator,
   InteractionManager,
   TextInput,
   Modal,
   useWindowDimensions,
   type LayoutChangeEvent,
+  type ListRenderItem,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -32,7 +34,8 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
 } from "@server/server/agent/provider-manifest";
-import type { AgentProvider, AgentMode, AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider, AgentMode, AgentSessionConfig, AgentPersistenceHandle } from "@server/server/agent/agent-sdk-types";
+import type { WSInboundMessage } from "@server/server/messages";
 
 interface CreateAgentModalProps {
   isVisible: boolean;
@@ -48,6 +51,40 @@ const fallbackDefinition = providerDefinitions[0];
 const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
 const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
+const RESUME_PAGE_SIZE = 20;
+
+type ResumeCandidate = {
+  provider: AgentProvider;
+  sessionId: string;
+  cwd: string;
+  title: string;
+  lastActivityAt: Date;
+  persistence: AgentPersistenceHandle;
+};
+
+type ResumeTab = "new" | "resume";
+type ProviderFilter = "all" | AgentProvider;
+
+function formatRelativeTime(date: Date): string {
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  if (!Number.isFinite(diffMs)) {
+    return "unknown";
+  }
+  const minutes = Math.max(0, Math.floor(diffMs / 60000));
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 export function CreateAgentModal({
   isVisible,
@@ -61,7 +98,7 @@ export function CreateAgentModal({
   const isCompactLayout = screenWidth < 720;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
-  const { ws, createAgent } = useSession();
+  const { ws, createAgent, resumeAgent } = useSession();
   const router = useRouter();
 
   const [isMounted, setIsMounted] = useState(isVisible);
@@ -73,12 +110,54 @@ export function CreateAgentModal({
   const [worktreeName, setWorktreeName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ResumeTab>("new");
+  const [resumeProviderFilter, setResumeProviderFilter] = useState<ProviderFilter>("all");
+  const [resumeSearchQuery, setResumeSearchQuery] = useState("");
+  const [resumeCandidates, setResumeCandidates] = useState<ResumeCandidate[]>([]);
+  const [isResumeLoading, setIsResumeLoading] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const pendingRequestIdRef = useRef<string | null>(null);
 
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
 
+  const tabOptions = useMemo(
+    () => [
+      { id: "new" as ResumeTab, label: "New Agent" },
+      { id: "resume" as ResumeTab, label: "Resume Agent" },
+    ],
+    []
+  );
+  const providerFilterOptions = useMemo(
+    () => [
+      { id: "all" as ProviderFilter, label: "All" },
+      ...providerDefinitions.map((definition) => ({
+        id: definition.id as ProviderFilter,
+        label: definition.label,
+      })),
+    ],
+    []
+  );
+  const getProviderLabel = useCallback(
+    (provider: AgentProvider) => providerDefinitionMap.get(provider)?.label ?? provider,
+    []
+  );
   const agentDefinition = providerDefinitionMap.get(selectedProvider);
   const modeOptions = agentDefinition?.modes ?? [];
+  const filteredResumeCandidates = useMemo(() => {
+    const providerFilter = resumeProviderFilter;
+    const query = resumeSearchQuery.trim().toLowerCase();
+    return resumeCandidates
+      .filter((candidate) => providerFilter === "all" || candidate.provider === providerFilter)
+      .filter((candidate) => {
+        if (query.length === 0) {
+          return true;
+        }
+        const titleText = candidate.title.toLowerCase();
+        const cwdText = candidate.cwd.toLowerCase();
+        return titleText.includes(query) || cwdText.includes(query);
+      })
+      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
+  }, [resumeCandidates, resumeProviderFilter, resumeSearchQuery]);
 
   useEffect(() => {
     if (!agentDefinition) {
@@ -108,7 +187,7 @@ export function CreateAgentModal({
     setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
     setErrorMessage("");
     setIsLoading(false);
-    setPendingRequestId(null);
+    pendingRequestIdRef.current = null;
   }, []);
 
   const navigateToAgentIfNeeded = useCallback(() => {
@@ -129,6 +208,29 @@ export function CreateAgentModal({
     setIsMounted(false);
     navigateToAgentIfNeeded();
   }, [navigateToAgentIfNeeded, resetFormState]);
+
+  const requestResumeCandidates = useCallback(
+    (provider?: AgentProvider) => {
+      setIsResumeLoading(true);
+      setResumeError(null);
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "list_persisted_agents_request",
+          ...(provider ? { provider } : {}),
+          limit: RESUME_PAGE_SIZE,
+        },
+      };
+      try {
+        ws.send(msg);
+      } catch (error) {
+        console.error("[CreateAgentModal] Failed to request persisted agents:", error);
+        setIsResumeLoading(false);
+        setResumeError("Unable to load saved agents. Please try again.");
+      }
+    },
+    [ws]
+  );
 
   useEffect(() => {
     if (!isVisible) {
@@ -284,8 +386,8 @@ export function CreateAgentModal({
 
     const requestId = generateMessageId();
 
+    pendingRequestIdRef.current = requestId;
     setIsLoading(true);
-    setPendingRequestId(requestId);
     setErrorMessage("");
 
     const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
@@ -306,7 +408,7 @@ export function CreateAgentModal({
       console.error("[CreateAgentModal] Failed to create agent:", error);
       setErrorMessage("Failed to create agent. Please try again.");
       setIsLoading(false);
-      setPendingRequestId(null);
+      pendingRequestIdRef.current = null;
     }
   }, [
     workingDir,
@@ -319,26 +421,96 @@ export function CreateAgentModal({
     addRecentPath,
     createAgent,
   ]);
+  
+  const handleResumeCandidatePress = useCallback(
+    (candidate: ResumeCandidate) => {
+      if (isLoading) {
+        return;
+      }
+      setErrorMessage("");
+      const requestId = generateMessageId();
+      pendingRequestIdRef.current = requestId;
+      setIsLoading(true);
+      resumeAgent({
+        handle: candidate.persistence,
+        requestId,
+      });
+    },
+    [isLoading, resumeAgent]
+  );
+
+  const renderResumeItem = useCallback<ListRenderItem<ResumeCandidate>>(
+    ({ item }) => (
+      <Pressable
+        onPress={() => handleResumeCandidatePress(item)}
+        disabled={isLoading}
+        style={styles.resumeItem}
+      >
+        <View style={styles.resumeItemHeader}>
+          <Text style={styles.resumeItemTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={styles.resumeItemTimestamp}>{formatRelativeTime(item.lastActivityAt)}</Text>
+        </View>
+        <Text style={styles.resumeItemPath} numberOfLines={1}>
+          {item.cwd}
+        </Text>
+        <View style={styles.resumeItemMetaRow}>
+          <View style={styles.resumeProviderBadge}>
+            <Text style={styles.resumeProviderBadgeText}>{getProviderLabel(item.provider)}</Text>
+          </View>
+          <Text style={styles.resumeItemHint}>Tap to resume</Text>
+        </View>
+      </Pressable>
+    ),
+    [getProviderLabel, handleResumeCandidatePress, isLoading]
+  );
 
   useEffect(() => {
-    if (!pendingRequestId) {
-      return;
-    }
+    const unsubscribe = ws.on("list_persisted_agents_response", (message) => {
+      if (message.type !== "list_persisted_agents_response") {
+        return;
+      }
+      const mapped = message.payload.items.map((item) => ({
+        provider: item.provider,
+        sessionId: item.sessionId,
+        cwd: item.cwd,
+        title: item.title ?? `Session ${item.sessionId.slice(0, 8)}`,
+        lastActivityAt: new Date(item.lastActivityAt),
+        persistence: item.persistence,
+      })) as ResumeCandidate[];
 
+      setResumeCandidates(mapped);
+      setIsResumeLoading(false);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [ws]);
+
+  useEffect(() => {
     const unsubscribe = ws.on("status", (message) => {
       if (message.type !== "status") {
         return;
       }
+
       const payload = message.payload as { status: string; agentId?: string; requestId?: string };
-      if (payload.status !== "agent_created") {
+      if (
+        (payload.status !== "agent_created" && payload.status !== "agent_resumed") ||
+        !payload.agentId
+      ) {
         return;
       }
-      if (payload.requestId !== pendingRequestId || !payload.agentId) {
+
+      const expectedRequestId = pendingRequestIdRef.current;
+      if (!expectedRequestId || payload.requestId !== expectedRequestId) {
         return;
       }
+
       console.log("[CreateAgentModal] Agent created:", payload.agentId);
+      pendingRequestIdRef.current = null;
       setIsLoading(false);
-      setPendingRequestId(null);
       pendingNavigationAgentIdRef.current = payload.agentId;
       handleClose();
     });
@@ -346,7 +518,20 @@ export function CreateAgentModal({
     return () => {
       unsubscribe();
     };
-  }, [pendingRequestId, ws, handleClose]);
+  }, [ws, handleClose]);
+
+  useEffect(() => {
+    if (!isVisible || activeTab !== "resume") {
+      return;
+    }
+    const provider = resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
+    requestResumeCandidates(provider);
+  }, [activeTab, isVisible, requestResumeCandidates, resumeProviderFilter]);
+
+  const refreshResumeList = useCallback(() => {
+    const provider = resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
+    requestResumeCandidates(provider);
+  }, [requestResumeCandidates, resumeProviderFilter]);
 
   const shouldRender = isVisible || isMounted;
 
@@ -395,93 +580,194 @@ export function CreateAgentModal({
               paddingLeft={horizontalPaddingLeft}
               paddingRight={horizontalPaddingRight}
               onClose={handleClose}
+              title={activeTab === "resume" ? "Resume Agent" : "Create New Agent"}
             />
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={[
-                styles.scrollContent,
+            <View
+              style={[
+                styles.tabSelector,
                 {
-                  paddingBottom: insets.bottom + defaultTheme.spacing[16],
                   paddingLeft: horizontalPaddingLeft,
                   paddingRight: horizontalPaddingRight,
                 },
               ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
             >
-              <WorkingDirectorySection
-                errorMessage={errorMessage}
-                isLoading={isLoading}
-                recentPaths={recentPaths}
-                workingDir={workingDir}
-                onChangeWorkingDir={(value) => {
-                  setWorkingDir(value);
-                  setErrorMessage("");
-                }}
-              />
+              {tabOptions.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <Pressable
+                    key={tab.id}
+                    onPress={() => setActiveTab(tab.id)}
+                    style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                  >
+                    <Text style={[styles.tabButtonText, isActive && styles.tabButtonTextActive]}>{tab.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
+            {activeTab === "new" ? (
+              <>
+                <ScrollView
+                  style={styles.scroll}
+                  contentContainerStyle={[
+                    styles.scrollContent,
+                    {
+                      paddingBottom: insets.bottom + defaultTheme.spacing[16],
+                      paddingLeft: horizontalPaddingLeft,
+                      paddingRight: horizontalPaddingRight,
+                    },
+                  ]}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <WorkingDirectorySection
+                    errorMessage={errorMessage}
+                    isLoading={isLoading}
+                    recentPaths={recentPaths}
+                    workingDir={workingDir}
+                    onChangeWorkingDir={(value) => {
+                      setWorkingDir(value);
+                      setErrorMessage("");
+                    }}
+                  />
+
+                  <View
+                    style={[
+                      styles.selectorRow,
+                      isCompactLayout && styles.selectorRowStacked,
+                    ]}
+                  >
+                    <AssistantSelector
+                      providerDefinitions={providerDefinitions}
+                      disabled={isLoading}
+                      isStacked={isCompactLayout}
+                      selectedProvider={selectedProvider}
+                      onSelect={setSelectedProvider}
+                    />
+                    <ModeSelector
+                      disabled={isLoading}
+                      isStacked={isCompactLayout}
+                      modeOptions={modeOptions}
+                      selectedMode={selectedMode}
+                      onSelect={setSelectedMode}
+                    />
+                  </View>
+
+                  <WorktreeSection
+                    isLoading={isLoading}
+                    value={worktreeName}
+                    onChange={(text) => {
+                      const slugified = slugifyWorktreeName(text);
+                      setWorktreeName(slugified);
+                      setErrorMessage("");
+                    }}
+                  />
+                </ScrollView>
+
+                <Animated.View
+                  style={[
+                    styles.footer,
+                    {
+                      paddingBottom: insets.bottom + defaultTheme.spacing[4],
+                      paddingLeft: horizontalPaddingLeft,
+                      paddingRight: horizontalPaddingRight,
+                    },
+                    footerAnimatedStyle,
+                  ]}
+                >
+                  <Pressable
+                    style={[
+                      styles.createButton,
+                      (workingDirIsEmpty || isLoading) && styles.createButtonDisabled,
+                    ]}
+                    onPress={handleCreate}
+                    disabled={workingDirIsEmpty || isLoading}
+                  >
+                    {isLoading ? (
+                      <View style={styles.loadingContainer}>
+                        <ActivityIndicator color={defaultTheme.colors.palette.white} />
+                        <Text style={styles.createButtonText}>Creating...</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.createButtonText}>Create Agent</Text>
+                    )}
+                  </Pressable>
+                </Animated.View>
+              </>
+            ) : (
               <View
                 style={[
-                  styles.selectorRow,
-                  isCompactLayout && styles.selectorRowStacked,
+                  styles.resumeContainer,
+                  {
+                    paddingLeft: horizontalPaddingLeft,
+                    paddingRight: horizontalPaddingRight,
+                    paddingBottom: insets.bottom + defaultTheme.spacing[4],
+                  },
                 ]}
               >
-                <AssistantSelector
-                  providerDefinitions={providerDefinitions}
-                  disabled={isLoading}
-                  isStacked={isCompactLayout}
-                  selectedProvider={selectedProvider}
-                  onSelect={setSelectedProvider}
-                />
-                <ModeSelector
-                  disabled={isLoading}
-                  isStacked={isCompactLayout}
-                  modeOptions={modeOptions}
-                  selectedMode={selectedMode}
-                  onSelect={setSelectedMode}
-                />
-              </View>
-
-              <WorktreeSection
-                isLoading={isLoading}
-                value={worktreeName}
-                onChange={(text) => {
-                  const slugified = slugifyWorktreeName(text);
-                  setWorktreeName(slugified);
-                  setErrorMessage("");
-                }}
-              />
-            </ScrollView>
-
-            <Animated.View
-              style={[
-                styles.footer,
-                {
-                  paddingBottom: insets.bottom + defaultTheme.spacing[4],
-                  paddingLeft: horizontalPaddingLeft,
-                  paddingRight: horizontalPaddingRight,
-                },
-                footerAnimatedStyle,
-              ]}
-            >
-              <Pressable
-                style={[
-                  styles.createButton,
-                  (workingDirIsEmpty || isLoading) && styles.createButtonDisabled,
-                ]}
-                onPress={handleCreate}
-                disabled={workingDirIsEmpty || isLoading}
-              >
-                {isLoading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator color={defaultTheme.colors.palette.white} />
-                    <Text style={styles.createButtonText}>Creating...</Text>
+                <View style={styles.resumeFilters}>
+                  <View style={styles.providerFilterRow}>
+                    {providerFilterOptions.map((option) => {
+                      const isActive = resumeProviderFilter === option.id;
+                      return (
+                        <Pressable
+                          key={option.id}
+                          onPress={() => setResumeProviderFilter(option.id)}
+                          style={[styles.providerFilterButton, isActive && styles.providerFilterButtonActive]}
+                        >
+                          <Text
+                            style={[
+                              styles.providerFilterText,
+                              isActive && styles.providerFilterTextActive,
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.resumeSearchRow}>
+                    <TextInput
+                      style={styles.resumeSearchInput}
+                      placeholder="Search by title or path"
+                      placeholderTextColor={defaultTheme.colors.mutedForeground}
+                      value={resumeSearchQuery}
+                      onChangeText={setResumeSearchQuery}
+                    />
+                    <Pressable style={styles.refreshButton} onPress={refreshResumeList} disabled={isResumeLoading}>
+                      <Text style={styles.refreshButtonText}>Refresh</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                {resumeError ? <Text style={styles.resumeErrorText}>{resumeError}</Text> : null}
+                {isResumeLoading ? (
+                  <View style={styles.resumeLoading}>
+                    <ActivityIndicator color={defaultTheme.colors.mutedForeground} />
+                    <Text style={styles.resumeLoadingText}>Loading saved agents...</Text>
+                  </View>
+                ) : filteredResumeCandidates.length === 0 ? (
+                  <View style={styles.resumeEmptyState}>
+                    <Text style={styles.resumeEmptyTitle}>No agents found</Text>
+                    <Text style={styles.resumeEmptySubtitle}>
+                      We'll load the latest Claude and Codex sessions from your local history.
+                    </Text>
+                    <Pressable style={styles.refreshButtonAlt} onPress={refreshResumeList}>
+                      <Text style={styles.refreshButtonAltText}>Try Again</Text>
+                    </Pressable>
                   </View>
                 ) : (
-                  <Text style={styles.createButtonText}>Create Agent</Text>
+                  <FlatList
+                    data={filteredResumeCandidates}
+                    renderItem={renderResumeItem}
+                    keyExtractor={(item) => `${item.provider}:${item.sessionId}`}
+                    ItemSeparatorComponent={() => <View style={styles.resumeItemSeparator} />}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.resumeListContent}
+                  />
                 )}
-              </Pressable>
-            </Animated.View>
+              </View>
+            )}
           </View>
         </Animated.View>
       </View>
@@ -494,12 +780,13 @@ interface ModalHeaderProps {
   paddingLeft: number;
   paddingRight: number;
   onClose: () => void;
+  title: string;
 }
 
-function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose }: ModalHeaderProps): ReactElement {
+function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose, title }: ModalHeaderProps): ReactElement {
   return (
     <View style={[styles.header, { paddingTop, paddingLeft, paddingRight }]}>
-      <Text style={styles.headerTitle}>Create New Agent</Text>
+      <Text style={styles.headerTitle}>{title}</Text>
       <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
         <X size={20} color={defaultTheme.colors.mutedForeground} />
       </Pressable>
@@ -742,6 +1029,35 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  tabSelector: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
+  },
+  tabButton: {
+    flex: 1,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    paddingVertical: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.background,
+  },
+  tabButtonActive: {
+    backgroundColor: theme.colors.muted,
+    borderColor: theme.colors.palette.blue[500],
+  },
+  tabButtonText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  tabButtonTextActive: {
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+  },
   scroll: {
     flex: 1,
   },
@@ -893,5 +1209,162 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  resumeContainer: {
+    flex: 1,
+    gap: theme.spacing[4],
+  },
+  resumeFilters: {
+    gap: theme.spacing[3],
+  },
+  providerFilterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+  },
+  providerFilterButton: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  providerFilterButtonActive: {
+    borderColor: theme.colors.palette.blue[500],
+    backgroundColor: theme.colors.muted,
+  },
+  providerFilterText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  providerFilterTextActive: {
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  resumeSearchRow: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    alignItems: "center",
+  },
+  resumeSearchInput: {
+    flex: 1,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    color: theme.colors.foreground,
+  },
+  refreshButton: {
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+  },
+  refreshButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  resumeErrorText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
+  },
+  resumeLoading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+  },
+  resumeLoadingText: {
+    color: theme.colors.mutedForeground,
+  },
+  resumeEmptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[6],
+    textAlign: "center",
+  },
+  resumeEmptyTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    textAlign: "center",
+  },
+  resumeEmptySubtitle: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  refreshButtonAlt: {
+    marginTop: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.palette.blue[500],
+    paddingHorizontal: theme.spacing[6],
+    paddingVertical: theme.spacing[3],
+  },
+  refreshButtonAltText: {
+    color: theme.colors.palette.white,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  resumeListContent: {
+    paddingBottom: theme.spacing[8],
+    gap: theme.spacing[2],
+  },
+  resumeItem: {
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[4],
+    backgroundColor: theme.colors.background,
+    gap: theme.spacing[2],
+  },
+  resumeItemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  resumeItemTitle: {
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+    flex: 1,
+  },
+  resumeItemTimestamp: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  resumeItemPath: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  resumeItemMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  resumeProviderBadge: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.muted,
+  },
+  resumeProviderBadgeText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  resumeItemHint: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+  },
+  resumeItemSeparator: {
+    height: theme.spacing[2],
   },
 }));

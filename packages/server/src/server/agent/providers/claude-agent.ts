@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
+import fs, { promises as fsPromises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -35,6 +35,8 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  ListPersistedAgentsOptions,
+  PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
@@ -71,7 +73,43 @@ const DEFAULT_MODES: AgentMode[] = [
 
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
-type ClaudeContentChunk = { type: string; [key: string]: any };
+export type ClaudeContentChunk = { type: string; [key: string]: any };
+
+export function extractUserMessageText(
+  content: string | ClaudeContentChunk[]
+): string | null {
+  if (typeof content === "string") {
+    const normalized = content.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const text = typeof block.text === "string" ? block.text : undefined;
+    if (text && text.trim()) {
+      parts.push(text.trim());
+      continue;
+    }
+    const input = typeof block.input === "string" ? block.input : undefined;
+    if (input && input.trim()) {
+      parts.push(input.trim());
+    }
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const combined = parts.join("\n\n").trim();
+  return combined.length > 0 ? combined : null;
+}
 
 type PendingPermission = {
   request: AgentPermissionRequest;
@@ -81,6 +119,7 @@ type PendingPermission = {
 };
 
 type ToolUseClassification = "generic" | "command" | "file_change";
+type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
 type ToolUseCacheEntry = {
   id: string;
@@ -90,6 +129,7 @@ type ToolUseCacheEntry = {
   started: boolean;
   commandText?: string;
   files?: { path: string; kind: string }[];
+  input?: Record<string, unknown> | null;
 };
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
@@ -121,6 +161,28 @@ export class ClaudeAgentClient implements AgentClient {
     const mergedConfig = { ...merged, provider: "claude" } as AgentSessionConfig;
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, this.defaults, handle);
+  }
+
+  async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
+    const projectsRoot = path.join(os.homedir(), ".claude", "projects");
+    if (!(await pathExists(projectsRoot))) {
+      return [];
+    }
+    const limit = options?.limit ?? 20;
+    const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
+    const descriptors: PersistedAgentDescriptor[] = [];
+
+    for (const candidate of candidates) {
+      const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
+      if (descriptor) {
+        descriptors.push(descriptor);
+      }
+      if (descriptors.length >= limit) {
+        break;
+      }
+    }
+
+    return descriptors;
   }
 
   private assertConfig(config: AgentSessionConfig): ClaudeAgentConfig {
@@ -269,10 +331,13 @@ class ClaudeAgentSession implements AgentSession {
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         await this.setMode("acceptEdits");
-        this.enqueueTimeline({
-          type: "command",
-          command: "plan:approved",
+        this.pushToolCall({
+          server: "plan",
+          tool: "plan_approval",
           status: "granted",
+          callId: pending.request.id,
+          displayName: "Plan approved",
+          kind: "plan",
           raw: pending.request,
         });
       }
@@ -282,10 +347,14 @@ class ClaudeAgentSession implements AgentSession {
         updatedPermissions: this.normalizePermissionUpdates(response.updatedPermissions),
       };
       pending.resolve(result);
-      this.enqueueTimeline({
-        type: "command",
-        command: `permission:${pending.request.name}`,
+      this.pushToolCall({
+        server: "permission",
+        tool: pending.request.name,
         status: "granted",
+        callId: pending.request.id,
+        displayName: pending.request.title ?? pending.request.name,
+        kind: "permission",
+        input: pending.request.input,
         raw: { request: pending.request, response },
       });
     } else {
@@ -295,10 +364,14 @@ class ClaudeAgentSession implements AgentSession {
         interrupt: response.interrupt,
       };
       pending.resolve(result);
-      this.enqueueTimeline({
-        type: "command",
-        command: `permission:${pending.request.name}`,
+      this.pushToolCall({
+        server: "permission",
+        tool: pending.request.name,
         status: "denied",
+        callId: pending.request.id,
+        displayName: pending.request.title ?? pending.request.name,
+        kind: "permission",
+        input: pending.request.input,
         raw: { request: pending.request, response },
       });
     }
@@ -551,10 +624,14 @@ class ClaudeAgentSession implements AgentSession {
       raw: { toolName, input, options },
     };
 
-    this.enqueueTimeline({
-      type: "command",
-      command: `permission:${toolName}`,
+    this.pushToolCall({
+      server: "permission",
+      tool: toolName,
       status: "requested",
+      callId: requestId,
+      displayName: request.title ?? toolName,
+      kind: "permission",
+      input,
       raw: { toolName, input },
     });
 
@@ -576,10 +653,14 @@ class ClaudeAgentSession implements AgentSession {
         this.pendingPermissions.delete(requestId);
         cleanup();
         const error = new Error("Permission request timed out");
-        this.enqueueTimeline({
-          type: "command",
-          command: `permission:${toolName}`,
+        this.pushToolCall({
+          server: "permission",
+          tool: toolName,
           status: "denied",
+          callId: requestId,
+          displayName: request.title ?? toolName,
+          kind: "permission",
+          input,
           raw: { reason: "timeout", toolName, input },
         });
         this.pushEvent({
@@ -632,6 +713,37 @@ class ClaudeAgentSession implements AgentSession {
 
   private enqueueTimeline(item: AgentTimelineItem) {
     this.pushEvent({ type: "timeline", item, provider: "claude" });
+  }
+
+  private pushToolCall(
+    data: Omit<ToolCallTimelineItem, "type">,
+    target?: AgentTimelineItem[]
+  ) {
+    const item: AgentTimelineItem = { type: "tool_call", ...data };
+    if (target) {
+      target.push(item);
+      return;
+    }
+    this.enqueueTimeline(item);
+  }
+
+  private getToolKind(classification?: ToolUseClassification): string | undefined {
+    switch (classification) {
+      case "command":
+        return "execute";
+      case "file_change":
+        return "edit";
+      case "generic":
+      default:
+        return "tool";
+    }
+  }
+
+  private buildToolDisplayName(entry?: ToolUseCacheEntry): string | undefined {
+    if (!entry) {
+      return undefined;
+    }
+    return entry.commandText ?? entry.name;
   }
 
   private pushEvent(event: AgentStreamEvent) {
@@ -700,20 +812,39 @@ class ClaudeAgentSession implements AgentSession {
 
   private convertHistoryEntry(entry: any): AgentTimelineItem[] {
     const message = entry?.message;
-    if (!message) {
+    if (!message || !("content" in message)) {
       return [];
     }
-    if (entry.type === "assistant" && message.content) {
-      return this.mapBlocksToTimeline(message.content as ClaudeContentChunk[]);
+    const content = message.content as string | ClaudeContentChunk[];
+
+    if (entry.type === "assistant" && content) {
+      return this.mapBlocksToTimeline(content);
     }
-    if (Array.isArray(message.content)) {
-      const hasToolBlock = message.content.some((block: ClaudeContentChunk) =>
-        typeof block?.type === "string" && block.type.includes("tool")
+
+    if (entry.type === "user") {
+      const text = extractUserMessageText(content);
+      if (text) {
+        return [
+          {
+            type: "user_message",
+            text,
+            raw: message,
+          },
+        ];
+      }
+      return [];
+    }
+
+    if (Array.isArray(content)) {
+      const hasToolBlock = content.some(
+        (block: ClaudeContentChunk) =>
+          typeof block?.type === "string" && block.type.includes("tool")
       );
       if (hasToolBlock) {
-        return this.mapBlocksToTimeline(message.content as ClaudeContentChunk[]);
+        return this.mapBlocksToTimeline(content);
       }
     }
+
     return [];
   }
 
@@ -773,28 +904,19 @@ class ClaudeAgentSession implements AgentSession {
     }
     entry.started = true;
     this.toolUseCache.set(entry.id, entry);
-    this.enqueueTimeline({
-      type: "command",
-      command: `permission:${entry.name}`,
-      status: "granted",
-      raw: block,
-    });
-    if (entry.classification === "command") {
-      const commandText = entry.commandText ?? entry.name;
-      items.push({
-        type: "command",
-        command: commandText,
-        status: "running",
+    this.pushToolCall(
+      {
+        server: entry.server,
+        tool: entry.name,
+        status: "pending",
+        callId: entry.id,
+        displayName: this.buildToolDisplayName(entry),
+        kind: this.getToolKind(entry.classification),
+        input: entry.input ?? this.normalizeToolInput(block.input),
         raw: block,
-      });
-    }
-    items.push({
-      type: "mcp_tool",
-      server: entry.server,
-      tool: entry.name,
-      status: "pending",
-      raw: block,
-    });
+      },
+      items
+    );
   }
 
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
@@ -802,29 +924,25 @@ class ClaudeAgentSession implements AgentSession {
     const server = entry?.server ?? block.server ?? "tool";
     const tool = entry?.name ?? block.tool_name ?? "tool";
     const status = block.is_error ? "failed" : "completed";
-    items.push({
-      type: "mcp_tool",
-      server,
-      tool,
-      status,
-      raw: block,
-    });
-    if (entry?.classification === "command") {
-      const commandText = entry.commandText ?? entry.name;
-      items.push({
-        type: "command",
-        command: commandText,
+    const rawPayload =
+      !block.is_error && entry?.classification === "file_change" && entry.files?.length
+        ? { block, files: entry.files }
+        : block;
+    this.pushToolCall(
+      {
+        server,
+        tool,
         status,
-        raw: block,
-      });
-    }
-    if (!block.is_error && entry?.classification === "file_change" && entry.files?.length) {
-      items.push({
-        type: "file_change",
-        files: entry.files,
-        raw: { block, files: entry.files },
-      });
-    }
+        callId: typeof block.tool_use_id === "string" ? block.tool_use_id : undefined,
+        displayName: this.buildToolDisplayName(entry),
+        kind: this.getToolKind(entry?.classification),
+        input: entry?.input,
+        output: !block.is_error && entry?.files?.length ? { files: entry.files } : undefined,
+        error: block.is_error ? block : undefined,
+        raw: rawPayload,
+      },
+      items
+    );
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
     }
@@ -872,6 +990,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (block.type === "tool_use") {
       const input = this.normalizeToolInput(block.input);
+      existing.input = input;
       if (input) {
         if (this.isCommandTool(existing.name, input)) {
           existing.classification = "command";
@@ -1042,4 +1161,143 @@ class Pushable<T> implements AsyncIterable<T> {
       },
     };
   }
+}
+
+type ClaudeSessionCandidate = {
+  path: string;
+  mtime: Date;
+};
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fsPromises.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function collectRecentClaudeSessions(root: string, limit: number): Promise<ClaudeSessionCandidate[]> {
+  let projectDirs: string[];
+  try {
+    projectDirs = await fsPromises.readdir(root);
+  } catch {
+    return [];
+  }
+  const candidates: ClaudeSessionCandidate[] = [];
+  for (const dirName of projectDirs) {
+    const projectPath = path.join(root, dirName);
+    let stats: fs.Stats;
+    try {
+      stats = await fsPromises.stat(projectPath);
+    } catch {
+      continue;
+    }
+    if (!stats.isDirectory()) {
+      continue;
+    }
+    let files: string[];
+    try {
+      files = await fsPromises.readdir(projectPath);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".jsonl")) {
+        continue;
+      }
+      const fullPath = path.join(projectPath, file);
+      try {
+        const fileStats = await fsPromises.stat(fullPath);
+        candidates.push({ path: fullPath, mtime: fileStats.mtime });
+      } catch {
+        // ignore stat errors for individual files
+      }
+    }
+  }
+  return candidates
+    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+    .slice(0, limit);
+}
+
+async function parseClaudeSessionDescriptor(
+  filePath: string,
+  mtime: Date
+): Promise<PersistedAgentDescriptor | null> {
+  let content: string;
+  try {
+    content = await fsPromises.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+
+  let sessionId: string | null = null;
+  let cwd: string | null = null;
+  let title: string | null = null;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!sessionId && typeof entry.sessionId === "string") {
+      sessionId = entry.sessionId;
+    }
+    if (!cwd && typeof entry.cwd === "string") {
+      cwd = entry.cwd;
+    }
+    if (!title && entry.type === "user" && entry.message) {
+      title = extractClaudeUserText(entry.message);
+    }
+    if (sessionId && cwd && title) {
+      break;
+    }
+  }
+
+  if (!sessionId || !cwd) {
+    return null;
+  }
+
+  const persistence: AgentPersistenceHandle = {
+    provider: "claude",
+    sessionId,
+    nativeHandle: sessionId,
+    metadata: {
+      provider: "claude",
+      cwd,
+    },
+  };
+
+  return {
+    provider: "claude",
+    sessionId,
+    cwd,
+    title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
+    lastActivityAt: mtime,
+    persistence,
+  };
+}
+
+function extractClaudeUserText(message: any): string | null {
+  if (!message) {
+    return null;
+  }
+  if (typeof message.content === "string") {
+    return message.content.trim();
+  }
+  if (typeof message.text === "string") {
+    return message.text.trim();
+  }
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (block && typeof block.text === "string") {
+        return block.text.trim();
+      }
+    }
+  }
+  return null;
 }

@@ -45,12 +45,22 @@ export type AgentUsage = {
 };
 
 export type AgentTimelineItem =
+  | { type: "user_message"; text: string; messageId?: string; raw?: unknown }
   | { type: "assistant_message"; text: string; raw?: unknown }
   | { type: "reasoning"; text: string; raw?: unknown }
-  | { type: "command"; command: string; status: string; raw?: unknown }
-  | { type: "file_change"; files: { path: string; kind: string }[]; raw?: unknown }
-  | { type: "mcp_tool"; server: string; tool: string; status: string; raw?: unknown }
-  | { type: "web_search"; query: string; raw?: unknown }
+  | {
+      type: "tool_call";
+      server: string;
+      tool: string;
+      status?: string;
+      callId?: string;
+      displayName?: string;
+      kind?: string;
+      input?: unknown;
+      output?: unknown;
+      error?: unknown;
+      raw?: unknown;
+    }
   | { type: "todo"; items: { text: string; completed: boolean }[]; raw?: unknown }
   | { type: "error"; message: string; raw?: unknown };
 
@@ -105,6 +115,19 @@ export type AgentRunResult = {
   timeline: AgentTimelineItem[];
 };
 
+export type ListPersistedAgentsOptions = {
+  limit?: number;
+};
+
+export type PersistedAgentDescriptor = {
+  provider: AgentProvider;
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  lastActivityAt: Date;
+  persistence: AgentPersistenceHandle;
+};
+
 export type AgentSessionConfig = {
   provider: AgentProvider;
   cwd: string;
@@ -143,4 +166,5 @@ export interface AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   createSession(config: AgentSessionConfig): Promise<AgentSession>;
   resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>): Promise<AgentSession>;
+  listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
 }
