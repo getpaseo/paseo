@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { ensureValidJson } from "../json-utils.js";
 import type {
   AgentPromptInput,
   AgentProvider,
@@ -294,14 +295,14 @@ export async function createAgentMcpServer(
 
       return {
         content: [],
-        structuredContent: {
+        structuredContent: ensureValidJson({
           agentId: snapshot.id,
           type: provider,
           status: snapshot.status,
           cwd: snapshot.cwd,
           currentModeId: snapshot.currentModeId,
           availableModes: snapshot.availableModes,
-        },
+        }),
       };
     }
   );
@@ -333,12 +334,12 @@ export async function createAgentMcpServer(
 
       return {
         content: [],
-        structuredContent: {
+        structuredContent: ensureValidJson({
           agentId,
           status: result.status,
           permission: result.permission,
           activity,
-        },
+        }),
       };
     }
   );
@@ -372,10 +373,10 @@ export async function createAgentMcpServer(
 
       return {
         content: [],
-        structuredContent: {
+        structuredContent: ensureValidJson({
           success: true,
           status: snapshot?.status ?? "idle",
-        },
+        }),
       };
     }
   );
@@ -400,15 +401,16 @@ export async function createAgentMcpServer(
         throw new Error(`Agent ${agentId} not found`);
       }
 
+      const structuredSnapshot = await serializeSnapshotWithMetadata(
+        agentRegistry,
+        snapshot
+      );
       return {
         content: [],
-        structuredContent: {
+        structuredContent: ensureValidJson({
           status: snapshot.status,
-          snapshot: await serializeSnapshotWithMetadata(
-            agentRegistry,
-            snapshot
-          ),
-        },
+          snapshot: structuredSnapshot,
+        }),
       };
     }
   );
@@ -432,7 +434,7 @@ export async function createAgentMcpServer(
       );
       return {
         content: [],
-        structuredContent: { agents },
+        structuredContent: ensureValidJson({ agents }),
       };
     }
   );
@@ -454,7 +456,7 @@ export async function createAgentMcpServer(
       const success = await agentManager.cancelAgentRun(agentId);
       return {
         content: [],
-        structuredContent: { success },
+        structuredContent: ensureValidJson({ success }),
       };
     }
   );
@@ -475,7 +477,7 @@ export async function createAgentMcpServer(
       await agentManager.closeAgent(agentId);
       return {
         content: [],
-        structuredContent: { success: true },
+        structuredContent: ensureValidJson({ success: true }),
       };
     }
   );
@@ -513,14 +515,14 @@ export async function createAgentMcpServer(
       if (format === "curated") {
         return {
           content: [],
-          structuredContent: {
+          structuredContent: ensureValidJson({
             agentId,
             format: "curated" as const,
             updateCount: timeline.length,
             currentModeId: snapshot?.currentModeId ?? null,
             content: curateAgentActivity(timeline),
             updates: null,
-          },
+          }),
         };
       }
 
@@ -529,14 +531,14 @@ export async function createAgentMcpServer(
         : timeline;
       return {
         content: [],
-        structuredContent: {
+        structuredContent: ensureValidJson({
           agentId,
           format: "raw" as const,
           updateCount: timeline.length,
           currentModeId: snapshot?.currentModeId ?? null,
           content: "",
           updates: entries,
-        },
+        }),
       };
     }
   );
@@ -560,7 +562,7 @@ export async function createAgentMcpServer(
       await agentManager.setAgentMode(agentId, modeId);
       return {
         content: [],
-        structuredContent: { success: true, newMode: modeId },
+        structuredContent: ensureValidJson({ success: true, newMode: modeId }),
       };
     }
   );
@@ -593,7 +595,7 @@ export async function createAgentMcpServer(
 
       return {
         content: [],
-        structuredContent: { permissions },
+        structuredContent: ensureValidJson({ permissions }),
       };
     }
   );
@@ -617,7 +619,7 @@ export async function createAgentMcpServer(
       await agentManager.respondToPermission(agentId, requestId, response);
       return {
         content: [],
-        structuredContent: { success: true },
+        structuredContent: ensureValidJson({ success: true }),
       };
     }
   );

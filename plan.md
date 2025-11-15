@@ -49,4 +49,16 @@
   - AgentInput now inspects the agent’s status and swaps the right-hand controls accordingly: send replaces dictate once text/images exist, running agents expose a new Cancel pill, and the realtime toggle is always available (it now starts/stops realtime rather than disappearing). Cancel dispatches a new `cancel_agent_request` websocket message that the server routes through `interruptAgentIfRunning`, so make sure any future API clients send that message when wiring similar controls. (FYI `npm run typecheck --workspace=@voice-dev/app` still fails in the existing stream harness suites for unrelated reasons.)
 - [x] Implement long press on the agent list item to opena a light bottom sheet with some actions, for now: "Delete agent" all this will do is remove it from our own persistence, but the agent will still exist in the claude/codex persistance and thats out of scope to remove. Its esentially just to remove it from the list, disown it.
   - Added a `delete_agent_request` flow: the session now closes the agent, removes its registry entry, and emits a dedicated `agent_deleted` event that the client listens for to prune the agents map/stream state. Long-pressing any agent row opens a lightweight bottom sheet with a Delete action wired to that new context method, so deleting disowns the agent locally without touching the Claude/Codex session.
-- [ ] Implement a function `ensureValidJson` that walks an object and validates that all values are valid JSON (no undefined, null, or non-string values). Use this for all return valies in the MCP server tools.
+- [x] Implement a function `ensureValidJson` that walks an object and validates that all values are valid JSON (no undefined, null, or non-string values). Use this for all return valies in the MCP server tools.
+  - Added `ensureValidJson` (`packages/server/src/server/json-utils.ts`) and wrapped every MCP server tool payload in both `terminal-mcp/server.ts` and `agent/mcp-server.ts`, so tool responses now get validated before streaming; `tsc` still fails earlier in the tree due to `packages/app/src/types/stream.ts` references (see npm run typecheck --workspace=@voice-dev/server).
+
+## Voice Interruptions & Streaming
+
+- [ ] Wire interrupt signal on speech start so VAD immediately issues `abort_request` to the server before any audio segment is sent.
+- [ ] Abort server-side playback/LLM as soon as a realtime audio chunk arrives; set a speech-in-progress flag that pauses new TTS until the turn completes.
+- [ ] Interrupt the currently focused agent whenever a realtime user turn begins, ensuring the next prompt starts fresh.
+- [ ] Harden playback stop/queue clearing so speech detection purges suppressed audio and the server stops emitting TTS while the user is talking.
+- [ ] Prototype chunked audio input: emit smaller PCM frames with `isLast=false`, update `handleAudioChunk` to buffer and trigger STT once the minimum duration is reached.
+- [ ] Investigate streaming STT/server-side VAD (Whisper or equivalent) and document requirements for production use.
+- [ ] Prototype streaming TTS output (chunked `audio_output` messages) and update the player to start playback as soon as chunks arrive.
+- [ ] Add telemetry for barge-in latency (speech start → playback stop, chunk arrival → LLM abort) to measure improvements per milestone.

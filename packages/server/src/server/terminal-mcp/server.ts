@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { ensureValidJson } from "../json-utils.js";
 import { TerminalManager } from "./terminal-manager.js";
 
 export interface TerminalMcpServerOptions {
@@ -98,7 +99,7 @@ export async function createTerminalMcpServer(
       const output = { commands };
       return {
         content: [],
-        structuredContent: output,
+        structuredContent: ensureValidJson(output),
       };
     }
   );
@@ -131,7 +132,7 @@ export async function createTerminalMcpServer(
       const result = await terminalManager.captureCommand(commandId, lines);
       return {
         content: [],
-        structuredContent: result,
+        structuredContent: ensureValidJson(result),
       };
     }
   );
@@ -190,7 +191,7 @@ export async function createTerminalMcpServer(
       const result = { output: output || null };
       return {
         content: [],
-        structuredContent: result,
+        structuredContent: ensureValidJson(result),
       };
     }
   );
@@ -238,7 +239,7 @@ export async function createTerminalMcpServer(
       const result = { output: output || null };
       return {
         content: [],
-        structuredContent: result,
+        structuredContent: ensureValidJson(result),
       };
     }
   );
@@ -272,7 +273,7 @@ export async function createTerminalMcpServer(
       const output = { success: true, killedCount };
       return {
         content: [],
-        structuredContent: output,
+        structuredContent: ensureValidJson(output),
       };
     }
   );
