@@ -1199,6 +1199,43 @@ function testMetadataReplayDeduplicationHydrated() {
   });
 }
 
+function testFallbackToolCallIdsStayUnique() {
+  const timestamp = new Date('2025-01-01T14:05:00Z');
+  const updates = [
+    {
+      event: toolTimeline(
+        'fallback-shell-1',
+        'completed',
+        { type: 'tool_result', tool_use_id: 'fallback-shell-1' },
+        { callId: null, server: 'command', tool: 'shell', displayName: 'Run shell' }
+      ),
+      timestamp,
+    },
+    {
+      event: toolTimeline(
+        'fallback-shell-2',
+        'completed',
+        { type: 'tool_result', tool_use_id: 'fallback-shell-2' },
+        { callId: null, server: 'command', tool: 'shell', displayName: 'Run shell' }
+      ),
+      timestamp,
+    },
+  ];
+
+  const hydrated = hydrateStreamState(updates);
+  const toolCalls = hydrated.filter(
+    (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
+  );
+
+  assert.strictEqual(toolCalls.length, 2, 'Hydration should retain multiple fallback tool entries');
+  const ids = toolCalls.map((item) => item.id);
+  assert.strictEqual(
+    new Set(ids).size,
+    ids.length,
+    'Fallback-generated tool ids must be unique even when metadata matches and callIds are missing'
+  );
+}
+
 describe('stream timeline reducers', () => {
   it('produces deterministic hydration results', testIdempotentReduction);
   it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
@@ -1222,4 +1259,5 @@ describe('stream timeline reducers', () => {
   it('merges out-of-order tool call updates without duplicating entries (hydrated)', testOutOfOrderToolCallMergingHydrated);
   it('replays metadata-only tool calls without duplicating entries (live)', testMetadataReplayDeduplicationLive);
   it('replays metadata-only tool calls without duplicating entries (hydrated)', testMetadataReplayDeduplicationHydrated);
+  it('assigns unique ids for fallback tool calls without call ids', testFallbackToolCallIdsStayUnique);
 });

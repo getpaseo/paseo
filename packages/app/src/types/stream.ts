@@ -35,7 +35,7 @@ function createTimelineId(prefix: string, text: string, timestamp: Date): string
 
 function createUniqueTimelineId(
   state: StreamItem[],
-  prefix: "assistant" | "thought" | "user",
+  prefix: "assistant" | "thought" | "user" | "tool",
   text: string,
   timestamp: Date
 ): string {
@@ -459,7 +459,8 @@ function appendAgentToolCall(
 
   const id = callId
     ? `agent_tool_${callId}`
-    : createTimelineId(
+    : createUniqueTimelineId(
+        state,
         "tool",
         `${data.provider}:${data.server}:${data.tool}`,
         timestamp
