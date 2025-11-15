@@ -86,6 +86,7 @@ export class Session {
 
   // Realtime mode state
   private isRealtimeMode = false;
+  private speechInProgress = false;
 
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
@@ -1496,6 +1497,8 @@ export class Session {
   private async handleAudioChunk(
     msg: Extract<SessionInboundMessage, { type: "realtime_audio_chunk" }>
   ): Promise<void> {
+    await this.handleRealtimeSpeechStart();
+
     // Decode base64
     const audioBuffer = Buffer.from(msg.audio, "base64");
 
@@ -1590,6 +1593,7 @@ export class Session {
           `[Session ${this.clientId}] Empty transcription (false positive), not aborting`
         );
         this.setPhase("idle");
+        this.clearSpeechInProgress("empty transcription");
         return;
       }
 
@@ -1633,12 +1637,14 @@ export class Session {
       this.messages.push({ role: "user", content: result.text });
 
       // Set phase to LLM and process (TTS enabled in realtime mode for voice conversations)
+      this.clearSpeechInProgress("transcription complete");
       this.setPhase("llm");
       this.currentStreamPromise = this.processWithLLM(this.isRealtimeMode);
       await this.currentStreamPromise;
       this.setPhase("idle");
     } catch (error: any) {
       this.setPhase("idle");
+      this.clearSpeechInProgress("transcription error");
       this.emit({
         type: "activity_log",
         payload: {
@@ -1663,13 +1669,17 @@ export class Session {
     const flushTextBuffer = () => {
       if (textBuffer.length > 0) {
         // TTS handling (capture mode at generation time for drift protection)
-        if (enableTTS) {
+        if (enableTTS && !this.speechInProgress) {
           const modeAtGeneration = this.isRealtimeMode;
           pendingTTS = this.ttsManager.generateAndWaitForPlayback(
             textBuffer,
             (msg) => this.emit(msg),
             this.abortController.signal,
             modeAtGeneration
+          );
+        } else if (enableTTS && this.speechInProgress) {
+          console.log(
+            `[Session ${this.clientId}] Skipping TTS chunk while speech in progress`
           );
         }
 
@@ -2047,6 +2057,36 @@ export class Session {
    */
   private handleAudioPlayed(id: string): void {
     this.ttsManager.confirmAudioPlayed(id);
+  }
+
+  /**
+   * Mark speech detection start and abort any active playback/LLM
+   */
+  private async handleRealtimeSpeechStart(): Promise<void> {
+    if (this.speechInProgress) {
+      return;
+    }
+
+    this.speechInProgress = true;
+    console.log(
+      `[Session ${this.clientId}] Realtime speech chunk detected – aborting playback and LLM`
+    );
+    this.ttsManager.cancelPendingPlaybacks("realtime speech detected");
+    await this.handleAbort();
+  }
+
+  /**
+   * Clear speech-in-progress flag once the user turn has completed
+   */
+  private clearSpeechInProgress(reason: string): void {
+    if (!this.speechInProgress) {
+      return;
+    }
+
+    this.speechInProgress = false;
+    console.log(
+      `[Session ${this.clientId}] Speech turn complete (${reason}) – resuming TTS`
+    );
   }
 
   /**

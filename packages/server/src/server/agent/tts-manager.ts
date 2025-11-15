@@ -126,6 +126,27 @@ export class TTSManager {
   }
 
   /**
+   * Cancel all pending playbacks (e.g., user interrupted audio)
+   */
+  public cancelPendingPlaybacks(reason: string): void {
+    if (this.pendingPlaybacks.size === 0) {
+      return;
+    }
+
+    console.log(
+      `[TTS-Manager ${this.sessionId}] Cancelling ${this.pendingPlaybacks.size} pending playback(s): ${reason}`
+    );
+
+    for (const [audioId, pending] of this.pendingPlaybacks.entries()) {
+      pending.resolve();
+      this.pendingPlaybacks.delete(audioId);
+      console.log(
+        `[TTS-Manager ${this.sessionId}] Cleared pending playback ${audioId}`
+      );
+    }
+  }
+
+  /**
    * Cleanup all pending playbacks
    */
   public cleanup(): void {
