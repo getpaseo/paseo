@@ -1,70 +1,44 @@
-import { View, Pressable, Text } from "react-native";
+import type { ReactNode } from "react";
+import { Pressable, Text } from "react-native";
 import { router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowLeft } from "lucide-react-native";
+import { ScreenHeader } from "./screen-header";
 
 interface BackHeaderProps {
   title?: string;
-  rightContent?: React.ReactNode;
+  rightContent?: ReactNode;
 }
 
 export function BackHeader({ title, rightContent }: BackHeaderProps) {
   const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
 
   return (
-    <View style={styles.header}>
-      <View style={{ paddingTop: insets.top + 12 }}>
-        <View style={styles.headerRow}>
-          {/* Left side - Back button */}
-          <View style={styles.headerLeft}>
-            <Pressable
-              onPress={() => router.back()}
-              style={styles.backButton}
-            >
-              <ArrowLeft size={20} color={theme.colors.foreground} />
-            </Pressable>
-            {title && (
-              <Text style={styles.title} numberOfLines={1}>
-                {title}
-              </Text>
-            )}
-          </View>
-
-          {/* Right side */}
-          <View style={styles.headerRight}>
-            {rightContent}
-          </View>
-        </View>
-      </View>
-    </View>
+    <ScreenHeader
+      left={
+        <>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backButton}
+          >
+            <ArrowLeft size={20} color={theme.colors.foreground} />
+          </Pressable>
+          {title && (
+            <Text style={styles.title} numberOfLines={1}>
+              {title}
+            </Text>
+          )}
+        </>
+      }
+      right={rightContent}
+      leftStyle={styles.left}
+    />
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  header: {
-    backgroundColor: theme.colors.background,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  headerLeft: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
+  left: {
     gap: theme.spacing[3],
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
   },
   backButton: {
     padding: theme.spacing[3],
