@@ -8,8 +8,8 @@ export interface TTSConfig {
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
 }
 
-export interface SpeechResult {
-  audio: Buffer;
+export interface SpeechStreamResult {
+  stream: Readable;
   format: string;
 }
 
@@ -31,7 +31,9 @@ export function initializeTTS(ttsConfig: TTSConfig): void {
   );
 }
 
-export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
+export async function synthesizeSpeech(
+  text: string
+): Promise<SpeechStreamResult> {
   if (!openaiClient || !config) {
     throw new Error("TTS not initialized. Call initializeTTS() first.");
   }
@@ -58,42 +60,19 @@ export async function synthesizeSpeech(text: string): Promise<SpeechResult> {
       response_format: config.responseFormat as "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm",
     });
 
-    // Response is a stream, convert to buffer
-    const audioBuffer = await streamToBuffer(
-      response.body as unknown as Readable
-    );
+    const audioStream = response.body as unknown as Readable;
 
     const duration = Date.now() - startTime;
-    console.log(
-      `[TTS] Speech synthesis complete in ${duration}ms (${audioBuffer.length} bytes)`
-    );
+    console.log(`[TTS] Speech synthesis stream ready in ${duration}ms`);
 
     return {
-      audio: audioBuffer,
+      stream: audioStream,
       format: config.responseFormat || "mp3",
     };
   } catch (error: any) {
     console.error("[TTS] Speech synthesis error:", error);
     throw new Error(`TTS synthesis failed: ${error.message}`);
   }
-}
-
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-
-  return new Promise((resolve, reject) => {
-    stream.on("data", (chunk) => {
-      chunks.push(Buffer.from(chunk));
-    });
-
-    stream.on("end", () => {
-      resolve(Buffer.concat(chunks));
-    });
-
-    stream.on("error", (error) => {
-      reject(error);
-    });
-  });
 }
 
 export function isTTSInitialized(): boolean {
