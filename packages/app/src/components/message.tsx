@@ -26,15 +26,9 @@ import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry } from "@/types/stream";
-import {
-  extractCommandDetails,
-  extractEditEntries,
-  extractReadEntries,
-  type CommandDetails,
-  type EditEntry,
-  type ReadEntry,
-} from "@/utils/tool-call-parsers";
+import type { CommandDetails, EditEntry, ReadEntry } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
+import { resolveToolCallPreview } from "./tool-call-preview";
 
 interface UserMessageProps {
   message: string;
@@ -1010,12 +1004,17 @@ export const ToolCall = memo(function ToolCall({
   parsedCommandDetails,
   onOpenDetails,
 }: ToolCallProps) {
-  const fallbackEditEntries = useMemo(() => extractEditEntries(args, result), [args, result]);
-  const editEntries = parsedEditEntries ?? fallbackEditEntries;
-  const fallbackReadEntries = useMemo(() => extractReadEntries(result, args), [args, result]);
-  const readEntries = parsedReadEntries ?? fallbackReadEntries;
-  const fallbackCommandDetails = useMemo(() => extractCommandDetails(args, result), [args, result]);
-  const commandDetails = parsedCommandDetails ?? fallbackCommandDetails;
+  const { editEntries, readEntries, commandDetails } = useMemo(
+    () =>
+      resolveToolCallPreview({
+        args,
+        result,
+        parsedEditEntries,
+        parsedReadEntries,
+        parsedCommandDetails,
+      }),
+    [args, result, parsedEditEntries, parsedReadEntries, parsedCommandDetails]
+  );
 
   const primaryEditEntry = editEntries[0];
   const primaryReadEntry = readEntries[0];
