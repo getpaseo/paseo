@@ -26,6 +26,17 @@ import type {
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
 
+const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
+  const fallbackId =
+    request.id ||
+    (typeof request.metadata?.id === "string" ? request.metadata.id : undefined) ||
+    request.name ||
+    request.title ||
+    `${request.kind}:${JSON.stringify(request.input ?? request.metadata ?? request.raw ?? {})}`;
+
+  return `${agentId}:${fallbackId}`;
+};
+
 export type MessageEntry =
   | {
       type: "user";
@@ -286,7 +297,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         const agent = normalizeAgentSnapshot(snapshot);
         nextAgents.set(agent.id, agent);
         for (const request of agent.pendingPermissions) {
-          nextPermissions.set(request.id, { agentId: agent.id, request });
+          const key = derivePendingPermissionKey(agent.id, request);
+          nextPermissions.set(key, { key, agentId: agent.id, request });
         }
       }
 
@@ -324,7 +336,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           }
         }
         for (const request of agent.pendingPermissions) {
-          next.set(request.id, { agentId: agent.id, request });
+          const key = derivePendingPermissionKey(agent.id, request);
+          next.set(key, { key, agentId: agent.id, request });
         }
         return next;
       });
@@ -413,7 +426,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       setPendingPermissions((prev) => {
         const next = new Map(prev);
-        next.set(request.id, { agentId, request });
+        const key = derivePendingPermissionKey(agentId, request);
+        next.set(key, { key, agentId, request });
         return next;
       });
     });
@@ -427,7 +441,15 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       setPendingPermissions((prev) => {
         const next = new Map(prev);
-        next.delete(requestId);
+        const derivedKey = `${agentId}:${requestId}`;
+        if (!next.delete(derivedKey)) {
+          for (const [key, pending] of next.entries()) {
+            if (pending.agentId === agentId && pending.request.id === requestId) {
+              next.delete(key);
+              break;
+            }
+          }
+        }
         return next;
       });
     });

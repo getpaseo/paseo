@@ -1118,29 +1118,33 @@ export function convertClaudeHistoryEntry(
   const content = message.content as string | ClaudeContentChunk[];
   const normalizedBlocks = normalizeHistoryBlocks(content);
   const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
+  const timeline: AgentTimelineItem[] = [];
+
+  if (entry.type === "user") {
+    const text = extractUserMessageText(content);
+    if (text) {
+      timeline.push({
+        type: "user_message",
+        text,
+        raw: message,
+      });
+    }
+  }
 
   if (hasToolBlock && normalizedBlocks) {
-    return mapBlocks(Array.isArray(content) ? content : normalizedBlocks);
+    const mapped = mapBlocks(Array.isArray(content) ? content : normalizedBlocks);
+    if (entry.type === "user") {
+      const toolItems = mapped.filter((item) => item.type === "tool_call");
+      return timeline.length ? [...timeline, ...toolItems] : toolItems;
+    }
+    return mapped;
   }
 
   if (entry.type === "assistant" && content) {
     return mapBlocks(content);
   }
 
-  if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      return [
-        {
-          type: "user_message",
-          text,
-          raw: message,
-        },
-      ];
-    }
-  }
-
-  return [];
+  return timeline;
 }
 
 class Pushable<T> implements AsyncIterable<T> {

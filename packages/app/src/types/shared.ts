@@ -14,6 +14,7 @@ export interface SelectedToolCall {
  * Uses actual ACP types instead of any
  */
 export interface PendingPermission {
+  key: string;
   agentId: string;
   request: AgentPermissionRequest;
 }
