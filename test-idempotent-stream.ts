@@ -1,4 +1,10 @@
-import { reduceStreamUpdate, hydrateStreamState, type StreamItem, type ToolCallItem } from "./packages/app/src/types/stream";
+import {
+  reduceStreamUpdate,
+  hydrateStreamState,
+  type StreamItem,
+  type ToolCallItem,
+  type TodoListItem,
+} from "./packages/app/src/types/stream";
 
 type AgentStreamEventPayload = Parameters<typeof reduceStreamUpdate>[1];
 
@@ -47,6 +53,17 @@ function permissionTimeline(id: string, status: string): AgentStreamEventPayload
       callId: id,
       displayName: "Permission",
       kind: "permission",
+    },
+  };
+}
+
+function todoTimeline(items: { text: string; completed: boolean }[]): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "codex",
+    item: {
+      type: "todo",
+      items,
     },
   };
 }
@@ -322,6 +339,46 @@ function testPermissionToolCallFiltering() {
   }
 }
 
+// Test 8: Todo lists should consolidate into a single entry and update completions
+function testTodoListConsolidation() {
+  console.log('\n=== Test 8: Todo List Consolidation ===');
+
+  const timestamp1 = new Date('2025-01-01T12:30:00Z');
+  const timestamp2 = new Date('2025-01-01T12:31:00Z');
+
+  const firstPlan = [
+    { text: 'Outline approach', completed: false },
+    { text: 'Write code', completed: false },
+  ];
+
+  const secondPlan = [
+    { text: 'Outline approach', completed: true },
+    { text: 'Write code', completed: false },
+  ];
+
+  const updates = [
+    { event: todoTimeline(firstPlan), timestamp: timestamp1 },
+    { event: todoTimeline(secondPlan), timestamp: timestamp2 },
+  ];
+
+  const state = hydrateStreamState(updates);
+  const todoEntries = state.filter(
+    (item): item is TodoListItem => item.kind === 'todo_list'
+  );
+
+  if (
+    todoEntries.length === 1 &&
+    todoEntries[0].items.some(
+      (entry) => entry.text === 'Outline approach' && entry.completed
+    )
+  ) {
+    console.log('✅ PASS: Todo list updates consolidate and reflect completion');
+  } else {
+    console.log('❌ FAIL: Todo list entries were not consolidated as expected');
+    console.log('State:', JSON.stringify(state, null, 2));
+  }
+}
+
 // Run all tests
 console.log("Testing Idempotent Stream Reduction");
 console.log("====================================");
@@ -333,6 +390,7 @@ testToolCallInputPreservation();
 testAssistantWhitespacePreservation();
 testUserMessageHydration();
 testPermissionToolCallFiltering();
+testTodoListConsolidation();
 
 console.log("\n====================================");
 console.log("Tests complete");

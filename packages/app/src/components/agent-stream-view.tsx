@@ -9,6 +9,7 @@ import {
   NativeSyntheticEvent,
   InteractionManager,
 } from "react-native";
+import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
@@ -21,14 +22,21 @@ import {
   ActivityLog,
   ToolCall,
   AgentThoughtMessage,
+  TodoListCard,
   type InlinePathTarget,
 } from "./message";
 import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
+import { DiffViewer } from "./diff-viewer";
 import type { StreamItem } from "@/types/stream";
 import type { SelectedToolCall, PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSession } from "@/contexts/session-context";
+import {
+  extractCommandDetails,
+  extractEditEntries,
+  extractReadEntries,
+} from "@/utils/tool-call-parsers";
 
 export interface AgentStreamViewProps {
   agentId: string;
@@ -269,6 +277,15 @@ export function AgentStreamView({
           />
         );
 
+      case "todo_list":
+        return (
+          <TodoListCard
+            provider={item.provider}
+            timestamp={item.timestamp.getTime()}
+            items={item.items}
+          />
+        );
+
       default:
         return null;
     }
@@ -417,9 +434,95 @@ function PermissionRequestCard({
   const { request } = permission;
   const title = request.title ?? request.name ?? "Permission Required";
   const description = request.description ?? "";
-  const inputPreview = request.input
-    ? JSON.stringify(request.input, null, 2)
-    : null;
+  const inputPreview = request.input ? JSON.stringify(request.input, null, 2) : null;
+
+  const planMarkdown = useMemo(() => {
+    if (!request) {
+      return undefined;
+    }
+    const planFromMetadata =
+      typeof request.metadata?.planText === "string"
+        ? request.metadata.planText
+        : undefined;
+    if (planFromMetadata) {
+      return planFromMetadata;
+    }
+    const candidate = request.input?.["plan"];
+    if (typeof candidate === "string") {
+      return candidate;
+    }
+    return undefined;
+  }, [request]);
+
+  const editEntries = useMemo(
+    () => extractEditEntries(request.input, request.metadata, request.raw),
+    [request]
+  );
+
+  const readEntries = useMemo(
+    () => extractReadEntries(request.input, request.metadata, request.raw),
+    [request]
+  );
+
+  const commandDetails = useMemo(
+    () => extractCommandDetails(request.input, request.metadata, request.raw),
+    [request]
+  );
+
+  const markdownStyles = useMemo(
+    () => ({
+      body: {
+        color: theme.colors.foreground,
+        fontSize: theme.fontSize.sm,
+        lineHeight: 20,
+      },
+      paragraph: {
+        marginBottom: theme.spacing[1],
+      },
+      strong: {
+        fontWeight: theme.fontWeight.semibold,
+      },
+      bullet_list: {
+        marginBottom: theme.spacing[1],
+      },
+      ordered_list: {
+        marginBottom: theme.spacing[1],
+      },
+      list_item: {
+        flexDirection: "row" as const,
+        marginBottom: theme.spacing[1],
+      },
+      code_inline: {
+        fontFamily: "monospace",
+        backgroundColor: theme.colors.card,
+        paddingHorizontal: theme.spacing[1],
+        paddingVertical: theme.spacing[1],
+        borderRadius: theme.borderRadius.sm,
+      },
+      code_block: {
+        fontFamily: "monospace",
+        backgroundColor: theme.colors.card,
+        padding: theme.spacing[2],
+        borderRadius: theme.borderRadius.md,
+      },
+      fence: {
+        fontFamily: "monospace",
+        backgroundColor: theme.colors.card,
+        padding: theme.spacing[2],
+        borderRadius: theme.borderRadius.md,
+      },
+      blockquote: {
+        borderLeftWidth: theme.borderWidth[1],
+        borderLeftColor: theme.colors.border,
+        paddingLeft: theme.spacing[3],
+        marginBottom: theme.spacing[2],
+      },
+      blockquote_text: {
+        color: theme.colors.mutedForeground,
+      },
+    }),
+    [theme]
+  );
 
   return (
     <View
@@ -436,23 +539,136 @@ function PermissionRequestCard({
       </Text>
 
       {description ? (
-        <Text style={[permissionStyles.planText, { color: theme.colors.mutedForeground }]}>
+        <Text style={[permissionStyles.description, { color: theme.colors.mutedForeground }]}>
           {description}
         </Text>
       ) : null}
 
-      {inputPreview && (
-        <View
-          style={[
-            permissionStyles.planContainer,
-            { backgroundColor: theme.colors.background },
-          ]}
-        >
-          <Text style={[permissionStyles.planText, { color: theme.colors.foreground }]}>
-            {inputPreview}
-          </Text>
+      {planMarkdown ? (
+        <View style={permissionStyles.section}>
+          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Proposed Plan</Text>
+          <View
+            style={[
+              permissionStyles.contentCard,
+              {
+                backgroundColor: theme.colors.background,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Markdown style={markdownStyles}>{planMarkdown}</Markdown>
+          </View>
         </View>
-      )}
+      ) : null}
+
+      {commandDetails ? (
+        <View style={permissionStyles.section}>
+          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Command</Text>
+          {commandDetails.command ? (
+            <View style={permissionStyles.metadataRow}>
+              <Text style={[permissionStyles.metadataLabel, { color: theme.colors.mutedForeground }]}>Command</Text>
+              <Text style={[permissionStyles.metadataValue, { color: theme.colors.foreground }]}>
+                {commandDetails.command}
+              </Text>
+            </View>
+          ) : null}
+          {commandDetails.cwd ? (
+            <View style={permissionStyles.metadataRow}>
+              <Text style={[permissionStyles.metadataLabel, { color: theme.colors.mutedForeground }]}>Directory</Text>
+              <Text style={[permissionStyles.metadataValue, { color: theme.colors.foreground }]}>
+                {commandDetails.cwd}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {editEntries.length > 0 ? (
+        <View style={permissionStyles.section}>
+          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Proposed Changes</Text>
+          {editEntries.map((entry, index) => (
+            <View key={`${entry.filePath ?? "change"}-${index}`} style={permissionStyles.diffSection}>
+              {entry.filePath ? (
+                <View
+                  style={[
+                    permissionStyles.fileBadge,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.card,
+                    },
+                  ]}
+                >
+                  <Text style={[permissionStyles.fileBadgeText, { color: theme.colors.foreground }]}>
+                    {entry.filePath}
+                  </Text>
+                </View>
+              ) : null}
+              <View
+                style={[
+                  permissionStyles.diffWrapper,
+                  {
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.card,
+                  },
+                ]}
+              >
+                <DiffViewer diffLines={entry.diffLines} maxHeight={200} />
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {readEntries.length > 0 ? (
+        <View style={permissionStyles.section}>
+          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>File Content</Text>
+          {readEntries.map((entry, index) => (
+            <View
+              key={`${entry.filePath ?? "content"}-${index}`}
+              style={[
+                permissionStyles.contentCard,
+                {
+                  backgroundColor: theme.colors.background,
+                  borderColor: theme.colors.border,
+                },
+              ]}
+            >
+              {entry.filePath ? (
+                <Text
+                  style={[
+                    permissionStyles.metadataLabel,
+                    { color: theme.colors.mutedForeground, marginBottom: theme.spacing[1] },
+                  ]}
+                >
+                  {entry.filePath}
+                </Text>
+              ) : null}
+              <Text style={[permissionStyles.rawContentText, { color: theme.colors.foreground }]}>
+                {entry.content}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {inputPreview ? (
+        <View style={permissionStyles.section}>
+          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Raw Request</Text>
+          <View
+            style={[
+              permissionStyles.contentCard,
+              {
+                backgroundColor: theme.colors.background,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Text style={[permissionStyles.rawContentText, { color: theme.colors.foreground }]}>
+              {inputPreview}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       <Text
         style={[
@@ -507,6 +723,7 @@ function PermissionRequestCard({
     </View>
   );
 }
+
 
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
@@ -570,35 +787,80 @@ const permissionStyles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     borderRadius: theme.spacing[2],
     borderWidth: 1,
+    gap: theme.spacing[2],
   },
   title: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: theme.spacing[3],
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
   },
-  planContainer: {
+  description: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+  },
+  section: {
+    gap: theme.spacing[2],
+  },
+  sectionTitle: {
+    fontSize: theme.fontSize.xs,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+  },
+  contentCard: {
     padding: theme.spacing[3],
-    borderRadius: theme.spacing[1],
-    marginBottom: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
   },
-  planText: {
-    fontSize: 14,
+  metadataRow: {
+    marginBottom: theme.spacing[2],
+  },
+  metadataLabel: {
+    fontSize: theme.fontSize.xs,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+  },
+  metadataValue: {
+    fontFamily: "monospace",
+    fontSize: theme.fontSize.sm,
+  },
+  diffSection: {
+    gap: theme.spacing[2],
+  },
+  fileBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+  },
+  fileBadgeText: {
+    fontFamily: "monospace",
+    fontSize: theme.fontSize.xs,
+  },
+  diffWrapper: {
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    overflow: "hidden",
+  },
+  rawContentText: {
+    fontFamily: "monospace",
+    fontSize: theme.fontSize.sm,
     lineHeight: 20,
   },
   question: {
-    fontSize: 14,
-    marginBottom: theme.spacing[3],
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[2],
   },
   optionsContainer: {
     gap: theme.spacing[2],
   },
   optionButton: {
     padding: theme.spacing[3],
-    borderRadius: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
     alignItems: "center",
   },
   optionText: {
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
 }));

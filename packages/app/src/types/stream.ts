@@ -30,6 +30,7 @@ export type StreamItem =
   | AssistantMessageItem
   | ThoughtItem
   | ToolCallItem
+  | TodoListItem
   | ActivityLogItem;
 
 export interface UserMessageItem {
@@ -101,7 +102,16 @@ export interface ActivityLogItem {
   metadata?: Record<string, unknown>;
 }
 
-type TodoEntry = { text: string; completed: boolean };
+export type TodoEntry = { text: string; completed: boolean };
+
+export interface TodoListItem {
+  kind: "todo_list";
+  id: string;
+  timestamp: Date;
+  provider: AgentProvider;
+  items: TodoEntry[];
+  raw?: unknown;
+}
 
 function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
   if (!text) {
@@ -354,13 +364,41 @@ function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamI
   return [...state, entry];
 }
 
-function formatTodoMessage(items: TodoEntry[]): string {
-  if (!items.length) {
-    return "Todo list";
+function appendTodoList(
+  state: StreamItem[],
+  provider: AgentProvider,
+  items: TodoEntry[],
+  timestamp: Date,
+  raw?: unknown
+): StreamItem[] {
+  const normalizedItems = items.map((item) => ({
+    text: item.text,
+    completed: Boolean(item.completed),
+  }));
+
+  const lastItem = state[state.length - 1];
+  if (lastItem && lastItem.kind === "todo_list" && lastItem.provider === provider) {
+    const next = [...state];
+    const updated: TodoListItem = {
+      ...lastItem,
+      items: normalizedItems,
+      timestamp,
+      raw: raw ?? lastItem.raw,
+    };
+    next[next.length - 1] = updated;
+    return next;
   }
-  const header = "Todo list";
-  const entries = items.map((item) => `• [${item.completed ? "x" : " "}] ${item.text}`);
-  return [header, ...entries].join("\n");
+
+  const entry: TodoListItem = {
+    kind: "todo_list",
+    id: createTimelineId("todo", `${provider}:${JSON.stringify(normalizedItems)}`, timestamp),
+    timestamp,
+    provider,
+    items: normalizedItems,
+    raw,
+  };
+
+  return [...state, entry];
 }
 
 function formatErrorMessage(message: string): string {
@@ -410,15 +448,7 @@ export function reduceStreamUpdate(
         }
         case "todo": {
           const items = (item.items ?? []) as TodoEntry[];
-          const activity: ActivityLogItem = {
-            kind: "activity_log",
-            id: createTimelineId("todo", JSON.stringify(items), timestamp),
-            timestamp,
-            activityType: "system",
-            message: formatTodoMessage(items),
-            metadata: items.length ? { items } : undefined,
-          };
-          return appendActivityLog(state, activity);
+          return appendTodoList(state, event.provider, items, timestamp, item.raw);
         }
         case "error": {
           const activity: ActivityLogItem = {
