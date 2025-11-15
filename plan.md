@@ -41,4 +41,10 @@
   - Hardened the assistant/thought timeline id generator so it now checks for existing ids before committing a suffix, ensuring new entries stay unique even if the stream shrinks, and added regression coverage in `test-idempotent-stream.ts` to prove assistant and reasoning ids remain unique after list pruning. Verified via `npx tsx test-idempotent-stream.ts`; note Test 1 still intentionally highlights state differences as before.
   - The warning points at the permission request cards rendered in the stream header; they’re reusing the same key so start the investigation there.
 - [x] Permission request cards rendered in the stream header emit duplicate key warnings because consecutive requests share the same `request.id`; derive a composite key so they stay unique per agent even when IDs collide or are missing.
+
   - Switched the header map to key permission cards by `${agentId}:${request.id}` with a title/name/index fallback so React no longer sees duplicate keys even if providers reuse an id or omit it altogether. Ran `npm run typecheck --workspace=@voice-dev/app`.
+
+- [x] Investigate and fix: ERROR Your app just crashed. See the error below.
+      java.lang.NullPointerException: Attempt to read from field 'int android.view.View.mViewFlags' on a null object reference in method 'void android.view.ViewGroup.dispatchDraw(android.graphics.Canvas)'
+      android.view.ViewGroup.dispatchDraw(ViewGroup.java:4396)
+  - reproducible crash came from Reanimated `entering/exiting` transitions on Android (react-native-reanimated#8422), so we now disable those fade animations for AgentInputArea, GlobalFooter, and AgentStreamView when running on Android to prevent ViewGroup.dispatchDraw from touching a null child; verified with `npm run typecheck --workspace=@voice-dev/app`.

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Pressable, Text } from "react-native";
+import { View, Pressable, Text, Platform } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -25,6 +25,11 @@ export function GlobalFooter() {
   const { ws } = useSession();
   const { controls } = useFooterControls();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // Guard Reanimated entry/exit transitions on Android to avoid ViewGroup.dispatchDraw crashes
+  // tracked in react-native-reanimated#8422.
+  const shouldDisableEntryExitAnimations = Platform.OS === "android";
+  const realtimeFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(250);
+  const realtimeFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(250);
 
   // Determine current screen type
   const isAgentScreen = pathname?.startsWith("/agent/");
@@ -89,8 +94,8 @@ export function GlobalFooter() {
           {isRealtimeMode && (
             <Animated.View
               style={styles.realtimeSection}
-              entering={FadeIn.duration(250)}
-              exiting={FadeOut.duration(250)}
+              entering={realtimeFadeIn}
+              exiting={realtimeFadeOut}
             >
               <RealtimeControls />
             </Animated.View>

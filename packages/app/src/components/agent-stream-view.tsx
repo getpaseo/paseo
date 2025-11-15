@@ -8,6 +8,7 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   InteractionManager,
+  Platform,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -66,6 +67,11 @@ export function AgentStreamView({
   const isUserScrollingRef = useRef(false);
   const router = useRouter();
   const { requestDirectoryListing, requestFilePreview } = useSession();
+  // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
+  // tracked in react-native-reanimated#8422.
+  const shouldDisableEntryExitAnimations = Platform.OS === "android";
+  const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(200);
+  const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(200);
 
   useEffect(() => {
     hasScrolledInitially.current = false;
@@ -252,6 +258,9 @@ export function AgentStreamView({
               result={data.result}
               error={data.error}
               status={data.status as "executing" | "completed" | "failed"}
+              parsedEditEntries={data.parsedEdits}
+              parsedReadEntries={data.parsedReads}
+              parsedCommandDetails={data.parsedCommand ?? null}
               onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
           );
@@ -363,8 +372,8 @@ export function AgentStreamView({
       {!isNearBottom && (
         <Animated.View
           style={stylesheet.scrollToBottomContainer}
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(200)}
+          entering={scrollIndicatorFadeIn}
+          exiting={scrollIndicatorFadeOut}
         >
           <Pressable
             style={stylesheet.scrollToBottomButton}

@@ -6,6 +6,7 @@ import {
   TextInputContentSizeChangeEventData,
   Image,
   Alert,
+  Platform,
 } from "react-native";
 import { useState, useEffect, useRef } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -34,6 +35,11 @@ interface AgentInputAreaProps {
 const MIN_INPUT_HEIGHT = 40;
 const MAX_INPUT_HEIGHT = 160;
 const BASE_VERTICAL_PADDING = (FOOTER_HEIGHT - MIN_INPUT_HEIGHT) / 2;
+// Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
+// entering/exiting animations (see react-native-reanimated#8422), so guard them.
+const SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS = Platform.OS === "android";
+const REALTIME_FADE_IN = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeIn.duration(250);
+const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeOut.duration(250);
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
@@ -268,8 +274,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       {isRealtimeMode && (
         <Animated.View
           style={styles.realtimeControlsContainer}
-          entering={FadeIn.duration(250)}
-          exiting={FadeOut.duration(250)}
+          entering={REALTIME_FADE_IN}
+          exiting={REALTIME_FADE_OUT}
         >
           <RealtimeControls />
         </Animated.View>
