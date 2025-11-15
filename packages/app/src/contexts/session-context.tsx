@@ -222,8 +222,10 @@ interface SessionContextValue {
   // Helpers
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   refreshAgent: (params: { agentId: string; requestId?: string }) => void;
+  cancelAgentRun: (agentId: string) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
+  deleteAgent: (agentId: string) => void;
   createAgent: (options: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => void;
   resumeAgent: (options: { handle: AgentPersistenceHandle; overrides?: Partial<AgentSessionConfig>; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
@@ -712,6 +714,71 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       });
     });
 
+    const unsubAgentDeleted = ws.on("agent_deleted", (message) => {
+      if (message.type !== "agent_deleted") {
+        return;
+      }
+      const { agentId } = message.payload;
+      console.log("[Session] Agent deleted:", agentId);
+
+      setAgents((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
+
+      setAgentStreamState((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
+
+      setPendingPermissions((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [key, pending] of prev.entries()) {
+          if (pending.agentId === agentId) {
+            next.delete(key);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      setInitializingAgents((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
+
+      setGitDiffs((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
+
+      setFileExplorer((prev) => {
+        if (!prev.has(agentId)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
+    });
+
     return () => {
       unsubSessionState();
       unsubAgentState();
@@ -726,6 +793,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubTranscription();
       unsubGitDiff();
       unsubFileExplorer();
+      unsubAgentDeleted();
     };
   }, [ws, audioPlayer, setIsPlayingAudio, updateExplorerState]);
 
@@ -772,6 +840,28 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         type: "refresh_agent_request",
         agentId,
         requestId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const cancelAgentRun = useCallback((agentId: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "cancel_agent_request",
+        agentId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const deleteAgent = useCallback((agentId: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "delete_agent_request",
+        agentId,
       },
     };
     ws.send(msg);
@@ -1003,6 +1093,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     requestFilePreview,
     initializeAgent,
     refreshAgent,
+    cancelAgentRun,
+    deleteAgent,
     sendAgentMessage,
     sendAgentAudio,
     createAgent,

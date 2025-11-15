@@ -529,6 +529,10 @@ export class Session {
           await this.handleDeleteConversation(msg.conversationId);
           break;
 
+        case "delete_agent_request":
+          await this.handleDeleteAgentRequest(msg.agentId);
+          break;
+
         case "set_realtime_mode":
           this.handleSetRealtimeMode(msg.enabled);
           break;
@@ -556,6 +560,10 @@ export class Session {
 
         case "refresh_agent_request":
           await this.handleRefreshAgentRequest(msg);
+          break;
+
+        case "cancel_agent_request":
+          await this.handleCancelAgentRequest(msg.agentId);
           break;
 
         case "initialize_agent_request":
@@ -683,6 +691,38 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleDeleteAgentRequest(agentId: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Deleting agent ${agentId} from registry`
+    );
+
+    try {
+      await this.agentManager.closeAgent(agentId);
+    } catch (error: any) {
+      console.warn(
+        `[Session ${this.clientId}] Failed to close agent ${agentId} during delete:`,
+        error
+      );
+    }
+
+    try {
+      await this.agentRegistry.remove(agentId);
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to remove agent ${agentId} from registry:`,
+        error
+      );
+    }
+
+    this.agentTitleCache.delete(agentId);
+    this.emit({
+      type: "agent_deleted",
+      payload: {
+        agentId,
+      },
+    });
   }
 
   /**
@@ -1050,6 +1090,22 @@ export class Session {
           content: `Failed to refresh agent: ${error.message}`,
         },
       });
+    }
+  }
+
+  private async handleCancelAgentRequest(agentId: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Cancel request received for agent ${agentId}`
+    );
+
+    try {
+      await this.interruptAgentIfRunning(agentId);
+    } catch (error) {
+      this.handleAgentRunError(
+        agentId,
+        error,
+        "Failed to cancel running agent on request"
+      );
     }
   }
 

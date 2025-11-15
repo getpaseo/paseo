@@ -6,6 +6,7 @@ import {
   TextInputContentSizeChangeEventData,
   Image,
   Platform,
+  Text,
 } from "react-native";
 import { useState, useEffect, useRef } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -42,8 +43,8 @@ const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : Fad
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const { ws, sendAgentMessage, sendAgentAudio } = useSession();
-  const { startRealtime, isRealtimeMode } = useRealtime();
+  const { ws, sendAgentMessage, sendAgentAudio, agents, cancelAgentRun } = useSession();
+  const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
   const [userInput, setUserInput] = useState("");
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
@@ -104,6 +105,9 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   async function handleVoicePress() {
     if (isRecording) {
       // This shouldn't happen as button is hidden when recording
+      return;
+    }
+    if (isRealtimeMode) {
       return;
     }
     
@@ -232,8 +236,13 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     });
   }
 
+  const agent = agents.get(agentId);
+  const isAgentRunning = agent?.status === "running";
   const hasText = userInput.trim().length > 0;
   const hasImages = selectedImages.length > 0;
+  const hasSendableContent = hasText || hasImages;
+  const shouldShowSendButton = !isAgentRunning && hasSendableContent;
+  const shouldShowDictateButton = !isAgentRunning && !hasSendableContent;
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -249,6 +258,49 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       pointerEvents: overlayTransition.value < 0.5 ? ("auto" as const) : ("none" as const),
     };
   });
+
+  async function handleRealtimePress() {
+    try {
+      if (isRealtimeMode) {
+        await stopRealtime();
+      } else {
+        if (!ws.isConnected) {
+          return;
+        }
+        await startRealtime();
+      }
+    } catch (error) {
+      console.error("[AgentInput] Failed to toggle realtime mode:", error);
+    }
+  }
+
+  function handleCancelAgent() {
+    if (!agent || agent.status !== "running") {
+      return;
+    }
+    if (!ws.isConnected) {
+      return;
+    }
+    cancelAgentRun(agentId);
+  }
+
+  const realtimeButton = (
+    <Pressable
+      onPress={handleRealtimePress}
+      disabled={!ws.isConnected && !isRealtimeMode}
+      style={[
+        styles.realtimeButton,
+        isRealtimeMode && styles.realtimeButtonActive,
+        (!ws.isConnected && !isRealtimeMode) && styles.buttonDisabled,
+      ]}
+    >
+      {isRealtimeMode ? (
+        <Square size={18} color={theme.colors.background} fill={theme.colors.background} />
+      ) : (
+        <AudioLines size={20} color={theme.colors.background} />
+      )}
+    </Pressable>
+  );
 
   return (
     <View style={styles.container}>
@@ -319,25 +371,42 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
             {/* Right button group */}
             <View style={styles.rightButtonGroup}>
-              {hasText || hasImages ? (
-                <Pressable
-                  onPress={handleSendMessage}
-                  disabled={!ws.isConnected || isProcessing}
-                  style={[
-                    styles.sendButton,
-                    (!ws.isConnected || isProcessing) && styles.buttonDisabled,
-                  ]}
-                >
-                  <ArrowUp size={20} color="white" />
-                </Pressable>
-              ) : !isRealtimeMode ? (
+              {isAgentRunning ? (
+                <>
+                  {realtimeButton}
+                  <Pressable
+                    onPress={handleCancelAgent}
+                    disabled={!ws.isConnected}
+                    style={[
+                      styles.cancelButton,
+                      !ws.isConnected && styles.buttonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+                </>
+              ) : shouldShowSendButton ? (
+                <>
+                  <Pressable
+                    onPress={handleSendMessage}
+                    disabled={!ws.isConnected || isProcessing}
+                    style={[
+                      styles.sendButton,
+                      (!ws.isConnected || isProcessing) && styles.buttonDisabled,
+                    ]}
+                  >
+                    <ArrowUp size={20} color="white" />
+                  </Pressable>
+                  {realtimeButton}
+                </>
+              ) : shouldShowDictateButton ? (
                 <>
                   <Pressable
                     onPress={handleVoicePress}
-                    disabled={!ws.isConnected}
+                    disabled={!ws.isConnected || isRealtimeMode}
                     style={[
                       styles.voiceButton,
-                      !ws.isConnected && styles.buttonDisabled,
+                      (!ws.isConnected || isRealtimeMode) && styles.buttonDisabled,
                       isRecording && styles.voiceButtonRecording,
                     ]}
                   >
@@ -347,17 +416,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                       <Mic size={20} color={theme.colors.foreground} />
                     )}
                   </Pressable>
-
-                  <Pressable
-                    onPress={startRealtime}
-                    disabled={!ws.isConnected}
-                    style={[
-                      styles.realtimeButton,
-                      !ws.isConnected && styles.buttonDisabled,
-                    ]}
-                  >
-                    <AudioLines size={20} color={theme.colors.background} />
-                  </Pressable>
+                  {realtimeButton}
                 </>
               ) : null}
             </View>
@@ -489,6 +548,23 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.accentForeground,
     alignItems: "center",
     justifyContent: "center",
+  },
+  realtimeButtonActive: {
+    backgroundColor: theme.colors.palette.blue[600],
+  },
+  cancelButton: {
+    minWidth: 92,
+    paddingHorizontal: theme.spacing[4],
+    height: 40,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.palette.red[500],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelButtonText: {
+    color: theme.colors.background,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
   buttonDisabled: {
     opacity: 0.5,

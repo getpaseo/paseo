@@ -293,6 +293,11 @@ export const DeleteConversationRequestMessageSchema = z.object({
   conversationId: z.string(),
 });
 
+export const DeleteAgentRequestMessageSchema = z.object({
+  type: z.literal("delete_agent_request"),
+  agentId: z.string(),
+});
+
 export const SetRealtimeModeMessageSchema = z.object({
   type: z.literal("set_realtime_mode"),
   enabled: z.boolean(),
@@ -336,6 +341,11 @@ export const RefreshAgentRequestMessageSchema = z.object({
   type: z.literal("refresh_agent_request"),
   agentId: z.string(),
   requestId: z.string().optional(),
+});
+
+export const CancelAgentRequestMessageSchema = z.object({
+  type: z.literal("cancel_agent_request"),
+  agentId: z.string(),
 });
 
 export const ListPersistedAgentsRequestMessageSchema = z.object({
@@ -406,12 +416,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoadConversationRequestMessageSchema,
   ListConversationsRequestMessageSchema,
   DeleteConversationRequestMessageSchema,
+  DeleteAgentRequestMessageSchema,
   SetRealtimeModeMessageSchema,
   SendAgentMessageSchema,
   SendAgentAudioSchema,
   CreateAgentRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
+  CancelAgentRequestMessageSchema,
   InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
@@ -593,6 +605,13 @@ export const AgentPermissionResolvedMessageSchema = z.object({
   }),
 });
 
+export const AgentDeletedMessageSchema = z.object({
+  type: z.literal("agent_deleted"),
+  payload: z.object({
+    agentId: z.string(),
+  }),
+});
+
 const PersistedAgentDescriptorPayloadSchema = z.object({
   provider: AgentProviderSchema,
   sessionId: z.string(),
@@ -649,6 +668,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DeleteConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
+  AgentDeletedMessageSchema,
   ListPersistedAgentsResponseSchema,
   GitDiffResponseSchema,
   FileExplorerResponseSchema,
@@ -677,6 +697,7 @@ export type ListConversationsResponseMessage = z.infer<typeof ListConversationsR
 export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
+export type AgentDeletedMessage = z.infer<typeof AgentDeletedMessageSchema>;
 export type ListPersistedAgentsResponseMessage = z.infer<typeof ListPersistedAgentsResponseSchema>;
 
 // Type exports for payload types
@@ -689,6 +710,7 @@ export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
 export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
+export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type ListPersistedAgentsRequestMessage = z.infer<typeof ListPersistedAgentsRequestMessageSchema>;
 export type InitializeAgentRequestMessage = z.infer<typeof InitializeAgentRequestMessageSchema>;
 export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
