@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { Agent } from "@/contexts/session-context";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
+import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 
 interface AgentListProps {
   agents: Map<string, Agent>;
@@ -27,6 +28,7 @@ export function AgentList({ agents }: AgentListProps) {
         const statusColor = getAgentStatusColor(agent.status);
         const statusLabel = getAgentStatusLabel(agent.status);
         const timeAgo = formatTimeAgo(agent.lastActivityAt);
+        const providerLabel = getAgentProviderDefinition(agent.provider).label;
 
         return (
           <Pressable
@@ -53,13 +55,26 @@ export function AgentList({ agents }: AgentListProps) {
               </Text>
 
               <View style={styles.statusRow}>
-                <View style={styles.statusBadge}>
+                <View style={styles.statusGroup}>
                   <View
-                    style={[styles.statusDot, { backgroundColor: statusColor }]}
-                  />
-                  <Text style={[styles.statusText, { color: statusColor }]}>
-                    {statusLabel}
-                  </Text>
+                    style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                  >
+                    <Text
+                      style={[styles.providerText, { color: theme.colors.mutedForeground }]}
+                      numberOfLines={1}
+                    >
+                      {providerLabel}
+                    </Text>
+                  </View>
+
+                  <View style={styles.statusBadge}>
+                    <View
+                      style={[styles.statusDot, { backgroundColor: statusColor }]}
+                    />
+                    <Text style={[styles.statusText, { color: statusColor }]}>
+                      {statusLabel}
+                    </Text>
+                  </View>
                 </View>
 
                 <Text style={styles.timeAgo}>
@@ -110,6 +125,19 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
+  },
+  statusGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  providerBadge: {
+    borderRadius: theme.borderRadius.full,
+  },
+  providerText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    textTransform: "uppercase",
   },
   statusBadge: {
     flexDirection: "row",

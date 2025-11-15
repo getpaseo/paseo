@@ -1064,6 +1064,60 @@ function testToolCallDeduplicationHydrated() {
   });
 }
 
+function buildOutOfOrderToolCallSequence(provider: ToolCallProvider) {
+  const timestamps = [
+    new Date('2025-01-01T13:00:00Z'),
+    new Date('2025-01-01T13:00:05Z'),
+  ];
+  const callId = `${provider}-out-of-order`;
+  return [
+    {
+      event: toolTimeline(
+        'shell',
+        'completed',
+        { type: 'tool_result', provider, tool_call_id: callId },
+        { provider, server: 'command', tool: 'shell', callId }
+      ),
+      timestamp: timestamps[0],
+    },
+    {
+      event: toolTimeline(
+        'shell',
+        'executing',
+        { type: 'tool_use', provider },
+        { provider, server: 'command', tool: 'shell', callId: null }
+      ),
+      timestamp: timestamps[1],
+    },
+  ];
+}
+
+function testOutOfOrderToolCallMergingLive() {
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const updates = buildOutOfOrderToolCallSequence(provider);
+    const finalState = updates.reduce<StreamItem[]>((state, { event, timestamp }) => {
+      return reduceStreamUpdate(state, event, timestamp);
+    }, []);
+    const toolCalls = finalState.filter(
+      (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
+    );
+    assert.strictEqual(toolCalls.length, 1, `${provider} live stream should not duplicate out-of-order calls`);
+    assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} live stream should keep completed status`);
+  });
+}
+
+function testOutOfOrderToolCallMergingHydrated() {
+  (['claude', 'codex'] as const).forEach((provider) => {
+    const updates = buildOutOfOrderToolCallSequence(provider);
+    const hydrated = hydrateStreamState(updates);
+    const toolCalls = hydrated.filter(
+      (item): item is ToolCallItem => item.kind === 'tool_call' && item.payload.source === 'agent'
+    );
+    assert.strictEqual(toolCalls.length, 1, `${provider} hydration should not duplicate out-of-order calls`);
+    assert.strictEqual(toolCalls[0]?.payload.data.status, 'completed', `${provider} hydration should keep completed status`);
+  });
+}
+
 describe('stream timeline reducers', () => {
   it('produces deterministic hydration results', testIdempotentReduction);
   it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
@@ -1083,4 +1137,6 @@ describe('stream timeline reducers', () => {
   it('keeps timeline ids stable after list shrinkage', testTimelineIdStabilityAfterRemovals);
   it('deduplicates live tool call entries', testToolCallDeduplicationLive);
   it('deduplicates hydrated tool call entries', testToolCallDeduplicationHydrated);
+  it('merges out-of-order tool call updates without duplicating entries (live)', testOutOfOrderToolCallMergingLive);
+  it('merges out-of-order tool call updates without duplicating entries (hydrated)', testOutOfOrderToolCallMergingHydrated);
 });

@@ -811,41 +811,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private convertHistoryEntry(entry: any): AgentTimelineItem[] {
-    const message = entry?.message;
-    if (!message || !("content" in message)) {
-      return [];
-    }
-    const content = message.content as string | ClaudeContentChunk[];
-
-    if (entry.type === "assistant" && content) {
-      return this.mapBlocksToTimeline(content);
-    }
-
-    if (entry.type === "user") {
-      const text = extractUserMessageText(content);
-      if (text) {
-        return [
-          {
-            type: "user_message",
-            text,
-            raw: message,
-          },
-        ];
-      }
-      return [];
-    }
-
-    if (Array.isArray(content)) {
-      const hasToolBlock = content.some(
-        (block: ClaudeContentChunk) =>
-          typeof block?.type === "string" && block.type.includes("tool")
-      );
-      if (hasToolBlock) {
-        return this.mapBlocksToTimeline(content);
-      }
-    }
-
-    return [];
+    return convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content));
   }
 
   private mapBlocksToTimeline(content: string | ClaudeContentChunk[]): AgentTimelineItem[] {
@@ -1118,6 +1084,63 @@ class ClaudeAgentSession implements AgentSession {
     }
     return files;
   }
+}
+
+function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+  const type = typeof block.type === "string" ? block.type.toLowerCase() : "";
+  return type.includes("tool");
+}
+
+function normalizeHistoryBlocks(
+  content: string | ClaudeContentChunk[]
+): ClaudeContentChunk[] | null {
+  if (Array.isArray(content)) {
+    return content;
+  }
+  if (content && typeof content === "object") {
+    return [content as ClaudeContentChunk];
+  }
+  return null;
+}
+
+export function convertClaudeHistoryEntry(
+  entry: any,
+  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[]
+): AgentTimelineItem[] {
+  const message = entry?.message;
+  if (!message || !("content" in message)) {
+    return [];
+  }
+
+  const content = message.content as string | ClaudeContentChunk[];
+  const normalizedBlocks = normalizeHistoryBlocks(content);
+  const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
+
+  if (hasToolBlock && normalizedBlocks) {
+    return mapBlocks(Array.isArray(content) ? content : normalizedBlocks);
+  }
+
+  if (entry.type === "assistant" && content) {
+    return mapBlocks(content);
+  }
+
+  if (entry.type === "user") {
+    const text = extractUserMessageText(content);
+    if (text) {
+      return [
+        {
+          type: "user_message",
+          text,
+          raw: message,
+        },
+      ];
+    }
+  }
+
+  return [];
 }
 
 class Pushable<T> implements AsyncIterable<T> {

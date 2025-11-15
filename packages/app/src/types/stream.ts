@@ -35,13 +35,30 @@ function createTimelineId(prefix: string, text: string, timestamp: Date): string
 
 function createUniqueTimelineId(
   state: StreamItem[],
-  prefix: "assistant" | "thought",
+  prefix: "assistant" | "thought" | "user",
   text: string,
   timestamp: Date
 ): string {
   const base = createTimelineId(prefix, text, timestamp);
-  const suffixSeed = state.length.toString(36);
-  return `${base}_${suffixSeed}`;
+  let suffixSeed = state.length;
+  let candidate = `${base}_${suffixSeed.toString(36)}`;
+
+  // Fast path when the generated id hasn't been used yet
+  const hasCollision = state.some((entry) => entry.id === candidate);
+  if (!hasCollision) {
+    return candidate;
+  }
+
+  // If the id already exists (e.g. prior items were pruned/replaced),
+  // spin until we find an unused suffix. Building the lookup Set lazily keeps
+  // the common case cheap while still guaranteeing uniqueness.
+  const usedIds = new Set(state.map((entry) => entry.id));
+  while (usedIds.has(candidate)) {
+    suffixSeed += 1;
+    candidate = `${base}_${suffixSeed.toString(36)}`;
+  }
+
+  return candidate;
 }
 
 export type StreamItem =
@@ -157,7 +174,9 @@ function appendUserMessage(
     return state;
   }
 
-  const entryId = messageId ?? createTimelineId("user", chunk.trim() || chunk, timestamp);
+  const chunkSeed = chunk.trim() || chunk;
+  const entryId =
+    messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp);
   const existingIndex = state.findIndex(
     (entry) => entry.kind === "user_message" && entry.id === entryId
   );
@@ -297,23 +316,27 @@ function findExistingAgentToolCallIndex(
   }
 
   const fallbackCandidates: Array<{ index: number; item: AgentToolCallItem }> = [];
+  const metadataMatches: Array<{ index: number; item: AgentToolCallItem }> = [];
   for (let i = 0; i < state.length; i += 1) {
     const entry = state[i];
     if (entry.kind !== "tool_call" || entry.payload.source !== "agent") {
       continue;
     }
     const payload = entry.payload.data;
+    const providerMatches =
+      payload.provider === data.provider &&
+      payload.server === data.server &&
+      payload.tool === data.tool;
+    if (providerMatches) {
+      metadataMatches.push({ index: i, item: entry as AgentToolCallItem });
+    }
     if (payload.callId) {
       continue;
     }
     if (payload.status !== "executing") {
       continue;
     }
-    if (
-      payload.provider === data.provider &&
-      payload.server === data.server &&
-      payload.tool === data.tool
-    ) {
+    if (providerMatches) {
       fallbackCandidates.push({ index: i, item: entry as AgentToolCallItem });
     }
   }
@@ -346,14 +369,34 @@ function findExistingAgentToolCallIndex(
     normalizedDisplayName
   );
 
-  const byKind = filterByComparableField(
-    byDisplayName,
-    (entry) => normalizeComparableString(entry.payload.data.kind),
-    normalizedKind
-  );
+  const selectCandidate = (
+    candidates: Array<{ index: number; item: AgentToolCallItem }>
+  ): number => {
+    const byDisplayName = filterByComparableField(
+      candidates,
+      (entry) => normalizeComparableString(entry.payload.data.displayName),
+      normalizedDisplayName
+    );
 
-  // Fall back to the oldest candidate (FIFO) to avoid duplicating the initial "executing" pill.
-  return byKind[0]?.index ?? -1;
+    const byKind = filterByComparableField(
+      byDisplayName,
+      (entry) => normalizeComparableString(entry.payload.data.kind),
+      normalizedKind
+    );
+
+    return byKind[0]?.index ?? -1;
+  };
+
+  if (fallbackCandidates.length) {
+    return selectCandidate(fallbackCandidates);
+  }
+
+  // If this update still lacks a call id, fall back to metadata matches (e.g. replayed hydration events)
+  if (!normalizedCallId && metadataMatches.length) {
+    return selectCandidate(metadataMatches);
+  }
+
+  return -1;
 }
 
 function appendAgentToolCall(
@@ -389,6 +432,10 @@ function appendAgentToolCall(
       payloadData.error !== undefined
         ? payloadData.error
         : existing.payload.data.error;
+    const mergedStatus = mergeToolCallStatus(
+      existing.payload.data.status,
+      payloadData.status ?? existing.payload.data.status ?? "executing"
+    );
     const parsed = computeParsedToolPayload(mergedRaw, mergedResult);
     next[existingIndex] = {
       ...existing,
@@ -398,6 +445,7 @@ function appendAgentToolCall(
         data: {
           ...existing.payload.data,
           ...payloadData,
+          status: mergedStatus,
           raw: mergedRaw,
           result: mergedResult,
           error: mergedError,
@@ -577,6 +625,19 @@ function normalizeToolCallStatus(
   }
 
   return normalizedFromStatus ?? "executing";
+}
+
+function mergeToolCallStatus(
+  existing: "executing" | "completed" | "failed" | undefined,
+  incoming: "executing" | "completed" | "failed"
+): "executing" | "completed" | "failed" {
+  if (existing === "failed" || incoming === "failed") {
+    return "failed";
+  }
+  if (existing === "completed" || incoming === "completed") {
+    return "completed";
+  }
+  return incoming ?? existing ?? "executing";
 }
 
 const TOOL_CALL_ID_KEYS = [

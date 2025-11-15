@@ -1,14 +1,20 @@
-import { describe, expect, test } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { describe, expect, test, vi } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ClaudeAgentClient } from "./claude-agent.js";
+import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
+import { hydrateStreamState, type StreamItem, type ToolCallItem, type AgentToolCallData } from "../../../../../app/src/types/stream.js";
+import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
-  return dir;
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
 }
 
 async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["createSession"]>>, event: AgentStreamEvent) {
@@ -283,4 +289,284 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     },
     180_000
   );
+
+  test(
+    "hydrates persisted tool call results into the UI stream",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        extra: { claude: { maxThinkingTokens: 4096 } },
+      };
+      const session = await client.createSession(config);
+      const prompt = [
+        "You are verifying the hydrate regression test.",
+        "Follow these steps exactly and report 'hydration test complete' at the end:",
+        "1. Run the Bash command 'pwd' via the terminal tool.",
+        "2. Use your editor tools (not the shell) to create a file named hydrate-proof.txt with the content:",
+        "   HYDRATION_PROOF_LINE_ONE",
+        "   HYDRATION_PROOF_LINE_TWO",
+        "3. Read hydrate-proof.txt via the editor read_file tool to confirm the contents.",
+        "4. Summarize the diff/write results briefly and then stop.",
+      ].join("\n");
+
+      try {
+        const liveTimelineUpdates: StreamHydrationUpdate[] = [];
+        const events = session.stream(prompt);
+
+        let completed = false;
+        try {
+          for await (const event of events) {
+            await autoApprove(session, event);
+            recordTimelineUpdate(liveTimelineUpdates, event);
+            if (event.type === "turn_completed") {
+              completed = true;
+              break;
+            }
+            if (event.type === "turn_failed") {
+              throw new Error(event.error);
+            }
+          }
+        } finally {
+          await session.close();
+        }
+
+        expect(completed).toBe(true);
+        const liveState = hydrateStreamState(liveTimelineUpdates);
+        const liveSnapshots = extractAgentToolSnapshots(liveState);
+        const commandTool = liveSnapshots.find((snapshot) =>
+          (snapshot.data.displayName ?? "").toLowerCase().includes("pwd")
+        );
+        const editTool = liveSnapshots.find((snapshot) =>
+          rawContainsText(snapshot.data.raw, "hydrate-proof.txt")
+        );
+        const readTool = liveSnapshots.find((snapshot) =>
+          rawContainsText(snapshot.data.raw, "HYDRATION_PROOF_LINE_TWO")
+        );
+
+        expect(commandTool).toBeTruthy();
+        expect(editTool).toBeTruthy();
+        expect(readTool).toBeTruthy();
+
+        const handle = session.describePersistence();
+        expect(handle).toBeTruthy();
+        const sessionId = handle?.sessionId ?? handle?.nativeHandle;
+        expect(typeof sessionId).toBe("string");
+
+        const historyPaths = getClaudeHistoryPaths(cwd, sessionId!);
+        expect(await waitForHistoryFile(historyPaths)).toBe(true);
+
+        const resumed = await client.resumeSession(handle!, { cwd });
+        const hydrationUpdates: StreamHydrationUpdate[] = [];
+        try {
+          for await (const event of resumed.streamHistory()) {
+            recordTimelineUpdate(hydrationUpdates, event);
+          }
+        } finally {
+          await resumed.close();
+        }
+
+        expect(hydrationUpdates.length).toBeGreaterThan(0);
+
+        const hydratedState = hydrateStreamState(hydrationUpdates);
+        const hydratedSnapshots = extractAgentToolSnapshots(hydratedState);
+        const hydratedMap = new Map(
+          hydratedSnapshots.map((entry) => [entry.key, entry.data])
+        );
+
+        assertHydratedReplica(commandTool!, hydratedMap, (data) => rawContainsText(data.raw, cwd));
+        assertHydratedReplica(editTool!, hydratedMap, (data) =>
+          rawContainsText(data.raw, "hydrate-proof.txt")
+        );
+        assertHydratedReplica(readTool!, hydratedMap, (data) =>
+          rawContainsText(data.raw, "HYDRATION_PROOF_LINE_TWO")
+        );
+      } finally {
+        cleanupClaudeHistory(cwd);
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    240_000
+  );
 });
+
+describe("convertClaudeHistoryEntry", () => {
+  test("maps user tool results to timeline items", () => {
+    const toolUseId = "toolu_test";
+    const entry = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content: [{ type: "text", text: "file contents" }],
+          },
+        ],
+      },
+    };
+
+    const stubTimeline: AgentTimelineItem[] = [
+      {
+        type: "tool_call",
+        server: "editor",
+        tool: "read_file",
+        status: "completed",
+      } as AgentTimelineItem,
+    ];
+
+    const mapBlocks = vi.fn().mockReturnValue(stubTimeline);
+    const result = convertClaudeHistoryEntry(entry, mapBlocks);
+
+    expect(result).toEqual(stubTimeline);
+    expect(mapBlocks).toHaveBeenCalledTimes(1);
+    const arg = mapBlocks.mock.calls[0][0];
+    expect(Array.isArray(arg)).toBe(true);
+  });
+
+  test("returns user messages when no tool blocks exist", () => {
+    const entry = {
+      type: "user",
+      message: {
+        role: "user",
+        content: "Run npm test",
+      },
+    };
+
+    const result = convertClaudeHistoryEntry(entry, () => []);
+
+    expect(result).toEqual([
+      {
+        type: "user_message",
+        text: "Run npm test",
+        raw: entry.message,
+      },
+    ]);
+  });
+});
+
+type StreamHydrationUpdate = {
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>;
+  timestamp: Date;
+};
+
+type ToolSnapshot = { key: string; data: AgentToolCallData };
+
+function recordTimelineUpdate(target: StreamHydrationUpdate[], event: AgentStreamEvent) {
+  if (event.type !== "timeline") {
+    return;
+  }
+  const payload = event as Extract<AgentStreamEvent, { type: "timeline" }>;
+  target.push({
+    event: payload as StreamHydrationUpdate["event"],
+    timestamp: new Date(),
+  });
+}
+
+function extractAgentToolSnapshots(state: StreamItem[]): ToolSnapshot[] {
+  return state
+    .filter(
+      (item): item is ToolCallItem =>
+        item.kind === "tool_call" && item.payload.source === "agent"
+    )
+    .map((item) => ({
+      key: buildToolSnapshotKey(item.payload.data, item.id),
+      data: item.payload.data,
+    }));
+}
+
+function buildToolSnapshotKey(data: AgentToolCallData, fallbackId: string): string {
+  const normalized = typeof data.callId === "string" && data.callId.trim().length > 0 ? data.callId.trim() : null;
+  if (normalized) {
+    return normalized;
+  }
+  const display = typeof data.displayName === "string" && data.displayName.trim().length > 0 ? data.displayName.trim() : fallbackId;
+  return `${data.server}:${data.tool}:${display}`;
+}
+
+function assertHydratedReplica(
+  liveSnapshot: ToolSnapshot,
+  hydratedMap: Map<string, AgentToolCallData>,
+  predicate: (data: AgentToolCallData) => boolean
+) {
+  expect(predicate(liveSnapshot.data)).toBe(true);
+  const hydrated = hydratedMap.get(liveSnapshot.key);
+  expect(hydrated).toBeTruthy();
+  expect(hydrated?.status).toBe(liveSnapshot.data.status);
+  expect(hydrated?.server).toBe(liveSnapshot.data.server);
+  expect(hydrated?.tool).toBe(liveSnapshot.data.tool);
+  expect(hydrated?.displayName).toBe(liveSnapshot.data.displayName);
+  expect(predicate(hydrated!)).toBe(true);
+}
+
+function sanitizeClaudeProjectName(cwd: string): string {
+  return cwd.replace(/[\\/]/g, "-").replace(/_/g, "-");
+}
+
+function resolveClaudeHistoryPath(cwd: string, sessionId: string): string {
+  const sanitized = sanitizeClaudeProjectName(cwd);
+  return path.join(os.homedir(), ".claude", "projects", sanitized, `${sessionId}.jsonl`);
+}
+
+function getClaudeHistoryPaths(cwd: string, sessionId: string): string[] {
+  return normalizeCwdCandidates(cwd).map((candidate) =>
+    resolveClaudeHistoryPath(candidate, sessionId)
+  );
+}
+
+function normalizeCwdCandidates(cwd: string): string[] {
+  const candidates = new Set<string>([cwd]);
+  try {
+    const resolved = realpathSync(cwd);
+    candidates.add(resolved);
+  } catch {
+    // ignore resolution errors
+  }
+  return Array.from(candidates);
+}
+
+function cleanupClaudeHistory(cwd: string) {
+  for (const candidate of normalizeCwdCandidates(cwd)) {
+    const sanitized = sanitizeClaudeProjectName(candidate);
+    const projectDir = path.join(os.homedir(), ".claude", "projects", sanitized);
+    if (existsSync(projectDir)) {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  }
+}
+
+async function waitForHistoryFile(historyPaths: string | string[], timeoutMs = 10_000): Promise<boolean> {
+  const candidates = Array.isArray(historyPaths) ? Array.from(new Set(historyPaths)) : [historyPaths];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (candidates.some((entry) => existsSync(entry))) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return candidates.some((entry) => existsSync(entry));
+}
+
+function rawContainsText(raw: unknown, text: string, depth = 0): boolean {
+  if (!raw || typeof text !== "string" || !text) {
+    return false;
+  }
+  if (typeof raw === "string") {
+    return raw.includes(text);
+  }
+  if (depth > 6) {
+    return false;
+  }
+  if (Array.isArray(raw)) {
+    return raw.some((entry) => rawContainsText(entry, text, depth + 1));
+  }
+  if (typeof raw === "object") {
+    return Object.values(raw as Record<string, unknown>).some((value) =>
+      rawContainsText(value, text, depth + 1)
+    );
+  }
+  return false;
+}
