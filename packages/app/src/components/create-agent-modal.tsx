@@ -98,7 +98,7 @@ export function CreateAgentModal({
   const isCompactLayout = screenWidth < 720;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
-  const { ws, createAgent, resumeAgent } = useSession();
+  const { ws, createAgent, resumeAgent, agents } = useSession();
   const router = useRouter();
 
   const [isMounted, setIsMounted] = useState(isVisible);
@@ -143,10 +143,24 @@ export function CreateAgentModal({
   );
   const agentDefinition = providerDefinitionMap.get(selectedProvider);
   const modeOptions = agentDefinition?.modes ?? [];
+  const activeSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    agents.forEach((agent) => {
+      if (agent.sessionId) {
+        ids.add(agent.sessionId);
+      }
+      const persistedSessionId = agent.persistence?.sessionId;
+      if (persistedSessionId) {
+        ids.add(persistedSessionId);
+      }
+    });
+    return ids;
+  }, [agents]);
   const filteredResumeCandidates = useMemo(() => {
     const providerFilter = resumeProviderFilter;
     const query = resumeSearchQuery.trim().toLowerCase();
     return resumeCandidates
+      .filter((candidate) => !activeSessionIds.has(candidate.sessionId))
       .filter((candidate) => providerFilter === "all" || candidate.provider === providerFilter)
       .filter((candidate) => {
         if (query.length === 0) {
@@ -157,7 +171,7 @@ export function CreateAgentModal({
         return titleText.includes(query) || cwdText.includes(query);
       })
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
-  }, [resumeCandidates, resumeProviderFilter, resumeSearchQuery]);
+  }, [activeSessionIds, resumeCandidates, resumeProviderFilter, resumeSearchQuery]);
 
   useEffect(() => {
     if (!agentDefinition) {
