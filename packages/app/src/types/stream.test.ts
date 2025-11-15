@@ -58,6 +58,24 @@ function toolTimeline(
   };
 }
 
+function codexProviderEvent(
+  eventType: string,
+  itemType: string,
+  overrides: Record<string, unknown>
+): AgentStreamEventPayload {
+  return {
+    type: "provider_event",
+    provider: "codex",
+    raw: {
+      type: eventType,
+      item: {
+        type: itemType,
+        ...overrides,
+      },
+    },
+  } as AgentStreamEventPayload;
+}
+
 function permissionTimeline(id: string, status: string): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -1236,6 +1254,91 @@ function testFallbackToolCallIdsStayUnique() {
   );
 }
 
+function testCodexProviderEventsProduceToolCalls() {
+  const timestamp = new Date('2025-01-02T08:00:00Z');
+
+  const commandUpdates = [
+    {
+      event: codexProviderEvent('item.started', 'command_execution', {
+        id: 'cmd-provider-1',
+        command: 'ls',
+        aggregated_output: '',
+        status: 'in_progress',
+      }),
+      timestamp,
+    },
+    {
+      event: codexProviderEvent('item.completed', 'command_execution', {
+        id: 'cmd-provider-1',
+        command: 'ls',
+        aggregated_output: 'README.md',
+        exit_code: 0,
+        status: 'completed',
+      }),
+      timestamp,
+    },
+  ];
+
+  const commandState = commandUpdates.reduce<StreamItem[]>((state, { event, timestamp: ts }) => {
+    return reduceStreamUpdate(state, event, ts);
+  }, []);
+
+  const commandTool = commandState.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === 'cmd-provider-1'
+  );
+
+  assert.ok(commandTool, 'Codex provider command events should create tool call entries');
+  assert.strictEqual(commandTool.payload.data.status, 'completed');
+  assert.strictEqual(commandTool.payload.data.displayName, 'ls');
+  assert.strictEqual(commandTool.payload.data.parsedCommand?.command, 'ls');
+  assert.ok(
+    commandTool.payload.data.parsedCommand?.output?.includes('README.md'),
+    'Command output should hydrate via parsed payloads'
+  );
+
+  const mcpUpdates = [
+    {
+      event: codexProviderEvent('item.started', 'mcp_tool_call', {
+        id: 'mcp-provider-1',
+        server: 'filesystem',
+        tool: 'read_file',
+        arguments: { path: 'package.json' },
+        status: 'in_progress',
+      }),
+      timestamp,
+    },
+    {
+      event: codexProviderEvent('item.completed', 'mcp_tool_call', {
+        id: 'mcp-provider-1',
+        server: 'filesystem',
+        tool: 'read_file',
+        result: { content: [{ type: 'text', text: 'Hello' }] },
+        status: 'completed',
+      }),
+      timestamp,
+    },
+  ];
+
+  const mcpState = mcpUpdates.reduce<StreamItem[]>((state, { event, timestamp: ts }) => {
+    return reduceStreamUpdate(state, event, ts);
+  }, []);
+
+  const mcpTool = mcpState.find(
+    (item): item is ToolCallItem =>
+      item.kind === 'tool_call' &&
+      item.payload.source === 'agent' &&
+      item.payload.data.callId === 'mcp-provider-1'
+  );
+
+  assert.ok(mcpTool, 'Codex provider MCP events should create tool call entries');
+  assert.strictEqual(mcpTool.payload.data.status, 'completed');
+  assert.strictEqual(mcpTool.payload.data.tool, 'read_file');
+  assert.strictEqual(mcpTool.payload.data.displayName, 'filesystem.read_file');
+}
+
 describe('stream timeline reducers', () => {
   it('produces deterministic hydration results', testIdempotentReduction);
   it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
@@ -1260,4 +1363,5 @@ describe('stream timeline reducers', () => {
   it('replays metadata-only tool calls without duplicating entries (live)', testMetadataReplayDeduplicationLive);
   it('replays metadata-only tool calls without duplicating entries (hydrated)', testMetadataReplayDeduplicationHydrated);
   it('assigns unique ids for fallback tool calls without call ids', testFallbackToolCallIdsStayUnique);
+  it('surfaces Codex provider events as tool calls', testCodexProviderEventsProduceToolCalls);
 });

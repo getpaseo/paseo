@@ -163,6 +163,179 @@ function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
   return { chunk, hasContent: /\S/.test(chunk) };
 }
 
+function coerceString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function buildCodexCommandLabel(command?: unknown): string {
+  const normalized = coerceString(command);
+  return normalized ?? "Command";
+}
+
+function buildCodexFileChangeSummary(changes: unknown): string {
+  if (!Array.isArray(changes) || changes.length === 0) {
+    return "File change";
+  }
+
+  if (changes.length === 1) {
+    const change = changes[0] as { path?: unknown; kind?: unknown };
+    const kind = coerceString(change?.kind) ?? "edit";
+    const path = coerceString(change?.path) ?? "file";
+    return `${kind}: ${path}`;
+  }
+
+  return `${changes.length} file changes`;
+}
+
+function normalizeCodexStatus(
+  status: unknown,
+  fallback?: "executing" | "completed"
+): "executing" | "completed" | "failed" {
+  if (typeof status === "string") {
+    const normalized = status.trim().toLowerCase();
+    if (normalized === "failed") {
+      return "failed";
+    }
+    if (normalized === "completed") {
+      return "completed";
+    }
+    if (normalized === "in_progress") {
+      return "executing";
+    }
+  }
+  return fallback ?? "executing";
+}
+
+function coerceCodexCallId(item: Record<string, unknown>): string | undefined {
+  const idCandidates = [item.call_id, item.callId, item.tool_use_id, item.id];
+  for (const candidate of idCandidates) {
+    const value = coerceString(candidate);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function convertCodexProviderEvent(
+  provider: AgentProvider,
+  raw: unknown
+): AgentToolCallData | null {
+  if (provider !== "codex" || !raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const rawRecord = raw as { type?: unknown; item?: unknown };
+  const eventType = coerceString(rawRecord.type);
+  if (!eventType || !eventType.startsWith("item.")) {
+    return null;
+  }
+
+  const item = rawRecord.item;
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const typedItem = item as Record<string, unknown> & { type?: unknown };
+  const itemType = coerceString(typedItem.type);
+  if (!itemType) {
+    return null;
+  }
+
+  const baseStatus = normalizeCodexStatus(
+    typedItem.status,
+    eventType === "item.completed" ? "completed" : undefined
+  );
+  const callId = coerceCodexCallId(typedItem);
+
+  if (itemType === "command_execution") {
+    const command = typedItem.command;
+    const aggregatedOutput = coerceString(
+      (typedItem as { aggregated_output?: unknown }).aggregated_output
+    );
+    const exitCode = typeof typedItem.exit_code === "number" ? typedItem.exit_code : undefined;
+    const resultPayload =
+      aggregatedOutput !== null || exitCode !== undefined
+        ? {
+            output: aggregatedOutput ?? undefined,
+            exitCode,
+            command,
+          }
+        : undefined;
+
+    return {
+      provider,
+      server: "command",
+      tool: "shell",
+      status: baseStatus,
+      raw: typedItem,
+      callId,
+      displayName: buildCodexCommandLabel(command),
+      kind: "execute",
+      result: resultPayload,
+    };
+  }
+
+  if (itemType === "file_change") {
+    const changes = Array.isArray(typedItem.changes) ? typedItem.changes : [];
+    return {
+      provider,
+      server: "file_change",
+      tool: "apply_patch",
+      status: baseStatus,
+      raw: typedItem,
+      callId,
+      displayName: buildCodexFileChangeSummary(changes),
+      kind: "edit",
+      result: { files: changes },
+    };
+  }
+
+  if (itemType === "mcp_tool_call") {
+    const serverName = coerceString(typedItem.server) ?? "mcp";
+    const toolName = coerceString(typedItem.tool) ?? "tool";
+    const argumentsPayload = (typedItem as { arguments?: unknown }).arguments;
+    const resultPayload = (typedItem as { result?: unknown }).result;
+    const errorPayload = (typedItem as { error?: unknown }).error;
+    return {
+      provider,
+      server: serverName,
+      tool: toolName,
+      status: baseStatus,
+      raw: {
+        ...typedItem,
+        arguments: argumentsPayload,
+      },
+      callId,
+      displayName: serverName && toolName ? `${serverName}.${toolName}` : toolName,
+      kind: "tool",
+      result: resultPayload,
+      error: errorPayload,
+    };
+  }
+
+  if (itemType === "web_search") {
+    const query = coerceString(typedItem.query);
+    return {
+      provider,
+      server: "web_search",
+      tool: "web_search",
+      status: baseStatus,
+      raw: typedItem,
+      callId,
+      displayName: query ? `Web search: ${query}` : "Web search",
+      kind: "search",
+      result: { query },
+    };
+  }
+
+  return null;
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
@@ -794,6 +967,13 @@ export function reduceStreamUpdate(
         default:
           return state;
       }
+    }
+    case "provider_event": {
+      const converted = convertCodexProviderEvent(event.provider, event.raw);
+      if (!converted) {
+        return state;
+      }
+      return appendAgentToolCall(state, converted, timestamp);
     }
     default:
       return state;
