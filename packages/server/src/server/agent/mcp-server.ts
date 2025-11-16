@@ -24,6 +24,10 @@ import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-manifest.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { createWorktree } from "../../utils/worktree.js";
+import {
+  WaitForAgentTracker,
+  type WaitForAgentCanceler,
+} from "./wait-for-agent-tracker.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -103,6 +107,7 @@ async function serializeSnapshotWithMetadata(
 async function waitForAgentEvent(
   agentManager: AgentManager,
   agentId: string,
+  tracker: WaitForAgentTracker,
   signal?: AbortSignal
 ): Promise<{
   status: AgentLifecycleStatus;
@@ -141,6 +146,19 @@ async function waitForAgentEvent(
       cleanup();
       resolve({ status: currentStatus, permission });
     };
+
+    const unregister = tracker.register(agentId, (reason) => {
+      cleanup();
+      reject(
+        Object.assign(
+          new Error(reason ?? "wait_for_agent cancelled"),
+          {
+            name: "AbortError",
+          }
+        )
+      );
+    });
+    cleanupFns.push(unregister);
 
     const unsubscribe = agentManager.subscribe(
       (event) => {
@@ -329,7 +347,12 @@ export async function createAgentMcpServer(
       },
     },
     async ({ agentId }, { signal }) => {
-      const result = await waitForAgentEvent(agentManager, agentId, signal);
+      const result = await waitForAgentEvent(
+        agentManager,
+        agentId,
+        waitTracker,
+        signal
+      );
       const activity = buildActivityPayload(agentManager, agentId);
 
       return {

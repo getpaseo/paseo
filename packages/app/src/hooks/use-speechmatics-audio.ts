@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   initialize,
+  useMicrophonePermissions,
   toggleRecording,
   tearDown,
   useExpoTwoWayAudioEventListener,
@@ -56,6 +57,8 @@ function concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
 export function useSpeechmaticsAudio(
   config: SpeechmaticsAudioConfig
 ): SpeechmaticsAudio {
+  const [microphonePermission, requestMicrophonePermission] =
+    useMicrophonePermissions();
   const [isActive, setIsActive] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
@@ -279,6 +282,24 @@ export function useSpeechmaticsAudio(
     )
   );
 
+  const ensureMicrophonePermission = useCallback(async () => {
+    let permissionStatus = microphonePermission;
+
+    if (!permissionStatus?.granted) {
+      try {
+        permissionStatus = await requestMicrophonePermission();
+      } catch (err) {
+        throw new Error("Failed to request microphone permission");
+      }
+    }
+
+    if (!permissionStatus?.granted) {
+      throw new Error(
+        "Microphone permission is required to capture audio. Please enable microphone access in system settings."
+      );
+    }
+  }, [microphonePermission, requestMicrophonePermission]);
+
   async function start(): Promise<void> {
     if (isActive) {
       console.log("[SpeechmaticsAudio] Already active");
@@ -286,6 +307,8 @@ export function useSpeechmaticsAudio(
     }
 
     try {
+      await ensureMicrophonePermission();
+
       // Initialize audio if not already initialized
       if (!audioInitialized) {
         console.log("[SpeechmaticsAudio] Initializing audio...");

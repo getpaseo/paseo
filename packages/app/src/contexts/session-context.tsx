@@ -276,6 +276,15 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
 
+  // Buffer for streaming audio chunks
+  interface AudioChunk {
+    chunkIndex: number;
+    audio: string; // base64
+    format: string;
+    id: string;
+  }
+  const audioChunkBuffersRef = useRef<Map<string, AudioChunk[]>>(new Map());
+
   const focusedAgentId = focusedAgentOverride ?? orchestratorFocusedAgentId;
   const setFocusedAgentId = useCallback((agentId: string | null) => {
     setFocusedAgentOverride(agentId);
@@ -500,61 +509,108 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       const data = message.payload;
       const playbackGroupId = data.groupId ?? data.id;
       const isFinalChunk = data.isLastChunk ?? true;
+      const chunkIndex = data.chunkIndex ?? 0;
+
       activeAudioGroupsRef.current.add(playbackGroupId);
       setIsPlayingAudio(true);
 
+      // Buffer the chunk
+      if (!audioChunkBuffersRef.current.has(playbackGroupId)) {
+        audioChunkBuffersRef.current.set(playbackGroupId, []);
+      }
+
+      const buffer = audioChunkBuffersRef.current.get(playbackGroupId)!;
+      buffer.push({
+        chunkIndex,
+        audio: data.audio,
+        format: data.format,
+        id: data.id,
+      });
+
+      // Only play when we receive the final chunk
+      if (!isFinalChunk) {
+        console.log(`[Session] Buffered chunk ${chunkIndex} for group ${playbackGroupId}`);
+        return;
+      }
+
+      // We have all chunks - sort by index and concatenate
+      console.log(`[Session] Received final chunk for group ${playbackGroupId}, total chunks: ${buffer.length}`);
+      buffer.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
       let playbackFailed = false;
+      const chunkIds = buffer.map(chunk => chunk.id);
 
       try {
-        // Create blob-like object with correct mime type (React Native compatible)
         const mimeType =
           data.format === "mp3" ? "audio/mpeg" : `audio/${data.format}`;
-        const base64Audio = data.audio;
+
+        // Decode each chunk separately and concatenate binary data
+        const decodedChunks: Uint8Array[] = [];
+        let totalSize = 0;
+
+        for (const chunk of buffer) {
+          const binaryString = atob(chunk.audio);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          decodedChunks.push(bytes);
+          totalSize += bytes.length;
+        }
+
+        // Concatenate all decoded chunks
+        const concatenatedBytes = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of decodedChunks) {
+          concatenatedBytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        console.log(`[Session] Playing concatenated audio: ${buffer.length} chunks, ${totalSize} bytes`);
 
         // Create a Blob-like object that works in React Native
         const audioBlob = {
           type: mimeType,
-          size: Math.ceil((base64Audio.length * 3) / 4), // Approximate size from base64
+          size: totalSize,
           arrayBuffer: async () => {
-            // Convert base64 to ArrayBuffer
-            const binaryString = atob(base64Audio);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            return bytes.buffer;
+            return concatenatedBytes.buffer;
           },
         } as Blob;
 
-        // Play audio
+        // Play concatenated audio
         await audioPlayer.play(audioBlob);
 
-        // Send confirmation back to server
-        const confirmMessage: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "audio_played",
-            id: data.id,
-          },
-        };
-        ws.send(confirmMessage);
+        // Send confirmation for all chunks
+        for (const chunkId of chunkIds) {
+          const confirmMessage: WSInboundMessage = {
+            type: "session",
+            message: {
+              type: "audio_played",
+              id: chunkId,
+            },
+          };
+          ws.send(confirmMessage);
+        }
       } catch (error: any) {
         playbackFailed = true;
         console.error("[Session] Audio playback error:", error);
 
-        // Still send confirmation even on error to prevent server from waiting
-        const confirmMessage: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "audio_played",
-            id: data.id,
-          },
-        };
-        ws.send(confirmMessage);
-      } finally {
-        if (isFinalChunk || playbackFailed) {
-          activeAudioGroupsRef.current.delete(playbackGroupId);
+        // Still send confirmation for all chunks even on error
+        for (const chunkId of chunkIds) {
+          const confirmMessage: WSInboundMessage = {
+            type: "session",
+            message: {
+              type: "audio_played",
+              id: chunkId,
+            },
+          };
+          ws.send(confirmMessage);
         }
+      } finally {
+        // Clean up buffer and active group
+        audioChunkBuffersRef.current.delete(playbackGroupId);
+        activeAudioGroupsRef.current.delete(playbackGroupId);
+
         if (activeAudioGroupsRef.current.size === 0) {
           setIsPlayingAudio(false);
         }

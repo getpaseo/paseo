@@ -1587,7 +1587,23 @@ export class Session {
       `[Session ${this.clientId}] Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
     );
 
+    // In realtime mode, only process audio when the user has finished speaking (isLast = true)
+    // This prevents partial transcriptions from being sent to the LLM
+    if (this.isRealtimeMode) {
+      if (!msg.isLast) {
+        console.log(
+          `[Session ${this.clientId}] Realtime mode: buffering audio, waiting for speech end`
+        );
+        return;
+      }
+      console.log(
+        `[Session ${this.clientId}] Realtime mode: speech ended, processing complete audio`
+      );
+    }
+
+    // In non-realtime mode, use streaming threshold to process chunks
     const reachedStreamingThreshold =
+      !this.isRealtimeMode &&
       this.audioBuffer.isPCM &&
       this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
 
