@@ -34,7 +34,13 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
 } from "@server/server/agent/provider-manifest";
-import type { AgentProvider, AgentMode, AgentSessionConfig, AgentPersistenceHandle } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentProvider,
+  AgentMode,
+  AgentSessionConfig,
+  AgentPersistenceHandle,
+  AgentTimelineItem,
+} from "@server/server/agent/agent-sdk-types";
 import type { WSInboundMessage } from "@server/server/messages";
 
 interface CreateAgentModalProps {
@@ -49,7 +55,8 @@ const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
 
 const fallbackDefinition = providerDefinitions[0];
 const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
-const DEFAULT_MODE_FOR_DEFAULT_PROVIDER = fallbackDefinition?.defaultModeId ?? "";
+const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
+  fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
 const RESUME_PAGE_SIZE = 20;
 
@@ -60,10 +67,19 @@ type ResumeCandidate = {
   title: string;
   lastActivityAt: Date;
   persistence: AgentPersistenceHandle;
+  timeline: AgentTimelineItem[];
 };
 
 type ResumeTab = "new" | "resume";
 type ProviderFilter = "all" | AgentProvider;
+
+type RepoInfoState = {
+  cwd: string;
+  repoRoot: string;
+  branches: Array<{ name: string; isCurrent: boolean }>;
+  currentBranch: string | null;
+  isDirty: boolean;
+};
 
 function formatRelativeTime(date: Date): string {
   const now = Date.now();
@@ -86,6 +102,18 @@ function formatRelativeTime(date: Date): string {
   return `${days}d ago`;
 }
 
+function getResumePreview(candidate: ResumeCandidate): string {
+  for (const item of candidate.timeline) {
+    if (item.type === "user_message") {
+      const text = item.text.trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  return candidate.title || candidate.cwd;
+}
+
 export function CreateAgentModal({
   isVisible,
   onClose,
@@ -103,20 +131,37 @@ export function CreateAgentModal({
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
-  const [selectedProvider, setSelectedProvider] = useState<AgentProvider>(
-    DEFAULT_PROVIDER
+  const [initialPrompt, setInitialPrompt] = useState("");
+  const [selectedProvider, setSelectedProvider] =
+    useState<AgentProvider>(DEFAULT_PROVIDER);
+  const [selectedMode, setSelectedMode] = useState(
+    DEFAULT_MODE_FOR_DEFAULT_PROVIDER
   );
-  const [selectedMode, setSelectedMode] = useState(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
-  const [worktreeName, setWorktreeName] = useState("");
+  const [baseBranch, setBaseBranch] = useState("");
+  const [createNewBranch, setCreateNewBranch] = useState(false);
+  const [branchName, setBranchName] = useState("");
+  const [createWorktree, setCreateWorktree] = useState(false);
+  const [worktreeSlug, setWorktreeSlug] = useState("");
+  const [branchNameEdited, setBranchNameEdited] = useState(false);
+  const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ResumeTab>("new");
-  const [resumeProviderFilter, setResumeProviderFilter] = useState<ProviderFilter>("all");
+  const [resumeProviderFilter, setResumeProviderFilter] =
+    useState<ProviderFilter>("all");
   const [resumeSearchQuery, setResumeSearchQuery] = useState("");
-  const [resumeCandidates, setResumeCandidates] = useState<ResumeCandidate[]>([]);
+  const [resumeCandidates, setResumeCandidates] = useState<ResumeCandidate[]>(
+    []
+  );
   const [isResumeLoading, setIsResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [repoInfo, setRepoInfo] = useState<RepoInfoState | null>(null);
+  const [repoInfoStatus, setRepoInfoStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [repoInfoError, setRepoInfoError] = useState<string | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
+  const repoInfoRequestIdRef = useRef<string | null>(null);
 
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
 
@@ -138,7 +183,8 @@ export function CreateAgentModal({
     []
   );
   const getProviderLabel = useCallback(
-    (provider: AgentProvider) => providerDefinitionMap.get(provider)?.label ?? provider,
+    (provider: AgentProvider) =>
+      providerDefinitionMap.get(provider)?.label ?? provider,
     []
   );
   const agentDefinition = providerDefinitionMap.get(selectedProvider);
@@ -161,7 +207,10 @@ export function CreateAgentModal({
     const query = resumeSearchQuery.trim().toLowerCase();
     return resumeCandidates
       .filter((candidate) => !activeSessionIds.has(candidate.sessionId))
-      .filter((candidate) => providerFilter === "all" || candidate.provider === providerFilter)
+      .filter(
+        (candidate) =>
+          providerFilter === "all" || candidate.provider === providerFilter
+      )
       .filter((candidate) => {
         if (query.length === 0) {
           return true;
@@ -171,7 +220,12 @@ export function CreateAgentModal({
         return titleText.includes(query) || cwdText.includes(query);
       })
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
-  }, [activeSessionIds, resumeCandidates, resumeProviderFilter, resumeSearchQuery]);
+  }, [
+    activeSessionIds,
+    resumeCandidates,
+    resumeProviderFilter,
+    resumeSearchQuery,
+  ]);
 
   useEffect(() => {
     if (!agentDefinition) {
@@ -196,12 +250,23 @@ export function CreateAgentModal({
 
   const resetFormState = useCallback(() => {
     setWorkingDir("");
-    setWorktreeName("");
+    setInitialPrompt("");
     setSelectedProvider(DEFAULT_PROVIDER);
     setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
+    setBaseBranch("");
+    setCreateNewBranch(false);
+    setBranchName("");
+    setCreateWorktree(false);
+    setWorktreeSlug("");
+    setBranchNameEdited(false);
+    setWorktreeSlugEdited(false);
     setErrorMessage("");
     setIsLoading(false);
+    setRepoInfo(null);
+    setRepoInfoStatus("idle");
+    setRepoInfoError(null);
     pendingRequestIdRef.current = null;
+    repoInfoRequestIdRef.current = null;
   }, []);
 
   const navigateToAgentIfNeeded = useCallback(() => {
@@ -238,7 +303,10 @@ export function CreateAgentModal({
       try {
         ws.send(msg);
       } catch (error) {
-        console.error("[CreateAgentModal] Failed to request persisted agents:", error);
+        console.error(
+          "[CreateAgentModal] Failed to request persisted agents:",
+          error
+        );
         setIsResumeLoading(false);
         setResumeError("Unable to load saved agents. Please try again.");
       }
@@ -248,9 +316,12 @@ export function CreateAgentModal({
 
   useEffect(() => {
     if (!isVisible) {
-      console.log("[CreateAgentModal] visibility effect skipped (isVisible is false)", {
-        isMounted,
-      });
+      console.log(
+        "[CreateAgentModal] visibility effect skipped (isVisible is false)",
+        {
+          isMounted,
+        }
+      );
       return;
     }
 
@@ -340,36 +411,122 @@ export function CreateAgentModal({
       .replace(/^-+|-+$/g, "");
   }, []);
 
-  const validateWorktreeName = useCallback((name: string): { valid: boolean; error?: string } => {
-    if (!name) {
+  const validateWorktreeName = useCallback(
+    (name: string): { valid: boolean; error?: string } => {
+      if (!name) {
+        return { valid: true };
+      }
+
+      if (name.length > 100) {
+        return {
+          valid: false,
+          error: "Worktree name too long (max 100 characters)",
+        };
+      }
+
+      if (!/^[a-z0-9-]+$/.test(name)) {
+        return {
+          valid: false,
+          error: "Must contain only lowercase letters, numbers, and hyphens",
+        };
+      }
+
+      if (name.startsWith("-") || name.endsWith("-")) {
+        return { valid: false, error: "Cannot start or end with a hyphen" };
+      }
+
+      if (name.includes("--")) {
+        return { valid: false, error: "Cannot have consecutive hyphens" };
+      }
+
       return { valid: true };
-    }
-
-    if (name.length > 100) {
-      return { valid: false, error: "Worktree name too long (max 100 characters)" };
-    }
-
-    if (!/^[a-z0-9-]+$/.test(name)) {
-      return {
-        valid: false,
-        error: "Must contain only lowercase letters, numbers, and hyphens",
-      };
-    }
-
-    if (name.startsWith("-") || name.endsWith("-")) {
-      return { valid: false, error: "Cannot start or end with a hyphen" };
-    }
-
-    if (name.includes("--")) {
-      return { valid: false, error: "Cannot have consecutive hyphens" };
-    }
-
-    return { valid: true };
-  }, []);
+    },
+    []
+  );
 
   const handleClose = useCallback(() => {
     onClose();
   }, [onClose]);
+
+  useEffect(() => {
+    const slug = slugifyWorktreeName(initialPrompt);
+    if (!branchNameEdited) {
+      setBranchName(slug);
+    }
+    if (!worktreeSlugEdited) {
+      setWorktreeSlug(slug);
+    }
+  }, [initialPrompt, branchNameEdited, worktreeSlugEdited, slugifyWorktreeName]);
+
+  const requestRepoInfo = useCallback(
+    (path: string) => {
+      const trimmed = path.trim();
+      if (!trimmed) {
+        setRepoInfo(null);
+        setRepoInfoStatus("idle");
+        setRepoInfoError(null);
+        repoInfoRequestIdRef.current = null;
+        return;
+      }
+
+      const requestId = generateMessageId();
+      repoInfoRequestIdRef.current = requestId;
+      setRepoInfoStatus("loading");
+      setRepoInfoError(null);
+
+      ws.send({
+        type: "session",
+        message: {
+          type: "git_repo_info_request",
+          cwd: trimmed,
+          requestId,
+        },
+      });
+    },
+    [ws]
+  );
+
+  useEffect(() => {
+    requestRepoInfo(workingDir);
+  }, [requestRepoInfo, workingDir]);
+
+  useEffect(() => {
+    const unsubscribe = ws.on("git_repo_info_response", (message) => {
+      if (message.type !== "git_repo_info_response") {
+        return;
+      }
+
+      if (
+        repoInfoRequestIdRef.current &&
+        message.payload.requestId &&
+        message.payload.requestId !== repoInfoRequestIdRef.current
+      ) {
+        return;
+      }
+
+      if (message.payload.error) {
+        setRepoInfo(null);
+        setRepoInfoStatus("error");
+        setRepoInfoError(message.payload.error);
+        return;
+      }
+
+      setRepoInfo({
+        cwd: message.payload.cwd,
+        repoRoot: message.payload.repoRoot,
+        branches: message.payload.branches ?? [],
+        currentBranch: message.payload.currentBranch ?? null,
+        isDirty: Boolean(message.payload.isDirty),
+      });
+      setRepoInfoStatus("ready");
+      setRepoInfoError(null);
+      setBaseBranch((prev) => prev || message.payload.currentBranch || "");
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [ws]);
 
   const handleCreate = useCallback(async () => {
     const trimmedPath = workingDir.trim();
@@ -378,19 +535,22 @@ export function CreateAgentModal({
       return;
     }
 
+    const trimmedPrompt = initialPrompt.trim();
+    if (!trimmedPrompt) {
+      setErrorMessage("Initial prompt is required");
+      return;
+    }
+
     if (isLoading) {
       return;
     }
 
-    const worktree = worktreeName.trim();
-
-    if (worktree) {
-      const validation = validateWorktreeName(worktree);
-      if (!validation.valid) {
-        setErrorMessage(`Invalid worktree name: ${validation.error}`);
-        return;
-      }
+    if (gitBlockingError) {
+      setErrorMessage(gitBlockingError);
+      return;
     }
+
+    const trimmedBaseBranch = baseBranch.trim();
 
     try {
       await addRecentPath(trimmedPath);
@@ -404,7 +564,8 @@ export function CreateAgentModal({
     setIsLoading(true);
     setErrorMessage("");
 
-    const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+    const modeId =
+      modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
 
     const config: AgentSessionConfig = {
       provider: selectedProvider,
@@ -412,10 +573,27 @@ export function CreateAgentModal({
       ...(modeId ? { modeId } : {}),
     };
 
+    const gitOptions =
+      createNewBranch || createWorktree || trimmedBaseBranch
+        ? {
+            ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
+            ...(createNewBranch
+              ? { createNewBranch: true, newBranchName: branchName.trim() }
+              : {}),
+            ...(createWorktree
+              ? {
+                  createWorktree: true,
+                  worktreeSlug: (worktreeSlug || branchName).trim(),
+                }
+              : {}),
+          }
+        : undefined;
+
     try {
       createAgent({
         config,
-        worktreeName: worktree || undefined,
+        initialPrompt: trimmedPrompt,
+        git: gitOptions,
         requestId,
       });
     } catch (error) {
@@ -426,7 +604,13 @@ export function CreateAgentModal({
     }
   }, [
     workingDir,
-    worktreeName,
+    initialPrompt,
+    baseBranch,
+    createNewBranch,
+    branchName,
+    createWorktree,
+    worktreeSlug,
+    repoInfo,
     selectedMode,
     modeOptions,
     selectedProvider,
@@ -435,7 +619,7 @@ export function CreateAgentModal({
     addRecentPath,
     createAgent,
   ]);
-  
+
   const handleResumeCandidatePress = useCallback(
     (candidate: ResumeCandidate) => {
       if (isLoading) {
@@ -462,16 +646,20 @@ export function CreateAgentModal({
       >
         <View style={styles.resumeItemHeader}>
           <Text style={styles.resumeItemTitle} numberOfLines={1}>
-            {item.title}
+            {getResumePreview(item)}
           </Text>
-          <Text style={styles.resumeItemTimestamp}>{formatRelativeTime(item.lastActivityAt)}</Text>
+          <Text style={styles.resumeItemTimestamp}>
+            {formatRelativeTime(item.lastActivityAt)}
+          </Text>
         </View>
         <Text style={styles.resumeItemPath} numberOfLines={1}>
           {item.cwd}
         </Text>
         <View style={styles.resumeItemMetaRow}>
           <View style={styles.resumeProviderBadge}>
-            <Text style={styles.resumeProviderBadgeText}>{getProviderLabel(item.provider)}</Text>
+            <Text style={styles.resumeProviderBadgeText}>
+              {getProviderLabel(item.provider)}
+            </Text>
           </View>
           <Text style={styles.resumeItemHint}>Tap to resume</Text>
         </View>
@@ -492,6 +680,7 @@ export function CreateAgentModal({
         title: item.title ?? `Session ${item.sessionId.slice(0, 8)}`,
         lastActivityAt: new Date(item.lastActivityAt),
         persistence: item.persistence,
+        timeline: item.timeline ?? [],
       })) as ResumeCandidate[];
 
       setResumeCandidates(mapped);
@@ -509,9 +698,30 @@ export function CreateAgentModal({
         return;
       }
 
-      const payload = message.payload as { status: string; agentId?: string; requestId?: string };
+      const payload = message.payload as {
+        status: string;
+        agentId?: string;
+        requestId?: string;
+        error?: string;
+      };
+
+      if (payload.status === "agent_create_failed") {
+        const expectedRequestId = pendingRequestIdRef.current;
+        if (!expectedRequestId || payload.requestId !== expectedRequestId) {
+          return;
+        }
+        pendingRequestIdRef.current = null;
+        setIsLoading(false);
+        setErrorMessage(
+          payload.error ??
+            "Failed to create agent. Resolve git issues or try again."
+        );
+        return;
+      }
+
       if (
-        (payload.status !== "agent_created" && payload.status !== "agent_resumed") ||
+        (payload.status !== "agent_created" &&
+          payload.status !== "agent_resumed") ||
         !payload.agentId
       ) {
         return;
@@ -538,21 +748,80 @@ export function CreateAgentModal({
     if (!isVisible || activeTab !== "resume") {
       return;
     }
-    const provider = resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
+    const provider =
+      resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
     requestResumeCandidates(provider);
   }, [activeTab, isVisible, requestResumeCandidates, resumeProviderFilter]);
 
   const refreshResumeList = useCallback(() => {
-    const provider = resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
+    const provider =
+      resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
     requestResumeCandidates(provider);
   }, [requestResumeCandidates, resumeProviderFilter]);
 
   const shouldRender = isVisible || isMounted;
 
+  const gitBlockingError = useMemo(() => {
+    const trimmedBase = baseBranch.trim();
+    const requiresBase =
+      createNewBranch || createWorktree || trimmedBase.length > 0;
+
+    if (requiresBase && !trimmedBase) {
+      return "Select a base branch before launching the agent";
+    }
+
+    if (createNewBranch) {
+      const slug = branchName.trim();
+      const validation = validateWorktreeName(slug);
+      if (!slug || !validation.valid) {
+        return `Invalid branch name: ${validation.error ?? "Must use lowercase letters, numbers, or hyphens"}`;
+      }
+    }
+
+    if (createWorktree) {
+      const slug = (worktreeSlug || branchName).trim();
+      const validation = validateWorktreeName(slug);
+      if (!slug || !validation.valid) {
+        return `Invalid worktree name: ${validation.error ?? "Must use lowercase letters, numbers, or hyphens"}`;
+      }
+    }
+
+    if (!createWorktree && repoInfo?.isDirty) {
+      const intendsCheckout =
+        createNewBranch ||
+        (trimmedBase.length > 0 && trimmedBase !== repoInfo.currentBranch);
+      if (intendsCheckout) {
+        return "Working directory has uncommitted changes. Clean up or create a worktree first.";
+      }
+    }
+
+    return null;
+  }, [
+    baseBranch,
+    branchName,
+    createNewBranch,
+    createWorktree,
+    repoInfo,
+    validateWorktreeName,
+    worktreeSlug,
+  ]);
+
   const workingDirIsEmpty = !workingDir.trim();
-  const headerPaddingTop = useMemo(() => insets.top + defaultTheme.spacing[4], [insets.top]);
-  const horizontalPaddingLeft = useMemo(() => defaultTheme.spacing[6] + insets.left, [insets.left]);
-  const horizontalPaddingRight = useMemo(() => defaultTheme.spacing[6] + insets.right, [insets.right]);
+  const promptIsEmpty = !initialPrompt.trim();
+  const createDisabled =
+    workingDirIsEmpty || promptIsEmpty || Boolean(gitBlockingError) || isLoading;
+  const headerPaddingTop = useMemo(
+    () => insets.top + defaultTheme.spacing[4],
+    [insets.top]
+  );
+  const horizontalPaddingLeft = useMemo(
+    () => defaultTheme.spacing[6] + insets.left,
+    [insets.left]
+  );
+  const horizontalPaddingRight = useMemo(
+    () => defaultTheme.spacing[6] + insets.right,
+    [insets.right]
+  );
 
   const handleSheetLayout = useCallback((event: LayoutChangeEvent) => {
     const { height, y } = event.nativeEvent.layout;
@@ -560,17 +829,17 @@ export function CreateAgentModal({
   }, []);
 
   if (!shouldRender) {
-    console.log("[CreateAgentModal] render skipped", {
-      isVisible,
-      isMounted,
-    });
+    // console.log("[CreateAgentModal] render skipped", {
+    //   isVisible,
+    //   isMounted,
+    // });
     return null;
   }
 
-  console.log("[CreateAgentModal] rendering modal", {
-    isVisible,
-    isMounted,
-  });
+  // console.log("[CreateAgentModal] rendering modal", {
+  //   isVisible,
+  //   isMounted,
+  // });
 
   return (
     <Modal
@@ -594,7 +863,9 @@ export function CreateAgentModal({
               paddingLeft={horizontalPaddingLeft}
               paddingRight={horizontalPaddingRight}
               onClose={handleClose}
-              title={activeTab === "resume" ? "Resume Agent" : "Create New Agent"}
+              title={
+                activeTab === "resume" ? "Resume Agent" : "Create New Agent"
+              }
             />
             <View
               style={[
@@ -611,9 +882,19 @@ export function CreateAgentModal({
                   <Pressable
                     key={tab.id}
                     onPress={() => setActiveTab(tab.id)}
-                    style={[styles.tabButton, isActive && styles.tabButtonActive]}
+                    style={[
+                      styles.tabButton,
+                      isActive && styles.tabButtonActive,
+                    ]}
                   >
-                    <Text style={[styles.tabButtonText, isActive && styles.tabButtonTextActive]}>{tab.label}</Text>
+                    <Text
+                      style={[
+                        styles.tabButtonText,
+                        isActive && styles.tabButtonTextActive,
+                      ]}
+                    >
+                      {tab.label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -667,14 +948,52 @@ export function CreateAgentModal({
                     />
                   </View>
 
-                  <WorktreeSection
+                  <PromptSection
+                    value={initialPrompt}
                     isLoading={isLoading}
-                    value={worktreeName}
                     onChange={(text) => {
-                      const slugified = slugifyWorktreeName(text);
-                      setWorktreeName(slugified);
+                      setInitialPrompt(text);
                       setErrorMessage("");
                     }}
+                  />
+
+                  <GitOptionsSection
+                    baseBranch={baseBranch}
+                    onBaseBranchChange={(value) => {
+                      setBaseBranch(value);
+                      setErrorMessage("");
+                    }}
+                    branches={repoInfo?.branches ?? []}
+                    status={repoInfoStatus}
+                    repoError={repoInfoError}
+                    warning={!createWorktree && repoInfo?.isDirty ? "Working directory has uncommitted changes" : null}
+                    createNewBranch={createNewBranch}
+                    onToggleCreateNewBranch={(next) => {
+                      setCreateNewBranch(next);
+                      if (!next) {
+                        setBranchName("");
+                        setBranchNameEdited(false);
+                      }
+                    }}
+                    branchName={branchName}
+                    onBranchNameChange={(value) => {
+                      setBranchName(slugifyWorktreeName(value));
+                      setBranchNameEdited(true);
+                    }}
+                    createWorktree={createWorktree}
+                    onToggleCreateWorktree={(next) => {
+                      setCreateWorktree(next);
+                      if (!next) {
+                        setWorktreeSlug("");
+                        setWorktreeSlugEdited(false);
+                      }
+                    }}
+                    worktreeSlug={worktreeSlug}
+                    onWorktreeSlugChange={(value) => {
+                      setWorktreeSlug(slugifyWorktreeName(value));
+                      setWorktreeSlugEdited(true);
+                    }}
+                    gitValidationError={gitBlockingError}
                   />
                 </ScrollView>
 
@@ -692,14 +1011,16 @@ export function CreateAgentModal({
                   <Pressable
                     style={[
                       styles.createButton,
-                      (workingDirIsEmpty || isLoading) && styles.createButtonDisabled,
+                      createDisabled && styles.createButtonDisabled,
                     ]}
                     onPress={handleCreate}
-                    disabled={workingDirIsEmpty || isLoading}
+                    disabled={createDisabled}
                   >
                     {isLoading ? (
                       <View style={styles.loadingContainer}>
-                        <ActivityIndicator color={defaultTheme.colors.palette.white} />
+                        <ActivityIndicator
+                          color={defaultTheme.colors.palette.white}
+                        />
                         <Text style={styles.createButtonText}>Creating...</Text>
                       </View>
                     ) : (
@@ -727,7 +1048,10 @@ export function CreateAgentModal({
                         <Pressable
                           key={option.id}
                           onPress={() => setResumeProviderFilter(option.id)}
-                          style={[styles.providerFilterButton, isActive && styles.providerFilterButtonActive]}
+                          style={[
+                            styles.providerFilterButton,
+                            isActive && styles.providerFilterButtonActive,
+                          ]}
                         >
                           <Text
                             style={[
@@ -749,24 +1073,38 @@ export function CreateAgentModal({
                       value={resumeSearchQuery}
                       onChangeText={setResumeSearchQuery}
                     />
-                    <Pressable style={styles.refreshButton} onPress={refreshResumeList} disabled={isResumeLoading}>
+                    <Pressable
+                      style={styles.refreshButton}
+                      onPress={refreshResumeList}
+                      disabled={isResumeLoading}
+                    >
                       <Text style={styles.refreshButtonText}>Refresh</Text>
                     </Pressable>
                   </View>
                 </View>
-                {resumeError ? <Text style={styles.resumeErrorText}>{resumeError}</Text> : null}
+                {resumeError ? (
+                  <Text style={styles.resumeErrorText}>{resumeError}</Text>
+                ) : null}
                 {isResumeLoading ? (
                   <View style={styles.resumeLoading}>
-                    <ActivityIndicator color={defaultTheme.colors.mutedForeground} />
-                    <Text style={styles.resumeLoadingText}>Loading saved agents...</Text>
+                    <ActivityIndicator
+                      color={defaultTheme.colors.mutedForeground}
+                    />
+                    <Text style={styles.resumeLoadingText}>
+                      Loading saved agents...
+                    </Text>
                   </View>
                 ) : filteredResumeCandidates.length === 0 ? (
                   <View style={styles.resumeEmptyState}>
                     <Text style={styles.resumeEmptyTitle}>No agents found</Text>
                     <Text style={styles.resumeEmptySubtitle}>
-                      We'll load the latest Claude and Codex sessions from your local history.
+                      We'll load the latest Claude and Codex sessions from your
+                      local history.
                     </Text>
-                    <Pressable style={styles.refreshButtonAlt} onPress={refreshResumeList}>
+                    <Pressable
+                      style={styles.refreshButtonAlt}
+                      onPress={refreshResumeList}
+                    >
                       <Text style={styles.refreshButtonAltText}>Try Again</Text>
                     </Pressable>
                   </View>
@@ -774,8 +1112,12 @@ export function CreateAgentModal({
                   <FlatList
                     data={filteredResumeCandidates}
                     renderItem={renderResumeItem}
-                    keyExtractor={(item) => `${item.provider}:${item.sessionId}`}
-                    ItemSeparatorComponent={() => <View style={styles.resumeItemSeparator} />}
+                    keyExtractor={(item) =>
+                      `${item.provider}:${item.sessionId}`
+                    }
+                    ItemSeparatorComponent={() => (
+                      <View style={styles.resumeItemSeparator} />
+                    )}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={styles.resumeListContent}
                   />
@@ -797,7 +1139,13 @@ interface ModalHeaderProps {
   title: string;
 }
 
-function ModalHeader({ paddingTop, paddingLeft, paddingRight, onClose, title }: ModalHeaderProps): ReactElement {
+function ModalHeader({
+  paddingTop,
+  paddingLeft,
+  paddingRight,
+  onClose,
+  title,
+}: ModalHeaderProps): ReactElement {
   return (
     <View style={[styles.header, { paddingTop, paddingLeft, paddingRight }]}>
       <Text style={styles.headerTitle}>{title}</Text>
@@ -836,7 +1184,9 @@ function WorkingDirectorySection({
         autoCorrect={false}
         editable={!isLoading}
       />
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+      {errorMessage ? (
+        <Text style={styles.errorText}>{errorMessage}</Text>
+      ) : null}
       {recentPaths.length > 0 ? (
         <ScrollView
           horizontal
@@ -845,7 +1195,11 @@ function WorkingDirectorySection({
           keyboardShouldPersistTaps="handled"
         >
           {recentPaths.map((path) => (
-            <Pressable key={path} style={styles.recentPathChip} onPress={() => onChangeWorkingDir(path)}>
+            <Pressable
+              key={path}
+              style={styles.recentPathChip}
+              onPress={() => onChangeWorkingDir(path)}
+            >
               <Text style={styles.recentPathChipText} numberOfLines={1}>
                 {path}
               </Text>
@@ -873,7 +1227,9 @@ function AssistantSelector({
   onSelect,
 }: AssistantSelectorProps): ReactElement {
   return (
-    <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
+    <View
+      style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}
+    >
       <Text style={styles.label}>Assistant</Text>
       <View style={styles.optionGroup}>
         {providerDefinitions.map((definition) => {
@@ -893,7 +1249,9 @@ function AssistantSelector({
                 <View
                   style={[
                     styles.radioOuter,
-                    isSelected ? styles.radioOuterSelected : styles.radioOuterUnselected,
+                    isSelected
+                      ? styles.radioOuterSelected
+                      : styles.radioOuterUnselected,
                   ]}
                 >
                   {isSelected ? <View style={styles.radioInner} /> : null}
@@ -924,10 +1282,14 @@ function ModeSelector({
   onSelect,
 }: ModeSelectorProps): ReactElement {
   return (
-    <View style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}>
+    <View
+      style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}
+    >
       <Text style={styles.label}>Permissions</Text>
       {modeOptions.length === 0 ? (
-        <Text style={styles.helperText}>This assistant does not expose selectable permissions.</Text>
+        <Text style={styles.helperText}>
+          This assistant does not expose selectable permissions.
+        </Text>
       ) : (
         <View style={styles.optionGroup}>
           {modeOptions.map((mode) => {
@@ -947,14 +1309,20 @@ function ModeSelector({
                   <View
                     style={[
                       styles.radioOuter,
-                      isSelected ? styles.radioOuterSelected : styles.radioOuterUnselected,
+                      isSelected
+                        ? styles.radioOuterSelected
+                        : styles.radioOuterUnselected,
                     ]}
                   >
                     {isSelected ? <View style={styles.radioInner} /> : null}
                   </View>
                   <View style={styles.modeTextContainer}>
                     <Text style={styles.optionLabel}>{mode.label}</Text>
-                    {mode.description ? <Text style={styles.modeDescription}>{mode.description}</Text> : null}
+                    {mode.description ? (
+                      <Text style={styles.modeDescription}>
+                        {mode.description}
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               </Pressable>
@@ -966,30 +1334,200 @@ function ModeSelector({
   );
 }
 
-interface WorktreeSectionProps {
+interface PromptSectionProps {
   value: string;
   isLoading: boolean;
   onChange: (value: string) => void;
 }
 
-function WorktreeSection({ value, isLoading, onChange }: WorktreeSectionProps): ReactElement {
+function PromptSection({ value, isLoading, onChange }: PromptSectionProps): ReactElement {
   return (
     <View style={styles.formSection}>
-      <Text style={styles.label}>Worktree Name (Optional)</Text>
+      <Text style={styles.label}>Initial Prompt</Text>
       <TextInput
-        style={[styles.input, isLoading && styles.inputDisabled]}
-        placeholder="feature-branch-name"
+        style={[styles.input, styles.promptInput, isLoading && styles.inputDisabled]}
+        placeholder="Describe what you want the agent to do"
         placeholderTextColor={defaultTheme.colors.mutedForeground}
         value={value}
         onChangeText={onChange}
-        autoCapitalize="none"
-        autoCorrect={false}
+        autoCapitalize="sentences"
+        autoCorrect
+        multiline
         editable={!isLoading}
       />
-      <Text style={styles.helperText}>
-        Create a git worktree for isolated development. Must be lowercase, alphanumeric, and hyphens only.
-      </Text>
     </View>
+  );
+}
+
+interface GitOptionsSectionProps {
+  baseBranch: string;
+  onBaseBranchChange: (value: string) => void;
+  branches: Array<{ name: string; isCurrent: boolean }>;
+  status: "idle" | "loading" | "ready" | "error";
+  repoError: string | null;
+  warning: string | null;
+  createNewBranch: boolean;
+  onToggleCreateNewBranch: (value: boolean) => void;
+  branchName: string;
+  onBranchNameChange: (value: string) => void;
+  createWorktree: boolean;
+  onToggleCreateWorktree: (value: boolean) => void;
+  worktreeSlug: string;
+  onWorktreeSlugChange: (value: string) => void;
+  gitValidationError: string | null;
+}
+
+function GitOptionsSection({
+  baseBranch,
+  onBaseBranchChange,
+  branches,
+  status,
+  repoError,
+  warning,
+  createNewBranch,
+  onToggleCreateNewBranch,
+  branchName,
+  onBranchNameChange,
+  createWorktree,
+  onToggleCreateWorktree,
+  worktreeSlug,
+  onWorktreeSlugChange,
+  gitValidationError,
+}: GitOptionsSectionProps): ReactElement {
+  const suggestedBranches = branches.slice(0, 6);
+  const currentBranchLabel = branches.find((branch) => branch.isCurrent)?.name;
+
+  return (
+    <View style={styles.formSection}>
+      <Text style={styles.label}>Git Setup</Text>
+      <Text style={styles.helperText}>
+        Choose a base branch, then optionally create a feature branch or isolated worktree.
+      </Text>
+
+      <TextInput
+        style={styles.input}
+        placeholder={currentBranchLabel || "main"}
+        placeholderTextColor={defaultTheme.colors.mutedForeground}
+        value={baseBranch}
+        onChangeText={onBaseBranchChange}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+
+      {status === "loading" ? (
+        <Text style={styles.helperText}>Inspecting repository…</Text>
+      ) : null}
+      {repoError ? <Text style={styles.errorText}>{repoError}</Text> : null}
+      {warning && !gitValidationError ? (
+        <Text style={styles.warningText}>{warning}</Text>
+      ) : null}
+
+      {suggestedBranches.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.branchChipRow}
+        >
+          {suggestedBranches.map((branch) => {
+            const isActive = branch.name === baseBranch;
+            return (
+              <Pressable
+                key={branch.name}
+                style={[
+                  styles.branchChip,
+                  isActive && styles.branchChipActive,
+                ]}
+                onPress={() => onBaseBranchChange(branch.name)}
+              >
+                <Text
+                  style={[
+                    styles.branchChipText,
+                    isActive && styles.branchChipTextActive,
+                  ]}
+                >
+                  {branch.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      <ToggleRow
+        label="New Branch"
+        description="Create a feature branch before launching the agent"
+        value={createNewBranch}
+        onToggle={onToggleCreateNewBranch}
+      />
+      {createNewBranch ? (
+        <TextInput
+          style={styles.input}
+          placeholder="feature-branch-name"
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          value={branchName}
+          onChangeText={onBranchNameChange}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      ) : null}
+
+      <ToggleRow
+        label="Create Worktree"
+        description="Use an isolated directory so your current branch stays untouched"
+        value={createWorktree}
+        onToggle={onToggleCreateWorktree}
+      />
+      {createWorktree ? (
+        <TextInput
+          style={styles.input}
+          placeholder={branchName || "feature-worktree"}
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          value={worktreeSlug}
+          onChangeText={onWorktreeSlugChange}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      ) : null}
+
+      {gitValidationError ? (
+        <Text style={styles.errorText}>{gitValidationError}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+interface ToggleRowProps {
+  label: string;
+  description?: string;
+  value: boolean;
+  onToggle: (value: boolean) => void;
+  disabled?: boolean;
+}
+
+function ToggleRow({ label, description, value, onToggle, disabled }: ToggleRowProps): ReactElement {
+  return (
+    <Pressable
+      onPress={() => {
+        if (!disabled) {
+          onToggle(!value);
+        }
+      }}
+      style={[styles.toggleRow, disabled && styles.toggleRowDisabled]}
+    >
+      <View
+        style={[
+          styles.checkbox,
+          value && styles.checkboxChecked,
+          disabled && styles.checkboxDisabled,
+        ]}
+      >
+        {value ? <View style={styles.checkboxDot} /> : null}
+      </View>
+      <View style={styles.toggleTextContainer}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        {description ? <Text style={styles.helperText}>{description}</Text> : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -1098,11 +1636,19 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
+  promptInput: {
+    minHeight: theme.spacing[24],
+    textAlignVertical: "top",
+  },
   inputDisabled: {
     opacity: theme.opacity[50],
   },
   errorText: {
     color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
+  },
+  warningText: {
+    color: theme.colors.palette.orange[400],
     fontSize: theme.fontSize.sm,
   },
   helperText: {
@@ -1126,6 +1672,31 @@ const styles = StyleSheet.create((theme) => ({
   recentPathChipText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  branchChipRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
+  branchChip: {
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[1],
+    backgroundColor: theme.colors.muted,
+  },
+  branchChipActive: {
+    borderColor: theme.colors.palette.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
+  },
+  branchChipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  branchChipTextActive: {
+    color: theme.colors.palette.white,
     fontWeight: theme.fontWeight.semibold,
   },
   selectorRow: {
@@ -1177,6 +1748,46 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[2],
     alignItems: "center",
     justifyContent: "center",
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  toggleRowDisabled: {
+    opacity: theme.opacity[50],
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: theme.borderWidth[2],
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: {
+    borderColor: theme.colors.palette.blue[500],
+    backgroundColor: theme.colors.palette.blue[500],
+  },
+  checkboxDisabled: {
+    borderColor: theme.colors.border,
+  },
+  checkboxDot: {
+    width: 10,
+    height: 10,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.palette.white,
+  },
+  toggleTextContainer: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  toggleLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
   },
   radioOuterSelected: {
     borderColor: theme.colors.palette.blue[500],

@@ -19,10 +19,11 @@ type ProviderEventPayload = Extract<
 
 export type AgentSnapshotPayload = Omit<
   AgentSnapshot,
-  "createdAt" | "updatedAt"
+  "createdAt" | "updatedAt" | "lastUserMessageAt"
 > & {
   createdAt: string;
   updatedAt: string;
+  lastUserMessageAt: string | null;
   title: string | null;
 };
 
@@ -219,6 +220,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   cwd: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   sessionId: z.string().nullable(),
   capabilities: AgentCapabilityFlagsSchema,
@@ -239,11 +241,12 @@ export function serializeAgentSnapshot(
   snapshot: AgentSnapshot,
   options?: { title?: string | null }
 ): AgentSnapshotPayload {
-  const { createdAt, updatedAt, ...rest } = snapshot;
+  const { createdAt, updatedAt, lastUserMessageAt, ...rest } = snapshot;
   return {
     ...rest,
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
+    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     title: options?.title ?? null,
   };
 }
@@ -323,10 +326,28 @@ export const SendAgentAudioSchema = z.object({
   requestId: z.string().optional(), // Client-provided ID for tracking transcription
 });
 
+const GitSetupOptionsSchema = z.object({
+  baseBranch: z.string().optional(),
+  createNewBranch: z.boolean().optional(),
+  newBranchName: z.string().optional(),
+  createWorktree: z.boolean().optional(),
+  worktreeSlug: z.string().optional(),
+});
+
+export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
+
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   config: AgentSessionConfigSchema,
   worktreeName: z.string().optional(),
+  initialPrompt: z.string().optional(),
+  git: GitSetupOptionsSchema.optional(),
+  requestId: z.string().optional(),
+});
+
+export const GitRepoInfoRequestMessageSchema = z.object({
+  type: z.literal("git_repo_info_request"),
+  cwd: z.string(),
   requestId: z.string().optional(),
 });
 
@@ -346,6 +367,11 @@ export const RefreshAgentRequestMessageSchema = z.object({
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
+});
+
+export const RestartServerRequestMessageSchema = z.object({
+  type: z.literal("restart_server_request"),
+  reason: z.string().optional(),
 });
 
 export const ListPersistedAgentsRequestMessageSchema = z.object({
@@ -424,12 +450,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
+  RestartServerRequestMessageSchema,
   InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   FileExplorerRequestSchema,
   ListPersistedAgentsRequestMessageSchema,
+  GitRepoInfoRequestMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -622,6 +650,7 @@ const PersistedAgentDescriptorPayloadSchema = z.object({
   title: z.string(),
   lastActivityAt: z.string(),
   persistence: AgentPersistenceHandleSchema,
+  timeline: z.array(AgentTimelineItemPayloadSchema),
 });
 
 export type PersistedAgentDescriptorPayload = z.infer<typeof PersistedAgentDescriptorPayloadSchema>;
@@ -654,6 +683,24 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+const GitBranchInfoSchema = z.object({
+  name: z.string(),
+  isCurrent: z.boolean(),
+});
+
+export const GitRepoInfoResponseSchema = z.object({
+  type: z.literal("git_repo_info_response"),
+  payload: z.object({
+    cwd: z.string(),
+    repoRoot: z.string(),
+    requestId: z.string().optional(),
+    branches: z.array(GitBranchInfoSchema).optional(),
+    currentBranch: z.string().nullable().optional(),
+    isDirty: z.boolean().optional(),
+    error: z.string().optional(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -675,6 +722,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListPersistedAgentsResponseSchema,
   GitDiffResponseSchema,
   FileExplorerResponseSchema,
+  GitRepoInfoResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -722,6 +770,7 @@ export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

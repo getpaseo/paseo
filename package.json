@@ -15,9 +15,11 @@
     "start": "npm run start --workspace=@paseo/server",
     "android": "npm run android --workspace=@paseo/app",
     "ios": "npm run ios --workspace=@paseo/app",
-    "web": "npm run web --workspace=@paseo/app"
+    "web": "npm run web --workspace=@paseo/app",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
+    "patch-package": "^8.0.1",
     "typescript": "^5.9.3"
   },
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",

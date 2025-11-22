@@ -14,6 +14,7 @@ function createSnapshot(overrides?: Partial<AgentSnapshot>): AgentSnapshot {
     cwd: "/tmp/project",
     createdAt: now,
     updatedAt: now,
+    lastUserMessageAt: null,
     status: "idle",
     sessionId: null,
     capabilities: {

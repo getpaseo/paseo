@@ -18,10 +18,12 @@ export function AgentList({ agents }: AgentListProps) {
   const [actionAgent, setActionAgent] = useState<Agent | null>(null);
   const isActionSheetVisible = actionAgent !== null;
   
-  // Sort agents by lastActivityAt (most recent first)
+  // Sort agents by the persisted timestamp of the last user message, falling back to last activity
   const agentArray = useMemo(() => {
     return Array.from(agents.values()).sort((a, b) => {
-      return b.lastActivityAt.getTime() - a.lastActivityAt.getTime();
+      const sortA = (a.lastUserMessageAt ?? a.lastActivityAt).getTime();
+      const sortB = (b.lastUserMessageAt ?? b.lastActivityAt).getTime();
+      return sortB - sortA;
     });
   }, [agents]);
 

@@ -98,6 +98,8 @@ const MODE_PRESETS: Record<
 type CodexOptionsOverrides = Partial<ThreadOptions> & { skipGitRepoCheck?: boolean };
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 5;
+const PERSISTED_TIMELINE_LIMIT = 20;
+const SHELL_FUNCTION_NAMES = new Set(["shell", "shell_command"]);
 type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
 type ExecPermissionRequestPayload = {
@@ -334,10 +336,26 @@ class CodexAgentSession implements AgentSession {
     const turnOptions = this.buildTurnOptions(options);
     const { events } = await thread.runStreamed(input, turnOptions);
 
-    for await (const rawEvent of events) {
-      yield* this.translateEvent(rawEvent);
-      if (rawEvent.type === "turn.completed" || rawEvent.type === "turn.failed" || rawEvent.type === "error") {
-        break;
+    let finishedNaturally = false;
+    try {
+      for await (const rawEvent of events) {
+        yield* this.translateEvent(rawEvent);
+        if (
+          rawEvent.type === "turn.completed" ||
+          rawEvent.type === "turn.failed" ||
+          rawEvent.type === "error"
+        ) {
+          finishedNaturally = true;
+          break;
+        }
+      }
+    } finally {
+      if (!finishedNaturally && typeof events.return === "function") {
+        try {
+          await events.return({ type: "turn.completed" } as ThreadEvent);
+        } catch (error) {
+          console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
+        }
       }
     }
   }
@@ -887,7 +905,7 @@ async function parseRolloutFile(filePath: string, threadId: string): Promise<Age
   const content = await fs.readFile(filePath, "utf8");
   const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const events: AgentStreamEvent[] = [{ type: "thread_started", provider: "codex", sessionId: threadId }];
-  const commandCalls = new Map<string, { command: string }>();
+  const commandCalls = new Map<string, { command: string; cwd?: string }>();
 
   for (const line of lines) {
     const entry = parseRolloutEntry(line);
@@ -933,18 +951,10 @@ function isSessionMetaEntry(value: unknown): value is SessionMetaEntry {
   return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "session_meta");
 }
 
-function isResponseItemEntry(value: unknown): value is ResponseItemEntry {
-  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "response_item");
-}
-
-function isRolloutMessagePayload(payload: RolloutResponsePayload | undefined): payload is RolloutMessagePayload {
-  return Boolean(payload && payload.type === "message");
-}
-
 function handleRolloutResponseItem(
   payload: RolloutResponsePayload | undefined,
   events: AgentStreamEvent[],
-  commandCalls: Map<string, { command: string }>
+  commandCalls: Map<string, { command: string; cwd?: string }>
 ): void {
   if (!payload || typeof payload !== "object") {
     return;
@@ -957,6 +967,9 @@ function handleRolloutResponseItem(
         if (payload.role === "assistant") {
           events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text, raw: payload } });
         } else if (payload.role === "user") {
+          if (isSyntheticRolloutUserMessage(text)) {
+            break;
+          }
           events.push({ type: "timeline", provider: "codex", item: { type: "user_message", text, raw: payload } });
         }
       }
@@ -998,18 +1011,35 @@ function handleRolloutEventMessage(payload: RolloutEventPayload | undefined, eve
 function handleRolloutFunctionCall(
   payload: RolloutFunctionCallPayload,
   events: AgentStreamEvent[],
-  commandCalls: Map<string, { command: string }>
+  commandCalls: Map<string, { command: string; cwd?: string }>
 ): void {
   const name = typeof payload.name === "string" ? payload.name : undefined;
   if (!name) {
     return;
   }
 
-  if (name === "shell") {
+  if (SHELL_FUNCTION_NAMES.has(name)) {
     const args = safeJsonParse<Record<string, unknown>>(payload.arguments);
     const command = formatCommand(args);
+    const cwd = args && typeof args === "object" && typeof (args as { workdir?: unknown }).workdir === "string"
+      ? ((args as { workdir?: unknown }).workdir as string)
+      : undefined;
     if (command && typeof payload.call_id === "string") {
-      commandCalls.set(payload.call_id, { command });
+      commandCalls.set(payload.call_id, { command, cwd });
+      events.push({
+        type: "timeline",
+        provider: "codex",
+        item: createToolCallTimelineItem({
+          server: "command",
+          tool: "shell",
+          status: payload.status ?? "in_progress",
+          callId: payload.call_id,
+          displayName: buildCommandDisplayName(command),
+          kind: "execute",
+          input: { command, cwd },
+          raw: payload,
+        }),
+      });
     }
     return;
   }
@@ -1042,7 +1072,7 @@ function handleRolloutFunctionCall(
 function finalizeRolloutFunctionCall(
   payload: RolloutFunctionCallOutputPayload,
   events: AgentStreamEvent[],
-  commandCalls: Map<string, { command: string }>
+  commandCalls: Map<string, { command: string; cwd?: string }>
 ): void {
   if (typeof payload.call_id !== "string") {
     return;
@@ -1064,7 +1094,7 @@ function finalizeRolloutFunctionCall(
       callId: payload.call_id,
       displayName: buildCommandDisplayName(command.command),
       kind: "execute",
-      input: { command: command.command },
+      input: { command: command.command, cwd: command.cwd },
       output: result,
       raw: { payload, result },
     }),
@@ -1196,11 +1226,6 @@ type SessionMetaEntry = {
   payload?: SessionMetaPayload;
 };
 
-type ResponseItemEntry = {
-  type: "response_item";
-  payload?: RolloutResponsePayload;
-};
-
 async function collectRecentRolloutFiles(rootDir: string, limit: number): Promise<RolloutCandidate[]> {
   const candidates: RolloutCandidate[] = [];
   async function traverse(dir: string): Promise<void> {
@@ -1268,21 +1293,19 @@ async function parseRolloutDescriptor(
       if (typeof entry.payload.cwd === "string" && entry.payload.cwd.length > 0) {
         cwd = entry.payload.cwd;
       }
-    } else if (
-      !title &&
-      isResponseItemEntry(entry) &&
-      isRolloutMessagePayload(entry.payload) &&
-      entry.payload.role === "user"
-    ) {
-      title = extractCodexUserPrompt(entry.payload);
     }
-    if (sessionId && cwd && title) {
+    if (sessionId && cwd) {
       break;
     }
   }
 
   if (!sessionId || !cwd) {
     return null;
+  }
+
+  const timeline = await loadCodexPersistedTimeline(filePath, sessionId);
+  if (!title) {
+    title = timeline.find((item) => item.type === "user_message")?.text ?? null;
   }
 
   const persistence: AgentPersistenceHandle = {
@@ -1304,19 +1327,8 @@ async function parseRolloutDescriptor(
     title: (title ?? "").trim() || `Codex session ${sessionId.slice(0, 8)}`,
     lastActivityAt: mtime,
     persistence,
+    timeline,
   };
-}
-
-function extractCodexUserPrompt(payload: RolloutMessagePayload): string | null {
-  if (!Array.isArray(payload.content)) {
-    return null;
-  }
-  for (const block of payload.content) {
-    if (block && typeof block === "object" && typeof block.text === "string") {
-      return block.text.trim();
-    }
-  }
-  return null;
 }
 
 function resolveCodexSessionRoot(): string | null {
@@ -1350,6 +1362,24 @@ function extractMessageText(content: unknown): string {
   return parts.join("\n").trim();
 }
 
+export function isSyntheticRolloutUserMessage(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith("# agents.md instructions for") && lower.includes("<instructions>")) {
+    return true;
+  }
+
+  if (lower.startsWith("<environment_context>")) {
+    return true;
+  }
+
+  return false;
+}
+
 function extractReasoningText(payload: RolloutReasoningPayload): string {
   if (Array.isArray(payload?.summary)) {
     const text = payload.summary
@@ -1365,6 +1395,26 @@ function extractReasoningText(payload: RolloutReasoningPayload): string {
     return payload.text;
   }
   return "";
+}
+
+async function loadCodexPersistedTimeline(filePath: string, threadId: string): Promise<AgentTimelineItem[]> {
+  try {
+    const events = await parseRolloutFile(filePath, threadId);
+    const timeline: AgentTimelineItem[] = [];
+    for (const event of events) {
+      if (event.type !== "timeline" || event.provider !== "codex") {
+        continue;
+      }
+      timeline.push(event.item);
+      if (timeline.length >= PERSISTED_TIMELINE_LIMIT) {
+        break;
+      }
+    }
+    return timeline;
+  } catch (error) {
+    console.warn(`[CodexAgentSession] Failed to load persisted timeline for ${threadId}:`, error);
+    return [];
+  }
 }
 
 function parsePlanItems(args: unknown): { text: string; completed: boolean }[] {

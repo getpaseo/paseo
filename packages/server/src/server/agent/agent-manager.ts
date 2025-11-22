@@ -33,6 +33,7 @@ export type AgentSnapshot = {
   cwd: string;
   createdAt: Date;
   updatedAt: Date;
+  lastUserMessageAt: Date | null;
   status: AgentLifecycleStatus;
   sessionId: string | null;
   capabilities: AgentCapabilityFlags;
@@ -85,6 +86,7 @@ type ManagedAgent = {
   lastUsage?: AgentUsage;
   lastError?: string;
   historyPrimed: boolean;
+  lastUserMessageAt: Date | null;
 };
 
 type SubscriptionRecord = {
@@ -317,12 +319,14 @@ export class AgentManager {
       raw: options?.raw,
     };
     agent.updatedAt = new Date();
+    agent.lastUserMessageAt = agent.updatedAt;
     this.recordTimeline(agent, item);
     this.dispatchStream(agentId, {
       type: "timeline",
       item,
       provider: agent.provider,
     });
+    this.emitState(agent);
   }
 
   streamAgent(
@@ -344,7 +348,12 @@ export class AgentManager {
     agent.lastError = undefined;
     this.emitState(agent);
 
+    let finalized = false;
     const finalize = (error?: string) => {
+      if (finalized) {
+        return;
+      }
+      finalized = true;
       agent.pendingRun = null;
       agent.status = error ? "error" : "idle";
       agent.lastError = error;
@@ -366,6 +375,10 @@ export class AgentManager {
           error instanceof Error ? error.message : "Agent stream failed";
         finalize(message);
         throw error;
+      } finally {
+        // Ensure we always clear the pending run and emit state when the stream is
+        // cancelled early (e.g., via .return()) so the UI can exit the cancelling state.
+        finalize();
       }
     })();
   }
@@ -403,6 +416,11 @@ export class AgentManager {
     return Array.from(agent.pendingPermissions.values());
   }
 
+  async primeAgentHistory(agentId: string): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    await this.primeHistory(agent);
+  }
+
   private async registerSession(
     session: AgentSession,
     config: AgentSessionConfig,
@@ -430,6 +448,7 @@ export class AgentManager {
       timeline: [],
       persistence: session.describePersistence(),
       historyPrimed: false,
+      lastUserMessageAt: null,
     };
 
     this.agents.set(agentId, managed);
@@ -438,7 +457,6 @@ export class AgentManager {
     await this.refreshSessionState(managed);
     managed.status = "idle";
     this.emitState(managed);
-    void this.primeHistory(managed);
     return this.toSnapshot(managed);
   }
 
@@ -473,7 +491,7 @@ export class AgentManager {
     agent.historyPrimed = true;
     try {
       for await (const event of agent.session.streamHistory()) {
-        this.handleStreamEvent(agent, event);
+        this.handleStreamEvent(agent, event, { fromHistory: true });
       }
     } catch {
       // ignore history failures
@@ -482,7 +500,8 @@ export class AgentManager {
 
   private handleStreamEvent(
     agent: ManagedAgent,
-    event: AgentStreamEvent
+    event: AgentStreamEvent,
+    options?: { fromHistory?: boolean }
   ): void {
     agent.updatedAt = new Date();
 
@@ -492,6 +511,13 @@ export class AgentManager {
         break;
       case "timeline":
         this.recordTimeline(agent, event.item);
+        if (
+          !options?.fromHistory &&
+          event.item.type === "user_message"
+        ) {
+          agent.lastUserMessageAt = new Date();
+          this.emitState(agent);
+        }
         break;
       case "turn_completed":
         agent.lastUsage = event.usage;
@@ -557,6 +583,7 @@ export class AgentManager {
       cwd: agent.cwd,
       createdAt: agent.createdAt,
       updatedAt: agent.updatedAt,
+      lastUserMessageAt: agent.lastUserMessageAt,
       status: agent.status,
       sessionId: agent.sessionId,
       capabilities: agent.capabilities,

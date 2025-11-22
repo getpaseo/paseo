@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import type { ReactNode } from "react";
 import {
   View,
   Text,
@@ -39,6 +40,7 @@ import {
   extractReadEntries,
 } from "@/utils/tool-call-parsers";
 
+const MAX_CHAT_WIDTH = 960;
 export interface AgentStreamViewProps {
   agentId: string;
   agent: Agent;
@@ -219,30 +221,31 @@ export function AgentStreamView({
   }
 
   function renderStreamItem({ item }: ListRenderItemInfo<StreamItem>) {
+    let content: React.ReactNode = null;
+
     switch (item.kind) {
       case "user_message":
-        return (
+        content = (
           <UserMessage
             message={item.text}
             timestamp={item.timestamp.getTime()}
           />
         );
+        break;
 
       case "assistant_message":
-        return (
+        content = (
           <AssistantMessage
             message={item.text}
             timestamp={item.timestamp.getTime()}
             onInlinePathPress={handleInlinePathPress}
           />
         );
+        break;
 
       case "thought":
-        return (
-          <AgentThoughtMessage
-            message={item.text}
-          />
-        );
+        content = <AgentThoughtMessage message={item.text} />;
+        break;
 
       case "tool_call": {
         const { payload } = item;
@@ -250,7 +253,7 @@ export function AgentStreamView({
         if (payload.source === "agent") {
           const data = payload.data;
           const toolLabel = data.displayName ?? `${data.server}/${data.tool}`;
-          return (
+          content = (
             <ToolCall
               toolName={toolLabel}
               kind={data.kind}
@@ -264,22 +267,23 @@ export function AgentStreamView({
               onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
           );
+        } else {
+          const data = payload.data;
+          content = (
+            <ToolCall
+              toolName={data.toolName}
+              args={data.arguments}
+              result={data.result}
+              status={data.status}
+              onOpenDetails={() => handleOpenToolCallDetails({ payload })}
+            />
+          );
         }
-
-        const data = payload.data;
-        return (
-          <ToolCall
-            toolName={data.toolName}
-            args={data.arguments}
-            result={data.result}
-            status={data.status}
-            onOpenDetails={() => handleOpenToolCallDetails({ payload })}
-          />
-        );
+        break;
       }
 
       case "activity_log":
-        return (
+        content = (
           <ActivityLog
             type={item.activityType}
             message={item.message}
@@ -287,19 +291,27 @@ export function AgentStreamView({
             metadata={item.metadata}
           />
         );
+        break;
 
       case "todo_list":
-        return (
+        content = (
           <TodoListCard
             provider={item.provider}
             timestamp={item.timestamp.getTime()}
             items={item.items}
           />
         );
+        break;
 
       default:
-        return null;
+        content = null;
     }
+
+    if (!content) {
+      return null;
+    }
+
+    return <View style={stylesheet.streamItemWrapper}>{content}</View>;
   }
 
   const pendingPermissionItems = useMemo(
@@ -318,24 +330,26 @@ export function AgentStreamView({
     }
 
     return (
-      <View style={stylesheet.listHeaderContent}>
-        {pendingPermissionItems.length > 0 ? (
-          <View style={stylesheet.permissionsContainer}>
-            {pendingPermissionItems.map((permission) => (
-              <PermissionRequestCard
-                key={permission.key}
-                permission={permission}
-                onResponse={onPermissionResponse}
-              />
-            ))}
-          </View>
-        ) : null}
+      <View style={stylesheet.contentWrapper}>
+        <View style={stylesheet.listHeaderContent}>
+          {pendingPermissionItems.length > 0 ? (
+            <View style={stylesheet.permissionsContainer}>
+              {pendingPermissionItems.map((permission) => (
+                <PermissionRequestCard
+                  key={permission.key}
+                  permission={permission}
+                  onResponse={onPermissionResponse}
+                />
+              ))}
+            </View>
+          ) : null}
 
-        {showWorkingIndicator ? (
-          <View style={stylesheet.workingIndicatorWrapper}>
-            <WorkingIndicator />
-          </View>
-        ) : null}
+          {showWorkingIndicator ? (
+            <View style={stylesheet.workingIndicatorWrapper}>
+              <WorkingIndicator />
+            </View>
+          ) : null}
+        </View>
       </View>
     );
   }, [onPermissionResponse, pendingPermissionItems, showWorkingIndicator]);
@@ -371,7 +385,7 @@ export function AgentStreamView({
         onMomentumScrollEnd={handleScrollEnd}
         scrollEventThrottle={16}
         ListEmptyComponent={
-          <View style={stylesheet.emptyState}>
+          <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
             <Text style={stylesheet.emptyStateText}>
               Start chatting with this agent...
             </Text>
@@ -395,15 +409,17 @@ export function AgentStreamView({
           entering={scrollIndicatorFadeIn}
           exiting={scrollIndicatorFadeOut}
         >
-          <Pressable
-            style={stylesheet.scrollToBottomButton}
-            onPress={scrollToBottom}
-          >
-            <ChevronDown
-              size={24}
-              color={stylesheet.scrollToBottomIcon.color}
-            />
-          </Pressable>
+          <View style={stylesheet.scrollToBottomInner}>
+            <Pressable
+              style={stylesheet.scrollToBottomButton}
+              onPress={scrollToBottom}
+            >
+              <ChevronDown
+                size={24}
+                color={stylesheet.scrollToBottomIcon.color}
+              />
+            </Pressable>
+          </View>
         </Animated.View>
       )}
 
@@ -462,16 +478,18 @@ function WorkingIndicator() {
   const dotOne = useSharedValue(0);
   const dotTwo = useSharedValue(0);
   const dotThree = useSharedValue(0);
+  const bounceDuration = 600;
+  const bounceDelayOffset = 160;
 
   useEffect(() => {
     const sharedValues = [dotOne, dotTwo, dotThree];
     sharedValues.forEach((value, index) => {
       value.value = withDelay(
-        index * 120,
+        index * bounceDelayOffset,
         withRepeat(
           withSequence(
-            withTiming(1, { duration: 320 }),
-            withTiming(0, { duration: 320 })
+            withTiming(1, { duration: bounceDuration }),
+            withTiming(0, { duration: bounceDuration })
           ),
           -1,
           true
@@ -487,19 +505,20 @@ function WorkingIndicator() {
     };
   }, [dotOne, dotTwo, dotThree]);
 
+  const translateDistance = -4;
   const dotOneStyle = useAnimatedStyle(() => ({
     opacity: 0.3 + dotOne.value * 0.7,
-    transform: [{ translateY: dotOne.value * -4 }],
+    transform: [{ translateY: dotOne.value * translateDistance }],
   }));
 
   const dotTwoStyle = useAnimatedStyle(() => ({
     opacity: 0.3 + dotTwo.value * 0.7,
-    transform: [{ translateY: dotTwo.value * -4 }],
+    transform: [{ translateY: dotTwo.value * translateDistance }],
   }));
 
   const dotThreeStyle = useAnimatedStyle(() => ({
     opacity: 0.3 + dotThree.value * 0.7,
-    transform: [{ translateY: dotThree.value * -4 }],
+    transform: [{ translateY: dotThree.value * translateDistance }],
   }));
 
   return (
@@ -566,8 +585,13 @@ function PermissionRequestCard({
     () => ({
       body: {
         color: theme.colors.foreground,
-        fontSize: theme.fontSize.sm,
-        lineHeight: 20,
+        fontSize: theme.fontSize.base,
+        lineHeight: 22,
+      },
+      text: {
+        color: theme.colors.foreground,
+        fontSize: theme.fontSize.base,
+        lineHeight: 22,
       },
       paragraph: {
         marginBottom: theme.spacing[1],
@@ -823,9 +847,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  contentWrapper: {
+    width: "100%",
+    maxWidth: MAX_CHAT_WIDTH,
+    alignSelf: "center",
+  },
   list: {
     flex: 1,
     paddingHorizontal: theme.spacing[2],
+  },
+  streamItemWrapper: {
+    width: "100%",
+    maxWidth: MAX_CHAT_WIDTH,
+    alignSelf: "center",
   },
   emptyState: {
     flex: 1,
@@ -840,18 +874,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   workingIndicatorWrapper: {
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   workingIndicatorBubble: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
+    paddingHorizontal: 0,
+    paddingVertical: theme.spacing[1],
+    paddingLeft: theme.spacing[1],
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.card,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    alignSelf: "flex-start",
   },
   workingIndicatorText: {
     color: theme.colors.mutedForeground,
@@ -885,6 +920,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     right: 0,
     alignItems: "center",
     pointerEvents: "box-none",
+  },
+  scrollToBottomInner: {
+    width: "100%",
+    maxWidth: MAX_CHAT_WIDTH,
+    alignSelf: "center",
+    alignItems: "center",
   },
   scrollToBottomButton: {
     width: 48,

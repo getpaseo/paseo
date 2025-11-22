@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WaitForAgentTracker } from "./wait-for-agent-tracker";
+import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 
 describe("WaitForAgentTracker", () => {
   it("registers and cancels waiters per agent", () => {
@@ -7,7 +7,7 @@ describe("WaitForAgentTracker", () => {
     const cancelA = vi.fn();
     const cancelB = vi.fn();
 
-    const unregisterA = tracker.register("agent-a", cancelA);
+    tracker.register("agent-a", cancelA);
     tracker.register("agent-a", cancelB);
 
     expect(tracker.cancel("agent-a", "test")).toBe(true);

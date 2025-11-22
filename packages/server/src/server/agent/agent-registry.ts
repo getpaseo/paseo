@@ -33,6 +33,8 @@ const STORED_AGENT_SCHEMA = z.object({
   cwd: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  lastActivityAt: z.string().optional(),
+  lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   lastStatus: z.string().nullable().optional(),
   lastModeId: z.string().nullable().optional(),
@@ -121,6 +123,8 @@ export class AgentRegistry {
       cwd,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      lastActivityAt: existing?.lastActivityAt ?? existing?.updatedAt ?? now,
+      lastUserMessageAt: existing?.lastUserMessageAt ?? null,
       title: existing?.title ?? null,
       lastStatus: existing?.lastStatus ?? null,
       lastModeId: nextModeId,
@@ -138,15 +142,19 @@ export class AgentRegistry {
     if (!existing) {
       const record: StoredAgentRecord = {
         id: snapshot.id,
-        provider: snapshot.provider,
-        cwd: snapshot.cwd,
-        createdAt: now,
-        updatedAt: now,
-        title: null,
-        lastStatus: snapshot.status,
-        lastModeId: snapshot.currentModeId ?? null,
-        config: null,
-        persistence: snapshot.persistence ?? null,
+      provider: snapshot.provider,
+      cwd: snapshot.cwd,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: snapshot.updatedAt.toISOString(),
+      lastUserMessageAt: snapshot.lastUserMessageAt
+        ? snapshot.lastUserMessageAt.toISOString()
+        : null,
+      title: null,
+      lastStatus: snapshot.status,
+      lastModeId: snapshot.currentModeId ?? null,
+      config: null,
+      persistence: snapshot.persistence ?? null,
       };
       this.cache.set(snapshot.id, record);
       await this.flush();
@@ -157,6 +165,10 @@ export class AgentRegistry {
       provider: snapshot.provider,
       cwd: snapshot.cwd,
       updatedAt: now,
+      lastActivityAt: snapshot.updatedAt.toISOString(),
+      lastUserMessageAt: snapshot.lastUserMessageAt
+        ? snapshot.lastUserMessageAt.toISOString()
+        : existing.lastUserMessageAt ?? null,
       lastStatus: snapshot.status,
       lastModeId: snapshot.currentModeId ?? null,
       persistence: snapshot.persistence ?? existing.persistence ?? null,

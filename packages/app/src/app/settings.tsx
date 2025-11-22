@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,12 +8,22 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useSettings } from "@/hooks/use-settings";
+import { useSession } from "@/contexts/session-context";
 import { theme as defaultTheme } from "@/styles/theme";
 import { BackHeader } from "@/components/headers/back-header";
+
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      clearTimeout(timeout);
+      resolve();
+    }, ms);
+  });
 
 const styles = StyleSheet.create((theme) => ({
   loadingContainer: {
@@ -192,6 +202,24 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
+  restartButton: {
+    padding: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    marginTop: theme.spacing[3],
+    backgroundColor: theme.colors.destructive,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  restartButtonDisabled: {
+    opacity: theme.opacity[50],
+  },
+  restartButtonText: {
+    color: theme.colors.destructiveForeground,
+    textAlign: "center",
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
   footer: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
@@ -212,6 +240,7 @@ const styles = StyleSheet.create((theme) => ({
 
 export default function SettingsScreen() {
   const { settings, isLoading, updateSettings, resetSettings } = useSettings();
+  const { restartServer, ws } = useSession();
 
   const [serverUrl, setServerUrl] = useState(settings.serverUrl);
   const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
@@ -223,6 +252,137 @@ export default function SettingsScreen() {
     success: boolean;
     message: string;
   } | null>(null);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const isMountedRef = useRef(true);
+  const wsIsConnectedRef = useRef(ws.isConnected);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    wsIsConnectedRef.current = ws.isConnected;
+  }, [ws.isConnected]);
+
+  const waitForCondition = useCallback(
+    async (predicate: () => boolean, timeoutMs: number, intervalMs = 250) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (!isMountedRef.current) {
+          return false;
+        }
+        if (predicate()) {
+          return true;
+        }
+        await delay(intervalMs);
+      }
+      return predicate();
+    },
+    []
+  );
+
+  const testServerConnection = useCallback((url: string, timeoutMs = 5000) => {
+    return new Promise<void>((resolve, reject) => {
+      let wsConnection: WebSocket | null = null;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let settled = false;
+
+      const cleanup = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+        }
+        if (wsConnection) {
+          wsConnection.onopen = null;
+          wsConnection.onerror = null;
+          wsConnection.onclose = null;
+          try {
+            wsConnection.close();
+          } catch {
+            // no-op
+          }
+        }
+      };
+
+      const succeed = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(message));
+      };
+
+      try {
+        wsConnection = new WebSocket(url);
+      } catch {
+        fail("Failed to create connection");
+        return;
+      }
+
+      timeoutId = setTimeout(() => {
+        fail("Connection timeout - server did not respond");
+      }, timeoutMs);
+
+      wsConnection.onopen = () => succeed();
+      wsConnection.onerror = () => fail("Connection failed - check URL and network");
+      wsConnection.onclose = () => fail("Connection failed - check URL and network");
+    });
+  }, []);
+
+  const waitForServerRestart = useCallback(async () => {
+    const maxAttempts = 12;
+    const retryDelayMs = 2500;
+    const disconnectTimeoutMs = 7000;
+    const reconnectTimeoutMs = 10000;
+
+    if (wsIsConnectedRef.current) {
+      await waitForCondition(() => !wsIsConnectedRef.current, disconnectTimeoutMs);
+    }
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await testServerConnection(settings.serverUrl);
+        const reconnected = await waitForCondition(
+          () => wsIsConnectedRef.current,
+          reconnectTimeoutMs
+        );
+
+        if (isMountedRef.current) {
+          setIsRestarting(false);
+          if (!reconnected) {
+            Alert.alert(
+              "Server reachable",
+              "The server came back online but the app has not reconnected yet."
+            );
+          }
+        }
+        return;
+      } catch (error) {
+        console.warn(
+          `[Settings] Restart poll attempt ${attempt}/${maxAttempts} failed`,
+          error
+        );
+        if (attempt === maxAttempts) {
+          if (isMountedRef.current) {
+            setIsRestarting(false);
+            Alert.alert(
+              "Unable to reconnect",
+              "The server did not come back online. Please verify the daemon restarted."
+            );
+          }
+          return;
+        }
+        await delay(retryDelayMs);
+      }
+    }
+  }, [settings.serverUrl, testServerConnection, waitForCondition]);
 
   // Update local state when settings load
   useEffect(() => {
@@ -315,6 +475,59 @@ export default function SettingsScreen() {
     );
   }
 
+  const restartConfirmationMessage =
+    "This will immediately stop the Voice Dev backend process. The app will disconnect until it restarts.";
+
+  const beginServerRestart = useCallback(() => {
+    if (!wsIsConnectedRef.current) {
+      Alert.alert(
+        "Not Connected",
+        "Connect to the server before attempting a restart."
+      );
+      return;
+    }
+
+    setIsRestarting(true);
+    try {
+      restartServer("settings_screen_restart");
+    } catch (error) {
+      setIsRestarting(false);
+      Alert.alert(
+        "Error",
+        "Failed to send restart request. Please ensure you are connected to the server."
+      );
+      return;
+    }
+
+    void waitForServerRestart();
+  }, [restartServer, waitForServerRestart]);
+
+  function handleRestartServer() {
+    if (Platform.OS === "web") {
+      const hasBrowserConfirm =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as any).confirm === "function";
+
+      const confirmed = hasBrowserConfirm
+        ? (globalThis as any).confirm(restartConfirmationMessage)
+        : true;
+
+      if (confirmed) {
+        beginServerRestart();
+      }
+      return;
+    }
+
+    Alert.alert("Restart Server", restartConfirmationMessage, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restart",
+        style: "destructive",
+        onPress: beginServerRestart,
+      },
+    ]);
+  }
+
 
   async function handleTestConnection() {
     if (!validateServerUrl(serverUrl)) {
@@ -330,40 +543,21 @@ export default function SettingsScreen() {
     setTestResult(null);
 
     try {
-      const ws = new WebSocket(serverUrl);
-
-      const timeout = setTimeout(() => {
-        ws.close();
-        setTestResult({
-          success: false,
-          message: "Connection timeout - server did not respond",
-        });
-        setIsTesting(false);
-      }, 5000);
-
-      ws.onopen = () => {
-        clearTimeout(timeout);
-        ws.close();
-        setTestResult({
-          success: true,
-          message: "Connection successful",
-        });
-        setIsTesting(false);
-      };
-
-      ws.onerror = () => {
-        clearTimeout(timeout);
-        setTestResult({
-          success: false,
-          message: "Connection failed - check URL and network",
-        });
-        setIsTesting(false);
-      };
+      await testServerConnection(serverUrl);
+      setTestResult({
+        success: true,
+        message: "Connection successful",
+      });
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Connection failed - check URL and network";
       setTestResult({
         success: false,
-        message: "Failed to create connection",
+        message,
       });
+    } finally {
       setIsTesting(false);
     }
   }
@@ -533,6 +727,26 @@ export default function SettingsScreen() {
 
             <Pressable style={styles.resetButton} onPress={handleReset}>
               <Text style={styles.resetButtonText}>Reset to Defaults</Text>
+            </Pressable>
+
+            <Pressable
+              style={[
+                styles.restartButton,
+                isRestarting && styles.restartButtonDisabled,
+              ]}
+              onPress={handleRestartServer}
+              disabled={isRestarting}
+            >
+              {isRestarting && (
+                <ActivityIndicator
+                  size="small"
+                  color={defaultTheme.colors.destructiveForeground}
+                  style={{ marginRight: defaultTheme.spacing[2] }}
+                />
+              )}
+              <Text style={styles.restartButtonText}>
+                {isRestarting ? "Restarting..." : "Restart Server"}
+              </Text>
             </Pressable>
           </View>
 

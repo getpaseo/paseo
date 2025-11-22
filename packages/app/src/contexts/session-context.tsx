@@ -9,6 +9,7 @@ import type {
   AgentStreamEventPayload,
   SessionInboundMessage,
   WSInboundMessage,
+  GitSetupOptions,
 } from "@server/server/messages";
 import type {
   AgentLifecycleStatus,
@@ -83,6 +84,7 @@ export interface Agent {
   status: AgentLifecycleStatus;
   createdAt: Date;
   updatedAt: Date;
+   lastUserMessageAt: Date | null;
   lastActivityAt: Date;
   sessionId: string | null;
   capabilities: AgentCapabilityFlags;
@@ -144,6 +146,8 @@ export interface AgentFileExplorerState {
   lastError: string | null;
   pendingRequest: ExplorerRequestState | null;
   currentPath: string;
+  history: string[];
+  lastVisitedPath: string;
 }
 
 const createExplorerState = (): AgentFileExplorerState => ({
@@ -153,17 +157,30 @@ const createExplorerState = (): AgentFileExplorerState => ({
   lastError: null,
   pendingRequest: null,
   currentPath: ".",
+  history: ["."],
+  lastVisitedPath: ".",
 });
+
+const pushHistory = (history: string[], path: string): string[] => {
+  const normalizedHistory = history.length === 0 ? ["."] : history;
+  const last = normalizedHistory[normalizedHistory.length - 1];
+  if (last === path) {
+    return normalizedHistory;
+  }
+  return [...normalizedHistory, path];
+};
 
 function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
+  const lastUserMessageAt = snapshot.lastUserMessageAt ? new Date(snapshot.lastUserMessageAt) : null;
   return {
     id: snapshot.id,
     provider: snapshot.provider,
     status: snapshot.status as AgentLifecycleStatus,
     createdAt,
     updatedAt,
+    lastUserMessageAt,
     lastActivityAt: updatedAt,
     sessionId: snapshot.sessionId,
     capabilities: snapshot.capabilities,
@@ -202,6 +219,12 @@ interface SessionContextValue {
   setAgentStreamState: (state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
   initializingAgents: Map<string, boolean>;
 
+  // Queued messages and draft input per agent
+  draftInputs: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>;
+  setDraftInputs: (value: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }> | ((prev: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>) => Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>)) => void;
+  queuedMessages: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>;
+  setQueuedMessages: (value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
+
   // Agents and commands
   agents: Map<string, Agent>;
   setAgents: (agents: Map<string, Agent> | ((prev: Map<string, Agent>) => Map<string, Agent>)) => void;
@@ -218,17 +241,25 @@ interface SessionContextValue {
 
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
-  requestDirectoryListing: (agentId: string, path: string) => void;
+  requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
   requestFilePreview: (agentId: string, path: string) => void;
+  navigateExplorerBack: (agentId: string) => string | null;
 
   // Helpers
+  restartServer: (reason?: string) => void;
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   refreshAgent: (params: { agentId: string; requestId?: string }) => void;
   cancelAgentRun: (agentId: string) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
   sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
   deleteAgent: (agentId: string) => void;
-  createAgent: (options: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => void;
+  createAgent: (options: {
+    config: AgentSessionConfig;
+    initialPrompt: string;
+    git?: GitSetupOptions;
+    worktreeName?: string;
+    requestId?: string;
+  }) => void;
   resumeAgent: (options: { handle: AgentPersistenceHandle; overrides?: Partial<AgentSessionConfig>; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
@@ -274,7 +305,10 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
+  const [draftInputs, setDraftInputs] = useState<SessionContextValue["draftInputs"]>(new Map());
+  const [queuedMessages, setQueuedMessages] = useState<SessionContextValue["queuedMessages"]>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
+  const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -354,14 +388,42 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       setAgents(nextAgents);
       setPendingPermissions(nextPermissions);
       setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
-      setAgentStreamState(() => {
-        const next = new Map<string, StreamItem[]>();
-        for (const snapshot of agentsList) {
-          next.set(snapshot.id, []);
+      setAgentStreamState((prev) => {
+        if (prev.size === 0) {
+          return prev;
         }
-        return next;
+
+        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        let changed = false;
+        const next = new Map(prev);
+
+        for (const agentId of prev.keys()) {
+          if (!validAgentIds.has(agentId)) {
+            next.delete(agentId);
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
       });
-      setInitializingAgents(new Map());
+      setInitializingAgents((prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+
+        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        let changed = false;
+        const next = new Map(prev);
+
+        for (const agentId of prev.keys()) {
+          if (!validAgentIds.has(agentId)) {
+            next.delete(agentId);
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
+      });
     });
 
     const unsubAgentState = ws.on("agent_state", (message) => {
@@ -948,28 +1010,6 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const cancelAgentRun = useCallback((agentId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "cancel_agent_request",
-        agentId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
-  const deleteAgent = useCallback((agentId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "delete_agent_request",
-        agentId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
   const sendAgentMessage = useCallback(async (agentId: string, message: string, imageUris?: string[]) => {
     // Generate unique message ID for deduplication
     const messageId = generateMessageId();
@@ -997,10 +1037,10 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           // Use FileSystem.File to read the image as base64
           const file = new FileSystem.File(imageUri);
           const base64 = file.base64Sync();
-          
+
           // Get MIME type from the file
           const mimeType = file.type || 'image/jpeg';
-          
+
           imagesData.push({
             data: base64,
             mimeType,
@@ -1024,6 +1064,60 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     };
     ws.send(msg);
   }, [ws]);
+
+  // Auto-flush queued messages when an agent transitions from running -> not running
+  useEffect(() => {
+    for (const [agentId, agent] of agents.entries()) {
+      const prevStatus = previousAgentStatusRef.current.get(agentId);
+      if (prevStatus === "running" && agent.status !== "running") {
+        const queue = queuedMessages.get(agentId);
+        if (queue && queue.length > 0) {
+          const [next, ...rest] = queue;
+          void sendAgentMessage(agentId, next.text, next.images?.map((img) => img.uri));
+          setQueuedMessages((prev) => {
+            const updated = new Map(prev);
+            updated.set(agentId, rest);
+            return updated;
+          });
+        }
+      }
+      previousAgentStatusRef.current.set(agentId, agent.status);
+    }
+  }, [agents, queuedMessages, sendAgentMessage]);
+
+  const cancelAgentRun = useCallback((agentId: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "cancel_agent_request",
+        agentId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const deleteAgent = useCallback((agentId: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "delete_agent_request",
+        agentId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const restartServer = useCallback((reason?: string) => {
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "restart_server_request",
+        ...(reason && reason.trim().length > 0 ? { reason } : {}),
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
 
   const sendAgentAudio = useCallback(async (agentId: string, audioBlob: Blob, requestId?: string) => {
     try {
@@ -1060,12 +1154,15 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     }
   }, [ws]);
 
-  const createAgent = useCallback(({ config, worktreeName, requestId }: { config: AgentSessionConfig; worktreeName?: string; requestId?: string }) => {
+  const createAgent = useCallback(({ config, initialPrompt, git, worktreeName, requestId }: { config: AgentSessionConfig; initialPrompt: string; git?: GitSetupOptions; worktreeName?: string; requestId?: string }) => {
+    const trimmedPrompt = initialPrompt.trim();
     const msg: WSInboundMessage = {
       type: "session",
       message: {
         type: "create_agent_request",
         config,
+        ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
+        ...(git ? { git } : {}),
         ...(worktreeName ? { worktreeName } : {}),
         ...(requestId ? { requestId } : {}),
       },
@@ -1127,14 +1224,18 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const requestDirectoryListing = useCallback((agentId: string, path: string) => {
+  const requestDirectoryListing = useCallback((agentId: string, path: string, options?: { recordHistory?: boolean }) => {
     const normalizedPath = path && path.length > 0 ? path : ".";
+    const shouldRecordHistory = options?.recordHistory ?? true;
+
     updateExplorerState(agentId, (state) => ({
       ...state,
       isLoading: true,
       lastError: null,
       pendingRequest: { path: normalizedPath, mode: "list" },
       currentPath: normalizedPath,
+      history: shouldRecordHistory ? pushHistory(state.history, normalizedPath) : state.history,
+      lastVisitedPath: normalizedPath,
     }));
 
     const msg: WSInboundMessage = {
@@ -1170,6 +1271,44 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [updateExplorerState, ws]);
 
+  const navigateExplorerBack = useCallback((agentId: string) => {
+    let targetPath: string | null = null;
+
+    updateExplorerState(agentId, (state) => {
+      if (!state.history || state.history.length <= 1) {
+        return state;
+      }
+
+      const nextHistory = state.history.slice(0, -1);
+      targetPath = nextHistory[nextHistory.length - 1] ?? ".";
+
+      return {
+        ...state,
+        isLoading: true,
+        lastError: null,
+        pendingRequest: { path: targetPath, mode: "list" },
+        currentPath: targetPath,
+        history: nextHistory,
+      };
+    });
+
+    if (!targetPath) {
+      return null;
+    }
+
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "file_explorer_request",
+        agentId,
+        path: targetPath,
+        mode: "list",
+      },
+    };
+    ws.send(msg);
+    return targetPath;
+  }, [updateExplorerState, ws]);
+
   const value: SessionContextValue = {
     ws,
     audioPlayer,
@@ -1194,8 +1333,14 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     gitDiffs,
     requestGitDiff,
     fileExplorer,
+    draftInputs,
+    setDraftInputs,
+    queuedMessages,
+    setQueuedMessages,
     requestDirectoryListing,
     requestFilePreview,
+    navigateExplorerBack,
+    restartServer,
     initializeAgent,
     refreshAgent,
     cancelAgentRun,
