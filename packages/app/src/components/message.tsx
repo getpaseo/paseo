@@ -21,7 +21,7 @@ import {
   Brain,
   Search,
 } from "lucide-react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -166,6 +166,11 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     lineHeight: 24,
   },
+  markdownText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
+  },
   markdownParagraph: {
     marginTop: 0,
     marginBottom: theme.spacing[2],
@@ -240,22 +245,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: 13,
   },
 }));
-
-const markdownStyles = {
-  body: assistantMessageStylesheet.markdownBody,
-  paragraph: assistantMessageStylesheet.markdownParagraph,
-  strong: assistantMessageStylesheet.markdownStrong,
-  em: assistantMessageStylesheet.markdownEm,
-  code_inline: assistantMessageStylesheet.markdownCodeInline,
-  code_block: assistantMessageStylesheet.markdownCodeBlock,
-  fence: assistantMessageStylesheet.markdownFence,
-  link: assistantMessageStylesheet.markdownLink,
-  bullet_list: assistantMessageStylesheet.markdownList,
-  ordered_list: assistantMessageStylesheet.markdownList,
-  list_item: assistantMessageStylesheet.markdownListItem,
-  blockquote: assistantMessageStylesheet.markdownBlockquote,
-  blockquote_text: assistantMessageStylesheet.markdownBlockquoteText,
-};
 
 function isLikelyPathToken(value: string): boolean {
   if (!value || value.length > 300) {
@@ -347,8 +336,86 @@ export const AssistantMessage = memo(function AssistantMessage({
   isStreaming = false,
   onInlinePathPress,
 }: AssistantMessageProps) {
+  const { theme } = useUnistyles();
   const fadeAnim = useRef(new Animated.Value(0.3)).current;
   const lastPathRef = useRef<string | null>(null);
+
+  const markdownStyles = useMemo(
+    () => ({
+      body: {
+        color: theme.colors.foreground,
+        fontSize: theme.fontSize.base,
+        lineHeight: 24,
+      },
+      text: {
+        color: theme.colors.foreground,
+      },
+      paragraph: {
+        marginTop: 0,
+        marginBottom: theme.spacing[2],
+      },
+      strong: {
+        fontWeight: theme.fontWeight.bold,
+      },
+      em: {
+        fontStyle: "italic" as const,
+      },
+      code_inline: {
+        backgroundColor: theme.colors.secondary,
+        color: theme.colors.secondaryForeground,
+        paddingHorizontal: theme.spacing[2],
+        paddingVertical: 2,
+        borderRadius: theme.borderRadius.sm,
+        fontFamily: "monospace",
+        fontSize: 13,
+      },
+      code_block: {
+        backgroundColor: theme.colors.secondary,
+        color: theme.colors.secondaryForeground,
+        padding: theme.spacing[3],
+        borderRadius: theme.borderRadius.md,
+        fontFamily: "monospace",
+        fontSize: 13,
+      },
+      fence: {
+        backgroundColor: theme.colors.secondary,
+        borderColor: theme.colors.border,
+        color: theme.colors.secondaryForeground,
+        padding: theme.spacing[3],
+        borderRadius: theme.borderRadius.md,
+        marginVertical: theme.spacing[2],
+        fontFamily: "monospace",
+        fontSize: 13,
+      },
+      link: {
+        color: theme.colors.primary,
+        textDecorationLine: "underline" as const,
+      },
+      bullet_list: {
+        marginBottom: theme.spacing[2],
+      },
+      ordered_list: {
+        marginBottom: theme.spacing[2],
+      },
+      list_item: {
+        marginBottom: theme.spacing[1],
+      },
+      blockquote: {
+        backgroundColor: theme.colors.secondary,
+        borderLeftWidth: 4,
+        borderLeftColor: theme.colors.primary,
+        paddingHorizontal: theme.spacing[3],
+        paddingVertical: theme.spacing[2],
+        marginVertical: theme.spacing[2],
+        borderRadius: theme.borderRadius.sm,
+      },
+      blockquote_text: {
+        color: theme.colors.foreground,
+        fontStyle: "italic" as const,
+      },
+    }),
+    [theme]
+  );
 
   const markdownRules = useMemo(() => {
     if (!onInlinePathPress) {

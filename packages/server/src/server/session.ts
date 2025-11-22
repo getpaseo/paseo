@@ -18,6 +18,7 @@ import {
   type SessionInboundMessage,
   type SessionOutboundMessage,
   type FileExplorerRequest,
+  type GitSetupOptions,
 } from "./messages.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
@@ -28,6 +29,10 @@ import {
   listConversations,
   deleteConversation,
 } from "./persistence.js";
+import {
+  buildConfigOverrides,
+  buildSessionConfig,
+} from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
@@ -39,8 +44,10 @@ import type {
   AgentPromptInput,
   AgentSessionConfig,
   AgentStreamEvent,
+  AgentProvider,
+  AgentPersistenceHandle,
 } from "./agent/agent-sdk-types.js";
-import { AgentRegistry } from "./agent/agent-registry.js";
+import { AgentRegistry, type StoredAgentRecord } from "./agent/agent-registry.js";
 import { expandTilde } from "./terminal-mcp/tmux.js";
 import {
   listDirectoryEntries,
@@ -51,11 +58,27 @@ import {
   isTitleGeneratorInitialized,
 } from "../services/agent-title-generator.js";
 import type { TerminalManager } from "./terminal-mcp/terminal-manager.js";
+import {
+  createWorktree,
+  detectRepoInfo,
+  slugify,
+  validateBranchSlug,
+} from "../utils/worktree.js";
 
 const execAsync = promisify(exec);
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
+let restartRequested = false;
+const KNOWN_AGENT_PROVIDERS: AgentProvider[] = ["claude", "codex"];
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
+
+type NormalizedGitOptions = {
+  baseBranch?: string;
+  createNewBranch: boolean;
+  newBranchName?: string;
+  createWorktree: boolean;
+  worktreeSlug?: string;
+};
 
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;
@@ -66,6 +89,7 @@ const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
 const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
+const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 
 /**
  * Type for present_artifact tool arguments
@@ -113,6 +137,45 @@ function convertPCMToWavBuffer(
   pcmBuffer.copy(wavBuffer, 44);
 
   return wavBuffer;
+}
+
+function isKnownAgentProvider(value: string): value is AgentProvider {
+  return KNOWN_AGENT_PROVIDERS.includes(value as AgentProvider);
+}
+
+function coerceAgentProvider(value: string, agentId?: string): AgentProvider {
+  if (isKnownAgentProvider(value)) {
+    return value;
+  }
+  console.warn(
+    `[Session] Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to 'claude'`
+  );
+  return "claude";
+}
+
+function toAgentPersistenceHandle(
+  handle: StoredAgentRecord["persistence"]
+): AgentPersistenceHandle | null {
+  if (!handle) {
+    return null;
+  }
+  const provider = handle.provider;
+  if (!isKnownAgentProvider(provider)) {
+    console.warn(
+      `[Session] Ignoring persistence handle with unknown provider '${provider}'`
+    );
+    return null;
+  }
+  if (!handle.sessionId) {
+    console.warn("[Session] Ignoring persistence handle missing sessionId");
+    return null;
+  }
+  return {
+    provider,
+    sessionId: handle.sessionId,
+    nativeHandle: handle.nativeHandle,
+    metadata: handle.metadata,
+  } satisfies AgentPersistenceHandle;
 }
 
 /**
@@ -460,6 +523,43 @@ export class Session {
     return serializeAgentSnapshot(agent, { title });
   }
 
+  private buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload {
+    const defaultCapabilities = {
+      supportsStreaming: false,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: true,
+    } as const;
+
+    const createdAt = new Date(record.createdAt);
+    const updatedAt = new Date(record.lastActivityAt ?? record.updatedAt);
+    const lastUserMessageAt = record.lastUserMessageAt
+      ? new Date(record.lastUserMessageAt)
+      : null;
+
+    const provider = coerceAgentProvider(record.provider, record.id);
+    return {
+      id: record.id,
+      provider,
+      cwd: record.cwd,
+      createdAt: createdAt.toISOString(),
+      updatedAt: updatedAt.toISOString(),
+      lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+      status: (record.lastStatus as any) ?? "closed",
+      sessionId: null,
+      capabilities: defaultCapabilities,
+      currentModeId: record.lastModeId ?? null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: toAgentPersistenceHandle(record.persistence),
+      lastUsage: undefined,
+      lastError: undefined,
+      title: record.title ?? null,
+    };
+  }
+
   private async forwardAgentState(agent: AgentSnapshot): Promise<void> {
     try {
       const payload = await this.buildAgentPayload(agent);
@@ -609,13 +709,17 @@ export class Session {
           await this.handleRefreshAgentRequest(msg);
           break;
 
-        case "cancel_agent_request":
-          await this.handleCancelAgentRequest(msg.agentId);
-          break;
+      case "cancel_agent_request":
+        await this.handleCancelAgentRequest(msg.agentId);
+        break;
 
-        case "initialize_agent_request":
-          await this.handleInitializeAgentRequest(msg.agentId, msg.requestId);
-          break;
+      case "restart_server_request":
+        await this.handleRestartServerRequest(msg.reason);
+        break;
+
+      case "initialize_agent_request":
+        await this.handleInitializeAgentRequest(msg.agentId, msg.requestId);
+        break;
 
         case "set_agent_mode":
           await this.handleSetAgentMode(msg.agentId, msg.modeId);
@@ -639,6 +743,10 @@ export class Session {
 
         case "list_persisted_agents_request":
           await this.handleListPersistedAgentsRequest(msg);
+          break;
+
+        case "git_repo_info_request":
+          await this.handleGitRepoInfoRequest(msg);
           break;
       }
     } catch (error: any) {
@@ -738,6 +846,34 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleRestartServerRequest(reason?: string): Promise<void> {
+    if (restartRequested) {
+      console.log(
+        `[Session ${this.clientId}] Restart already requested, ignoring duplicate`
+      );
+      return;
+    }
+
+    restartRequested = true;
+    const payload: { status: string } & Record<string, unknown> = {
+      status: "restart_requested",
+      clientId: this.clientId,
+    };
+    if (reason && reason.trim().length > 0) {
+      payload.reason = reason;
+    }
+
+    console.warn(`[Session ${this.clientId}] Restart requested via websocket`);
+    this.emit({
+      type: "status",
+      payload,
+    });
+
+    setTimeout(() => {
+      process.exit(0);
+    }, 250);
   }
 
   private async handleDeleteAgentRequest(agentId: string): Promise<void> {
@@ -931,13 +1067,30 @@ export class Session {
     );
 
     try {
-      const snapshot = this.agentManager.getAgent(agentId);
+      let snapshot = this.agentManager.getAgent(agentId);
       if (!snapshot) {
-        throw new Error(`Agent not found: ${agentId}`);
+        const record = await this.agentRegistry.get(agentId);
+        if (!record) {
+          throw new Error(`Agent not found: ${agentId}`);
+        }
+
+        const handle = toAgentPersistenceHandle(record.persistence);
+        if (handle) {
+          snapshot = await this.agentManager.resumeAgent(
+            handle,
+            buildConfigOverrides(record),
+            agentId
+          );
+        } else {
+          const config = buildSessionConfig(record);
+          snapshot = await this.agentManager.createAgent(config, agentId);
+        }
       }
 
+      await this.agentManager.primeAgentHistory(agentId);
       await this.forwardAgentState(snapshot);
 
+      // Send timeline snapshot after hydration (if any)
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
 
       if (requestId) {
@@ -978,7 +1131,7 @@ export class Session {
   private async handleCreateAgentRequest(
     msg: Extract<SessionInboundMessage, { type: "create_agent_request" }>
   ): Promise<void> {
-    const { config, worktreeName, requestId } = msg;
+    const { config, worktreeName, requestId, initialPrompt, git } = msg;
     console.log(
       `[Session ${this.clientId}] Creating agent in ${config.cwd} (${config.provider})${
         worktreeName ? ` with worktree ${worktreeName}` : ""
@@ -988,6 +1141,7 @@ export class Session {
     try {
       const sessionConfig = await this.buildAgentSessionConfig(
         config,
+        git,
         worktreeName
       );
       const snapshot = await this.agentManager.createAgent(sessionConfig);
@@ -1012,6 +1166,28 @@ export class Session {
 
       await this.forwardAgentState(snapshot);
 
+      const trimmedPrompt = initialPrompt?.trim();
+      if (trimmedPrompt && trimmedPrompt.length > 0) {
+        try {
+          this.agentManager.recordUserMessage(snapshot.id, trimmedPrompt);
+        } catch (recordError) {
+          console.error(
+            `[Session ${this.clientId}] Failed to record initial prompt for agent ${snapshot.id}:`,
+            recordError
+          );
+        }
+
+        try {
+          const normalizedPrompt = this.buildAgentPrompt(trimmedPrompt);
+          this.startAgentStream(snapshot.id, normalizedPrompt);
+        } catch (promptError) {
+          console.error(
+            `[Session ${this.clientId}] Failed to run initial prompt for agent ${snapshot.id}:`,
+            promptError
+          );
+        }
+      }
+
       if (requestId) {
         this.emit({
           type: "status",
@@ -1031,6 +1207,16 @@ export class Session {
         `[Session ${this.clientId}] Failed to create agent:`,
         error
       );
+      if (requestId) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_create_failed",
+            requestId,
+            error: (error as Error)?.message ?? String(error),
+          },
+        });
+      }
       this.emit({
         type: "activity_log",
         payload: {
@@ -1068,6 +1254,7 @@ export class Session {
     try {
       const snapshot = await this.agentManager.resumeAgent(handle, overrides);
       this.setCachedTitle(snapshot.id, null);
+      await this.agentManager.primeAgentHistory(snapshot.id);
       await this.forwardAgentState(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
@@ -1107,9 +1294,31 @@ export class Session {
     );
 
     try {
-      const snapshot = await this.agentManager.refreshAgentFromPersistence(
-        agentId
-      );
+      let snapshot: AgentSnapshot;
+      const existing = this.agentManager.getAgent(agentId);
+      if (existing) {
+        snapshot = await this.agentManager.refreshAgentFromPersistence(
+          agentId
+        );
+      } else {
+        const record = await this.agentRegistry.get(agentId);
+        if (!record) {
+          throw new Error(`Agent not found: ${agentId}`);
+        }
+        const handle = toAgentPersistenceHandle(record.persistence);
+        if (!handle) {
+          throw new Error(
+            `Agent ${agentId} cannot be refreshed because it lacks persistence`
+          );
+        }
+        snapshot = await this.agentManager.resumeAgent(
+          handle,
+          buildConfigOverrides(record),
+          agentId
+        );
+        this.setCachedTitle(agentId, null);
+      }
+      await this.agentManager.primeAgentHistory(agentId);
       await this.forwardAgentState(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
@@ -1158,26 +1367,269 @@ export class Session {
 
   private async buildAgentSessionConfig(
     config: AgentSessionConfig,
-    worktreeName?: string
+    gitOptions?: GitSetupOptions,
+    legacyWorktreeName?: string
   ): Promise<AgentSessionConfig> {
     let cwd = expandTilde(config.cwd);
+    const normalized = this.normalizeGitOptions(gitOptions, legacyWorktreeName);
 
-    if (worktreeName) {
-      const { createWorktree } = await import("../utils/worktree.js");
-      console.log(
-        `[Session ${this.clientId}] Creating worktree '${worktreeName}' from ${cwd}`
-      );
-      const worktreeConfig = await createWorktree({
-        branchName: worktreeName,
+    if (!normalized) {
+      return {
+        ...config,
         cwd,
+      };
+    }
+
+    if (!normalized.createWorktree) {
+      await this.ensureCleanWorkingTree(cwd);
+    }
+
+    if (normalized.createWorktree) {
+      const targetBranch = normalized.createNewBranch
+        ? normalized.newBranchName
+        : normalized.baseBranch;
+
+      if (!targetBranch) {
+        throw new Error(
+          "A branch name is required when creating a worktree."
+        );
+      }
+
+      console.log(
+        `[Session ${this.clientId}] Creating worktree '${
+          normalized.worktreeSlug ?? targetBranch
+        }' for branch ${targetBranch}`
+      );
+
+      const worktreeConfig = await createWorktree({
+        branchName: targetBranch,
+        cwd,
+        baseBranch: normalized.createNewBranch
+          ? normalized.baseBranch
+          : undefined,
+        worktreeSlug: normalized.worktreeSlug ?? targetBranch,
       });
       cwd = worktreeConfig.worktreePath;
+    } else if (normalized.createNewBranch) {
+      await this.createBranchFromBase({
+        cwd,
+        baseBranch: normalized.baseBranch ?? "HEAD",
+        newBranchName: normalized.newBranchName!,
+      });
+    } else if (normalized.baseBranch) {
+      await this.checkoutExistingBranch(cwd, normalized.baseBranch);
     }
 
     return {
       ...config,
       cwd,
     };
+  }
+
+  private async handleGitRepoInfoRequest(
+    msg: Extract<SessionInboundMessage, { type: "git_repo_info_request" }>
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    const resolvedCwd = expandTilde(cwd);
+
+    try {
+      const repoInfo = await detectRepoInfo(resolvedCwd);
+      const { stdout: branchesRaw } = await execAsync(
+        "git branch --format='%(refname:short)'",
+        { cwd: repoInfo.path }
+      );
+      const { stdout: currentRaw } = await execAsync(
+        "git rev-parse --abbrev-ref HEAD",
+        { cwd: resolvedCwd }
+      );
+      const currentBranch = currentRaw.trim();
+      const branches = branchesRaw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((name) => ({
+          name,
+          isCurrent: name === currentBranch,
+        }));
+
+      const isDirty = await this.isWorkingTreeDirty(resolvedCwd);
+
+      this.emit({
+        type: "git_repo_info_response",
+        payload: {
+          cwd: resolvedCwd,
+          repoRoot: repoInfo.path,
+          requestId,
+          branches,
+          currentBranch: currentBranch || null,
+          isDirty,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "git_repo_info_response",
+        payload: {
+          cwd,
+          repoRoot: cwd,
+          requestId,
+          error: (error as Error)?.message ?? String(error),
+        },
+      });
+    }
+  }
+
+  private normalizeGitOptions(
+    gitOptions?: GitSetupOptions,
+    legacyWorktreeName?: string
+  ): NormalizedGitOptions | null {
+    const fallbackOptions: GitSetupOptions | undefined = legacyWorktreeName
+      ? {
+          createWorktree: true,
+          createNewBranch: true,
+          newBranchName: legacyWorktreeName,
+          worktreeSlug: legacyWorktreeName,
+        }
+      : undefined;
+
+    const merged = gitOptions ?? fallbackOptions;
+    if (!merged) {
+      return null;
+    }
+
+    const baseBranch = merged.baseBranch?.trim() || undefined;
+    const createWorktree = Boolean(merged.createWorktree);
+    const createNewBranch = Boolean(merged.createNewBranch);
+    const normalizedBranchName = merged.newBranchName
+      ? slugify(merged.newBranchName)
+      : undefined;
+    const normalizedWorktreeSlug = merged.worktreeSlug
+      ? slugify(merged.worktreeSlug)
+      : normalizedBranchName;
+
+    if (!createWorktree && !createNewBranch && !baseBranch) {
+      return null;
+    }
+
+    if (baseBranch) {
+      this.assertSafeGitRef(baseBranch, "base branch");
+    }
+
+    if (createNewBranch) {
+      if (!normalizedBranchName) {
+        throw new Error("New branch name is required");
+      }
+      const validation = validateBranchSlug(normalizedBranchName);
+      if (!validation.valid) {
+        throw new Error(`Invalid branch name: ${validation.error}`);
+      }
+    }
+
+    if (normalizedWorktreeSlug) {
+      const validation = validateBranchSlug(normalizedWorktreeSlug);
+      if (!validation.valid) {
+        throw new Error(`Invalid worktree name: ${validation.error}`);
+      }
+    }
+
+    if (createWorktree && !createNewBranch && !baseBranch) {
+      throw new Error(
+        "Base branch is required when creating a worktree without a new branch"
+      );
+    }
+
+    return {
+      baseBranch,
+      createNewBranch,
+      newBranchName: normalizedBranchName,
+      createWorktree,
+      worktreeSlug: normalizedWorktreeSlug,
+    };
+  }
+
+  private assertSafeGitRef(ref: string, label: string): void {
+    if (!SAFE_GIT_REF_PATTERN.test(ref) || ref.includes("..") || ref.includes("@{")) {
+      throw new Error(`Invalid ${label}: ${ref}`);
+    }
+  }
+
+  private async ensureCleanWorkingTree(cwd: string): Promise<void> {
+    const dirty = await this.isWorkingTreeDirty(cwd);
+    if (dirty) {
+      throw new Error(
+        "Working directory has uncommitted changes. Commit or stash before switching branches."
+      );
+    }
+  }
+
+  private async isWorkingTreeDirty(cwd: string): Promise<boolean> {
+    try {
+      const { stdout } = await execAsync("git status --porcelain", { cwd });
+      return stdout.trim().length > 0;
+    } catch (error) {
+      throw new Error(
+        `Unable to inspect git status for ${cwd}: ${(error as Error).message}`
+      );
+    }
+  }
+
+  private async checkoutExistingBranch(
+    cwd: string,
+    branch: string
+  ): Promise<void> {
+    this.assertSafeGitRef(branch, "branch");
+    try {
+      await execAsync(`git rev-parse --verify ${branch}`, { cwd });
+    } catch (error) {
+      throw new Error(`Branch not found: ${branch}`);
+    }
+
+    const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+      cwd,
+    });
+    const current = stdout.trim();
+    if (current === branch) {
+      return;
+    }
+
+    await execAsync(`git checkout ${branch}`, { cwd });
+  }
+
+  private async createBranchFromBase(params: {
+    cwd: string;
+    baseBranch: string;
+    newBranchName: string;
+  }): Promise<void> {
+    const { cwd, baseBranch, newBranchName } = params;
+    this.assertSafeGitRef(baseBranch, "base branch");
+
+    try {
+      await execAsync(`git rev-parse --verify ${baseBranch}`, { cwd });
+    } catch (error) {
+      throw new Error(`Base branch not found: ${baseBranch}`);
+    }
+
+    const exists = await this.doesLocalBranchExist(cwd, newBranchName);
+    if (exists) {
+      throw new Error(`Branch already exists: ${newBranchName}`);
+    }
+
+    await execAsync(`git checkout -b ${newBranchName} ${baseBranch}`, {
+      cwd,
+    });
+  }
+
+  private async doesLocalBranchExist(
+    cwd: string,
+    branch: string
+  ): Promise<boolean> {
+    try {
+      await execAsync(`git show-ref --verify --quiet refs/heads/${branch}` , {
+        cwd,
+      });
+      return true;
+    } catch (error: any) {
+      return false;
+    }
   }
 
   private async handleListPersistedAgentsRequest(
@@ -1199,6 +1651,7 @@ export class Session {
             title: entry.title ?? `Session ${entry.sessionId.slice(0, 8)}`,
             lastActivityAt: entry.lastActivityAt.toISOString(),
             persistence: entry.persistence,
+            timeline: entry.timeline ?? [],
           })),
         },
       });
@@ -1438,9 +1891,18 @@ export class Session {
     try {
       // Get live agents with session modes
       const agentSnapshots = this.agentManager.listAgents();
-      const agents = await Promise.all(
+      const liveAgents = await Promise.all(
         agentSnapshots.map((agent) => this.buildAgentPayload(agent))
       );
+
+      // Add persisted agents that have not been lazily initialized yet
+      const registryRecords = await this.agentRegistry.list();
+      const liveIds = new Set(agentSnapshots.map((a) => a.id));
+      const persistedAgents = registryRecords
+        .filter((record) => !liveIds.has(record.id))
+        .map((record) => this.buildStoredAgentPayload(record));
+
+      const agents = [...liveAgents, ...persistedAgents];
 
       // Get live commands from terminal manager
       let commands: any[] = [];
@@ -1467,11 +1929,6 @@ export class Session {
       console.log(
         `[Session ${this.clientId}] Sent session state: ${agents.length} agents, ${commands.length} commands`
       );
-
-      for (const agent of agentSnapshots) {
-        this.emitAgentTimelineSnapshot(agent);
-        void this.maybeGenerateAgentTitle(agent.id);
-      }
     } catch (error) {
       console.error(
         `[Session ${this.clientId}] Failed to send session state:`,

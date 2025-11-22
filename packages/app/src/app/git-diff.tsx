@@ -121,41 +121,32 @@ export default function GitDiffScreen() {
                 <Text style={styles.filePath}>{file.path}</Text>
               </View>
               <View style={styles.diffContent}>
-                <ScrollView
-                  horizontal
-                  nestedScrollEnabled
-                  showsHorizontalScrollIndicator
-                  bounces={false}
-                  overScrollMode="never"
-                  contentContainerStyle={styles.diffScrollContent}
-                >
-                  <View style={styles.diffLinesContainer}>
-                    {file.lines.map((line, lineIndex) => (
-                      <View
-                        key={lineIndex}
+                <View style={styles.diffLinesContainer}>
+                  {file.lines.map((line, lineIndex) => (
+                    <View
+                      key={lineIndex}
+                      style={[
+                        styles.diffLineContainer,
+                        line.type === "add" && styles.addLineContainer,
+                        line.type === "remove" && styles.removeLineContainer,
+                        line.type === "header" && styles.headerLineContainer,
+                        line.type === "context" && styles.contextLineContainer,
+                      ]}
+                    >
+                      <Text
                         style={[
-                          styles.diffLineContainer,
-                          line.type === "add" && styles.addLineContainer,
-                          line.type === "remove" && styles.removeLineContainer,
-                          line.type === "header" && styles.headerLineContainer,
-                          line.type === "context" && styles.contextLineContainer,
+                          styles.diffLineText,
+                          line.type === "add" && styles.addLineText,
+                          line.type === "remove" && styles.removeLineText,
+                          line.type === "header" && styles.headerLineText,
+                          line.type === "context" && styles.contextLineText,
                         ]}
                       >
-                        <Text
-                          style={[
-                            styles.diffLineText,
-                            line.type === "add" && styles.addLineText,
-                            line.type === "remove" && styles.removeLineText,
-                            line.type === "header" && styles.headerLineText,
-                            line.type === "context" && styles.contextLineText,
-                          ]}
-                        >
-                          {line.content}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </ScrollView>
+                        {line.content}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
           ))
@@ -175,6 +166,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentContainer: {
     padding: theme.spacing[4],
+    paddingBottom: theme.spacing[8],
   },
   loadingContainer: {
     flex: 1,
@@ -215,6 +207,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
+    width: "100%",
   },
   fileHeader: {
     backgroundColor: theme.colors.muted,
@@ -231,27 +224,23 @@ const styles = StyleSheet.create((theme) => ({
   diffContent: {
     backgroundColor: theme.colors.card,
   },
-  diffScrollContent: {
-    flexDirection: "column",
-    alignItems: "flex-start",
-    paddingBottom: theme.spacing[2],
-  },
   diffLinesContainer: {
-    alignSelf: "flex-start",
+    width: "100%",
   },
   diffLineContainer: {
-    minWidth: "100%",
+    width: "100%",
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
-    alignSelf: "flex-start",
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
   diffLineText: {
     fontSize: theme.fontSize.xs,
     fontFamily: "monospace",
     color: theme.colors.foreground,
-    flexShrink: 0,
+    flexShrink: 1,
+    flexWrap: "wrap",
+    width: "100%",
   },
   addLineContainer: {
     backgroundColor: theme.colors.palette.green[900],

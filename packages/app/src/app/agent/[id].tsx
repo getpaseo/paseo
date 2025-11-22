@@ -210,13 +210,9 @@ export default function AgentScreen() {
     if (!id) {
       return;
     }
-    if (!agent?.persistence) {
-      handleCloseMenu();
-      return;
-    }
     handleCloseMenu();
     refreshAgent({ agentId: id });
-  }, [agent?.persistence, handleCloseMenu, id, refreshAgent]);
+  }, [handleCloseMenu, id, refreshAgent]);
 
   if (!agent) {
     return (
@@ -294,28 +290,26 @@ export default function AgentScreen() {
               <Folder size={20} color={theme.colors.foreground} />
               <Text style={styles.menuItemText}>Browse Files</Text>
             </Pressable>
-            {agent.persistence && (
-              <Pressable
-                onPress={handleRefreshAgent}
-                style={[
-                  styles.menuItem,
-                  isInitializing ? styles.menuItemDisabled : null,
-                ]}
-                disabled={isInitializing}
-              >
-                <RotateCcw size={20} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>
-                  {isInitializing ? "Refreshing..." : "Refresh"}
-                </Text>
-                {isInitializing && (
-                  <ActivityIndicator
-                    size="small"
-                    color={theme.colors.primary}
-                    style={styles.menuItemSpinner}
-                  />
-                )}
-              </Pressable>
-            )}
+            <Pressable
+              onPress={handleRefreshAgent}
+              style={[
+                styles.menuItem,
+                isInitializing ? styles.menuItemDisabled : null,
+              ]}
+              disabled={isInitializing}
+            >
+              <RotateCcw size={20} color={theme.colors.foreground} />
+              <Text style={styles.menuItemText}>
+                {isInitializing ? "Refreshing..." : "Refresh"}
+              </Text>
+              {isInitializing && (
+                <ActivityIndicator
+                  size="small"
+                  color={theme.colors.primary}
+                  style={styles.menuItemSpinner}
+                />
+              )}
+            </Pressable>
           </View>
         </View>
       </Modal>

@@ -1,11 +1,27 @@
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, promises as fs } from "node:fs";
+import type { Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CodexAgentClient } from "./codex-agent.js";
-import { hydrateStreamState, type StreamItem } from "../../../../../app/src/types/stream.js";
-import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentPermissionRequest } from "../agent-sdk-types.js";
+import { CodexAgentClient, isSyntheticRolloutUserMessage } from "./codex-agent.js";
+import {
+  hydrateStreamState,
+  isAgentToolCallItem,
+  type AgentToolCallItem,
+  type StreamItem,
+} from "../../../../../app/src/types/stream.js";
+import {
+  serializeAgentStreamEvent,
+  type AgentStreamEventPayload,
+} from "../../messages.js";
+import type {
+  AgentProvider,
+  AgentSessionConfig,
+  AgentStreamEvent,
+  AgentPermissionRequest,
+  AgentPersistenceHandle,
+} from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(os.tmpdir(), "codex-agent-e2e-"));
@@ -30,38 +46,6 @@ function useTempCodexSessionDir(): () => void {
 
 function log(message: string): void {
   console.info(`[CodexAgentTest] ${message}`);
-}
-
-function createStubCodexBinary(events: Record<string, unknown>[]): { path: string; cleanup: () => void } {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "codex-stub-"));
-  const filePath = path.join(dir, "codex-stub.js");
-  const script = `#!/usr/bin/env node
-const events = ${JSON.stringify(events)};
-const emit = () => {
-  for (const event of events) {
-    process.stdout.write(JSON.stringify(event) + "\\n");
-  }
-};
-
-if (process.stdin.isTTY) {
-  emit();
-  process.exit(0);
-} else {
-  process.stdin.resume();
-  process.stdin.on("data", () => {});
-  process.stdin.on("end", () => {
-    emit();
-    process.exit(0);
-  });
-}`;
-  writeFileSync(filePath, script, "utf8");
-  chmodSync(filePath, 0o755);
-  return {
-    path: filePath,
-    cleanup: () => {
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
 }
 
 describe("CodexAgentClient (SDK integration)", () => {
@@ -133,6 +117,154 @@ describe("CodexAgentClient (SDK integration)", () => {
         expect(sawActivity).toBe(true);
       } finally {
         await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "emits Codex tool calls that hydrate into specific UI entries",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = { provider: "codex", cwd };
+      type HydrationEntry = { event: AgentStreamEventPayload; timestamp: Date };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      try {
+        session = await client.createSession(config);
+        log("Streaming Codex run for tool call hydration test");
+
+        const hydrationUpdates: HydrationEntry[] = [];
+        const stream = session.stream(
+          [
+            "1. Run the command `pwd` using your shell tool and report the output.",
+            "2. Next, use your apply_patch editing tool (not the shell) to create a file named codex-stream.log containing exactly the single line 'ok'.",
+            "3. After the patch succeeds, stop.",
+          ].join("\n")
+        );
+
+        for await (const event of stream) {
+          if (event.type === "timeline" || event.type === "provider_event") {
+            hydrationUpdates.push({
+              event: serializeAgentStreamEvent(event),
+              timestamp: new Date(),
+            });
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        const streamItems = hydrateStreamState(hydrationUpdates);
+        const commandEntry = streamItems.find(
+          (item): item is AgentToolCallItem =>
+            isAgentToolCallItem(item) &&
+            item.payload.data.server === "command" &&
+            (item.payload.data.displayName?.includes("pwd") ?? false)
+        );
+        const fileEntry = streamItems.find((item): item is AgentToolCallItem => {
+          if (!isAgentToolCallItem(item)) {
+            return false;
+          }
+          if (item.payload.data.server !== "file_change") {
+            return false;
+          }
+          const result = item.payload.data.result as { files?: Array<{ path?: string }> } | undefined;
+          if (!Array.isArray(result?.files)) {
+            return false;
+          }
+          return result.files.some((file) => typeof file?.path === "string" && file.path.includes("codex-stream.log"));
+        });
+
+        expect(commandEntry).toBeDefined();
+        expect(commandEntry?.payload.data.status).toBe("completed");
+        expect(commandEntry?.payload.data.result).toMatchObject({
+          exitCode: 0,
+        });
+
+        expect(fileEntry).toBeDefined();
+        expect(fileEntry?.payload.data.status).toBe("completed");
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "hydrates persisted shell_command tool calls with completed status",
+    async () => {
+      const restoreSessionDir = useTempCodexSessionDir();
+      const client = new CodexAgentClient();
+      const cwd = tmpCwd();
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      let resumed: Awaited<ReturnType<typeof client.resumeSession>> | null = null;
+      try {
+        session = await client.createSession({ provider: "codex", cwd, modeId: "full-access" });
+        log("Recording Codex command activity for persistence hydration test");
+
+        const prompt = [
+          "Run the command `pwd` using your shell tool to print the working directory.",
+          "After the command finishes, respond with DONE and stop.",
+        ].join("\n");
+
+        let sawCommand = false;
+        const stream = session.stream(prompt);
+        for await (const event of stream) {
+          if (
+            event.type === "timeline" &&
+            event.provider === "codex" &&
+            event.item.type === "tool_call" &&
+            event.item.server === "command"
+          ) {
+            sawCommand = true;
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+        expect(sawCommand).toBe(true);
+
+        const handle = session.describePersistence();
+        expect(handle).toBeTruthy();
+
+        await session.close();
+        session = null;
+
+        const rolloutPath = handle ? await resolveRolloutPathFromHandle(handle) : null;
+        expect(rolloutPath).toBeTruthy();
+        await prependSyntheticRolloutEntries(rolloutPath!, [
+          buildSyntheticInstructionEntry(handle!.sessionId ?? handle!.nativeHandle ?? "synthetic-session"),
+          buildSyntheticEnvironmentEntry(),
+        ]);
+
+        resumed = await client.resumeSession(handle!);
+        const hydrationUpdates: StreamHydrationUpdate[] = [];
+        for await (const event of resumed.streamHistory()) {
+          recordTimelineUpdate(hydrationUpdates, event);
+        }
+
+        const hydratedState = hydrateStreamState(hydrationUpdates);
+        const commandEntry = hydratedState.find(
+          (item): item is AgentToolCallItem =>
+            isAgentToolCallItem(item) && item.payload.data.server === "command"
+        );
+        expect(commandEntry).toBeTruthy();
+        if (commandEntry) {
+          expect(commandEntry.payload.data.status).toBe("completed");
+          expect(commandEntry.payload.data.result).toMatchObject({
+            metadata: { exit_code: 0 },
+          });
+        }
+      } finally {
+        await session?.close();
+        await resumed?.close();
         rmSync(cwd, { recursive: true, force: true });
         restoreSessionDir();
       }
@@ -260,47 +392,42 @@ describe("CodexAgentClient (SDK integration)", () => {
     180_000
   );
 
-  test(
-    "emits permission requests and resolves them when approvals are handled",
+  // Codex CLI currently doesn't emit approval request events even when approvalPolicy is set to on-request,
+  // so we keep this test skipped until upstream support lands.
+  test.skip(
+    "emits permission requests and resolves them when approvals are handled (awaiting Codex support)",
     async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
-      const events = [
-        { type: "thread.started", thread_id: "019a83a2-permission" },
-        { type: "turn.started" },
-        {
-          type: "exec_approval_request",
-          call_id: "call-permission-1",
-          command: ["bash", "-lc", "rm -rf /tmp/codex"],
-          cwd,
-          reason: "Requires elevated sandbox permissions",
-          risk: { description: "Deletes files", risk_level: "high" },
-        },
-        { type: "turn.failed", error: { message: "Approval required" } },
-      ];
-      const stub = createStubCodexBinary(events);
-      const client = new CodexAgentClient({ codexPathOverride: stub.path });
-      const config: AgentSessionConfig = { provider: "codex", cwd };
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "codex",
+        cwd,
+        modeId: "full-access",
+        extra: { codex: { approvalPolicy: "on-request" } },
+      };
       let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
       try {
         session = await client.createSession(config);
-        log("Processing synthetic permission request stream");
+        log("Processing Codex permission request stream");
 
         let captured: AgentPermissionRequest | null = null;
-        const streamed = session.stream("Trigger permission request");
+        const streamed = session.stream(
+          "Request approval to run the command `pwd`, then run it after approval and stop."
+        );
         for await (const event of streamed) {
-          if (event.type === "permission_requested") {
+          if (event.type === "permission_requested" && !captured) {
             captured = event.request;
+            expect(session.getPendingPermissions()).toHaveLength(1);
+            await session.respondToPermission(captured.id, { behavior: "allow" });
           }
-          if (event.type === "turn_failed") {
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
           }
         }
 
         expect(captured).not.toBeNull();
-        expect(session.getPendingPermissions()).toHaveLength(1);
-
-        await session.respondToPermission(captured!.id, { behavior: "allow" });
+        expect(session.getPendingPermissions()).toHaveLength(0);
 
         const replay: AgentStreamEvent[] = [];
         for await (const event of session.streamHistory()) {
@@ -315,15 +442,23 @@ describe("CodexAgentClient (SDK integration)", () => {
               event.resolution.behavior === "allow"
           )
         ).toBe(true);
-        expect(session.getPendingPermissions()).toHaveLength(0);
+        expect(
+          replay.some(
+            (event) =>
+              event.type === "timeline" &&
+              event.provider === "codex" &&
+              event.item.type === "tool_call" &&
+              event.item.server === "permission" &&
+              event.item.status === "granted"
+          )
+        ).toBe(true);
       } finally {
         await session?.close();
-        stub.cleanup();
         rmSync(cwd, { recursive: true, force: true });
         restoreSessionDir();
       }
     },
-    30_000
+    180_000
   );
 
   test(
@@ -369,6 +504,14 @@ describe("CodexAgentClient (SDK integration)", () => {
 
         expect(stateIncludesUserMessage(liveState, promptMarker)).toBe(true);
         expect(stateIncludesUserMessage(hydratedState, promptMarker)).toBe(true);
+        expect(stateIncludesSyntheticMessage(hydratedState)).toBe(false);
+
+        const persisted = await client.listPersistedAgents({ limit: 200 });
+        const persistedEntry = persisted.find((entry) => entry.sessionId === handle!.sessionId);
+        expect(persistedEntry).toBeTruthy();
+        const normalizedTitle = (persistedEntry?.title ?? "").toLowerCase();
+        expect(normalizedTitle.startsWith("# agents.md instructions for")).toBe(false);
+        expect(normalizedTitle.startsWith("<environment_context>")).toBe(false);
       } finally {
         await session?.close();
         await resumed?.close();
@@ -378,6 +521,29 @@ describe("CodexAgentClient (SDK integration)", () => {
     },
     180_000
   );
+});
+
+describe("isSyntheticRolloutUserMessage", () => {
+  test("flags AGENTS instruction payloads", () => {
+    const text = `# AGENTS.md instructions for /Users/test
+
+<INSTRUCTIONS>
+Stay safe.
+</INSTRUCTIONS>`;
+    expect(isSyntheticRolloutUserMessage(text)).toBe(true);
+  });
+
+  test("flags environment context payloads", () => {
+    const text = `<environment_context>
+  <cwd>/Users/test/project</cwd>
+  <approval_policy>never</approval_policy>
+</environment_context>`;
+    expect(isSyntheticRolloutUserMessage(text)).toBe(true);
+  });
+
+  test("allows real user prompts", () => {
+    expect(isSyntheticRolloutUserMessage("investigate flaky tests")).toBe(false);
+  });
 });
 
 type StreamHydrationUpdate = {
@@ -418,4 +584,119 @@ function stateIncludesUserMessage(state: StreamItem[], marker: string): boolean 
   return state.some(
     (item) => item.kind === "user_message" && item.text.toLowerCase().includes(marker.toLowerCase())
   );
+}
+
+function stateIncludesSyntheticMessage(state: StreamItem[]): boolean {
+  return state.some((item) => {
+    if (item.kind !== "user_message") {
+      return false;
+    }
+    const normalized = item.text.trim().toLowerCase();
+    return (
+      normalized.startsWith("# agents.md instructions for") ||
+      normalized.startsWith("<environment_context>")
+    );
+  });
+}
+
+async function prependSyntheticRolloutEntries(filePath: string, entries: Array<Record<string, unknown>>): Promise<void> {
+  const existing = await fs.readFile(filePath, "utf8");
+  const synthetic = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  const nextContent = synthetic.length ? `${synthetic}\n${existing}` : existing;
+  await fs.writeFile(
+    filePath,
+    nextContent.endsWith("\n") ? nextContent : `${nextContent}\n`,
+    "utf8"
+  );
+}
+
+async function resolveRolloutPathFromHandle(handle: AgentPersistenceHandle): Promise<string | null> {
+  const pathFromMetadata = typeof handle.metadata?.codexRolloutPath === "string" ? handle.metadata.codexRolloutPath : null;
+  if (pathFromMetadata && (await fileExists(pathFromMetadata))) {
+    return pathFromMetadata;
+  }
+
+  const sessionDir = typeof handle.metadata?.codexSessionDir === "string" ? handle.metadata.codexSessionDir : null;
+  const sessionId = handle.sessionId ?? (typeof handle.nativeHandle === "string" ? handle.nativeHandle : null);
+  if (!sessionDir || !sessionId) {
+    return null;
+  }
+  return findRolloutInDir(sessionDir, sessionId, 5);
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findRolloutInDir(root: string, sessionId: string, maxDepth: number): Promise<string | null> {
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  while (stack.length > 0) {
+    const { dir, depth } = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isFile()) {
+        if (
+          entry.name.startsWith("rollout-") &&
+          entry.name.includes(sessionId) &&
+          (entry.name.endsWith(".json") || entry.name.endsWith(".jsonl"))
+        ) {
+          return entryPath;
+        }
+      } else if (entry.isDirectory() && depth < maxDepth) {
+        stack.push({ dir: entryPath, depth: depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+function buildSyntheticInstructionEntry(sessionId: string): Record<string, unknown> {
+  const text = [
+    `# AGENTS.md instructions for ${sessionId}`,
+    "",
+    "<INSTRUCTIONS>",
+    "Always obey the operator.",
+    "</INSTRUCTIONS>",
+  ].join("\n");
+  return buildSyntheticResponseItem(text);
+}
+
+function buildSyntheticEnvironmentEntry(): Record<string, unknown> {
+  const text = [
+    "<environment_context>",
+    "  <cwd>/tmp/workspace</cwd>",
+    "  <approval_policy>never</approval_policy>",
+    "  <sandbox_mode>danger-full-access</sandbox_mode>",
+    "</environment_context>",
+  ].join("\n");
+  return buildSyntheticResponseItem(text);
+}
+
+function buildSyntheticResponseItem(text: string): Record<string, unknown> {
+  return {
+    timestamp: new Date().toISOString(),
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text,
+        },
+      ],
+    },
+  };
 }

@@ -8,9 +8,10 @@ import { ScreenHeader } from "./screen-header";
 interface BackHeaderProps {
   title?: string;
   rightContent?: ReactNode;
+  onBack?: () => void;
 }
 
-export function BackHeader({ title, rightContent }: BackHeaderProps) {
+export function BackHeader({ title, rightContent, onBack }: BackHeaderProps) {
   const { theme } = useUnistyles();
 
   return (
@@ -18,7 +19,7 @@ export function BackHeader({ title, rightContent }: BackHeaderProps) {
       left={
         <>
           <Pressable
-            onPress={() => router.back()}
+            onPress={onBack ?? (() => router.back())}
             style={styles.backButton}
           >
             <ArrowLeft size={20} color={theme.colors.foreground} />

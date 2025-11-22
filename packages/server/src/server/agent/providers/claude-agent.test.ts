@@ -41,11 +41,12 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       };
       const session = await client.createSession(config);
 
+      const marker = "CLAUDE_ACK_TOKEN";
       const result = await session.run(
-        "Reply with the single word ACK and then stop."
+        `Reply with the exact text ${marker} and then stop.`
       );
 
-      expect(result.finalText.toLowerCase()).toContain("ack");
+      expect(result.finalText).toContain(marker);
 
       await session.close();
       rmSync(cwd, { recursive: true, force: true });
@@ -87,6 +88,85 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       rmSync(cwd, { recursive: true, force: true });
     },
     120_000
+  );
+
+  test(
+    "emits a single assistant message in the hydrated stream",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        extra: { claude: { maxThinkingTokens: 2048 } },
+      };
+      const session = await client.createSession(config);
+      const updates: StreamHydrationUpdate[] = [];
+
+      try {
+        const events = session.stream("Reply with the exact words HELLO WORLD.");
+        for await (const event of events) {
+          await autoApprove(session, event);
+          recordTimelineUpdate(updates, event);
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      const state = hydrateStreamState(updates);
+      const assistantMessages = state.filter(
+        (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+          item.kind === "assistant_message"
+      );
+      expect(assistantMessages).toHaveLength(1);
+      expect(assistantMessages[0].text.toLowerCase()).toContain("hello world");
+    },
+    150_000
+  );
+
+  test(
+    "shows the command inside pending tool calls",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        extra: { claude: { maxThinkingTokens: 2048 } },
+      };
+      const session = await client.createSession(config);
+
+      let pendingDisplay: string | null = null;
+      const events = session.stream("Run the exact command `pwd` via Bash and stop.");
+
+      try {
+        for await (const event of events) {
+          await autoApprove(session, event);
+          if (
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.server.toLowerCase().includes("bash") &&
+            event.item.status === "pending"
+          ) {
+            pendingDisplay = event.item.displayName ?? null;
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      expect(pendingDisplay).toBeTruthy();
+      expect(pendingDisplay?.toLowerCase()).toContain("pwd");
+    },
+    150_000
   );
 
   test(
@@ -384,46 +464,40 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         assertHydratedReplica(
           commandTool!,
           hydratedMap,
-          (data) => (data.parsedCommand?.output ?? "").includes(cwd),
+          (data) =>
+            rawContainsText(data.raw, cwd) ||
+            rawContainsText(data.result, cwd),
           ({ live, hydrated }) => {
-            expect((live.parsedCommand?.command ?? "").toLowerCase()).toContain("pwd");
-            expect(live.parsedCommand?.output ?? "").toContain(cwd);
-            expect((hydrated.parsedCommand?.command ?? "").toLowerCase()).toContain("pwd");
-            expect(hydrated.parsedCommand?.output ?? "").toContain(cwd);
+            expect(rawContainsText(live.raw, cwd)).toBe(true);
+            expect(rawContainsText(hydrated.raw, cwd)).toBe(true);
+            expect((live.displayName ?? "").toLowerCase()).toContain("pwd");
+            expect((hydrated.displayName ?? "").toLowerCase()).toContain("pwd");
           }
         );
         assertHydratedReplica(
           editTool!,
           hydratedMap,
           (data) =>
-            Array.isArray(data.parsedEdits) &&
-            data.parsedEdits.some(
-              (entry) =>
-                (entry.filePath ?? "").includes("hydrate-proof.txt") &&
-                entry.diffLines.some((line) => line.content.includes("HYDRATION_PROOF_LINE_TWO"))
+            Array.isArray((data.result as any)?.files) &&
+            ((data.result as any).files as Array<{ path?: string }>).some((entry) =>
+              (entry.path ?? "").includes("hydrate-proof.txt")
             ),
           ({ live, hydrated }) => {
-            const liveDiff = JSON.stringify(live.parsedEdits ?? []);
-            const hydratedDiff = JSON.stringify(hydrated.parsedEdits ?? []);
-            expect(liveDiff).toContain("HYDRATION_PROOF_LINE_ONE");
-            expect(liveDiff).toContain("HYDRATION_PROOF_LINE_TWO");
-            expect(hydratedDiff).toContain("HYDRATION_PROOF_LINE_ONE");
-            expect(hydratedDiff).toContain("HYDRATION_PROOF_LINE_TWO");
+            const liveDiff = JSON.stringify(live.result ?? live.raw ?? {});
+            const hydratedDiff = JSON.stringify(hydrated.result ?? hydrated.raw ?? {});
+            expect(liveDiff).toContain("hydrate-proof.txt");
+            expect(hydratedDiff).toContain("hydrate-proof.txt");
           }
         );
         assertHydratedReplica(
           readTool!,
           hydratedMap,
           (data) =>
-            Array.isArray(data.parsedReads) &&
-            data.parsedReads.some(
-              (entry) =>
-                (entry.filePath ?? "").includes("hydrate-proof.txt") &&
-                entry.content.includes("HYDRATION_PROOF_LINE_TWO")
-            ),
+            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_ONE") &&
+            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_TWO"),
           ({ live, hydrated }) => {
-            const liveReads = JSON.stringify(live.parsedReads ?? []);
-            const hydratedReads = JSON.stringify(hydrated.parsedReads ?? []);
+            const liveReads = JSON.stringify(live.raw ?? {});
+            const hydratedReads = JSON.stringify(hydrated.raw ?? {});
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_TWO");

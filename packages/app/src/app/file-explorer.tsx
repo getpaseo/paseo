@@ -4,24 +4,29 @@ import {
   FlatList,
   Image as RNImage,
   ListRenderItemInfo,
+  ViewToken,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
   ScrollView,
   Text,
   View,
+  BackHandler,
+  useWindowDimensions,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import {
   Copy,
   Check,
-  ArrowLeft,
   File,
   FileText,
   Folder,
   Image as ImageIcon,
+  LayoutGrid,
+  List as ListIcon,
+  X,
 } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSession, type ExplorerEntry } from "@/contexts/session-context";
@@ -42,7 +47,9 @@ export default function FileExplorerScreen() {
     fileExplorer,
     requestDirectoryListing,
     requestFilePreview,
+    navigateExplorerBack,
   } = useSession();
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const pendingPathParamRef = useRef<string | null>(null);
   const pendingFileParamRef = useRef<string | null>(null);
@@ -50,16 +57,27 @@ export default function FileExplorerScreen() {
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listScrollRef = useRef<FlatList<ExplorerEntry> | null>(null);
   const listScrollOffsetRef = useRef(0);
+  const scrollOffsetsByPathRef = useRef<Map<string, number>>(new Map());
+  const pendingScrollRestoreRef = useRef<number | null>(null);
+  const { width: windowWidth } = useWindowDimensions();
 
   const normalizedPathParam = normalizePathParam(getFirstParam(pathParamRaw));
   const normalizedFileParam = normalizeFileParam(getFirstParam(fileParamRaw));
   const derivedDirectoryFromFile = normalizedFileParam
     ? deriveDirectoryFromFile(normalizedFileParam)
     : null;
-  const initialTargetDirectory = normalizedPathParam ?? derivedDirectoryFromFile ?? ".";
 
   const agent = agentId ? agents.get(agentId) : undefined;
   const explorerState = agentId ? fileExplorer.get(agentId) : undefined;
+  const history = explorerState?.history ?? [];
+  const lastKnownDirectory = history[history.length - 1];
+  const rememberedDirectory = explorerState?.lastVisitedPath;
+  const initialTargetDirectory =
+    normalizedPathParam ??
+    derivedDirectoryFromFile ??
+    rememberedDirectory ??
+    lastKnownDirectory ??
+    ".";
   const currentPath = explorerState?.currentPath ?? ".";
   const pendingRequest = explorerState?.pendingRequest ?? null;
   const isExplorerLoading = explorerState?.isLoading ?? false;
@@ -81,6 +99,49 @@ export default function FileExplorerScreen() {
     ? explorerState?.files.get(selectedEntryPath)
     : null;
   const shouldShowPreview = Boolean(selectedEntryPath);
+  const pendingThumbnailPathsRef = useRef<Set<string>>(new Set());
+  const [thumbnailLoadingMap, setThumbnailLoadingMap] = useState<Record<string, boolean>>({});
+  const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 50 });
+  const gridColumnCount = useMemo(() => {
+    if (windowWidth >= 1500) {
+      return 6;
+    }
+    if (windowWidth >= 1200) {
+      return 5;
+    }
+    if (windowWidth >= 960) {
+      return 4;
+    }
+    if (windowWidth >= 720) {
+      return 3;
+    }
+    if (windowWidth >= 520) {
+      return 2;
+    }
+    return 1;
+  }, [windowWidth]);
+  const listColumns = viewMode === "grid" ? gridColumnCount : 1;
+  const listKey = viewMode === "grid" ? `grid-${gridColumnCount}` : "list";
+
+  const restoreQueuedScrollOffset = useCallback(() => {
+    if (pendingScrollRestoreRef.current === null) {
+      return;
+    }
+
+    if (!listScrollRef.current) {
+      return;
+    }
+
+    const targetOffset = pendingScrollRestoreRef.current;
+    listScrollRef.current.scrollToOffset({ offset: targetOffset, animated: false });
+    listScrollOffsetRef.current = targetOffset;
+    pendingScrollRestoreRef.current = null;
+  }, []);
+
+  const queueScrollRestore = useCallback((offset: number) => {
+    pendingScrollRestoreRef.current = offset;
+    requestAnimationFrame(restoreQueuedScrollOffset);
+  }, [restoreQueuedScrollOffset]);
 
   useEffect(() => {
     setSelectedEntryPath(null);
@@ -91,28 +152,15 @@ export default function FileExplorerScreen() {
       return;
     }
 
-    const targetOffset = listScrollOffsetRef.current;
-    if (!listScrollRef.current) {
-      return;
-    }
-
-    listScrollRef.current.scrollToOffset({ offset: targetOffset, animated: false });
-  }, [shouldShowPreview]);
+    const savedOffset = scrollOffsetsByPathRef.current.get(activePath) ?? listScrollOffsetRef.current;
+    queueScrollRestore(savedOffset);
+  }, [activePath, queueScrollRestore, shouldShowPreview]);
 
   useEffect(() => {
-    listScrollOffsetRef.current = 0;
-    listScrollRef.current?.scrollToOffset({ offset: 0, animated: false });
-  }, [activePath]);
-
-  const parentPath = useMemo(() => {
-    if (activePath === ".") {
-      return null;
-    }
-    const segments = activePath.split("/");
-    segments.pop();
-    const nextPath = segments.join("/");
-    return nextPath.length === 0 ? "." : nextPath;
-  }, [activePath]);
+    const savedOffset = scrollOffsetsByPathRef.current.get(activePath) ?? 0;
+    listScrollOffsetRef.current = savedOffset;
+    queueScrollRestore(savedOffset);
+  }, [activePath, queueScrollRestore]);
 
   useEffect(() => {
     setCopiedPath(null);
@@ -179,14 +227,6 @@ export default function FileExplorerScreen() {
     [agentId, requestDirectoryListing, requestFilePreview]
   );
 
-  const handleNavigateUp = useCallback(() => {
-    if (!agentId || !parentPath) {
-      return;
-    }
-    setSelectedEntryPath(null);
-    requestDirectoryListing(agentId, parentPath);
-  }, [agentId, parentPath, requestDirectoryListing]);
-
   const handleCopyPath = useCallback(async (path: string) => {
     await Clipboard.setStringAsync(path);
     setCopiedPath(path);
@@ -209,13 +249,87 @@ export default function FileExplorerScreen() {
 
   const handleListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      listScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+      const offset = event.nativeEvent.contentOffset.y;
+      listScrollOffsetRef.current = offset;
+      scrollOffsetsByPathRef.current.set(activePath, offset);
     },
-    []
+    [activePath]
+  );
+
+  const handleCloseExplorer = useCallback(() => {
+    if (agentId) {
+      router.replace({ pathname: "/agent/[id]", params: { id: agentId } });
+      return;
+    }
+
+    router.back();
+  }, [agentId]);
+
+  const handleBackNavigation = useCallback(() => {
+    if (!agentId) {
+      router.back();
+      return true;
+    }
+
+    if (shouldShowPreview) {
+      setSelectedEntryPath(null);
+      return true;
+    }
+
+    if ((explorerState?.history?.length ?? 0) > 1) {
+      navigateExplorerBack(agentId);
+      return true;
+    }
+
+    handleCloseExplorer();
+    return true;
+  }, [agentId, explorerState?.history?.length, handleCloseExplorer, navigateExplorerBack, shouldShowPreview]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener("hardwareBackPress", handleBackNavigation);
+      return () => subscription.remove();
+    }, [handleBackNavigation])
   );
 
   const renderEntry = useCallback(
     ({ item }: ListRenderItemInfo<ExplorerEntry>) => {
+      if (viewMode === "grid") {
+        const preview = explorerState?.files.get(item.path);
+        const isImage = getEntryDisplayKind(item) === "image";
+        const isLoadingThumb = Boolean(thumbnailLoadingMap[item.path]);
+        return (
+          <Pressable
+            style={styles.gridCard}
+            onPress={() => handleEntryPress(item)}
+          >
+            <View
+              style={[styles.gridThumbnail, isImage && styles.gridImageBackground]}
+            >
+              {isImage && preview?.content ? (
+                <RNImage
+                  source={{
+                    uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+                  }}
+                  style={styles.gridImage}
+                  resizeMode="cover"
+                />
+              ) : isImage && isLoadingThumb ? (
+                <ActivityIndicator size="small" />
+              ) : (
+                renderEntryIcon(getEntryDisplayKind(item), theme.colors)
+              )}
+            </View>
+            <Text style={styles.gridName} numberOfLines={2}>
+              {item.name}
+            </Text>
+            <Text style={styles.gridMeta} numberOfLines={1}>
+              {formatFileSize({ size: item.size })}
+            </Text>
+          </Pressable>
+        );
+      }
+
       const displayKind = getEntryDisplayKind(item);
       return (
         <Pressable
@@ -254,17 +368,23 @@ export default function FileExplorerScreen() {
         </Pressable>
       );
     },
-    [copiedPath, handleCopyPath, handleEntryPress, theme.colors]
+    [
+      copiedPath,
+      explorerState?.files,
+      handleCopyPath,
+      handleEntryPress,
+      theme.colors,
+      thumbnailLoadingMap,
+      viewMode,
+    ]
   );
 
   const listHeaderComponent = useMemo(() => {
-    if (!parentPath && !showListLoadingBanner) {
-      return null;
-    }
-
     return (
       <View style={styles.headerContainer}>
-        {parentPath && <UpRow label=".." onPress={handleNavigateUp} />}
+        <View style={styles.headerRow}>
+          <ViewToggle viewMode={viewMode} onChange={setViewMode} />
+        </View>
         {showListLoadingBanner && (
           <View style={styles.loadingBanner}>
             <ActivityIndicator size="small" />
@@ -275,12 +395,20 @@ export default function FileExplorerScreen() {
         )}
       </View>
     );
-  }, [activePath, handleNavigateUp, parentPath, showListLoadingBanner]);
+  }, [activePath, showListLoadingBanner, viewMode]);
 
   if (!agent) {
     return (
       <View style={styles.container}>
-        <BackHeader title="Files" />
+        <BackHeader
+          title="Files"
+          onBack={handleBackNavigation}
+          rightContent={
+            <Pressable style={styles.closeButton} onPress={handleCloseExplorer}>
+              <X size={18} color={theme.colors.foreground} />
+            </Pressable>
+          }
+        />
         <View style={styles.centerState}>
           <Text style={styles.errorText}>Agent not found</Text>
         </View>
@@ -288,14 +416,73 @@ export default function FileExplorerScreen() {
     );
   }
 
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+      if (!agentId || viewMode !== "grid") {
+        return;
+      }
+
+      viewableItems.forEach((token) => {
+        const item = token.item as ExplorerEntry | undefined;
+        if (!item) {
+          return;
+        }
+
+        if (getEntryDisplayKind(item) !== "image") {
+          return;
+        }
+
+        const hasPreview = explorerState?.files.get(item.path);
+        if (hasPreview || pendingThumbnailPathsRef.current.has(item.path)) {
+          return;
+        }
+
+        pendingThumbnailPathsRef.current.add(item.path);
+        setThumbnailLoadingMap((prev) => ({ ...prev, [item.path]: true }));
+        requestFilePreview(agentId, item.path);
+      });
+    },
+    [agentId, explorerState?.files, requestFilePreview, viewMode]
+  );
+
+  useEffect(() => {
+    if (!explorerState) {
+      return;
+    }
+    setThumbnailLoadingMap((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(prev).forEach((path) => {
+        if (explorerState.files.has(path)) {
+          delete next[path];
+          pendingThumbnailPathsRef.current.delete(path);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [explorerState?.files.size]);
+
+  useEffect(() => {
+    pendingThumbnailPathsRef.current.clear();
+    setThumbnailLoadingMap({});
+  }, [activePath, viewMode]);
+
   return (
     <View style={styles.container}>
-      <BackHeader title={selectedEntryPath ?? (activePath || ".")} />
+      <BackHeader
+        title={selectedEntryPath ?? (activePath || ".")}
+        onBack={handleBackNavigation}
+        rightContent={
+          <Pressable style={styles.closeButton} onPress={handleCloseExplorer}>
+            <X size={18} color={theme.colors.foreground} />
+          </Pressable>
+        }
+      />
 
       <View style={styles.content}>
         {shouldShowPreview ? (
           <View style={styles.previewWrapper}>
-            <UpRow label="Back to directory" onPress={() => setSelectedEntryPath(null)} />
             <View style={styles.previewSection}>
               {isPreviewLoading && !preview ? (
                 <View style={styles.centerState}>
@@ -359,19 +546,61 @@ export default function FileExplorerScreen() {
                 data={entries}
                 renderItem={renderEntry}
                 keyExtractor={(item) => item.path}
-                contentContainerStyle={styles.entriesContent}
+                contentContainerStyle={
+                  viewMode === "grid" ? styles.gridContent : styles.entriesContent
+                }
+                columnWrapperStyle={
+                  viewMode === "grid" && listColumns > 1
+                    ? styles.gridColumnWrapper
+                    : undefined
+                }
+                numColumns={listColumns}
+                key={listKey}
                 onScroll={handleListScroll}
                 scrollEventThrottle={16}
+                onLayout={restoreQueuedScrollOffset}
+                onContentSizeChange={restoreQueuedScrollOffset}
                 ListHeaderComponent={listHeaderComponent}
-                extraData={copiedPath}
+                extraData={{ copiedPath, viewMode, thumbnailLoadingMap }}
                 initialNumToRender={20}
                 maxToRenderPerBatch={30}
                 windowSize={10}
+                onViewableItemsChanged={handleViewableItemsChanged}
+                viewabilityConfig={viewabilityConfigRef.current}
               />
             )}
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+function ViewToggle({
+  viewMode,
+  onChange,
+}: {
+  viewMode: "list" | "grid";
+  onChange: (mode: "list" | "grid") => void;
+}) {
+  const { theme } = useUnistyles();
+
+  return (
+    <View style={styles.viewToggleContainer}>
+      <Pressable
+        style={[styles.viewToggleButton, viewMode === "list" && styles.viewToggleActive]}
+        onPress={() => onChange("list")}
+      >
+        <ListIcon size={16} color={theme.colors.foreground} />
+        <Text style={styles.viewToggleText}>List</Text>
+      </Pressable>
+      <Pressable
+        style={[styles.viewToggleButton, viewMode === "grid" && styles.viewToggleActive]}
+        onPress={() => onChange("grid")}
+      >
+        <LayoutGrid size={16} color={theme.colors.foreground} />
+        <Text style={styles.viewToggleText}>Gallery</Text>
+      </Pressable>
     </View>
   );
 }
@@ -435,16 +664,6 @@ function deriveDirectoryFromFile(filePath: string): string {
   }
   const directory = normalized.slice(0, lastSlash);
   return directory.length > 0 ? directory : ".";
-}
-
-function UpRow({ label, onPress }: { label: string; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  return (
-    <Pressable style={styles.upRow} onPress={onPress}>
-      <ArrowLeft size={16} color={theme.colors.foreground} />
-      <Text style={styles.upRowText}>{label}</Text>
-    </Pressable>
-  );
 }
 
 type EntryDisplayKind = "directory" | "image" | "text" | "other";
@@ -567,6 +786,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingBottom: theme.spacing[2],
   },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
   loadingBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -661,21 +884,31 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  upRow: {
+  viewToggleContainer: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.full,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    overflow: "hidden",
   },
-  upRowText: {
+  viewToggleButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+  },
+  viewToggleActive: {
+    backgroundColor: theme.colors.muted,
+  },
+  viewToggleText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
+  },
+  closeButton: {
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
   },
   textPreview: {
     flex: 1,
@@ -687,6 +920,51 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: "monospace",
     fontSize: theme.fontSize.sm,
+  },
+  gridContent: {
+    paddingBottom: theme.spacing[4],
+    paddingHorizontal: theme.spacing[1],
+  },
+  gridColumnWrapper: {
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[2],
+  },
+  gridCard: {
+    flex: 1,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    padding: theme.spacing[2],
+    gap: theme.spacing[2],
+    backgroundColor: theme.colors.card,
+    marginHorizontal: theme.spacing[1],
+    marginBottom: theme.spacing[1],
+    minWidth: 0,
+  },
+  gridThumbnail: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    backgroundColor: theme.colors.muted,
+  },
+  gridImageBackground: {
+    backgroundColor: theme.colors.background,
+  },
+  gridImage: {
+    width: "100%",
+    height: "100%",
+  },
+  gridName: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  gridMeta: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
   },
   imagePreviewContainer: {
     flex: 1,

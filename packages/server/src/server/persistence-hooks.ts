@@ -45,7 +45,9 @@ export async function restorePersistedAgents(
     return;
   }
 
-  console.log(`[Agents] Restoring ${records.length} persisted agent(s)`);
+  let resumed = 0;
+  let created = 0;
+
   for (const record of records) {
     if (!isKnownProvider(record.provider)) {
       console.warn(
@@ -54,27 +56,33 @@ export async function restorePersistedAgents(
       continue;
     }
 
+    const handle = buildPersistenceHandle(record);
     try {
-      const persistenceHandle = buildPersistenceHandle(record);
-      if (persistenceHandle) {
+      if (handle) {
         await agentManager.resumeAgent(
-          persistenceHandle,
+          handle,
           buildConfigOverrides(record),
           record.id
         );
+        resumed += 1;
       } else {
         await agentManager.createAgent(
           buildSessionConfig(record),
           record.id
         );
+        created += 1;
       }
     } catch (error) {
       console.error(
-        `[Agents] Failed to restore agent ${record.id}:`,
+        `[Agents] Failed to restore agent ${record.id} from registry:`,
         error
       );
     }
   }
+
+  console.log(
+    `[Agents] Loaded ${records.length} persisted agent record(s); resumed ${resumed}, created ${created}`
+  );
 }
 
 function isKnownProvider(provider: string): provider is AgentProvider {

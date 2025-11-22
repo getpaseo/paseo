@@ -24,10 +24,7 @@ import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-manifest.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { createWorktree } from "../../utils/worktree.js";
-import {
-  WaitForAgentTracker,
-  type WaitForAgentCanceler,
-} from "./wait-for-agent-tracker.js";
+import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -229,6 +226,7 @@ export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
   const { agentManager, agentRegistry } = options;
+  const waitTracker = new WaitForAgentTracker();
 
   const server = new McpServer({
     name: "agent-mcp",
@@ -289,6 +287,7 @@ export async function createAgentMcpServer(
         const worktree = await createWorktree({
           branchName: worktreeName,
           cwd: resolvedCwd,
+          worktreeSlug: worktreeName,
         });
         resolvedCwd = worktree.worktreePath;
       }

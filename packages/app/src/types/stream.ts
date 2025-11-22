@@ -35,7 +35,7 @@ function createTimelineId(prefix: string, text: string, timestamp: Date): string
 
 function createUniqueTimelineId(
   state: StreamItem[],
-  prefix: "assistant" | "thought" | "user" | "tool",
+  prefix: string,
   text: string,
   timestamp: Date
 ): string {
@@ -892,9 +892,12 @@ function appendTodoList(
     return next;
   }
 
+  const idSeed = `${provider}:${JSON.stringify(normalizedItems)}`;
+  const entryId = createUniqueTimelineId(state, "todo", idSeed, timestamp);
+
   const entry: TodoListItem = {
     kind: "todo_list",
-    id: createTimelineId("todo", `${provider}:${JSON.stringify(normalizedItems)}`, timestamp),
+    id: entryId,
     timestamp,
     provider,
     items: normalizedItems,

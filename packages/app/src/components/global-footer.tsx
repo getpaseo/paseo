@@ -77,6 +77,9 @@ export function GlobalFooter() {
     ? FOOTER_HEIGHT * 2 + insets.bottom
     : FOOTER_HEIGHT + insets.bottom;
 
+  const iconSize = 24;
+  const iconStyle = { width: iconSize, height: iconSize };
+
   return (
     <>
       <Animated.View
@@ -110,7 +113,13 @@ export function GlobalFooter() {
                 pressed && styles.buttonPressed,
               ]}
             >
-              <Users size={20} color={theme.colors.foreground} />
+              <View style={styles.footerIconWrapper}>
+                <Users
+                  size={iconSize}
+                  color={theme.colors.foreground}
+                  style={iconStyle}
+                />
+              </View>
               <Text style={styles.footerButtonText}>Agents</Text>
             </Pressable>
 
@@ -124,7 +133,13 @@ export function GlobalFooter() {
                 pressed && styles.buttonPressed,
               ]}
             >
-              <Plus size={20} color={theme.colors.foreground} />
+              <View style={styles.footerIconWrapper}>
+                <Plus
+                  size={iconSize}
+                  color={theme.colors.foreground}
+                  style={iconStyle}
+                />
+              </View>
               <Text style={styles.footerButtonText}>New Agent</Text>
             </Pressable>
 
@@ -137,7 +152,13 @@ export function GlobalFooter() {
                 pressed && !ws.isConnected && styles.buttonPressed,
               ]}
             >
-              <AudioLines size={20} color={theme.colors.foreground} />
+              <View style={styles.footerIconWrapper}>
+                <AudioLines
+                  size={iconSize}
+                  color={theme.colors.foreground}
+                  style={iconStyle}
+                />
+              </View>
               <Text style={styles.footerButtonText}>Realtime</Text>
             </Pressable>
           </View>
@@ -179,6 +200,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[3],
     gap: theme.spacing[1],
+  },
+  footerIconWrapper: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   footerButtonText: {
     color: theme.colors.foreground,

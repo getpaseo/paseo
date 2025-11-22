@@ -207,10 +207,15 @@ class ClaudeAgentSession implements AgentSession {
   private currentMode: PermissionMode;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
+  private toolUseIndexToId = new Map<number, string>();
+  private toolUseInputBuffers = new Map<string, string>();
   private pendingPermissions = new Map<string, PendingPermission>();
   private eventQueue: Pushable<AgentStreamEvent> | null = null;
   private persistedHistory: AgentTimelineItem[] = [];
   private historyPending = false;
+  private turnCancelRequested = false;
+  private streamedAssistantTextThisTurn = false;
+  private streamedReasoningThisTurn = false;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -266,6 +271,17 @@ class ClaudeAgentSession implements AgentSession {
     const sdkMessage = this.toSdkUserMessage(prompt);
     const queue = new Pushable<AgentStreamEvent>();
     this.eventQueue = queue;
+    let finishedNaturally = false;
+    let cancelIssued = false;
+    const requestCancel = () => {
+      if (cancelIssued) {
+        return;
+      }
+      cancelIssued = true;
+      this.turnCancelRequested = true;
+      void this.interruptActiveTurn();
+      queue.end();
+    };
     if (this.historyPending && this.persistedHistory.length > 0) {
       for (const item of this.persistedHistory) {
         queue.push({ type: "timeline", item, provider: "claude" });
@@ -279,10 +295,14 @@ class ClaudeAgentSession implements AgentSession {
       for await (const event of queue) {
         yield event;
         if (event.type === "turn_completed" || event.type === "turn_failed") {
+          finishedNaturally = true;
           break;
         }
       }
     } finally {
+      if (!finishedNaturally && !cancelIssued) {
+        requestCancel();
+      }
       if (this.eventQueue === queue) {
         this.eventQueue = null;
       }
@@ -501,6 +521,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async forwardPromptEvents(message: SDKUserMessage, queue: Pushable<AgentStreamEvent>) {
+    this.streamedAssistantTextThisTurn = false;
+    this.streamedReasoningThisTurn = false;
     try {
       for await (const sdkEvent of this.processPrompt(message)) {
         const events = this.translateMessageToEvents(sdkEvent);
@@ -509,13 +531,27 @@ class ClaudeAgentSession implements AgentSession {
         }
       }
     } catch (error) {
-      queue.push({
-        type: "turn_failed",
-        provider: "claude",
-        error: error instanceof Error ? error.message : "Claude stream failed",
-      });
+      if (!this.turnCancelRequested) {
+        queue.push({
+          type: "turn_failed",
+          provider: "claude",
+          error: error instanceof Error ? error.message : "Claude stream failed",
+        });
+      }
     } finally {
+      this.turnCancelRequested = false;
       queue.end();
+    }
+  }
+
+  private async interruptActiveTurn(): Promise<void> {
+    if (!this.query || typeof this.query.interrupt !== "function") {
+      return;
+    }
+    try {
+      await this.query.interrupt();
+    } catch (error) {
+      console.warn("[ClaudeAgentSession] Failed to interrupt active turn:", error);
     }
   }
 
@@ -539,7 +575,10 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "assistant": {
-        const timelineItems = this.mapBlocksToTimeline(message.message.content);
+        const timelineItems = this.mapBlocksToTimeline(message.message.content, {
+          suppressAssistantText: this.streamedAssistantTextThisTurn,
+          suppressReasoning: this.streamedReasoningThisTurn,
+        });
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
         }
@@ -811,12 +850,31 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private convertHistoryEntry(entry: any): AgentTimelineItem[] {
-    return convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content));
+    return convertClaudeHistoryEntry(entry, (content) =>
+      this.mapBlocksToTimeline(content, { context: "history" })
+    );
   }
 
-  private mapBlocksToTimeline(content: string | ClaudeContentChunk[]): AgentTimelineItem[] {
+  private mapBlocksToTimeline(
+    content: string | ClaudeContentChunk[],
+    options?: {
+      context?: "live" | "history";
+      suppressAssistantText?: boolean;
+      suppressReasoning?: boolean;
+    }
+  ): AgentTimelineItem[] {
+    const context = options?.context ?? "live";
+    const suppressAssistant = options?.suppressAssistantText ?? false;
+    const suppressReasoning = options?.suppressReasoning ?? false;
+
     if (typeof content === "string") {
       if (!content || content === "[Request interrupted by user for tool use]") {
+        return [];
+      }
+      if (context === "live") {
+        this.streamedAssistantTextThisTurn = true;
+      }
+      if (suppressAssistant) {
         return [];
       }
       return [{ type: "assistant_message", text: content, raw: content }];
@@ -828,13 +886,23 @@ class ClaudeAgentSession implements AgentSession {
         case "text":
         case "text_delta":
           if (block.text && block.text !== "[Request interrupted by user for tool use]") {
-            items.push({ type: "assistant_message", text: block.text, raw: block });
+            if (context === "live") {
+              this.streamedAssistantTextThisTurn = true;
+            }
+            if (!suppressAssistant) {
+              items.push({ type: "assistant_message", text: block.text, raw: block });
+            }
           }
           break;
         case "thinking":
         case "thinking_delta":
           if (block.thinking) {
-            items.push({ type: "reasoning", text: block.thinking, raw: block });
+            if (context === "live") {
+              this.streamedReasoningThisTurn = true;
+            }
+            if (!suppressReasoning) {
+              items.push({ type: "reasoning", text: block.thinking, raw: block });
+            }
           }
           break;
         case "tool_use":
@@ -915,6 +983,23 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {
+    if (event.type === "content_block_start" && (event.content_block as ClaudeContentChunk | undefined)?.type === "tool_use") {
+      const block = event.content_block as ClaudeContentChunk;
+      if (typeof event.index === "number" && typeof block?.id === "string") {
+        this.toolUseIndexToId.set(event.index, block.id);
+        this.toolUseInputBuffers.delete(block.id);
+      }
+    } else if (event.type === "content_block_delta" && (event.delta as ClaudeContentChunk | undefined)?.type === "input_json_delta") {
+      this.handleToolInputDelta(event.index, (event.delta as { partial_json?: string })?.partial_json);
+      return [];
+    } else if (event.type === "content_block_stop" && typeof event.index === "number") {
+      const toolId = this.toolUseIndexToId.get(event.index);
+      if (toolId) {
+        this.toolUseIndexToId.delete(event.index);
+        this.toolUseInputBuffers.delete(toolId);
+      }
+    }
+
     switch (event.type) {
       case "content_block_start":
         return this.mapBlocksToTimeline([event.content_block as ClaudeContentChunk]);
@@ -956,18 +1041,8 @@ class ClaudeAgentSession implements AgentSession {
 
     if (block.type === "tool_use") {
       const input = this.normalizeToolInput(block.input);
-      existing.input = input;
       if (input) {
-        if (this.isCommandTool(existing.name, input)) {
-          existing.classification = "command";
-          existing.commandText = this.extractCommandText(input) ?? existing.commandText;
-        } else {
-          const files = this.extractFileChanges(input);
-          if (files?.length) {
-            existing.classification = "file_change";
-            existing.files = files;
-          }
-        }
+        this.applyToolInput(existing, input);
       }
     }
 
@@ -975,11 +1050,60 @@ class ClaudeAgentSession implements AgentSession {
     return existing;
   }
 
+  private handleToolInputDelta(index: number | undefined, partialJson: string | undefined): void {
+    if (typeof index !== "number" || typeof partialJson !== "string") {
+      return;
+    }
+    const toolId = this.toolUseIndexToId.get(index);
+    if (!toolId) {
+      return;
+    }
+    const buffer = (this.toolUseInputBuffers.get(toolId) ?? "") + partialJson;
+    this.toolUseInputBuffers.set(toolId, buffer);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(buffer);
+    } catch {
+      return;
+    }
+    const entry = this.toolUseCache.get(toolId);
+    const normalized = this.normalizeToolInput(parsed);
+    if (!entry || !normalized) {
+      return;
+    }
+    this.applyToolInput(entry, normalized);
+    this.toolUseCache.set(toolId, entry);
+    this.pushToolCall({
+      server: entry.server,
+      tool: entry.name,
+      status: "pending",
+      callId: toolId,
+      displayName: this.buildToolDisplayName(entry),
+      kind: this.getToolKind(entry.classification),
+      input: normalized,
+      raw: { type: "tool_use", id: toolId, input: parsed },
+    });
+  }
+
   private normalizeToolInput(input: unknown): Record<string, unknown> | null {
     if (!input || typeof input !== "object") {
       return null;
     }
     return input as Record<string, unknown>;
+  }
+
+  private applyToolInput(entry: ToolUseCacheEntry, input: Record<string, unknown>): void {
+    entry.input = input;
+    if (this.isCommandTool(entry.name, input)) {
+      entry.classification = "command";
+      entry.commandText = this.extractCommandText(input) ?? entry.commandText;
+    } else {
+      const files = this.extractFileChanges(input);
+      if (files?.length) {
+        entry.classification = "file_change";
+        entry.files = files;
+      }
+    }
   }
 
   private isCommandTool(name: string, input: Record<string, unknown>): boolean {
@@ -1247,6 +1371,8 @@ async function collectRecentClaudeSessions(root: string, limit: number): Promise
     .slice(0, limit);
 }
 
+const CLAUDE_PERSISTED_TIMELINE_LIMIT = 20;
+
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date
@@ -1261,6 +1387,7 @@ async function parseClaudeSessionDescriptor(
   let sessionId: string | null = null;
   let cwd: string | null = null;
   let title: string | null = null;
+  const timeline: AgentTimelineItem[] = [];
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -1277,8 +1404,19 @@ async function parseClaudeSessionDescriptor(
     if (!cwd && typeof entry.cwd === "string") {
       cwd = entry.cwd;
     }
-    if (!title && entry.type === "user" && entry.message) {
-      title = extractClaudeUserText(entry.message);
+    if (entry.type === "user" && entry.message) {
+      const text = extractClaudeUserText(entry.message);
+      if (text) {
+        if (!title) {
+          title = text;
+        }
+        timeline.push({ type: "user_message", text });
+      }
+    } else if (entry.type === "assistant" && entry.message) {
+      const text = extractClaudeUserText(entry.message);
+      if (text) {
+        timeline.push({ type: "assistant_message", text });
+      }
     }
     if (sessionId && cwd && title) {
       break;
@@ -1306,6 +1444,7 @@ async function parseClaudeSessionDescriptor(
     title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
     lastActivityAt: mtime,
     persistence,
+    timeline: timeline.slice(0, CLAUDE_PERSISTED_TIMELINE_LIMIT),
   };
 }
 

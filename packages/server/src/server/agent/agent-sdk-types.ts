@@ -126,6 +126,7 @@ export type PersistedAgentDescriptor = {
   title: string | null;
   lastActivityAt: Date;
   persistence: AgentPersistenceHandle;
+  timeline: AgentTimelineItem[];
 };
 
 export type AgentSessionConfig = {

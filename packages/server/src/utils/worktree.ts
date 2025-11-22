@@ -18,6 +18,13 @@ interface WorktreeConfig {
   repoPath: string;
 }
 
+interface CreateWorktreeOptions {
+  branchName: string;
+  cwd: string;
+  baseBranch?: string;
+  worktreeSlug?: string;
+}
+
 /**
  * Check if current directory is a bare repository
  */
@@ -148,6 +155,11 @@ export function slugify(input: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function sanitizeWorktreeSlug(input: string): string {
+  const slug = slugify(input);
+  return slug.length > 0 ? slug : "worktree";
+}
+
 /**
  * Check if a worktree already exists for a branch
  */
@@ -183,12 +195,12 @@ async function findExistingWorktree(
 /**
  * Create a git worktree with proper naming conventions
  */
-export async function createWorktree(params: {
-  branchName: string;
-  cwd: string;
-}): Promise<WorktreeConfig> {
-  const { branchName, cwd } = params;
-
+export async function createWorktree({
+  branchName,
+  cwd,
+  baseBranch,
+  worktreeSlug,
+}: CreateWorktreeOptions): Promise<WorktreeConfig> {
   // Validate branch name
   const validation = validateBranchSlug(branchName);
   if (!validation.valid) {
@@ -200,11 +212,13 @@ export async function createWorktree(params: {
 
   // Determine worktree directory based on repo type
   let worktreePath: string;
+  const desiredSlug = sanitizeWorktreeSlug(worktreeSlug ?? branchName);
+
   if (repoInfo.type === "bare") {
-    worktreePath = join(repoInfo.path, branchName);
+    worktreePath = join(repoInfo.path, desiredSlug);
   } else {
     const parentDir = dirname(repoInfo.path);
-    const worktreeName = `${repoInfo.name}-${branchName.replace(/\//g, "-")}`;
+    const worktreeName = `${repoInfo.name}-${desiredSlug}`;
     worktreePath = join(parentDir, worktreeName);
   }
 
@@ -238,10 +252,9 @@ export async function createWorktree(params: {
     });
   } catch (error) {
     // Branch doesn't exist, create new branch and worktree
-    await execAsync(
-      `git worktree add "${worktreePath}" -b "${branchName}"`,
-      { cwd: repoInfo.path }
-    );
+    const baseArg = baseBranch ? ` "${baseBranch}"` : "";
+    const command = `git worktree add "${worktreePath}" -b "${branchName}"${baseArg}`;
+    await execAsync(command, { cwd: repoInfo.path });
   }
 
   // Copy .env file if it exists

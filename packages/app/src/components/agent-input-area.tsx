@@ -4,13 +4,15 @@ import {
   Pressable,
   NativeSyntheticEvent,
   TextInputContentSizeChangeEventData,
+  TextInputKeyPressEventData,
   Image,
   Platform,
   Text,
+  ActivityIndicator,
 } from "react-native";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, ArrowUp, AudioLines, Square, Paperclip, X } from "lucide-react-native";
+import { Mic, ArrowUp, AudioLines, Square, Paperclip, X, Pencil } from "lucide-react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -32,18 +34,45 @@ interface AgentInputAreaProps {
   agentId: string;
 }
 
-const MIN_INPUT_HEIGHT = 40;
+const MIN_INPUT_HEIGHT = 32;
 const MAX_INPUT_HEIGHT = 160;
+const MAX_INPUT_WIDTH = 960;
 const BASE_VERTICAL_PADDING = (FOOTER_HEIGHT - MIN_INPUT_HEIGHT) / 2;
 // Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
 // entering/exiting animations (see react-native-reanimated#8422), so guard them.
 const SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS = Platform.OS === "android";
 const REALTIME_FADE_IN = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeIn.duration(250);
 const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeOut.duration(250);
+const IS_WEB = Platform.OS === "web";
+const SHOULD_DEBUG_INPUT_HEIGHT = IS_WEB;
+type WebTextInputKeyPressEvent = NativeSyntheticEvent<
+  TextInputKeyPressEventData & {
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+  }
+>;
+type TextAreaHandle = {
+  scrollHeight?: number;
+  style?: {
+    height?: string;
+    overflowY?: string;
+  } & Record<string, unknown>;
+};
 
 export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const { ws, sendAgentMessage, sendAgentAudio, agents, cancelAgentRun } = useSession();
+  const {
+    ws,
+    sendAgentMessage,
+    sendAgentAudio,
+    agents,
+    cancelAgentRun,
+    draftInputs,
+    setDraftInputs,
+    queuedMessages: queuedMessagesByAgent,
+    setQueuedMessages: setQueuedMessagesByAgent,
+  } = useSession();
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
   const [userInput, setUserInput] = useState("");
@@ -54,8 +83,10 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const [recordingVolume, setRecordingVolume] = useState(0);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [transcribingRequestId, setTranscribingRequestId] = useState<string | null>(null);
+  const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
   const overlayTransition = useSharedValue(0);
   const { pickImages } = useImageAttachmentPicker();
   
@@ -64,6 +95,13 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       setRecordingVolume(level);
     },
   });
+
+  const debugInputHeight = (label: string, payload: Record<string, unknown>) => {
+    if (!SHOULD_DEBUG_INPUT_HEIGHT) {
+      return;
+    }
+    console.log(`[AgentInput][InputHeight] ${label}`, payload);
+  };
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -218,22 +256,106 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     };
   }, []);
 
-  function handleContentSizeChange(
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
-  ) {
-    const contentHeight = event.nativeEvent.contentSize.height;
+  function isTextAreaLike(value: unknown): value is TextAreaHandle {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const candidate = value as TextAreaHandle;
+    return typeof candidate.scrollHeight === "number" && typeof candidate.style === "object";
+  }
+
+  function getWebTextArea(): TextAreaHandle | null {
+    if (!IS_WEB) {
+      return null;
+    }
+
+    const node = textInputRef.current;
+    if (!node) {
+      debugInputHeight("missing-ref", {});
+      return null;
+    }
+
+    if (isTextAreaLike(node)) {
+      debugInputHeight("using-ref", {
+        scrollHeight: node.scrollHeight,
+        inlineHeight: node.style?.height,
+      });
+      return node;
+    }
+
+    if (typeof (node as { getNativeRef?: () => unknown }).getNativeRef === "function") {
+      const native = (node as { getNativeRef?: () => unknown }).getNativeRef?.();
+      if (isTextAreaLike(native)) {
+        debugInputHeight("using-native-ref", {
+          scrollHeight: native.scrollHeight,
+          inlineHeight: native.style?.height,
+        });
+        return native;
+      }
+    }
+
+    debugInputHeight("no-textarea-found", {});
+    return null;
+  }
+
+  function measureWebInputHeight(source: string): boolean {
+    if (!IS_WEB) {
+      return false;
+    }
+    const element = getWebTextArea();
+    if (!element?.style || typeof element.scrollHeight !== "number") {
+      debugInputHeight(`${source}-missing`, {});
+      return false;
+    }
+    const previousHeight = element.style.height;
+    element.style.height = "auto";
+    const measuredHeight = element.scrollHeight;
+    element.style.height = previousHeight ?? "";
+    const bounded = Math.min(
+      MAX_INPUT_HEIGHT,
+      Math.max(MIN_INPUT_HEIGHT, measuredHeight),
+    );
+    debugInputHeight(source, {
+      measuredHeight,
+      bounded,
+      scrollHeight: element.scrollHeight,
+      inlineHeight: previousHeight,
+    });
+    setBoundedInputHeight(bounded);
+    return true;
+  }
+
+  function setBoundedInputHeight(nextHeight: number) {
     const boundedHeight = Math.min(
       MAX_INPUT_HEIGHT,
-      Math.max(MIN_INPUT_HEIGHT, contentHeight),
+      Math.max(MIN_INPUT_HEIGHT, nextHeight),
     );
 
     setInputHeight((currentHeight) => {
       if (Math.abs(currentHeight - boundedHeight) < 1) {
         return currentHeight;
       }
-
+      debugInputHeight("set-state", {
+        nextHeight,
+        boundedHeight,
+        previousHeight: currentHeight,
+      });
       return boundedHeight;
     });
+  }
+
+  function handleContentSizeChange(
+    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
+  ) {
+    if (IS_WEB && measureWebInputHeight("web-measure")) {
+      return;
+    }
+
+    debugInputHeight("native-measure", {
+      height: event.nativeEvent.contentSize.height,
+      width: event.nativeEvent.contentSize.width,
+    });
+    setBoundedInputHeight(event.nativeEvent.contentSize.height);
   }
 
   const agent = agents.get(agentId);
@@ -243,6 +365,73 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const hasSendableContent = hasText || hasImages;
   const shouldShowSendButton = !isAgentRunning && hasSendableContent;
   const shouldShowVoiceControls = !isAgentRunning && !hasSendableContent;
+  const queuedMessages = queuedMessagesByAgent.get(agentId) ?? [];
+  const shouldHandleDesktopSubmit = IS_WEB;
+
+  useLayoutEffect(() => {
+    if (!IS_WEB) {
+      return;
+    }
+    measureWebInputHeight("layout-effect");
+  }, [userInput]);
+
+  function handleDesktopSubmitKeyPress(event: WebTextInputKeyPressEvent) {
+    if (!shouldHandleDesktopSubmit) {
+      return;
+    }
+    if (event.nativeEvent.key !== "Enter") {
+      return;
+    }
+    const { metaKey, ctrlKey, shiftKey } = event.nativeEvent;
+    if (shiftKey || metaKey || ctrlKey) {
+      return;
+    }
+    event.preventDefault();
+    if (!shouldShowSendButton || isProcessing || !ws.isConnected) {
+      return;
+    }
+    void handleSendMessage();
+  }
+
+  useEffect(() => {
+    if (!isAgentRunning || !ws.isConnected) {
+      setIsCancellingAgent(false);
+    }
+  }, [isAgentRunning, ws.isConnected]);
+
+  // Hydrate draft only when switching agents
+  useEffect(() => {
+    const draft = draftInputs.get(agentId);
+    if (!draft) {
+      setUserInput("");
+      setSelectedImages([]);
+      return;
+    }
+
+    setUserInput(draft.text);
+    setSelectedImages(draft.images);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+
+  // Persist drafts into context with change detection to avoid render loops
+  useEffect(() => {
+    setDraftInputs((prev) => {
+      const existing = prev.get(agentId);
+      const isSameText = existing?.text === userInput;
+      const existingImages = existing?.images ?? [];
+      const isSameImages =
+        existingImages.length === selectedImages.length &&
+        existingImages.every((img, idx) => img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType);
+
+      if (isSameText && isSameImages) {
+        return prev;
+      }
+
+      const next = new Map(prev);
+      next.set(agentId, { text: userInput, images: selectedImages });
+      return next;
+    });
+  }, [agentId, userInput, selectedImages, setDraftInputs]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -275,13 +464,57 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   }
 
   function handleCancelAgent() {
-    if (!agent || agent.status !== "running") {
+    if (!agent || agent.status !== "running" || isCancellingAgent) {
       return;
     }
     if (!ws.isConnected) {
       return;
     }
+    setIsCancellingAgent(true);
     cancelAgentRun(agentId);
+  }
+
+  function updateQueue(updater: (current: typeof queuedMessages) => typeof queuedMessages) {
+    setQueuedMessagesByAgent((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, updater(prev.get(agentId) ?? []));
+      return next;
+    });
+  }
+
+  function handleQueueCurrentInput() {
+    if (!hasSendableContent) return;
+
+    const newItem = {
+      id: generateMessageId(),
+      text: userInput.trim(),
+      images: selectedImages.length ? selectedImages : undefined,
+    };
+
+    updateQueue((current) => [...current, newItem]);
+    setUserInput("");
+    setSelectedImages([]);
+    setInputHeight(MIN_INPUT_HEIGHT);
+  }
+
+  function handleEditQueuedMessage(id: string) {
+    const item = queuedMessages.find((q) => q.id === id);
+    if (!item) return;
+
+    updateQueue((current) => current.filter((q) => q.id !== id));
+    setUserInput(item.text);
+    setSelectedImages(item.images ?? []);
+  }
+
+  async function handleSendQueuedNow(id: string) {
+    const item = queuedMessages.find((q) => q.id === id);
+    if (!item || !ws.isConnected) return;
+
+    updateQueue((current) => current.filter((q) => q.id !== id));
+
+    // Cancels current agent run before sending queued prompt
+    handleCancelAgent();
+    await sendAgentMessage(agentId, item.text, item.images?.map((img) => img.uri));
   }
 
   const realtimeButton = (
@@ -320,8 +553,33 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
       {/* Input area */}
       <View style={styles.inputAreaContainer}>
-        {/* Regular input controls */}
-        <Animated.View style={[styles.inputContainer, inputAnimatedStyle]}>
+        <View style={styles.inputAreaContent}>
+          {/* Regular input controls */}
+          <Animated.View style={[styles.inputContainer, inputAnimatedStyle]}>
+          {/* Queue list */}
+          {queuedMessages.length > 0 && (
+            <View style={styles.queueContainer}>
+              {queuedMessages.map((item) => (
+                <View key={item.id} style={styles.queueItem}>
+                  <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+                    {item.text}
+                  </Text>
+                  <View style={styles.queueActions}>
+                    <Pressable onPress={() => handleEditQueuedMessage(item.id)} style={styles.queueActionButton}>
+                      <Pencil size={14} color={theme.colors.foreground} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleSendQueuedNow(item.id)}
+                      style={[styles.queueActionButton, styles.queueSendButton]}
+                    >
+                      <ArrowUp size={14} color={theme.colors.background} />
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
           {/* Image preview pills */}
           {hasImages && (
             <View style={styles.imagePreviewContainer}>
@@ -338,6 +596,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
           {/* Full-width text input */}
           <TextInput
+            ref={textInputRef}
             value={userInput}
             onChangeText={setUserInput}
             placeholder="Message agent..."
@@ -350,6 +609,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
             scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
             onContentSizeChange={handleContentSizeChange}
             editable={!isRecording && ws.isConnected}
+            onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
           />
 
           {/* Button row below input */}
@@ -373,18 +633,33 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
             <View style={styles.rightButtonGroup}>
               {isAgentRunning ? (
                 <>
+                  {hasSendableContent && (
+                    <Pressable
+                      onPress={handleQueueCurrentInput}
+                      disabled={!ws.isConnected}
+                      accessibilityLabel="Queue message while agent is running"
+                      accessibilityRole="button"
+                      style={[styles.queueButton, !ws.isConnected && styles.buttonDisabled]}
+                    >
+                      <ArrowUp size={20} color="white" />
+                    </Pressable>
+                  )}
                   {realtimeButton}
                   <Pressable
                     onPress={handleCancelAgent}
-                    disabled={!ws.isConnected}
-                    accessibilityLabel="Stop agent"
+                    disabled={!ws.isConnected || isCancellingAgent}
+                    accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
                     accessibilityRole="button"
                     style={[
                       styles.cancelButton,
-                      !ws.isConnected && styles.buttonDisabled,
+                      (!ws.isConnected || isCancellingAgent) && styles.buttonDisabled,
                     ]}
                   >
-                    <Square size={18} color={theme.colors.background} fill={theme.colors.background} />
+                    {isCancellingAgent ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Square size={18} color="white" fill="white" />
+                    )}
                   </Pressable>
                 </>
               ) : shouldShowSendButton ? (
@@ -420,17 +695,20 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
               ) : null}
             </View>
           </View>
-        </Animated.View>
+          </Animated.View>
+        </View>
 
         {/* Voice note recording overlay */}
         <Animated.View style={[styles.overlayContainer, overlayAnimatedStyle]}>
-          <VoiceNoteRecordingOverlay
-            volume={recordingVolume}
-            duration={recordingDuration}
-            onCancel={handleCancelRecording}
-            onSend={handleSendRecording}
-            isTranscribing={transcribingRequestId !== null}
-          />
+          <View style={styles.inputAreaContent}>
+            <VoiceNoteRecordingOverlay
+              volume={recordingVolume}
+              duration={recordingDuration}
+              onCancel={handleCancelRecording}
+              onSend={handleSendRecording}
+              isTranscribing={transcribingRequestId !== null}
+            />
+          </View>
         </Animated.View>
       </View>
     </View>
@@ -451,6 +729,12 @@ const styles = StyleSheet.create((theme) => ({
   inputAreaContainer: {
     position: "relative",
     minHeight: FOOTER_HEIGHT,
+    alignItems: "center",
+    width: "100%",
+  },
+  inputAreaContent: {
+    width: "100%",
+    maxWidth: MAX_INPUT_WIDTH,
   },
   inputContainer: {
     flexDirection: "column",
@@ -458,6 +742,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     gap: theme.spacing[3],
     minHeight: FOOTER_HEIGHT,
+    width: "100%",
   },
   overlayContainer: {
     position: "absolute",
@@ -465,6 +750,7 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
     height: FOOTER_HEIGHT,
+    alignItems: "center",
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -499,6 +785,13 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     lineHeight: theme.fontSize.lg * 1.4,
+    ...(IS_WEB
+      ? {
+          outlineStyle: "none" as const,
+          outlineWidth: 0,
+          outlineColor: "transparent",
+        }
+      : {}),
   },
   buttonRow: {
     flexDirection: "row",
@@ -559,7 +852,52 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  queueButton: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.palette.blue[600],
+    alignItems: "center",
+    justifyContent: "center",
+  },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  queueContainer: {
+    flexDirection: "column",
+    gap: theme.spacing[2],
+  },
+  queueItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    gap: theme.spacing[2],
+  },
+  queueText: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  queueActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  queueActionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.muted,
+  },
+  queueSendButton: {
+    backgroundColor: theme.colors.palette.blue[600],
   },
 }));
