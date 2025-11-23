@@ -463,14 +463,20 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       return;
     }
 
-    const handleDictationShortcut = (event: KeyboardEvent) => {
+    const listener = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      const isCommandLike = event.metaKey || event.ctrlKey;
 
-      if (event.metaKey && !event.altKey && !event.ctrlKey && key === "d") {
+      if (isCommandLike && !event.altKey && key === "d") {
         event.preventDefault();
+        event.stopPropagation();
+
         if (isRecording) {
           void handleSendRecording();
-        } else if (!isRealtimeMode && shouldShowVoiceControls && ws.isConnected) {
+          return;
+        }
+
+        if (!isRealtimeMode && shouldShowVoiceControls && ws.isConnected) {
           void handleVoicePress();
         }
         return;
@@ -478,13 +484,14 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
       if (key === "escape" && isRecording) {
         event.preventDefault();
+        event.stopPropagation();
         void handleCancelRecording();
       }
     };
 
-    window.addEventListener("keydown", handleDictationShortcut);
+    window.addEventListener("keydown", listener, true);
     return () => {
-      window.removeEventListener("keydown", handleDictationShortcut);
+      window.removeEventListener("keydown", listener, true);
     };
   }, [
     isRecording,
