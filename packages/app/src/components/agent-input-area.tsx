@@ -261,6 +261,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     };
   }, []);
 
+
   function isTextAreaLike(value: unknown): value is TextAreaHandle {
     if (!value || typeof value !== "object") {
       return false;
@@ -456,6 +457,44 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       setIsCancellingAgent(false);
     }
   }, [isAgentRunning, ws.isConnected]);
+
+  useEffect(() => {
+    if (!IS_WEB) {
+      return;
+    }
+
+    const handleDictationShortcut = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (event.metaKey && !event.altKey && !event.ctrlKey && key === "d") {
+        event.preventDefault();
+        if (isRecording) {
+          void handleSendRecording();
+        } else if (!isRealtimeMode && shouldShowVoiceControls && ws.isConnected) {
+          void handleVoicePress();
+        }
+        return;
+      }
+
+      if (key === "escape" && isRecording) {
+        event.preventDefault();
+        void handleCancelRecording();
+      }
+    };
+
+    window.addEventListener("keydown", handleDictationShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleDictationShortcut);
+    };
+  }, [
+    isRecording,
+    isRealtimeMode,
+    shouldShowVoiceControls,
+    ws,
+    handleVoicePress,
+    handleSendRecording,
+    handleCancelRecording,
+  ]);
 
   useEffect(() => {
     focusWebTextInput();
