@@ -10,7 +10,7 @@ Full list of the places where the app still depends on the ACP (Agent Client Pro
 | WebSocket transport | `packages/server/src/server/websocket-server.ts`, `packages/server/src/server/messages.ts` | Session still emits `agent_created`/`agent_initialized`/`agent_update` messages that wrap ACP `AgentUpdate` payloads | Define `agent_state` and `agent_stream` session events in `messages.ts`, forward `AgentSnapshot` + `AgentStreamEvent` to clients, and remove ACP‑specific envelopes |
 | MCP tools | `packages/server/src/server/acp/mcp-server.ts`, `packages/server/src/server/session.ts` | MCP server calls `acp.AgentManager` helpers (`createAgent`, `wait_for_agent`, `getAgentActivity`, etc.) and serializes ACP `AgentNotification`s | Build `agent-mcp` on top of SDK `AgentManager` snapshots/streams (`AgentTimelineItem` for `curateAgentActivity`, `AgentPermissionRequest` for gating) and expose provider‑agnostic controls (`runAgent`, `getTimeline`, `respondToPermission`) |
 | Title generator | `packages/server/src/services/agent-title-generator.ts`, `packages/server/src/server/acp/activity-curator.ts` | Takes `AgentUpdate[]` (ACP notifications) to derive activity summaries | Switch to `AgentTimelineItem[]` returned by `AgentManager.getTimeline()` and reuse the same prompt, so titles are based on SDK timeline events |
-| Frontend session context + reducers | `packages/app/src/contexts/session-context.tsx`, `packages/app/src/types/stream.ts`, `packages/app/src/components/agent-stream-view.tsx`, `packages/app/src/components/tool-call-bottom-sheet.tsx`, `packages/app/src/types/shared.ts`, `packages/app/src/components/create-agent-modal.tsx` | Imports `AgentStatus`, `AgentUpdate`, `AgentNotification`, `RequestPermissionRequest`, and ACP agent type definitions; UI expects `agent_update` packets containing ACP `SessionNotification` deltas | Switch to shared SDK types exported via `@server/server/agent/...`: `AgentSnapshot`, `AgentManagerEvent`, `AgentStreamEvent`, `AgentPermissionRequest`, and provider definitions that come from `agent/providers`. `reduceStreamUpdate` should read `AgentTimelineItem` events instead of ACP deltas |
+| Frontend session context + reducers | `packages/app/src/contexts/session-context.tsx`, `packages/app/src/types/stream.ts`, `packages/app/src/components/agent-stream-view.tsx`, `packages/app/src/types/shared.ts`, `packages/app/src/components/create-agent-modal.tsx` | Imports `AgentStatus`, `AgentUpdate`, `AgentNotification`, `RequestPermissionRequest`, and ACP agent type definitions; UI expects `agent_update` packets containing ACP `SessionNotification` deltas | Switch to shared SDK types exported via `@server/server/agent/...`: `AgentSnapshot`, `AgentManagerEvent`, `AgentStreamEvent`, `AgentPermissionRequest`, and provider definitions that come from `agent/providers`. `reduceStreamUpdate` should read `AgentTimelineItem` events instead of ACP deltas |
 
 ## Target AgentManager message contract
 
@@ -109,7 +109,6 @@ Files:
 - `packages/app/src/types/stream.ts`
 - `packages/app/src/types/shared.ts`
 - `packages/app/src/components/agent-stream-view.tsx`
-- `packages/app/src/components/tool-call-bottom-sheet.tsx`
 - `packages/app/src/components/create-agent-modal.tsx`
 - `packages/app/src/components/agent-sidebar.tsx`, `agent-list.tsx`, `active-processes.tsx`
 

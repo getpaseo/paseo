@@ -271,6 +271,7 @@ class CodexAgentSession implements AgentSession {
   private rolloutPath: string | null;
   private historyEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
+  private cancelCurrentTurn: (() => void) | null = null;
 
   constructor(codex: Codex, config: CodexAgentConfig, handle?: AgentPersistenceHandle) {
     this.codex = codex;
@@ -337,6 +338,29 @@ class CodexAgentSession implements AgentSession {
     const { events } = await thread.runStreamed(input, turnOptions);
 
     let finishedNaturally = false;
+    let cancelIssued = false;
+    const requestCancel = () => {
+      if (cancelIssued) {
+        return;
+      }
+      cancelIssued = true;
+      if (typeof events.return !== "function") {
+        return;
+      }
+      try {
+        const cancellation = events.return({
+          type: "turn.completed",
+        } as ThreadEvent);
+        void cancellation.catch((error) => {
+          console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
+        });
+      } catch (error) {
+        console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
+      }
+    };
+
+    this.cancelCurrentTurn = requestCancel;
+
     try {
       for await (const rawEvent of events) {
         yield* this.translateEvent(rawEvent);
@@ -350,14 +374,17 @@ class CodexAgentSession implements AgentSession {
         }
       }
     } finally {
-      if (!finishedNaturally && typeof events.return === "function") {
-        try {
-          await events.return({ type: "turn.completed" } as ThreadEvent);
-        } catch (error) {
-          console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
-        }
+      if (!finishedNaturally) {
+        requestCancel();
+      }
+      if (this.cancelCurrentTurn === requestCancel) {
+        this.cancelCurrentTurn = null;
       }
     }
+  }
+
+  async interrupt(): Promise<void> {
+    this.cancelCurrentTurn?.();
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {

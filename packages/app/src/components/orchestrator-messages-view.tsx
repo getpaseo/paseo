@@ -1,16 +1,13 @@
 import { View, ScrollView } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { forwardRef, useRef, useState } from "react";
-import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { StyleSheet } from "react-native-unistyles";
+import { forwardRef } from "react";
 import {
   UserMessage,
   AssistantMessage,
   ActivityLog,
   ToolCall,
 } from "@/components/message";
-import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import type { MessageEntry } from "@/contexts/session-context";
-import type { SelectedToolCall } from "@/types/shared";
 
 interface OrchestratorMessagesViewProps {
   messages: MessageEntry[];
@@ -20,43 +17,6 @@ interface OrchestratorMessagesViewProps {
 
 export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessagesViewProps>(
   function OrchestratorMessagesView({ messages, currentAssistantMessage, onArtifactClick }, ref) {
-    const { theme } = useUnistyles();
-    const bottomSheetRef = useRef<BottomSheetModal | null>(null);
-    const [selectedToolCall, setSelectedToolCall] = useState<SelectedToolCall | null>(null);
-    const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
-
-    function handleOpenToolCallDetails(toolCall: {
-      toolName: string;
-      status: 'executing' | 'completed' | 'failed';
-      args: any;
-      result?: any;
-      error?: any;
-    }) {
-      // Wrap orchestrator tool call in payload structure
-      setSelectedToolCall({
-        payload: {
-          source: 'orchestrator',
-          data: {
-            toolCallId: `orchestrator_${Date.now()}`, // Generate a simple ID
-            toolName: toolCall.toolName,
-            arguments: toolCall.args,
-            result: toolCall.result,
-            error: toolCall.error,
-            status: toolCall.status,
-          },
-        },
-      });
-      setIsBottomSheetVisible(true);
-      // Delay present to next frame to ensure component is mounted
-      setTimeout(() => {
-        bottomSheetRef.current?.present();
-      }, 0);
-    }
-
-    function handleBottomSheetDismiss() {
-      setIsBottomSheetVisible(false);
-      setSelectedToolCall(null);
-    }
 
     return (
       <>
@@ -125,13 +85,6 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
                 result={msg.result}
                 error={msg.error}
                 status={msg.status}
-                onOpenDetails={() => handleOpenToolCallDetails({
-                  toolName: msg.toolName,
-                  status: msg.status,
-                  args: msg.args,
-                  result: msg.result,
-                  error: msg.error,
-                })}
               />
             );
           }
@@ -149,13 +102,6 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
         )}
       </ScrollView>
 
-      {isBottomSheetVisible && (
-        <ToolCallBottomSheet
-          bottomSheetRef={bottomSheetRef}
-          selectedToolCall={selectedToolCall}
-          onDismiss={handleBottomSheetDismiss}
-        />
-      )}
     </>
     );
   }

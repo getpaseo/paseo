@@ -14,7 +14,6 @@ import {
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
 import { useRouter } from "expo-router";
@@ -27,10 +26,9 @@ import {
   TodoListCard,
   type InlinePathTarget,
 } from "./message";
-import { ToolCallBottomSheet } from "./tool-call-bottom-sheet";
 import { DiffViewer } from "./diff-viewer";
 import type { StreamItem } from "@/types/stream";
-import type { SelectedToolCall, PendingPermission } from "@/types/shared";
+import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSession } from "@/contexts/session-context";
@@ -57,10 +55,7 @@ export function AgentStreamView({
   onPermissionResponse,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
-  const bottomSheetRef = useRef<BottomSheetModal | null>(null);
   const insets = useSafeAreaInsets();
-  const [selectedToolCall, setSelectedToolCall] =
-    useState<SelectedToolCall | null>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
@@ -80,18 +75,6 @@ export function AgentStreamView({
     hasAutoScrolledOnce.current = false;
     isNearBottomRef.current = true;
   }, [agentId]);
-
-  function handleOpenToolCallDetails(toolCall: SelectedToolCall) {
-    setSelectedToolCall(toolCall);
-    // Delay present to next frame to ensure component is mounted
-    setTimeout(() => {
-      bottomSheetRef.current?.present();
-    }, 0);
-  }
-
-  function handleBottomSheetDismiss() {
-    setSelectedToolCall(null);
-  }
 
   const handleInlinePathPress = useCallback(
     (target: InlinePathTarget) => {
@@ -244,7 +227,7 @@ export function AgentStreamView({
         break;
 
       case "thought":
-        content = <AgentThoughtMessage message={item.text} />;
+        content = <AgentThoughtMessage message={item.text} status={item.status} />;
         break;
 
       case "tool_call": {
@@ -264,7 +247,6 @@ export function AgentStreamView({
               parsedEditEntries={data.parsedEdits}
               parsedReadEntries={data.parsedReads}
               parsedCommandDetails={data.parsedCommand ?? null}
-              onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
           );
         } else {
@@ -275,7 +257,6 @@ export function AgentStreamView({
               args={data.arguments}
               result={data.result}
               status={data.status}
-              onOpenDetails={() => handleOpenToolCallDetails({ payload })}
             />
           );
         }
@@ -423,11 +404,6 @@ export function AgentStreamView({
         </Animated.View>
       )}
 
-      <ToolCallBottomSheet
-        bottomSheetRef={bottomSheetRef}
-        selectedToolCall={selectedToolCall}
-        onDismiss={handleBottomSheetDismiss}
-      />
     </View>
   );
 }

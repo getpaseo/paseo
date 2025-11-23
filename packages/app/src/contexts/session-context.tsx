@@ -21,6 +21,7 @@ import type {
   AgentPermissionRequest,
   AgentMode,
   AgentCapabilityFlags,
+  AgentModelDefinition,
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
@@ -77,6 +78,13 @@ export type MessageEntry =
       error?: any;
       status: "executing" | "completed" | "failed";
     };
+
+type ProviderModelState = {
+  models: AgentModelDefinition[] | null;
+  fetchedAt: Date | null;
+  error: string | null;
+  isLoading: boolean;
+};
 
 export interface Agent {
   id: string;
@@ -245,6 +253,9 @@ interface SessionContextValue {
   requestFilePreview: (agentId: string, path: string) => void;
   navigateExplorerBack: (agentId: string) => string | null;
 
+  providerModels: Map<AgentProvider, ProviderModelState>;
+  requestProviderModels: (provider: AgentProvider, options?: { cwd?: string }) => void;
+
   // Helpers
   restartServer: (reason?: string) => void;
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
@@ -305,10 +316,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
+  const [providerModels, setProviderModels] = useState<Map<AgentProvider, ProviderModelState>>(new Map());
   const [draftInputs, setDraftInputs] = useState<SessionContextValue["draftInputs"]>(new Map());
   const [queuedMessages, setQueuedMessages] = useState<SessionContextValue["queuedMessages"]>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
+  const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -879,6 +892,33 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       });
     });
 
+    const unsubProviderModels = ws.on(
+      "list_provider_models_response",
+      (message) => {
+        if (message.type !== "list_provider_models_response") {
+          return;
+        }
+        const { provider, models, error, fetchedAt, requestId } = message.payload;
+        const latestRequestId = providerModelRequestIdsRef.current.get(provider);
+        if (latestRequestId && requestId && requestId !== latestRequestId) {
+          return;
+        }
+        if (requestId) {
+          providerModelRequestIdsRef.current.delete(provider);
+        }
+        setProviderModels((prev) => {
+          const next = new Map(prev);
+          next.set(provider, {
+            models: models ?? null,
+            error: error ?? null,
+            fetchedAt: new Date(fetchedAt),
+            isLoading: false,
+          });
+          return next;
+        });
+      }
+    );
+
     const unsubAgentDeleted = ws.on("agent_deleted", (message) => {
       if (message.type !== "agent_deleted") {
         return;
@@ -958,6 +998,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubTranscription();
       unsubGitDiff();
       unsubFileExplorer();
+      unsubProviderModels();
       unsubAgentDeleted();
     };
   }, [ws, audioPlayer, setIsPlayingAudio, updateExplorerState]);
@@ -1004,6 +1045,37 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       message: {
         type: "refresh_agent_request",
         agentId,
+        requestId,
+      },
+    };
+    ws.send(msg);
+  }, [ws]);
+
+  const requestProviderModels = useCallback((provider: AgentProvider, options?: { cwd?: string }) => {
+    const requestId = generateMessageId();
+    providerModelRequestIdsRef.current.set(provider, requestId);
+    setProviderModels((prev) => {
+      const next = new Map(prev);
+      const current =
+        prev.get(provider) ?? {
+          models: null,
+          fetchedAt: null,
+          error: null,
+          isLoading: false,
+        };
+      next.set(provider, {
+        ...current,
+        isLoading: true,
+        error: null,
+      });
+      return next;
+    });
+    const msg: WSInboundMessage = {
+      type: "session",
+      message: {
+        type: "list_provider_models_request",
+        provider,
+        ...(options?.cwd ? { cwd: options.cwd } : {}),
         requestId,
       },
     };
@@ -1333,6 +1405,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     gitDiffs,
     requestGitDiff,
     fileExplorer,
+    providerModels,
+    requestProviderModels,
     draftInputs,
     setDraftInputs,
     queuedMessages,

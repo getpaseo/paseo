@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AgentSnapshot } from "./agent/agent-manager.js";
 import type {
   AgentCapabilityFlags,
+  AgentModelDefinition,
   AgentMode,
   AgentPermissionRequest,
   AgentPermissionResponse,
@@ -43,6 +44,15 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+});
+
+const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
+  provider: AgentProviderSchema,
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -345,6 +355,13 @@ export const CreateAgentRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const ListProviderModelsRequestMessageSchema = z.object({
+  type: z.literal("list_provider_models_request"),
+  provider: AgentProviderSchema,
+  cwd: z.string().optional(),
+  requestId: z.string().optional(),
+});
+
 export const GitRepoInfoRequestMessageSchema = z.object({
   type: z.literal("git_repo_info_request"),
   cwd: z.string(),
@@ -447,6 +464,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SendAgentMessageSchema,
   SendAgentAudioSchema,
   CreateAgentRequestMessageSchema,
+  ListProviderModelsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
@@ -701,6 +719,17 @@ export const GitRepoInfoResponseSchema = z.object({
   }),
 });
 
+export const ListProviderModelsResponseMessageSchema = z.object({
+  type: z.literal("list_provider_models_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    models: z.array(AgentModelDefinitionSchema).optional(),
+    error: z.string().optional(),
+    fetchedAt: z.string(),
+    requestId: z.string().optional(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -723,6 +752,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitDiffResponseSchema,
   FileExplorerResponseSchema,
   GitRepoInfoResponseSchema,
+  ListProviderModelsResponseMessageSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -750,6 +780,9 @@ export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionReques
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
 export type AgentDeletedMessage = z.infer<typeof AgentDeletedMessageSchema>;
 export type ListPersistedAgentsResponseMessage = z.infer<typeof ListPersistedAgentsResponseSchema>;
+export type ListProviderModelsResponseMessage = z.infer<
+  typeof ListProviderModelsResponseMessageSchema
+>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
@@ -760,6 +793,9 @@ export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessage
 export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
 export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
+export type ListProviderModelsRequestMessage = z.infer<
+  typeof ListProviderModelsRequestMessageSchema
+>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type ListPersistedAgentsRequestMessage = z.infer<typeof ListPersistedAgentsRequestMessageSchema>;

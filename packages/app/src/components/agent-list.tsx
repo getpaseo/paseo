@@ -18,9 +18,20 @@ export function AgentList({ agents }: AgentListProps) {
   const [actionAgent, setActionAgent] = useState<Agent | null>(null);
   const isActionSheetVisible = actionAgent !== null;
   
-  // Sort agents by the persisted timestamp of the last user message, falling back to last activity
+  // Sort agents by status so running agents stay at the top, then fall back to the
+  // persisted timestamp of the last user message, and finally their last activity
   const agentArray = useMemo(() => {
     return Array.from(agents.values()).sort((a, b) => {
+      const aIsRunning = a.status === "running";
+      const bIsRunning = b.status === "running";
+
+      if (aIsRunning && !bIsRunning) {
+        return -1;
+      }
+      if (!aIsRunning && bIsRunning) {
+        return 1;
+      }
+
       const sortA = (a.lastUserMessageAt ?? a.lastActivityAt).getTime();
       const sortB = (b.lastUserMessageAt ?? b.lastActivityAt).getTime();
       return sortB - sortA;

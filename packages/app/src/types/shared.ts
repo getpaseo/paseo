@@ -1,13 +1,4 @@
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
-import type { ToolCallPayload } from "./stream";
-
-/**
- * Generic tool call selection for bottom sheet
- * Reuses ToolCallPayload so we don't duplicate shapes
- */
-export interface SelectedToolCall {
-  payload: ToolCallPayload;
-}
 
 /**
  * Pending permission structure

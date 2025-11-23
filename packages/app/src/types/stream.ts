@@ -83,11 +83,14 @@ export interface AssistantMessageItem {
   timestamp: Date;
 }
 
+export type ThoughtStatus = "loading" | "ready";
+
 export interface ThoughtItem {
   kind: "thought";
   id: string;
   text: string;
   timestamp: Date;
+  status: ThoughtStatus;
 }
 
 export type ToolCallStatus = "executing" | "completed" | "failed";
@@ -418,6 +421,7 @@ function appendThought(state: StreamItem[], text: string, timestamp: Date): Stre
       ...last,
       text: `${last.text}${chunk}`,
       timestamp,
+      status: "loading",
     };
     return [...state.slice(0, -1), updated];
   }
@@ -432,8 +436,22 @@ function appendThought(state: StreamItem[], text: string, timestamp: Date): Stre
     id: createUniqueTimelineId(state, "thought", idSeed, timestamp),
     text: chunk,
     timestamp,
+    status: "loading",
   };
   return [...state, item];
+}
+
+function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
+  let mutated = false;
+  const nextState = state.map((entry) => {
+    if (entry.kind === "thought" && entry.status !== "ready") {
+      mutated = true;
+      return { ...entry, status: "ready" as ThoughtStatus };
+    }
+    return entry;
+  });
+
+  return mutated ? nextState : state;
 }
 
 function mergeToolCallRaw(existingRaw: unknown, nextRaw: unknown): unknown {
@@ -922,11 +940,14 @@ export function reduceStreamUpdate(
   switch (event.type) {
     case "timeline": {
       const item = event.item;
+      let nextState = state;
       switch (item.type) {
         case "user_message":
-          return appendUserMessage(state, item.text, timestamp, item.messageId);
+          nextState = appendUserMessage(state, item.text, timestamp, item.messageId);
+          break;
         case "assistant_message":
-          return appendAssistantMessage(state, item.text, timestamp);
+          nextState = appendAssistantMessage(state, item.text, timestamp);
+          break;
         case "reasoning":
           return appendThought(state, item.text, timestamp);
         case "tool_call": {
@@ -935,7 +956,7 @@ export function reduceStreamUpdate(
           }
           const rawPayload =
             item.raw ?? { input: item.input, output: item.output, error: item.error };
-          return appendAgentToolCall(
+          nextState = appendAgentToolCall(
             state,
             {
               provider: event.provider,
@@ -951,10 +972,12 @@ export function reduceStreamUpdate(
             },
             timestamp
           );
+          break;
         }
         case "todo": {
           const items = (item.items ?? []) as TodoEntry[];
-          return appendTodoList(state, event.provider, items, timestamp, item.raw);
+          nextState = appendTodoList(state, event.provider, items, timestamp, item.raw);
+          break;
         }
         case "error": {
           const activity: ActivityLogItem = {
@@ -965,19 +988,29 @@ export function reduceStreamUpdate(
             message: formatErrorMessage(item.message ?? "Unknown error"),
             metadata: item.raw ? { raw: item.raw } : undefined,
           };
-          return appendActivityLog(state, activity);
+          nextState = appendActivityLog(state, activity);
+          break;
         }
         default:
           return state;
       }
+
+      return finalizeActiveThoughts(nextState);
     }
     case "provider_event": {
       const converted = convertCodexProviderEvent(event.provider, event.raw);
       if (!converted) {
         return state;
       }
-      return appendAgentToolCall(state, converted, timestamp);
+      return finalizeActiveThoughts(appendAgentToolCall(state, converted, timestamp));
     }
+    case "thread_started":
+    case "turn_started":
+    case "turn_completed":
+    case "turn_failed":
+    case "permission_requested":
+    case "permission_resolved":
+      return finalizeActiveThoughts(state);
     default:
       return state;
   }
@@ -989,7 +1022,9 @@ export function reduceStreamUpdate(
 export function hydrateStreamState(
   events: Array<{ event: AgentStreamEventPayload; timestamp: Date }>
 ): StreamItem[] {
-  return events.reduce<StreamItem[]>((state, { event, timestamp }) => {
+  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp }) => {
     return reduceStreamUpdate(state, event, timestamp);
   }, []);
+
+  return finalizeActiveThoughts(hydrated);
 }

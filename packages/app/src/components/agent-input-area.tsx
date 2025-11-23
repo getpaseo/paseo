@@ -34,7 +34,7 @@ interface AgentInputAreaProps {
   agentId: string;
 }
 
-const MIN_INPUT_HEIGHT = 32;
+const MIN_INPUT_HEIGHT = 50;
 const MAX_INPUT_HEIGHT = 160;
 const MAX_INPUT_WIDTH = 960;
 const BASE_VERTICAL_PADDING = (FOOTER_HEIGHT - MIN_INPUT_HEIGHT) / 2;
@@ -87,6 +87,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
+  const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
+  const baselineInputHeightRef = useRef<number | null>(null);
   const overlayTransition = useSharedValue(0);
   const { pickImages } = useImageAttachmentPicker();
   
@@ -102,6 +104,9 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     }
     console.log(`[AgentInput][InputHeight] ${label}`, payload);
   };
+  useEffect(() => {
+    inputHeightRef.current = inputHeight;
+  }, [inputHeight]);
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -298,6 +303,32 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     return null;
   }
 
+  function focusWebTextInput(): void {
+    if (!IS_WEB) {
+      return;
+    }
+    const node = textInputRef.current;
+    if (!node) {
+      return;
+    }
+
+    const target: unknown =
+      typeof (node as { focus?: () => void }).focus === "function"
+        ? node
+        : typeof (node as { getNativeRef?: () => unknown }).getNativeRef === "function"
+          ? (node as { getNativeRef?: () => unknown }).getNativeRef?.()
+          : null;
+
+    if (target && typeof (target as { focus?: () => void }).focus === "function") {
+      const exec = () => (target as { focus: () => void }).focus();
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(exec);
+      } else {
+        setTimeout(exec, 0);
+      }
+    }
+  }
+
   function measureWebInputHeight(source: string): boolean {
     if (!IS_WEB) {
       return false;
@@ -311,18 +342,41 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     element.style.height = "auto";
     const measuredHeight = element.scrollHeight;
     element.style.height = previousHeight ?? "";
-    const bounded = Math.min(
-      MAX_INPUT_HEIGHT,
-      Math.max(MIN_INPUT_HEIGHT, measuredHeight),
-    );
-    debugInputHeight(source, {
-      measuredHeight,
-      bounded,
+    const bounded = applyMeasuredHeight(measuredHeight, source, {
       scrollHeight: element.scrollHeight,
       inlineHeight: previousHeight,
     });
-    setBoundedInputHeight(bounded);
+    element.style.height = `${bounded}px`;
+    element.style.minHeight = `${MIN_INPUT_HEIGHT}px`;
+    element.style.maxHeight = `${MAX_INPUT_HEIGHT}px`;
+    element.style.overflowY = bounded >= MAX_INPUT_HEIGHT ? "auto" : "hidden";
     return true;
+  }
+
+  function applyMeasuredHeight(
+    measuredHeight: number,
+    source: string,
+    details: Record<string, unknown> = {},
+  ): number {
+    const existingBaseline = baselineInputHeightRef.current;
+    if (existingBaseline === null) {
+      baselineInputHeightRef.current = measuredHeight;
+    }
+    const baseline = baselineInputHeightRef.current ?? measuredHeight;
+    const normalizedHeight = measuredHeight - baseline + MIN_INPUT_HEIGHT;
+    const bounded = Math.min(
+      MAX_INPUT_HEIGHT,
+      Math.max(MIN_INPUT_HEIGHT, normalizedHeight),
+    );
+    debugInputHeight(source, {
+      measuredHeight,
+      normalizedHeight,
+      bounded,
+      baseline,
+      ...details,
+    });
+    setBoundedInputHeight(bounded);
+    return bounded;
   }
 
   function setBoundedInputHeight(nextHeight: number) {
@@ -331,17 +385,16 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       Math.max(MIN_INPUT_HEIGHT, nextHeight),
     );
 
-    setInputHeight((currentHeight) => {
-      if (Math.abs(currentHeight - boundedHeight) < 1) {
-        return currentHeight;
-      }
-      debugInputHeight("set-state", {
-        nextHeight,
-        boundedHeight,
-        previousHeight: currentHeight,
-      });
-      return boundedHeight;
+    if (Math.abs(inputHeightRef.current - boundedHeight) < 1) {
+      return;
+    }
+
+    debugInputHeight("set-state", {
+      nextHeight,
+      boundedHeight,
+      previousHeight: inputHeightRef.current,
     });
+    setInputHeight(boundedHeight);
   }
 
   function handleContentSizeChange(
@@ -351,11 +404,9 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       return;
     }
 
-    debugInputHeight("native-measure", {
-      height: event.nativeEvent.contentSize.height,
+    applyMeasuredHeight(event.nativeEvent.contentSize.height, "native-measure", {
       width: event.nativeEvent.contentSize.width,
     });
-    setBoundedInputHeight(event.nativeEvent.contentSize.height);
   }
 
   const agent = agents.get(agentId);
@@ -387,6 +438,13 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       return;
     }
     event.preventDefault();
+    if (isAgentRunning) {
+      if (!hasSendableContent || !ws.isConnected) {
+        return;
+      }
+      handleQueueCurrentInput();
+      return;
+    }
     if (!shouldShowSendButton || isProcessing || !ws.isConnected) {
       return;
     }
@@ -398,6 +456,10 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       setIsCancellingAgent(false);
     }
   }, [isAgentRunning, ws.isConnected]);
+
+  useEffect(() => {
+    focusWebTextInput();
+  }, [agentId]);
 
   // Hydrate draft only when switching agents
   useEffect(() => {
@@ -522,9 +584,9 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       onPress={handleRealtimePress}
       disabled={!ws.isConnected && !isRealtimeMode}
       style={[
-        styles.realtimeButton,
-        isRealtimeMode && styles.realtimeButtonActive,
-        (!ws.isConnected && !isRealtimeMode) && styles.buttonDisabled,
+        styles.realtimeButton as any,
+        (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
+        (!ws.isConnected && !isRealtimeMode ? styles.buttonDisabled : undefined) as any,
       ]}
     >
       {isRealtimeMode ? (
@@ -620,8 +682,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                 onPress={handlePickImage}
                 disabled={!ws.isConnected}
                 style={[
-                  styles.attachButton,
-                  !ws.isConnected && styles.buttonDisabled,
+                  styles.attachButton as any,
+                  (!ws.isConnected ? styles.buttonDisabled : undefined) as any,
                 ]}
               >
                 <Paperclip size={20} color={theme.colors.foreground} />
@@ -639,7 +701,10 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                       disabled={!ws.isConnected}
                       accessibilityLabel="Queue message while agent is running"
                       accessibilityRole="button"
-                      style={[styles.queueButton, !ws.isConnected && styles.buttonDisabled]}
+                      style={[
+                        styles.queueButton as any,
+                        (!ws.isConnected ? styles.buttonDisabled : undefined) as any,
+                      ]}
                     >
                       <ArrowUp size={20} color="white" />
                     </Pressable>
@@ -651,8 +716,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                     accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
                     accessibilityRole="button"
                     style={[
-                      styles.cancelButton,
-                      (!ws.isConnected || isCancellingAgent) && styles.buttonDisabled,
+                      styles.cancelButton as any,
+                      (!ws.isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
                     ]}
                   >
                     {isCancellingAgent ? (
@@ -666,10 +731,10 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                 <Pressable
                   onPress={handleSendMessage}
                   disabled={!ws.isConnected || isProcessing}
-                  style={[
-                    styles.sendButton,
-                    (!ws.isConnected || isProcessing) && styles.buttonDisabled,
-                  ]}
+                style={[
+                  styles.sendButton as any,
+                  (!ws.isConnected || isProcessing ? styles.buttonDisabled : undefined) as any,
+                ]}
                 >
                   <ArrowUp size={20} color="white" />
                 </Pressable>
@@ -679,9 +744,9 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                     onPress={handleVoicePress}
                     disabled={!ws.isConnected || isRealtimeMode}
                     style={[
-                      styles.voiceButton,
-                      (!ws.isConnected || isRealtimeMode) && styles.buttonDisabled,
-                      isRecording && styles.voiceButtonRecording,
+                      styles.voiceButton as any,
+                      (!ws.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
+                      (isRecording ? styles.voiceButtonRecording : undefined) as any,
                     ]}
                   >
                     {isRecording ? (
@@ -715,7 +780,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(((theme: any) => ({
   container: {
     flexDirection: "column",
   },
@@ -900,4 +965,4 @@ const styles = StyleSheet.create((theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.palette.blue[600],
   },
-}));
+})) as any) as Record<string, any>;

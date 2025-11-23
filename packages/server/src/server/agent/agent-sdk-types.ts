@@ -12,6 +12,15 @@ export type AgentMode = {
   description?: string;
 };
 
+export type AgentModelDefinition = {
+  provider: AgentProvider;
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
 export type AgentCapabilityFlags = {
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
@@ -159,6 +168,7 @@ export interface AgentSession {
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void>;
   describePersistence(): AgentPersistenceHandle | null;
+  interrupt(): Promise<void>;
   close(): Promise<void>;
 }
 

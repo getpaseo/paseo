@@ -216,6 +216,7 @@ class ClaudeAgentSession implements AgentSession {
   private turnCancelRequested = false;
   private streamedAssistantTextThisTurn = false;
   private streamedReasoningThisTurn = false;
+  private cancelCurrentTurn: (() => void) | null = null;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -282,6 +283,7 @@ class ClaudeAgentSession implements AgentSession {
       void this.interruptActiveTurn();
       queue.end();
     };
+    this.cancelCurrentTurn = requestCancel;
     if (this.historyPending && this.persistedHistory.length > 0) {
       for (const item of this.persistedHistory) {
         queue.push({ type: "timeline", item, provider: "claude" });
@@ -306,7 +308,14 @@ class ClaudeAgentSession implements AgentSession {
       if (this.eventQueue === queue) {
         this.eventQueue = null;
       }
+      if (this.cancelCurrentTurn === requestCancel) {
+        this.cancelCurrentTurn = null;
+      }
     }
+  }
+
+  async interrupt(): Promise<void> {
+    this.cancelCurrentTurn?.();
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {

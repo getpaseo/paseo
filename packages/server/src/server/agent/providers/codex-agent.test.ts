@@ -21,6 +21,7 @@ import type {
   AgentStreamEvent,
   AgentPermissionRequest,
   AgentPersistenceHandle,
+  AgentTimelineItem,
 } from "../agent-sdk-types.js";
 
 function tmpCwd(): string {
@@ -46,6 +47,34 @@ function useTempCodexSessionDir(): () => void {
 
 function log(message: string): void {
   console.info(`[CodexAgentTest] ${message}`);
+}
+
+type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+function commandTextFromInput(input: unknown): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const command = (input as { command?: unknown }).command;
+  if (typeof command === "string" && command.length > 0) {
+    return command;
+  }
+  if (Array.isArray(command)) {
+    const tokens = command.filter((value): value is string => typeof value === "string");
+    if (tokens.length > 0) {
+      return tokens.join(" ");
+    }
+  }
+  return null;
+}
+
+function isSleepCommandToolCall(item: ToolCallItem): boolean {
+  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
+  if (display.includes("sleep 60")) {
+    return true;
+  }
+  const inputText = commandTextFromInput(item.input)?.toLowerCase() ?? "";
+  return inputText.includes("sleep 60");
 }
 
 describe("CodexAgentClient (SDK integration)", () => {
@@ -390,6 +419,76 @@ describe("CodexAgentClient (SDK integration)", () => {
       }
     },
     180_000
+  );
+
+  test(
+    "interrupts a long-running shell command before it completes",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = { provider: "codex", cwd, modeId: "full-access" };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      let runStartedAt: number | null = null;
+      let durationMs = 0;
+      let sawSleepCommand = false;
+      let interruptIssued = false;
+
+      try {
+        session = await client.createSession(config);
+        log("Launching sleep command interrupt test");
+
+        const prompt = [
+          "Run the exact shell command `sleep 60` using your shell tool.",
+          "Do not run any additional commands or send a response until that command finishes.",
+        ].join(" ");
+
+        runStartedAt = Date.now();
+        const stream = session.stream(prompt);
+
+        for await (const event of stream) {
+          if (event.type === "permission_requested" && session) {
+            await session.respondToPermission(event.request.id, { behavior: "allow" });
+          }
+
+          if (
+            event.type === "timeline" &&
+            event.provider === "codex" &&
+            event.item.type === "tool_call" &&
+            event.item.server === "command" &&
+            isSleepCommandToolCall(event.item)
+          ) {
+            sawSleepCommand = true;
+            if (!interruptIssued) {
+              interruptIssued = true;
+              await session.interrupt();
+            }
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        if (runStartedAt === null) {
+          throw new Error("Codex run never started");
+        }
+        durationMs = Date.now() - runStartedAt;
+      } finally {
+        if (durationMs === 0 && runStartedAt !== null) {
+          durationMs = Date.now() - runStartedAt;
+        }
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+
+      expect(sawSleepCommand).toBe(true);
+      expect(interruptIssued).toBe(true);
+      expect(durationMs).toBeGreaterThan(0);
+      expect(durationMs).toBeLessThan(60_000);
+    },
+    90_000
   );
 
   // Codex CLI currently doesn't emit approval request events even when approvalPolicy is set to on-request,

@@ -354,6 +354,14 @@ export class AgentManager {
         return;
       }
       finalized = true;
+
+      if (agent.pendingRun !== iterator) {
+        if (error) {
+          agent.lastError = error;
+        }
+        return;
+      }
+
       agent.pendingRun = null;
       agent.status = error ? "error" : "idle";
       agent.lastError = error;
@@ -396,11 +404,30 @@ export class AgentManager {
 
   async cancelAgentRun(agentId: string): Promise<boolean> {
     const agent = this.requireAgent(agentId);
-    if (!agent.pendingRun || typeof agent.pendingRun.return !== "function") {
+    const pendingRun = agent.pendingRun;
+    if (!pendingRun || typeof pendingRun.return !== "function") {
       return false;
     }
+
     try {
-      await agent.pendingRun.return(undefined as unknown as AgentStreamEvent);
+      await agent.session.interrupt();
+    } catch (error) {
+      console.error(
+        `[AgentManager] Failed to interrupt session for agent ${agentId}:`,
+        error
+      );
+    }
+
+    try {
+      const cancellation = pendingRun.return(
+        undefined as unknown as AgentStreamEvent
+      );
+      void cancellation.catch((error) => {
+        console.error(
+          `[AgentManager] Failed to cancel run for agent ${agentId}:`,
+          error
+        );
+      });
       return true;
     } catch (error) {
       console.error(

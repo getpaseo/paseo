@@ -37,6 +37,7 @@ import { experimental_createMCPClient } from "ai";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { fetchProviderModelCatalog } from "./agent/model-catalog.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { AgentSnapshot } from "./agent/agent-manager.js";
 import type {
@@ -748,6 +749,10 @@ export class Session {
         case "git_repo_info_request":
           await this.handleGitRepoInfoRequest(msg);
           break;
+
+        case "list_provider_models_request":
+          await this.handleListProviderModelsRequest(msg);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -1167,24 +1172,27 @@ export class Session {
       await this.forwardAgentState(snapshot);
 
       const trimmedPrompt = initialPrompt?.trim();
-      if (trimmedPrompt && trimmedPrompt.length > 0) {
+      if (trimmedPrompt) {
         try {
-          this.agentManager.recordUserMessage(snapshot.id, trimmedPrompt);
-        } catch (recordError) {
-          console.error(
-            `[Session ${this.clientId}] Failed to record initial prompt for agent ${snapshot.id}:`,
-            recordError
+          await this.handleSendAgentMessage(
+            snapshot.id,
+            trimmedPrompt,
+            uuidv4()
           );
-        }
-
-        try {
-          const normalizedPrompt = this.buildAgentPrompt(trimmedPrompt);
-          this.startAgentStream(snapshot.id, normalizedPrompt);
         } catch (promptError) {
           console.error(
             `[Session ${this.clientId}] Failed to run initial prompt for agent ${snapshot.id}:`,
             promptError
           );
+          this.emit({
+            type: "activity_log",
+            payload: {
+              id: uuidv4(),
+              timestamp: new Date(),
+              type: "error",
+              content: `Initial prompt failed: ${(promptError as Error)?.message ?? promptError}`,
+            },
+          });
         }
       }
 
@@ -1297,6 +1305,7 @@ export class Session {
       let snapshot: AgentSnapshot;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
+        await this.interruptAgentIfRunning(agentId);
         snapshot = await this.agentManager.refreshAgentFromPersistence(
           agentId
         );
@@ -1473,6 +1482,40 @@ export class Session {
           repoRoot: cwd,
           requestId,
           error: (error as Error)?.message ?? String(error),
+        },
+      });
+    }
+  }
+
+  private async handleListProviderModelsRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_provider_models_request" }>
+  ): Promise<void> {
+    const fetchedAt = new Date().toISOString();
+    try {
+      const models = await fetchProviderModelCatalog(msg.provider, {
+        cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
+      });
+      this.emit({
+        type: "list_provider_models_response",
+        payload: {
+          provider: msg.provider,
+          models,
+          fetchedAt,
+          ...(msg.requestId ? { requestId: msg.requestId } : {}),
+        },
+      });
+    } catch (error) {
+      console.error(
+        `[Session ${this.clientId}] Failed to list models for ${msg.provider}:`,
+        error
+      );
+      this.emit({
+        type: "list_provider_models_response",
+        payload: {
+          provider: msg.provider,
+          error: (error as Error)?.message ?? String(error),
+          fetchedAt,
+          ...(msg.requestId ? { requestId: msg.requestId } : {}),
         },
       });
     }

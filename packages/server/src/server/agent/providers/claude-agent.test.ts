@@ -28,6 +28,40 @@ async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["create
   }
 }
 
+type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+function extractCommandText(input: unknown): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const command = (input as { command?: unknown }).command;
+  if (typeof command === "string" && command.length > 0) {
+    return command;
+  }
+  if (Array.isArray(command)) {
+    const tokens = command.filter((value): value is string => typeof value === "string");
+    if (tokens.length > 0) {
+      return tokens.join(" ");
+    }
+  }
+  if (typeof (input as { description?: string }).description === "string") {
+    const description = (input as { description?: string }).description as string;
+    if (description.length > 0) {
+      return description;
+    }
+  }
+  return null;
+}
+
+function isSleepCommandToolCall(item: ToolCallItem): boolean {
+  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
+  if (display.includes("sleep 60")) {
+    return true;
+  }
+  const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
+  return inputCommand.includes("sleep 60");
+}
+
 describe("ClaudeAgentClient (SDK integration)", () => {
   test(
     "responds with text",
@@ -240,6 +274,68 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       rmSync(cwd, { recursive: true, force: true });
     },
     180_000
+  );
+
+  test(
+    "interrupts a long-running bash command before it finishes",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        extra: { claude: { maxThinkingTokens: 2048 } },
+      };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      let runStartedAt: number | null = null;
+      let durationMs = 0;
+      let sawSleepCommand = false;
+      let interruptIssued = false;
+
+      try {
+        session = await client.createSession(config);
+        const prompt = [
+          "Use your Bash command tool to run the exact command `sleep 60`.",
+          "Do not run any other commands or respond until that command finishes.",
+        ].join(" ");
+
+        runStartedAt = Date.now();
+        const events = session.stream(prompt);
+
+        for await (const event of events) {
+          await autoApprove(session, event);
+
+          if (event.type === "timeline" && event.item.type === "tool_call" && isSleepCommandToolCall(event.item)) {
+            sawSleepCommand = true;
+            if (!interruptIssued) {
+              interruptIssued = true;
+              await session.interrupt();
+            }
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        if (runStartedAt === null) {
+          throw new Error("Claude run never started");
+        }
+        durationMs = Date.now() - runStartedAt;
+      } finally {
+        if (durationMs === 0 && runStartedAt !== null) {
+          durationMs = Date.now() - runStartedAt;
+        }
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      expect(sawSleepCommand).toBe(true);
+      expect(interruptIssued).toBe(true);
+      expect(durationMs).toBeGreaterThan(0);
+      expect(durationMs).toBeLessThan(60_000);
+    },
+    120_000
   );
 
   test(

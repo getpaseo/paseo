@@ -1,5 +1,12 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import type { ReactElement } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+  useLayoutEffect,
+} from "react";
+import type { ReactElement, RefObject, ReactNode } from "react";
 import {
   View,
   Text,
@@ -13,7 +20,12 @@ import {
   useWindowDimensions,
   type LayoutChangeEvent,
   type ListRenderItem,
+  Platform,
+  NativeSyntheticEvent,
+  TextInputContentSizeChangeEventData,
+  TextInputKeyPressEventData,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
@@ -24,7 +36,7 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { X } from "lucide-react-native";
+import { X, ChevronDown } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useSession } from "@/contexts/session-context";
@@ -40,6 +52,7 @@ import type {
   AgentSessionConfig,
   AgentPersistenceHandle,
   AgentTimelineItem,
+  AgentModelDefinition,
 } from "@server/server/agent/agent-sdk-types";
 import type { WSInboundMessage } from "@server/server/messages";
 
@@ -59,6 +72,42 @@ const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
   fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
 const RESUME_PAGE_SIZE = 20;
+const PROMPT_MIN_HEIGHT = 64;
+const PROMPT_MAX_HEIGHT = 200;
+const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
+const IS_WEB = Platform.OS === "web";
+
+type WebTextInputKeyPressEvent = NativeSyntheticEvent<
+  TextInputKeyPressEventData & {
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+  }
+>;
+
+type TextAreaHandle = {
+  scrollHeight?: number;
+  style?: {
+    height?: string;
+    minHeight?: string;
+    maxHeight?: string;
+    overflowY?: string;
+  } & Record<string, unknown>;
+};
+
+const isTextAreaLike = (node: unknown): node is TextAreaHandle => {
+  if (!node || typeof node !== "object") {
+    return false;
+  }
+  if (!("scrollHeight" in node) || !("style" in node)) {
+    return false;
+  }
+  const style = (node as { style?: unknown }).style;
+  if (!style || typeof style !== "object") {
+    return false;
+  }
+  return true;
+};
 
 type ResumeCandidate = {
   provider: AgentProvider;
@@ -72,6 +121,7 @@ type ResumeCandidate = {
 
 type ResumeTab = "new" | "resume";
 type ProviderFilter = "all" | AgentProvider;
+type DropdownKey = "assistant" | "permissions" | "model" | "workingDir" | "baseBranch";
 
 type RepoInfoState = {
   cwd: string;
@@ -124,19 +174,30 @@ export function CreateAgentModal({
   const backdropOpacity = useSharedValue(0);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const isCompactLayout = screenWidth < 720;
+  const shouldHandlePromptDesktopSubmit = IS_WEB;
+  const shouldAutoFocusPrompt = IS_WEB;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
-  const { ws, createAgent, resumeAgent, agents } = useSession();
+  const {
+    ws,
+    createAgent,
+    resumeAgent,
+    agents,
+    providerModels,
+    requestProviderModels,
+  } = useSession();
   const router = useRouter();
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
   const [initialPrompt, setInitialPrompt] = useState("");
+  const [promptInputHeight, setPromptInputHeight] = useState(PROMPT_MIN_HEIGHT);
   const [selectedProvider, setSelectedProvider] =
     useState<AgentProvider>(DEFAULT_PROVIDER);
   const [selectedMode, setSelectedMode] = useState(
     DEFAULT_MODE_FOR_DEFAULT_PROVIDER
   );
+  const [selectedModel, setSelectedModel] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [createNewBranch, setCreateNewBranch] = useState(false);
   const [branchName, setBranchName] = useState("");
@@ -155,6 +216,7 @@ export function CreateAgentModal({
   );
   const [isResumeLoading, setIsResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const [repoInfo, setRepoInfo] = useState<RepoInfoState | null>(null);
   const [repoInfoStatus, setRepoInfoStatus] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -162,8 +224,154 @@ export function CreateAgentModal({
   const [repoInfoError, setRepoInfoError] = useState<string | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
   const repoInfoRequestIdRef = useRef<string | null>(null);
+  const shouldSyncBaseBranchRef = useRef(true);
+  const promptInputRef = useRef<
+    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
+  >(null);
+  const promptInputHeightRef = useRef(PROMPT_MIN_HEIGHT);
+  const promptBaselineHeightRef = useRef<number | null>(null);
+  const formPreferencesHydratedRef = useRef(false);
+  const userEditedPreferencesRef = useRef({
+    provider: false,
+    mode: false,
+    model: false,
+    workingDir: false,
+  });
 
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
+  const openDropdownSheet = useCallback((key: DropdownKey) => {
+    setOpenDropdown(key);
+  }, []);
+  const closeDropdown = useCallback(() => {
+    setOpenDropdown(null);
+  }, []);
+
+  const setProviderFromUser = useCallback((provider: AgentProvider) => {
+    userEditedPreferencesRef.current.provider = true;
+    setSelectedProvider(provider);
+    userEditedPreferencesRef.current.model = true;
+    setSelectedModel("");
+  }, []);
+
+  const setModeFromUser = useCallback((modeId: string) => {
+    userEditedPreferencesRef.current.mode = true;
+    setSelectedMode(modeId);
+  }, []);
+
+  const setModelFromUser = useCallback((modelId: string) => {
+    userEditedPreferencesRef.current.model = true;
+    setSelectedModel(modelId);
+  }, []);
+
+  const setWorkingDirFromUser = useCallback((value: string) => {
+    userEditedPreferencesRef.current.workingDir = true;
+    setWorkingDir(value);
+  }, []);
+
+  const handleUserWorkingDirChange = useCallback(
+    (value: string) => {
+      setWorkingDirFromUser(value);
+      setErrorMessage("");
+    },
+    [setWorkingDirFromUser]
+  );
+
+  const refreshProviderModels = useCallback(() => {
+    const trimmed = workingDir.trim();
+    requestProviderModels(selectedProvider, {
+      cwd: trimmed.length > 0 ? trimmed : undefined,
+    });
+  }, [requestProviderModels, selectedProvider, workingDir]);
+
+  const handleBaseBranchChange = useCallback(
+    (value: string) => {
+      shouldSyncBaseBranchRef.current = false;
+      setBaseBranch(value);
+      setErrorMessage("");
+    },
+    [setErrorMessage]
+  );
+
+  useEffect(() => {
+    let isActive = true;
+    const hydratePreferences = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
+        if (!stored || !isActive) {
+          return;
+        }
+        const parsed = JSON.parse(stored) as {
+          workingDir?: string;
+          provider?: AgentProvider;
+          mode?: string;
+          model?: string;
+        };
+        if (
+          parsed.provider &&
+          providerDefinitionMap.has(parsed.provider) &&
+          !userEditedPreferencesRef.current.provider
+        ) {
+          setSelectedProvider(parsed.provider);
+        }
+        if (
+          typeof parsed.mode === "string" &&
+          !userEditedPreferencesRef.current.mode
+        ) {
+          setSelectedMode(parsed.mode);
+        }
+        if (
+          typeof parsed.workingDir === "string" &&
+          !userEditedPreferencesRef.current.workingDir
+        ) {
+          setWorkingDir(parsed.workingDir);
+        }
+        if (
+          typeof parsed.model === "string" &&
+          !userEditedPreferencesRef.current.model
+        ) {
+          setSelectedModel(parsed.model);
+        }
+      } catch (error) {
+        console.error(
+          "[CreateAgentModal] Failed to hydrate form preferences:",
+          error
+        );
+      } finally {
+        if (isActive) {
+          formPreferencesHydratedRef.current = true;
+        }
+      }
+    };
+    void hydratePreferences();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!formPreferencesHydratedRef.current) {
+      return;
+    }
+    const persist = async () => {
+      try {
+        await AsyncStorage.setItem(
+          FORM_PREFERENCES_STORAGE_KEY,
+          JSON.stringify({
+            workingDir,
+            provider: selectedProvider,
+            mode: selectedMode,
+            model: selectedModel,
+          })
+        );
+      } catch (error) {
+        console.error(
+          "[CreateAgentModal] Failed to persist form preferences:",
+          error
+        );
+      }
+    };
+    void persist();
+  }, [selectedMode, selectedProvider, workingDir]);
 
   const tabOptions = useMemo(
     () => [
@@ -189,6 +397,134 @@ export function CreateAgentModal({
   );
   const agentDefinition = providerDefinitionMap.get(selectedProvider);
   const modeOptions = agentDefinition?.modes ?? [];
+  const modelState = providerModels.get(selectedProvider);
+  const availableModels = modelState?.models ?? [];
+  const isModelLoading = modelState?.isLoading ?? false;
+  const modelError = modelState?.error ?? null;
+
+  useEffect(() => {
+    const trimmed = workingDir.trim();
+    const currentState = providerModels.get(selectedProvider);
+    if (currentState?.models?.length || currentState?.isLoading) {
+      return;
+    }
+    requestProviderModels(selectedProvider, {
+      cwd: trimmed.length > 0 ? trimmed : undefined,
+    });
+  }, [providerModels, requestProviderModels, selectedProvider, workingDir]);
+  const setPromptHeight = useCallback((nextHeight: number) => {
+    const bounded = Math.min(
+      PROMPT_MAX_HEIGHT,
+      Math.max(PROMPT_MIN_HEIGHT, nextHeight)
+    );
+    if (Math.abs(promptInputHeightRef.current - bounded) < 1) {
+      return;
+    }
+    promptInputHeightRef.current = bounded;
+    setPromptInputHeight(bounded);
+  }, []);
+
+  const applyPromptMeasuredHeight = useCallback(
+    (measuredHeight: number) => {
+      if (promptBaselineHeightRef.current === null) {
+        promptBaselineHeightRef.current = measuredHeight;
+      }
+      const baseline = promptBaselineHeightRef.current ?? measuredHeight;
+      const normalized = measuredHeight - baseline + PROMPT_MIN_HEIGHT;
+      const bounded = Math.min(
+        PROMPT_MAX_HEIGHT,
+        Math.max(PROMPT_MIN_HEIGHT, normalized)
+      );
+      setPromptHeight(bounded);
+      return bounded;
+    },
+    [setPromptHeight]
+  );
+
+  const getPromptWebTextArea = useCallback((): TextAreaHandle | null => {
+    if (!IS_WEB) {
+      return null;
+    }
+    const node = promptInputRef.current;
+    if (!node) {
+      return null;
+    }
+    if (isTextAreaLike(node)) {
+      return node;
+    }
+    if (
+      typeof (node as { getNativeRef?: () => unknown }).getNativeRef ===
+      "function"
+    ) {
+      const native = (
+        node as { getNativeRef?: () => unknown }
+      ).getNativeRef?.();
+      if (isTextAreaLike(native)) {
+        return native;
+      }
+    }
+    return null;
+  }, []);
+
+  const measurePromptWebInputHeight = useCallback(() => {
+    if (!IS_WEB) {
+      return false;
+    }
+    const element = getPromptWebTextArea();
+    if (!element?.style || typeof element.scrollHeight !== "number") {
+      return false;
+    }
+    const previousHeight = element.style.height;
+    element.style.height = "auto";
+    const measuredHeight = element.scrollHeight;
+    element.style.height = previousHeight ?? "";
+    const bounded = applyPromptMeasuredHeight(measuredHeight);
+    element.style.height = `${bounded}px`;
+    element.style.minHeight = `${PROMPT_MIN_HEIGHT}px`;
+    element.style.maxHeight = `${PROMPT_MAX_HEIGHT}px`;
+    element.style.overflowY = bounded >= PROMPT_MAX_HEIGHT ? "auto" : "hidden";
+    return true;
+  }, [applyPromptMeasuredHeight, getPromptWebTextArea]);
+
+  const handlePromptContentSizeChange = useCallback(
+    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      if (IS_WEB && measurePromptWebInputHeight()) {
+        return;
+      }
+      applyPromptMeasuredHeight(event.nativeEvent.contentSize.height);
+    },
+    [applyPromptMeasuredHeight, measurePromptWebInputHeight]
+  );
+
+  const focusPromptInput = useCallback(() => {
+    if (!shouldAutoFocusPrompt) {
+      return;
+    }
+    const node = promptInputRef.current;
+    if (!node) {
+      return;
+    }
+    const target:
+      | (TextInput & { focus?: () => void })
+      | { focus?: () => void }
+      | null =
+      typeof (node as { focus?: () => void }).focus === "function"
+        ? node
+        : typeof (node as { getNativeRef?: () => unknown }).getNativeRef ===
+          "function"
+        ? ((node as { getNativeRef?: () => unknown }).getNativeRef?.() as {
+            focus?: () => void;
+          } | null)
+        : null;
+    if (target && typeof target.focus === "function") {
+      const exec = () => target.focus?.();
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(exec);
+      } else {
+        setTimeout(exec, 0);
+      }
+    }
+  }, [shouldAutoFocusPrompt]);
   const activeSessionIds = useMemo(() => {
     const ids = new Set<string>();
     agents.forEach((agent) => {
@@ -248,11 +584,28 @@ export function CreateAgentModal({
     }
   }, [agentDefinition, selectedMode, modeOptions]);
 
+  useLayoutEffect(() => {
+    if (!IS_WEB) {
+      return;
+    }
+    measurePromptWebInputHeight();
+  }, [initialPrompt, measurePromptWebInputHeight]);
+
+  useEffect(() => {
+    if (!shouldAutoFocusPrompt) {
+      return;
+    }
+    if (!isVisible || activeTab !== "new") {
+      return;
+    }
+    focusPromptInput();
+  }, [activeTab, focusPromptInput, isVisible, shouldAutoFocusPrompt]);
+
   const resetFormState = useCallback(() => {
-    setWorkingDir("");
     setInitialPrompt("");
-    setSelectedProvider(DEFAULT_PROVIDER);
-    setSelectedMode(DEFAULT_MODE_FOR_DEFAULT_PROVIDER);
+    promptBaselineHeightRef.current = null;
+    promptInputHeightRef.current = PROMPT_MIN_HEIGHT;
+    setPromptHeight(PROMPT_MIN_HEIGHT);
     setBaseBranch("");
     setCreateNewBranch(false);
     setBranchName("");
@@ -265,9 +618,11 @@ export function CreateAgentModal({
     setRepoInfo(null);
     setRepoInfoStatus("idle");
     setRepoInfoError(null);
+    setOpenDropdown(null);
     pendingRequestIdRef.current = null;
     repoInfoRequestIdRef.current = null;
-  }, []);
+    shouldSyncBaseBranchRef.current = true;
+  }, [setPromptHeight]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
     const agentId = pendingNavigationAgentIdRef.current;
@@ -456,7 +811,12 @@ export function CreateAgentModal({
     if (!worktreeSlugEdited) {
       setWorktreeSlug(slug);
     }
-  }, [initialPrompt, branchNameEdited, worktreeSlugEdited, slugifyWorktreeName]);
+  }, [
+    initialPrompt,
+    branchNameEdited,
+    worktreeSlugEdited,
+    slugifyWorktreeName,
+  ]);
 
   const requestRepoInfo = useCallback(
     (path: string) => {
@@ -485,6 +845,10 @@ export function CreateAgentModal({
     },
     [ws]
   );
+
+  useEffect(() => {
+    shouldSyncBaseBranchRef.current = true;
+  }, [workingDir]);
 
   useEffect(() => {
     requestRepoInfo(workingDir);
@@ -520,7 +884,16 @@ export function CreateAgentModal({
       });
       setRepoInfoStatus("ready");
       setRepoInfoError(null);
-      setBaseBranch((prev) => prev || message.payload.currentBranch || "");
+      setBaseBranch((prev) => {
+        if (
+          shouldSyncBaseBranchRef.current ||
+          prev.trim().length === 0
+        ) {
+          shouldSyncBaseBranchRef.current = false;
+          return message.payload.currentBranch ?? "";
+        }
+        return prev;
+      });
     });
 
     return () => {
@@ -566,28 +939,35 @@ export function CreateAgentModal({
 
     const modeId =
       modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
+    const trimmedModel = selectedModel.trim();
 
     const config: AgentSessionConfig = {
       provider: selectedProvider,
       cwd: trimmedPath,
       ...(modeId ? { modeId } : {}),
+      ...(trimmedModel ? { model: trimmedModel } : {}),
     };
 
-    const gitOptions =
-      createNewBranch || createWorktree || trimmedBaseBranch
-        ? {
-            ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
-            ...(createNewBranch
-              ? { createNewBranch: true, newBranchName: branchName.trim() }
-              : {}),
-            ...(createWorktree
-              ? {
-                  createWorktree: true,
-                  worktreeSlug: (worktreeSlug || branchName).trim(),
-                }
-              : {}),
-          }
-        : undefined;
+    const currentBranch = repoInfo?.currentBranch ?? "";
+    const shouldIncludeBase =
+      createNewBranch ||
+      createWorktree ||
+      (trimmedBaseBranch.length > 0 && trimmedBaseBranch !== currentBranch);
+
+    const gitOptions = shouldIncludeBase
+      ? {
+          ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
+          ...(createNewBranch
+            ? { createNewBranch: true, newBranchName: branchName.trim() }
+            : {}),
+          ...(createWorktree
+            ? {
+                createWorktree: true,
+                worktreeSlug: (worktreeSlug || branchName).trim(),
+              }
+            : {}),
+        }
+      : undefined;
 
     try {
       createAgent({
@@ -763,8 +1143,11 @@ export function CreateAgentModal({
 
   const gitBlockingError = useMemo(() => {
     const trimmedBase = baseBranch.trim();
-    const requiresBase =
-      createNewBranch || createWorktree || trimmedBase.length > 0;
+    const currentBranch = repoInfo?.currentBranch ?? "";
+    const isCustomBase =
+      trimmedBase.length > 0 &&
+      (currentBranch.length === 0 || trimmedBase !== currentBranch);
+    const requiresBase = createNewBranch || createWorktree || isCustomBase;
 
     if (requiresBase && !trimmedBase) {
       return "Select a base branch before launching the agent";
@@ -774,7 +1157,9 @@ export function CreateAgentModal({
       const slug = branchName.trim();
       const validation = validateWorktreeName(slug);
       if (!slug || !validation.valid) {
-        return `Invalid branch name: ${validation.error ?? "Must use lowercase letters, numbers, or hyphens"}`;
+        return `Invalid branch name: ${
+          validation.error ?? "Must use lowercase letters, numbers, or hyphens"
+        }`;
       }
     }
 
@@ -782,7 +1167,9 @@ export function CreateAgentModal({
       const slug = (worktreeSlug || branchName).trim();
       const validation = validateWorktreeName(slug);
       if (!slug || !validation.valid) {
-        return `Invalid worktree name: ${validation.error ?? "Must use lowercase letters, numbers, or hyphens"}`;
+        return `Invalid worktree name: ${
+          validation.error ?? "Must use lowercase letters, numbers, or hyphens"
+        }`;
       }
     }
 
@@ -809,7 +1196,30 @@ export function CreateAgentModal({
   const workingDirIsEmpty = !workingDir.trim();
   const promptIsEmpty = !initialPrompt.trim();
   const createDisabled =
-    workingDirIsEmpty || promptIsEmpty || Boolean(gitBlockingError) || isLoading;
+    workingDirIsEmpty ||
+    promptIsEmpty ||
+    Boolean(gitBlockingError) ||
+    isLoading;
+  const handlePromptDesktopSubmitKeyPress = useCallback(
+    (event: WebTextInputKeyPressEvent) => {
+      if (!shouldHandlePromptDesktopSubmit) {
+        return;
+      }
+      if (event.nativeEvent.key !== "Enter") {
+        return;
+      }
+      const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+      if (shiftKey || metaKey || ctrlKey) {
+        return;
+      }
+      if (createDisabled) {
+        return;
+      }
+      event.preventDefault();
+      void handleCreate();
+    },
+    [createDisabled, handleCreate, shouldHandlePromptDesktopSubmit]
+  );
   const headerPaddingTop = useMemo(
     () => insets.top + defaultTheme.spacing[4],
     [insets.top]
@@ -915,15 +1325,19 @@ export function CreateAgentModal({
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
-                  <WorkingDirectorySection
-                    errorMessage={errorMessage}
+                  <PromptSection
+                    value={initialPrompt}
                     isLoading={isLoading}
-                    recentPaths={recentPaths}
-                    workingDir={workingDir}
-                    onChangeWorkingDir={(value) => {
-                      setWorkingDir(value);
+                    onChange={(text) => {
+                      setInitialPrompt(text);
                       setErrorMessage("");
                     }}
+                    inputRef={promptInputRef}
+                    inputHeight={promptInputHeight}
+                    onContentSizeChange={handlePromptContentSizeChange}
+                    onDesktopSubmit={handlePromptDesktopSubmitKeyPress}
+                    autoFocus={shouldAutoFocusPrompt}
+                    scrollEnabled={promptInputHeight >= PROMPT_MAX_HEIGHT}
                   />
 
                   <View
@@ -932,45 +1346,80 @@ export function CreateAgentModal({
                       isCompactLayout && styles.selectorRowStacked,
                     ]}
                   >
-                    <AssistantSelector
+                    <AssistantDropdown
                       providerDefinitions={providerDefinitions}
                       disabled={isLoading}
-                      isStacked={isCompactLayout}
                       selectedProvider={selectedProvider}
-                      onSelect={setSelectedProvider}
+                      isOpen={openDropdown === "assistant"}
+                      onOpen={() => openDropdownSheet("assistant")}
+                      onClose={closeDropdown}
+                      onSelect={setProviderFromUser}
                     />
-                    <ModeSelector
+                    <PermissionsDropdown
                       disabled={isLoading}
-                      isStacked={isCompactLayout}
                       modeOptions={modeOptions}
                       selectedMode={selectedMode}
-                      onSelect={setSelectedMode}
+                      isOpen={openDropdown === "permissions"}
+                      onOpen={() => openDropdownSheet("permissions")}
+                      onClose={closeDropdown}
+                      onSelect={setModeFromUser}
+                    />
+                    <ModelDropdown
+                      models={availableModels}
+                      selectedModel={selectedModel}
+                      isLoading={isModelLoading}
+                      error={modelError}
+                      isOpen={openDropdown === "model"}
+                      onOpen={() => {
+                        refreshProviderModels();
+                        openDropdownSheet("model");
+                      }}
+                      onClose={closeDropdown}
+                      onSelect={(modelId) => {
+                        setModelFromUser(modelId);
+                        setErrorMessage("");
+                      }}
+                      onClear={() => {
+                        setModelFromUser("");
+                        setErrorMessage("");
+                      }}
+                      onRefresh={refreshProviderModels}
                     />
                   </View>
 
-                  <PromptSection
-                    value={initialPrompt}
-                    isLoading={isLoading}
-                    onChange={(text) => {
-                      setInitialPrompt(text);
-                      setErrorMessage("");
-                    }}
+                  <WorkingDirectoryDropdown
+                    workingDir={workingDir}
+                    errorMessage={errorMessage}
+                    isOpen={openDropdown === "workingDir"}
+                    onOpen={() => openDropdownSheet("workingDir")}
+                    onClose={closeDropdown}
+                    disabled={isLoading}
+                    recentPaths={recentPaths}
+                    onSelectPath={handleUserWorkingDirChange}
                   />
 
                   <GitOptionsSection
                     baseBranch={baseBranch}
-                    onBaseBranchChange={(value) => {
-                      setBaseBranch(value);
-                      setErrorMessage("");
-                    }}
+                    onBaseBranchChange={handleBaseBranchChange}
                     branches={repoInfo?.branches ?? []}
                     status={repoInfoStatus}
                     repoError={repoInfoError}
-                    warning={!createWorktree && repoInfo?.isDirty ? "Working directory has uncommitted changes" : null}
+                    warning={
+                      !createWorktree && repoInfo?.isDirty
+                        ? "Working directory has uncommitted changes"
+                        : null
+                    }
                     createNewBranch={createNewBranch}
                     onToggleCreateNewBranch={(next) => {
                       setCreateNewBranch(next);
-                      if (!next) {
+                      if (next) {
+                        if (!branchNameEdited) {
+                          const slug = slugifyWorktreeName(
+                            initialPrompt || baseBranch || ""
+                          );
+                          setBranchName(slug);
+                        }
+                      } else {
                         setBranchName("");
                         setBranchNameEdited(false);
                       }
@@ -983,7 +1432,14 @@ export function CreateAgentModal({
                     createWorktree={createWorktree}
                     onToggleCreateWorktree={(next) => {
                       setCreateWorktree(next);
-                      if (!next) {
+                      if (next) {
+                        if (!worktreeSlugEdited) {
+                          const slug = slugifyWorktreeName(
+                            initialPrompt || branchName || baseBranch || ""
+                          );
+                          setWorktreeSlug(slug);
+                        }
+                      } else {
                         setWorktreeSlug("");
                         setWorktreeSlugEdited(false);
                       }
@@ -994,6 +1450,9 @@ export function CreateAgentModal({
                       setWorktreeSlugEdited(true);
                     }}
                     gitValidationError={gitBlockingError}
+                    isBaseDropdownOpen={openDropdown === "baseBranch"}
+                    onToggleBaseDropdown={() => openDropdownSheet("baseBranch")}
+                    onCloseDropdown={closeDropdown}
                   />
                 </ScrollView>
 
@@ -1156,180 +1615,451 @@ function ModalHeader({
   );
 }
 
-interface WorkingDirectorySectionProps {
-  workingDir: string;
-  isLoading: boolean;
-  errorMessage: string;
-  recentPaths: string[];
-  onChangeWorkingDir: (value: string) => void;
+interface DropdownFieldProps {
+  label: string;
+  value: string;
+  placeholder: string;
+  onPress: () => void;
+  disabled?: boolean;
+  errorMessage?: string | null;
+  warningMessage?: string | null;
+  helperText?: string | null;
 }
 
-function WorkingDirectorySection({
-  workingDir,
-  isLoading,
+function DropdownField({
+  label,
+  value,
+  placeholder,
+  onPress,
+  disabled,
   errorMessage,
-  recentPaths,
-  onChangeWorkingDir,
-}: WorkingDirectorySectionProps): ReactElement {
+  warningMessage,
+  helperText,
+}: DropdownFieldProps): ReactElement {
   return (
     <View style={styles.formSection}>
-      <Text style={styles.label}>Working Directory</Text>
-      <TextInput
-        style={[styles.input, isLoading && styles.inputDisabled]}
-        placeholder="/path/to/project"
-        placeholderTextColor={defaultTheme.colors.mutedForeground}
-        value={workingDir}
-        onChangeText={onChangeWorkingDir}
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!isLoading}
-      />
+      <Text style={styles.label}>{label}</Text>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        style={[styles.dropdownControl, disabled && styles.dropdownControlDisabled]}
+      >
+        <Text
+          style={value ? styles.dropdownValue : styles.dropdownPlaceholder}
+          numberOfLines={1}
+        >
+          {value || placeholder}
+        </Text>
+        <ChevronDown size={16} color={defaultTheme.colors.mutedForeground} />
+      </Pressable>
       {errorMessage ? (
         <Text style={styles.errorText}>{errorMessage}</Text>
       ) : null}
-      {recentPaths.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.recentPathsContainer}
-          keyboardShouldPersistTaps="handled"
-        >
-          {recentPaths.map((path) => (
-            <Pressable
-              key={path}
-              style={styles.recentPathChip}
-              onPress={() => onChangeWorkingDir(path)}
-            >
-              <Text style={styles.recentPathChipText} numberOfLines={1}>
-                {path}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+      {warningMessage ? (
+        <Text style={styles.warningText}>{warningMessage}</Text>
+      ) : null}
+      {!errorMessage && helperText ? (
+        <Text style={styles.helperText}>{helperText}</Text>
       ) : null}
     </View>
   );
 }
 
-interface AssistantSelectorProps {
+interface DropdownSheetProps {
+  title: string;
+  visible: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+function DropdownSheet({ title, visible, onClose, children }: DropdownSheetProps): ReactElement {
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.dropdownSheetOverlay}>
+        <Pressable style={styles.dropdownSheetBackdrop} onPress={onClose} />
+        <View style={styles.dropdownSheetContainer}>
+          <View style={styles.dropdownSheetHandle} />
+          <Text style={styles.dropdownSheetTitle}>{title}</Text>
+          <ScrollView
+            contentContainerStyle={styles.dropdownSheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+interface AssistantDropdownProps {
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider;
   disabled: boolean;
-  isStacked: boolean;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
   onSelect: (provider: AgentProvider) => void;
 }
 
-function AssistantSelector({
+function AssistantDropdown({
   providerDefinitions,
   selectedProvider,
   disabled,
-  isStacked,
+  isOpen,
+  onOpen,
+  onClose,
   onSelect,
-}: AssistantSelectorProps): ReactElement {
+}: AssistantDropdownProps): ReactElement {
+  const selectedDefinition = providerDefinitions.find(
+    (definition) => definition.id === selectedProvider
+  );
   return (
-    <View
-      style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}
-    >
-      <Text style={styles.label}>Assistant</Text>
-      <View style={styles.optionGroup}>
+    <View style={styles.selectorColumn}>
+      <DropdownField
+        label="Assistant"
+        value={selectedDefinition?.label ?? ""}
+        placeholder="Select assistant"
+        onPress={onOpen}
+        disabled={disabled}
+      />
+      <DropdownSheet title="Choose Assistant" visible={isOpen} onClose={onClose}>
         {providerDefinitions.map((definition) => {
-          const isSelected = selectedProvider === definition.id;
+          const isSelected = definition.id === selectedProvider;
           return (
             <Pressable
               key={definition.id}
-              onPress={() => onSelect(definition.id)}
-              disabled={disabled}
               style={[
-                styles.optionCard,
-                isSelected && styles.optionCardSelected,
-                disabled && styles.optionCardDisabled,
+                styles.dropdownSheetOption,
+                isSelected && styles.dropdownSheetOptionSelected,
               ]}
+              onPress={() => {
+                onSelect(definition.id);
+                onClose();
+              }}
             >
-              <View style={styles.optionContent}>
-                <View
-                  style={[
-                    styles.radioOuter,
-                    isSelected
-                      ? styles.radioOuterSelected
-                      : styles.radioOuterUnselected,
-                  ]}
-                >
-                  {isSelected ? <View style={styles.radioInner} /> : null}
-                </View>
-                <Text style={styles.optionLabel}>{definition.label}</Text>
-              </View>
+              <Text style={styles.dropdownSheetOptionLabel}>{definition.label}</Text>
+              {definition.description ? (
+                <Text style={styles.dropdownSheetOptionDescription}>
+                  {definition.description}
+                </Text>
+              ) : null}
             </Pressable>
           );
         })}
-      </View>
+      </DropdownSheet>
     </View>
   );
 }
 
-interface ModeSelectorProps {
+interface PermissionsDropdownProps {
   modeOptions: AgentMode[];
   selectedMode: string;
   disabled: boolean;
-  isStacked: boolean;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
   onSelect: (modeId: string) => void;
 }
 
-function ModeSelector({
+function PermissionsDropdown({
   modeOptions,
   selectedMode,
   disabled,
-  isStacked,
+  isOpen,
+  onOpen,
+  onClose,
   onSelect,
-}: ModeSelectorProps): ReactElement {
+}: PermissionsDropdownProps): ReactElement {
+  const hasOptions = modeOptions.length > 0;
+  const selectedModeLabel = hasOptions
+    ? modeOptions.find((mode) => mode.id === selectedMode)?.label ??
+      modeOptions[0]?.label ??
+      "Default"
+    : "Automatic";
   return (
-    <View
-      style={[styles.selectorColumn, isStacked && styles.selectorColumnFull]}
-    >
-      <Text style={styles.label}>Permissions</Text>
-      {modeOptions.length === 0 ? (
-        <Text style={styles.helperText}>
-          This assistant does not expose selectable permissions.
-        </Text>
-      ) : (
-        <View style={styles.optionGroup}>
+    <View style={[styles.selectorColumn, styles.selectorColumnFull]}>
+      <DropdownField
+        label="Permissions"
+        value={selectedModeLabel}
+        placeholder={hasOptions ? "Select permissions" : "Automatic"}
+        onPress={hasOptions ? onOpen : () => {}}
+        disabled={disabled || !hasOptions}
+        helperText={
+          hasOptions
+            ? undefined
+            : "This assistant does not expose selectable permissions."
+        }
+      />
+      {hasOptions ? (
+        <DropdownSheet title="Permissions" visible={isOpen} onClose={onClose}>
           {modeOptions.map((mode) => {
-            const isSelected = selectedMode === mode.id;
+            const isSelected = mode.id === selectedMode;
             return (
               <Pressable
                 key={mode.id}
-                onPress={() => onSelect(mode.id)}
-                disabled={disabled}
                 style={[
-                  styles.optionCard,
-                  isSelected && styles.optionCardSelected,
-                  disabled && styles.optionCardDisabled,
+                  styles.dropdownSheetOption,
+                  isSelected && styles.dropdownSheetOptionSelected,
                 ]}
+                onPress={() => {
+                  onSelect(mode.id);
+                  onClose();
+                }}
               >
-                <View style={styles.optionContent}>
-                  <View
-                    style={[
-                      styles.radioOuter,
-                      isSelected
-                        ? styles.radioOuterSelected
-                        : styles.radioOuterUnselected,
-                    ]}
-                  >
-                    {isSelected ? <View style={styles.radioInner} /> : null}
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.optionLabel}>{mode.label}</Text>
-                    {mode.description ? (
-                      <Text style={styles.modeDescription}>
-                        {mode.description}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
+                <Text style={styles.dropdownSheetOptionLabel}>{mode.label}</Text>
+                {mode.description ? (
+                  <Text style={styles.dropdownSheetOptionDescription}>
+                    {mode.description}
+                  </Text>
+                ) : null}
               </Pressable>
             );
           })}
-        </View>
-      )}
+        </DropdownSheet>
+      ) : null}
+    </View>
+  );
+}
+
+interface ModelDropdownProps {
+  models: AgentModelDefinition[];
+  selectedModel: string;
+  isLoading: boolean;
+  error: string | null;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onSelect: (modelId: string) => void;
+  onClear: () => void;
+  onRefresh: () => void;
+}
+
+function ModelDropdown({
+  models,
+  selectedModel,
+  isLoading,
+  error,
+  isOpen,
+  onOpen,
+  onClose,
+  onSelect,
+  onClear,
+  onRefresh,
+}: ModelDropdownProps): ReactElement {
+  const selectedLabel = selectedModel
+    ? models.find((model) => model.id === selectedModel)?.label ?? selectedModel
+    : "Automatic";
+  const placeholder = isLoading && models.length === 0 ? "Loading..." : "Automatic";
+  const helperText = error
+    ? undefined
+    : isLoading
+      ? "Fetching available models..."
+      : models.length === 0
+        ? "This assistant did not expose selectable models."
+        : undefined;
+
+  return (
+    <View style={styles.selectorColumn}>
+      <DropdownField
+        label="Model"
+        value={selectedLabel}
+        placeholder={placeholder}
+        onPress={onOpen}
+        disabled={false}
+        errorMessage={error ?? undefined}
+        helperText={helperText}
+      />
+      <DropdownSheet title="Model" visible={isOpen} onClose={onClose}>
+        <Pressable
+          style={styles.dropdownSheetOption}
+          onPress={() => {
+            onClear();
+            onClose();
+          }}
+        >
+          <Text style={styles.dropdownSheetOptionLabel}>Automatic (provider default)</Text>
+          <Text style={styles.dropdownSheetOptionDescription}>
+            Let the assistant pick the recommended model.
+          </Text>
+        </Pressable>
+        {models.map((model) => {
+          const isSelected = model.id === selectedModel;
+          return (
+            <Pressable
+              key={model.id}
+              style={[
+                styles.dropdownSheetOption,
+                isSelected && styles.dropdownSheetOptionSelected,
+              ]}
+              onPress={() => {
+                onSelect(model.id);
+                onClose();
+              }}
+            >
+              <Text style={styles.dropdownSheetOptionLabel}>{model.label}</Text>
+              {model.description ? (
+                <Text style={styles.dropdownSheetOptionDescription}>
+                  {model.description}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+        <Pressable
+          style={styles.dropdownSheetOption}
+          onPress={() => {
+            onRefresh();
+          }}
+        >
+          <Text style={styles.dropdownSheetOptionLabel}>Refresh models</Text>
+          <Text style={styles.dropdownSheetOptionDescription}>
+            Request the latest catalog from the provider.
+          </Text>
+        </Pressable>
+        {isLoading ? (
+          <View style={styles.dropdownSheetLoading}>
+            <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
+          </View>
+        ) : null}
+      </DropdownSheet>
+    </View>
+  );
+}
+
+interface WorkingDirectoryDropdownProps {
+  workingDir: string;
+  errorMessage: string;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  disabled: boolean;
+  recentPaths: string[];
+  onSelectPath: (value: string) => void;
+}
+
+function WorkingDirectoryDropdown({
+  workingDir,
+  errorMessage,
+  isOpen,
+  onOpen,
+  onClose,
+  disabled,
+  recentPaths,
+  onSelectPath,
+}: WorkingDirectoryDropdownProps): ReactElement {
+  const inputRef = useRef<TextInput | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQuery("");
+      inputRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredPaths = useMemo(() => {
+    if (!normalizedSearch) {
+      return recentPaths;
+    }
+    return recentPaths.filter((path) =>
+      path.toLowerCase().includes(normalizedSearch)
+    );
+  }, [recentPaths, normalizedSearch]);
+
+  const hasRecentPaths = recentPaths.length > 0;
+  const hasMatches = filteredPaths.length > 0;
+  const sanitizedSearchValue = searchQuery.trim();
+  const showCustomOption = sanitizedSearchValue.length > 0;
+
+  const handleSelect = useCallback(
+    (path: string) => {
+      onSelectPath(path);
+      onClose();
+    },
+    [onClose, onSelectPath]
+  );
+
+  return (
+    <View style={styles.formSection}>
+      <DropdownField
+        label="Working Directory"
+        value={workingDir}
+        placeholder="/path/to/project"
+        onPress={onOpen}
+        disabled={disabled}
+        errorMessage={errorMessage || undefined}
+        helperText={
+          hasRecentPaths
+            ? "Search saved directories or paste a new path."
+            : "No saved directories yet - search to add one."
+        }
+      />
+      <DropdownSheet title="Working Directory" visible={isOpen} onClose={onClose}>
+        <TextInput
+          ref={inputRef}
+          style={styles.dropdownSearchInput}
+          placeholder="/path/to/project"
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {!hasRecentPaths && !showCustomOption ? (
+          <Text style={styles.helperText}>
+            We'll remember the directories you use most often.
+          </Text>
+        ) : null}
+        {showCustomOption ? (
+          <View style={styles.dropdownSheetList}>
+            <Pressable
+              key="working-dir-custom-option"
+              style={styles.dropdownSheetOption}
+              onPress={() => handleSelect(sanitizedSearchValue)}
+            >
+              <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
+                {`Use "${sanitizedSearchValue}"`}
+              </Text>
+              <Text style={styles.dropdownSheetOptionDescription}>
+                Launch the agent in this directory
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {hasMatches ? (
+          <View style={styles.dropdownSheetList}>
+            {filteredPaths.map((path) => {
+              const isActive = path === workingDir;
+              return (
+                <Pressable
+                  key={path}
+                  style={[
+                    styles.dropdownSheetOption,
+                    isActive && styles.dropdownSheetOptionSelected,
+                  ]}
+                  onPress={() => handleSelect(path)}
+                >
+                  <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
+                    {path}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : hasRecentPaths ? (
+          <Text style={styles.helperText}>
+            No recent paths match your search.
+          </Text>
+        ) : null}
+      </DropdownSheet>
     </View>
   );
 }
@@ -1338,14 +2068,44 @@ interface PromptSectionProps {
   value: string;
   isLoading: boolean;
   onChange: (value: string) => void;
+  inputRef: RefObject<
+    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
+  >;
+  inputHeight: number;
+  onContentSizeChange: (
+    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>
+  ) => void;
+  onDesktopSubmit?: (event: WebTextInputKeyPressEvent) => void;
+  autoFocus?: boolean;
+  scrollEnabled: boolean;
 }
 
-function PromptSection({ value, isLoading, onChange }: PromptSectionProps): ReactElement {
+function PromptSection({
+  value,
+  isLoading,
+  onChange,
+  inputRef,
+  inputHeight,
+  onContentSizeChange,
+  onDesktopSubmit,
+  autoFocus,
+  scrollEnabled,
+}: PromptSectionProps): ReactElement {
   return (
     <View style={styles.formSection}>
       <Text style={styles.label}>Initial Prompt</Text>
       <TextInput
-        style={[styles.input, styles.promptInput, isLoading && styles.inputDisabled]}
+        ref={inputRef}
+        style={[
+          styles.input,
+          styles.promptInput,
+          isLoading && styles.inputDisabled,
+          {
+            height: inputHeight,
+            minHeight: PROMPT_MIN_HEIGHT,
+            maxHeight: PROMPT_MAX_HEIGHT,
+          },
+        ]}
         placeholder="Describe what you want the agent to do"
         placeholderTextColor={defaultTheme.colors.mutedForeground}
         value={value}
@@ -1353,7 +2113,12 @@ function PromptSection({ value, isLoading, onChange }: PromptSectionProps): Reac
         autoCapitalize="sentences"
         autoCorrect
         multiline
+        scrollEnabled={scrollEnabled}
+        onContentSizeChange={onContentSizeChange}
         editable={!isLoading}
+        autoFocus={autoFocus}
+        blurOnSubmit={false}
+        onKeyPress={onDesktopSubmit}
       />
     </View>
   );
@@ -1375,6 +2140,9 @@ interface GitOptionsSectionProps {
   worktreeSlug: string;
   onWorktreeSlugChange: (value: string) => void;
   gitValidationError: string | null;
+  isBaseDropdownOpen: boolean;
+  onToggleBaseDropdown: () => void;
+  onCloseDropdown: () => void;
 }
 
 function GitOptionsSection({
@@ -1393,65 +2161,109 @@ function GitOptionsSection({
   worktreeSlug,
   onWorktreeSlugChange,
   gitValidationError,
+  isBaseDropdownOpen,
+  onToggleBaseDropdown,
+  onCloseDropdown,
 }: GitOptionsSectionProps): ReactElement {
-  const suggestedBranches = branches.slice(0, 6);
-  const currentBranchLabel = branches.find((branch) => branch.isCurrent)?.name;
+  const [branchSearch, setBranchSearch] = useState("");
+  const branchFilter = branchSearch.trim().toLowerCase();
+  const filteredBranches =
+    branchFilter.length === 0
+      ? branches
+      : branches.filter((branch) =>
+          branch.name.toLowerCase().includes(branchFilter)
+        );
+  const maxVisible = 30;
+  const currentBranchLabel =
+    branches.find((branch) => branch.isCurrent)?.name ?? "";
+  const baseInputRef = useRef<TextInput | null>(null);
+
+  useEffect(() => {
+    if (isBaseDropdownOpen) {
+      setBranchSearch("");
+      baseInputRef.current?.focus();
+    }
+  }, [isBaseDropdownOpen]);
 
   return (
     <View style={styles.formSection}>
       <Text style={styles.label}>Git Setup</Text>
       <Text style={styles.helperText}>
-        Choose a base branch, then optionally create a feature branch or isolated worktree.
+        Choose a base branch, then optionally create a feature branch or
+        isolated worktree.
       </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder={currentBranchLabel || "main"}
-        placeholderTextColor={defaultTheme.colors.mutedForeground}
+      <DropdownField
+        label="Base Branch"
         value={baseBranch}
-        onChangeText={onBaseBranchChange}
-        autoCapitalize="none"
-        autoCorrect={false}
+        placeholder={currentBranchLabel || "main"}
+        onPress={onToggleBaseDropdown}
+        disabled={status === "loading"}
+        errorMessage={repoError}
+        warningMessage={!gitValidationError ? warning : null}
+        helperText={
+          status === "loading"
+            ? "Inspecting repository…"
+            : "Search existing branches, then tap to select."
+        }
       />
-
-      {status === "loading" ? (
-        <Text style={styles.helperText}>Inspecting repository…</Text>
-      ) : null}
-      {repoError ? <Text style={styles.errorText}>{repoError}</Text> : null}
-      {warning && !gitValidationError ? (
-        <Text style={styles.warningText}>{warning}</Text>
-      ) : null}
-
-      {suggestedBranches.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.branchChipRow}
-        >
-          {suggestedBranches.map((branch) => {
-            const isActive = branch.name === baseBranch;
-            return (
-              <Pressable
-                key={branch.name}
-                style={[
-                  styles.branchChip,
-                  isActive && styles.branchChipActive,
-                ]}
-                onPress={() => onBaseBranchChange(branch.name)}
-              >
-                <Text
+      <DropdownSheet
+        title="Base Branch"
+        visible={isBaseDropdownOpen}
+        onClose={onCloseDropdown}
+      >
+        <TextInput
+          ref={baseInputRef}
+          style={styles.dropdownSearchInput}
+          placeholder={currentBranchLabel || "main"}
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          value={branchSearch}
+          onChangeText={setBranchSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {status === "loading" ? (
+          <View style={styles.dropdownLoading}>
+            <ActivityIndicator color={defaultTheme.colors.mutedForeground} />
+            <Text style={styles.helperText}>Inspecting repository…</Text>
+          </View>
+        ) : filteredBranches.length === 0 ? (
+          <Text style={styles.helperText}>
+            {branchFilter.length === 0
+              ? "No branches detected yet."
+              : "No branches match your search."}
+          </Text>
+        ) : (
+          <View style={styles.dropdownSheetList}>
+            {filteredBranches.slice(0, maxVisible).map((branch) => {
+              const isActive = branch.name === baseBranch;
+              return (
+                <Pressable
+                  key={branch.name}
                   style={[
-                    styles.branchChipText,
-                    isActive && styles.branchChipTextActive,
+                    styles.dropdownSheetOption,
+                    isActive && styles.dropdownSheetOptionSelected,
                   ]}
+                  onPress={() => {
+                    onBaseBranchChange(branch.name);
+                    onCloseDropdown();
+                  }}
                 >
-                  {branch.name}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      ) : null}
+                  <Text style={styles.dropdownSheetOptionLabel}>
+                    {branch.name}
+                    {branch.isCurrent ? "  (current)" : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        {filteredBranches.length > maxVisible ? (
+          <Text style={styles.helperText}>
+            Showing first {maxVisible} matches. Keep typing to narrow it down.
+          </Text>
+        ) : null}
+      </DropdownSheet>
 
       <ToggleRow
         label="New Branch"
@@ -1504,7 +2316,13 @@ interface ToggleRowProps {
   disabled?: boolean;
 }
 
-function ToggleRow({ label, description, value, onToggle, disabled }: ToggleRowProps): ReactElement {
+function ToggleRow({
+  label,
+  description,
+  value,
+  onToggle,
+  disabled,
+}: ToggleRowProps): ReactElement {
   return (
     <Pressable
       onPress={() => {
@@ -1525,13 +2343,15 @@ function ToggleRow({ label, description, value, onToggle, disabled }: ToggleRowP
       </View>
       <View style={styles.toggleTextContainer}>
         <Text style={styles.toggleLabel}>{label}</Text>
-        {description ? <Text style={styles.helperText}>{description}</Text> : null}
+        {description ? (
+          <Text style={styles.helperText}>{description}</Text>
+        ) : null}
       </View>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(((theme: any) => ({
   overlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -1636,9 +2456,121 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
+  dropdownControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    backgroundColor: theme.colors.background,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  dropdownControlDisabled: {
+    opacity: theme.opacity[50],
+  },
+  dropdownValue: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  dropdownPlaceholder: {
+    flex: 1,
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.base,
+  },
+  dropdownSearchInput: {
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    color: theme.colors.foreground,
+  },
+  dropdownLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  dropdownSheetOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  dropdownSheetBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: theme.colors.palette.gray[900],
+    opacity: 0.45,
+  },
+  dropdownSheetContainer: {
+    backgroundColor: theme.colors.card,
+    borderTopLeftRadius: theme.borderRadius["2xl"],
+    borderTopRightRadius: theme.borderRadius["2xl"],
+    paddingTop: theme.spacing[4],
+    paddingHorizontal: theme.spacing[5],
+    paddingBottom: theme.spacing[6] + theme.spacing[2],
+    maxHeight: 560,
+    width: "100%",
+  },
+  dropdownSheetHandle: {
+    width: 56,
+    height: 4,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.border,
+    alignSelf: "center",
+    marginBottom: theme.spacing[3],
+  },
+  dropdownSheetTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    textAlign: "center",
+    marginBottom: theme.spacing[4],
+  },
+  dropdownSheetScrollContent: {
+    paddingBottom: theme.spacing[8],
+    paddingHorizontal: theme.spacing[1],
+  },
+  dropdownSheetList: {
+    marginTop: theme.spacing[3],
+  },
+  dropdownSheetOption: {
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    marginBottom: theme.spacing[2],
+  },
+  dropdownSheetOptionSelected: {
+    borderColor: theme.colors.palette.blue[400],
+    backgroundColor: "rgba(59, 130, 246, 0.18)",
+  },
+  dropdownSheetOptionLabel: {
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  dropdownSheetOptionDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[1],
+  },
+  dropdownSheetLoading: {
+    alignItems: "center",
+    paddingVertical: theme.spacing[4],
+  },
   promptInput: {
     minHeight: theme.spacing[24],
     textAlignVertical: "top",
+    outlineWidth: 0,
+    outlineColor: "transparent",
+    outlineStyle: "none",
   },
   inputDisabled: {
     opacity: theme.opacity[50],
@@ -1655,50 +2587,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
-  recentPathsContainer: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-  },
-  recentPathChip: {
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    maxWidth: 200,
-  },
-  recentPathChipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  branchChipRow: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-  },
-  branchChip: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[1],
-    backgroundColor: theme.colors.muted,
-  },
-  branchChipActive: {
-    borderColor: theme.colors.palette.blue[500],
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  branchChipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  branchChipTextActive: {
-    color: theme.colors.palette.white,
-    fontWeight: theme.fontWeight.semibold,
-  },
   selectorRow: {
     flexDirection: "row",
     gap: theme.spacing[4],
@@ -1712,42 +2600,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   selectorColumnFull: {
     width: "100%",
-  },
-  optionGroup: {
-    gap: theme.spacing[3],
-  },
-  optionCard: {
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-  },
-  optionCardSelected: {
-    borderColor: theme.colors.palette.blue[500],
-    backgroundColor: theme.colors.muted,
-  },
-  optionCardDisabled: {
-    opacity: theme.opacity[50],
-  },
-  optionContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  optionLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  radioOuter: {
-    width: 20,
-    height: 20,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: theme.borderWidth[2],
-    alignItems: "center",
-    justifyContent: "center",
   },
   toggleRow: {
     flexDirection: "row",
@@ -1788,26 +2640,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
-  },
-  radioOuterSelected: {
-    borderColor: theme.colors.palette.blue[500],
-  },
-  radioOuterUnselected: {
-    borderColor: theme.colors.border,
-  },
-  radioInner: {
-    width: 12,
-    height: 12,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  modeTextContainer: {
-    flex: 1,
-    gap: theme.spacing[1],
-  },
-  modeDescription: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
   },
   footer: {
     borderTopWidth: theme.borderWidth[1],
@@ -1992,4 +2824,4 @@ const styles = StyleSheet.create((theme) => ({
   resumeItemSeparator: {
     height: theme.spacing[2],
   },
-}));
+})) as any) as Record<string, any>;
