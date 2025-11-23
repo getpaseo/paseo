@@ -18,9 +18,54 @@ import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { useSession } from "@/contexts/session-context";
+import type { Agent } from "@/contexts/session-context";
 import { useFooterControls } from "@/contexts/footer-controls-context";
+import { generateMessageId } from "@/types/stream";
 
 const DROPDOWN_WIDTH = 220;
+
+type BranchStatus = "idle" | "loading" | "ready" | "error";
+
+function extractAgentModel(agent?: Agent | null): string | null {
+  if (!agent) {
+    return null;
+  }
+
+  const directModel = typeof agent.model === "string" ? agent.model.trim() : "";
+  if (directModel.length > 0) {
+    return directModel;
+  }
+
+  const metadata = agent.persistence?.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const persistedModel = (metadata as Record<string, unknown>).model;
+  if (typeof persistedModel === "string" && persistedModel.trim().length > 0) {
+    return persistedModel.trim();
+  }
+
+  const extra = (metadata as Record<string, unknown>).extra;
+  if (!extra || typeof extra !== "object") {
+    return null;
+  }
+
+  const getModelFrom = (source: unknown) => {
+    if (!source || typeof source !== "object") {
+      return null;
+    }
+    const candidate = (source as Record<string, unknown>).model;
+    return typeof candidate === "string" && candidate.trim().length > 0
+      ? candidate.trim()
+      : null;
+  };
+
+  return (
+    getModelFrom((extra as Record<string, unknown>).codex) ??
+    getModelFrom((extra as Record<string, unknown>).claude)
+  );
+}
 
 export default function AgentScreen() {
   const { theme } = useUnistyles();
@@ -36,6 +81,7 @@ export default function AgentScreen() {
     initializeAgent,
     refreshAgent,
     setFocusedAgentId,
+    ws,
   } = useSession();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -43,6 +89,10 @@ export default function AgentScreen() {
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
+  const [branchStatus, setBranchStatus] = useState<BranchStatus>("idle");
+  const [branchLabel, setBranchLabel] = useState<string | null>(null);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const repoInfoRequestIdRef = useRef<string | null>(null);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -66,6 +116,86 @@ export default function AgentScreen() {
   const agentPermissions = new Map(
     Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === id)
   );
+  const agentModel = extractAgentModel(agent);
+  const modelDisplayValue = agentModel ?? "Unknown";
+
+  const resetBranchState = useCallback(() => {
+    repoInfoRequestIdRef.current = null;
+    setBranchStatus("idle");
+    setBranchLabel(null);
+    setBranchError(null);
+  }, []);
+
+  const sendGitRepoInfoRequest = useCallback(
+    (cwd: string) => {
+      if (!cwd) {
+        resetBranchState();
+        return;
+      }
+
+      const requestId = generateMessageId();
+      repoInfoRequestIdRef.current = requestId;
+      setBranchStatus("loading");
+      setBranchLabel(null);
+      setBranchError(null);
+
+      ws.send({
+        type: "session",
+        message: {
+          type: "git_repo_info_request",
+          cwd,
+          requestId,
+        },
+      });
+    },
+    [resetBranchState, ws]
+  );
+
+  useEffect(() => {
+    if (!agent?.cwd) {
+      resetBranchState();
+      return;
+    }
+
+    sendGitRepoInfoRequest(agent.cwd);
+  }, [agent?.cwd, resetBranchState, sendGitRepoInfoRequest]);
+
+  useEffect(() => {
+    const unsubscribe = ws.on("git_repo_info_response", (message) => {
+      if (message.type !== "git_repo_info_response") {
+        return;
+      }
+
+      if (
+        repoInfoRequestIdRef.current &&
+        message.payload.requestId &&
+        message.payload.requestId !== repoInfoRequestIdRef.current
+      ) {
+        return;
+      }
+
+      if (agent?.cwd && message.payload.cwd && message.payload.cwd !== agent.cwd) {
+        return;
+      }
+
+      repoInfoRequestIdRef.current = null;
+
+      if (message.payload.error) {
+        setBranchStatus("error");
+        setBranchError(message.payload.error);
+        setBranchLabel(null);
+        return;
+      }
+
+      setBranchStatus("ready");
+      setBranchError(null);
+      setBranchLabel(message.payload.currentBranch ?? null);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [agent?.cwd, ws]);
 
   useEffect(() => {
     if (!id) {
@@ -169,10 +299,14 @@ export default function AgentScreen() {
   );
 
   const handleOpenMenu = useCallback(() => {
+    if (agent?.cwd) {
+      sendGitRepoInfoRequest(agent.cwd);
+    }
+
     recalculateMenuPosition(() => {
       setMenuVisible(true);
     });
-  }, [recalculateMenuPosition]);
+  }, [agent?.cwd, recalculateMenuPosition, sendGitRepoInfoRequest]);
 
   const handleCloseMenu = useCallback(() => {
     setMenuVisible(false);
@@ -191,6 +325,10 @@ export default function AgentScreen() {
     const { height } = event.nativeEvent.layout;
     setMenuContentHeight((current) => (current === height ? current : height));
   }, []);
+
+  const handleBackToHome = useCallback(() => {
+    router.replace("/");
+  }, [router]);
 
   const handleViewChanges = useCallback(() => {
     handleCloseMenu();
@@ -214,10 +352,15 @@ export default function AgentScreen() {
     refreshAgent({ agentId: id });
   }, [handleCloseMenu, id, refreshAgent]);
 
+  const branchDisplayValue =
+    branchStatus === "error"
+      ? branchError ?? "Unavailable"
+      : branchLabel ?? "Unknown";
+
   if (!agent) {
     return (
       <View style={styles.container}>
-        <BackHeader />
+        <BackHeader onBack={handleBackToHome} />
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Agent not found</Text>
         </View>
@@ -230,6 +373,7 @@ export default function AgentScreen() {
       {/* Header */}
       <BackHeader 
         title={agent.title || "Agent"}
+        onBack={handleBackToHome}
         rightContent={
           <View ref={menuButtonRef} collapsable={false}>
             <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
@@ -282,6 +426,58 @@ export default function AgentScreen() {
             ]}
             onLayout={handleMenuLayout}
           >
+            <View style={styles.menuMetaContainer}>
+              <View style={styles.menuMetaRow}>
+                <Text style={styles.menuMetaLabel}>Directory</Text>
+                <Text
+                  style={styles.menuMetaValue}
+                  numberOfLines={2}
+                  ellipsizeMode="middle"
+                >
+                  {agent.cwd}
+                </Text>
+              </View>
+
+              <View style={styles.menuMetaRow}>
+                <Text style={styles.menuMetaLabel}>Model</Text>
+                <Text
+                  style={styles.menuMetaValue}
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
+                  {modelDisplayValue}
+                </Text>
+              </View>
+
+              <View style={styles.menuMetaRow}>
+                <Text style={styles.menuMetaLabel}>Branch</Text>
+                <View style={styles.menuMetaValueRow}>
+                  {branchStatus === "loading" ? (
+                    <>
+                      <ActivityIndicator
+                        size="small"
+                        color={theme.colors.mutedForeground}
+                      />
+                      <Text style={styles.menuMetaPendingText}>Fetching…</Text>
+                    </>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.menuMetaValue,
+                        branchStatus === "error" ? styles.menuMetaValueError : null,
+                      ]}
+                      numberOfLines={1}
+                      ellipsizeMode="middle"
+                    >
+                      {branchDisplayValue}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.menuDivider} />
+
             <Pressable onPress={handleViewChanges} style={styles.menuItem}>
               <GitBranch size={20} color={theme.colors.foreground} />
               <Text style={styles.menuItemText}>View Changes</Text>
@@ -367,6 +563,40 @@ const styles = StyleSheet.create((theme) => ({
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 5,
+  },
+  menuMetaContainer: {
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
+  menuMetaRow: {
+    gap: theme.spacing[1],
+  },
+  menuMetaLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  menuMetaValue: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+  },
+  menuMetaValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  menuMetaPendingText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.mutedForeground,
+  },
+  menuMetaValueError: {
+    color: theme.colors.destructive,
+  },
+  menuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[2],
   },
   menuItem: {
     flexDirection: "row",
