@@ -7,7 +7,6 @@ import type {
   ActivityLogPayload,
   AgentSnapshotPayload,
   AgentStreamEventPayload,
-  SessionInboundMessage,
   WSInboundMessage,
   GitSetupOptions,
 } from "@server/server/messages";
@@ -104,6 +103,7 @@ export interface Agent {
   lastError?: string | null;
   title: string | null;
   cwd: string;
+  model: string | null;
 }
 
 export interface Command {
@@ -178,6 +178,14 @@ const pushHistory = (history: string[], path: string): string[] => {
   return [...normalizedHistory, path];
 };
 
+type PendingAgentLifecycleRequest = {
+  kind: "initialize" | "refresh";
+  params: {
+    agentId: string;
+    requestId?: string;
+  };
+};
+
 function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
@@ -200,6 +208,7 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
     lastError: snapshot.lastError ?? null,
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,
+    model: snapshot.model ?? null,
   };
 }
 
@@ -293,6 +302,7 @@ interface SessionProviderProps {
 
 export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
+  const wsIsConnected = ws.isConnected;
   
   // State for voice detection flags (will be set by RealtimeContext)
   const isDetectingRef = useRef(false);
@@ -322,6 +332,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
+  const pendingAgentLifecycleRequestsRef = useRef<PendingAgentLifecycleRequest[]>([]);
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -376,6 +387,41 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     },
     []
   );
+
+  const sendAgentLifecycleRequest = useCallback(
+    (request: PendingAgentLifecycleRequest) => {
+      const { kind, params } = request;
+      const messageType = kind === "initialize" ? "initialize_agent_request" : "refresh_agent_request";
+
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: messageType,
+          agentId: params.agentId,
+          requestId: params.requestId,
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
+
+  useEffect(() => {
+    if (!wsIsConnected) {
+      return;
+    }
+
+    if (pendingAgentLifecycleRequestsRef.current.length === 0) {
+      return;
+    }
+
+    const pending = [...pendingAgentLifecycleRequestsRef.current];
+    pendingAgentLifecycleRequestsRef.current = [];
+
+    for (const request of pending) {
+      sendAgentLifecycleRequest(request);
+    }
+  }, [wsIsConnected, sendAgentLifecycleRequest]);
 
   // WebSocket message handlers
   useEffect(() => {
@@ -481,6 +527,16 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         );
         const next = new Map(prev);
         next.set(agentId, newStream);
+        return next;
+      });
+
+      setInitializingAgents((prev) => {
+        const currentState = prev.get(agentId);
+        if (currentState === false) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(agentId, false);
         return next;
       });
 
@@ -1016,16 +1072,19 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       return next;
     });
 
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "initialize_agent_request",
-        agentId,
-        requestId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
+    if (!wsIsConnected) {
+      pendingAgentLifecycleRequestsRef.current.push({
+        kind: "initialize",
+        params: { agentId, requestId },
+      });
+      return;
+    }
+
+    sendAgentLifecycleRequest({
+      kind: "initialize",
+      params: { agentId, requestId },
+    });
+  }, [wsIsConnected, sendAgentLifecycleRequest]);
 
   const refreshAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     setInitializingAgents((prev) => {
@@ -1040,16 +1099,19 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       return next;
     });
 
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "refresh_agent_request",
-        agentId,
-        requestId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
+    if (!wsIsConnected) {
+      pendingAgentLifecycleRequestsRef.current.push({
+        kind: "refresh",
+        params: { agentId, requestId },
+      });
+      return;
+    }
+
+    sendAgentLifecycleRequest({
+      kind: "refresh",
+      params: { agentId, requestId },
+    });
+  }, [wsIsConnected, sendAgentLifecycleRequest]);
 
   const requestProviderModels = useCallback((provider: AgentProvider, options?: { cwd?: string }) => {
     const requestId = generateMessageId();
