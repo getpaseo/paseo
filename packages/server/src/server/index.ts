@@ -3,7 +3,7 @@ import express from "express";
 import basicAuth from "express-basic-auth";
 import { createServer as createHTTPServer } from "http";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
-import { initializeSTT } from "./agent/stt-openai.js";
+import { initializeSTT, type STTConfig } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
 import { listConversations, deleteConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
@@ -101,9 +101,12 @@ async function main() {
       ? parseFloat(process.env.STT_CONFIDENCE_THRESHOLD)
       : undefined; // Will default to -3.0 in stt-openai.ts
 
+    const sttModel = process.env.STT_MODEL as STTConfig["model"];
+
     initializeSTT({
       apiKey,
-      confidenceThreshold: sttConfidenceThreshold
+      confidenceThreshold: sttConfidenceThreshold,
+      ...(sttModel ? { model: sttModel } : {}),
     });
 
     // Initialize TTS

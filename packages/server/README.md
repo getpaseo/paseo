@@ -72,6 +72,9 @@ See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for complete details.
 ```bash
 OPENAI_API_KEY=sk-...      # GPT-4 and TTS
 DEEPGRAM_API_KEY=...       # Streaming STT
+STT_MODEL=whisper-1        # Optional: override to gpt-4o-transcribe, etc.
+STT_CONFIDENCE_THRESHOLD=-3.0  # Optional: reject low-confidence clips
+STT_DEBUG_AUDIO_DIR=.stt-debug # Optional: persist raw dictation audio for debugging
 PORT=3000                  # Server port
 NODE_ENV=development       # Environment
 ```

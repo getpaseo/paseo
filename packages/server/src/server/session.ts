@@ -545,6 +545,7 @@ export class Session {
       id: record.id,
       provider,
       cwd: record.cwd,
+      model: record.config?.model ?? null,
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -971,7 +972,8 @@ export class Session {
   private async handleSendAgentAudio(
     msg: Extract<SessionInboundMessage, { type: "send_agent_audio" }>
   ): Promise<void> {
-    const { agentId, audio, format, isLast, requestId } = msg;
+    const { agentId, audio, format, isLast, requestId, mode } = msg;
+    const shouldAutoRun = mode === "auto_run";
 
     // Decode base64
     const audioBuffer = Buffer.from(audio, "base64");
@@ -992,7 +994,11 @@ export class Session {
 
     try {
       // Transcribe the audio
-      const result = await this.sttManager.transcribe(audioBuffer, format);
+      const result = await this.sttManager.transcribe(audioBuffer, format, {
+        agentId,
+        requestId,
+        label: shouldAutoRun ? "dictation:auto_run" : "dictation",
+      });
 
       const transcriptText = result.text.trim();
       if (!transcriptText) {
@@ -1014,8 +1020,20 @@ export class Session {
           language: result.language,
           duration: result.duration,
           requestId,
+          avgLogprob: result.avgLogprob,
+          isLowConfidence: result.isLowConfidence,
+          byteLength: result.byteLength,
+          format: result.format,
+          debugRecordingPath: result.debugRecordingPath,
         },
       });
+
+      if (!shouldAutoRun) {
+        console.log(
+          `[Session ${this.clientId}] Completed transcription for agent ${agentId} (requestId: ${requestId ?? "n/a"})`
+        );
+        return;
+      }
 
       try {
         await this.interruptAgentIfRunning(agentId);
@@ -2225,7 +2243,9 @@ export class Session {
     });
 
     try {
-      const result = await this.sttManager.transcribe(audio, format);
+      const result = await this.sttManager.transcribe(audio, format, {
+        label: this.isRealtimeMode ? "realtime" : "buffered",
+      });
 
       const transcriptText = result.text.trim();
       if (!transcriptText) {
@@ -2255,6 +2275,11 @@ export class Session {
           text: result.text,
           language: result.language,
           duration: result.duration,
+          avgLogprob: result.avgLogprob,
+          isLowConfidence: result.isLowConfidence,
+          byteLength: result.byteLength,
+          format: result.format,
+          debugRecordingPath: result.debugRecordingPath,
         },
       });
 

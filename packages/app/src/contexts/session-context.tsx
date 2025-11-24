@@ -38,6 +38,11 @@ const derivePendingPermissionKey = (agentId: string, request: AgentPermissionReq
   return `${agentId}:${fallbackId}`;
 };
 
+type DraftInput = {
+  text: string;
+  images: Array<{ uri: string; mimeType: string }>;
+};
+
 export type MessageEntry =
   | {
       type: "user";
@@ -237,8 +242,8 @@ interface SessionContextValue {
   initializingAgents: Map<string, boolean>;
 
   // Queued messages and draft input per agent
-  draftInputs: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>;
-  setDraftInputs: (value: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }> | ((prev: Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>) => Map<string, { text: string; images: Array<{ uri: string; mimeType: string }> }>)) => void;
+  getDraftInput: (agentId: string) => DraftInput | undefined;
+  saveDraftInput: (agentId: string, draft: DraftInput) => void;
   queuedMessages: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>;
   setQueuedMessages: (value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
 
@@ -271,7 +276,12 @@ interface SessionContextValue {
   refreshAgent: (params: { agentId: string; requestId?: string }) => void;
   cancelAgentRun: (agentId: string) => void;
   sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
-  sendAgentAudio: (agentId: string, audioBlob: Blob, requestId?: string) => Promise<void>;
+  sendAgentAudio: (
+    agentId: string,
+    audioBlob: Blob,
+    requestId?: string,
+    options?: { mode?: "transcribe_only" | "auto_run" }
+  ) => Promise<void>;
   deleteAgent: (agentId: string) => void;
   createAgent: (options: {
     config: AgentSessionConfig;
@@ -327,7 +337,17 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
   const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
   const [providerModels, setProviderModels] = useState<Map<AgentProvider, ProviderModelState>>(new Map());
-  const [draftInputs, setDraftInputs] = useState<SessionContextValue["draftInputs"]>(new Map());
+  const draftInputsRef = useRef<Map<string, DraftInput>>(new Map());
+  const getDraftInput = useCallback<SessionContextValue["getDraftInput"]>((agentId) => {
+    return draftInputsRef.current.get(agentId);
+  }, []);
+
+  const saveDraftInput = useCallback<SessionContextValue["saveDraftInput"]>((agentId, draft) => {
+    draftInputsRef.current.set(agentId, {
+      text: draft.text,
+      images: draft.images,
+    });
+  }, []);
   const [queuedMessages, setQueuedMessages] = useState<SessionContextValue["queuedMessages"]>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
@@ -1000,6 +1020,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         return next;
       });
 
+      draftInputsRef.current.delete(agentId);
+
       setPendingPermissions((prev) => {
         let changed = false;
         const next = new Map(prev);
@@ -1253,7 +1275,12 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   }, [ws]);
 
 
-  const sendAgentAudio = useCallback(async (agentId: string, audioBlob: Blob, requestId?: string) => {
+  const sendAgentAudio = useCallback(async (
+    agentId: string,
+    audioBlob: Blob,
+    requestId?: string,
+    options?: { mode?: "transcribe_only" | "auto_run" }
+  ) => {
     try {
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -1264,8 +1291,21 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       }
       const base64Audio = btoa(binary);
 
-      // Determine format from MIME type
-      const format = audioBlob.type.split('/')[1] || 'm4a';
+      const deriveFormat = (mimeType: string | undefined): string => {
+        if (!mimeType || mimeType.length === 0) {
+          return "webm";
+        }
+        const slashIndex = mimeType.indexOf("/");
+        let formatPart = slashIndex >= 0 ? mimeType.slice(slashIndex + 1) : mimeType;
+        const semicolonIndex = formatPart.indexOf(";");
+        if (semicolonIndex >= 0) {
+          formatPart = formatPart.slice(0, semicolonIndex);
+        }
+        return formatPart.trim().length > 0 ? formatPart.trim() : "webm";
+      };
+
+      // Determine format from MIME type (strip codec metadata)
+      const format = deriveFormat(audioBlob.type);
 
       // Send audio message
       const msg: WSInboundMessage = {
@@ -1277,6 +1317,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
           format,
           isLast: true,
           requestId,
+          ...(options?.mode ? { mode: options.mode } : {}),
         },
       };
       ws.send(msg);
@@ -1469,8 +1510,8 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     fileExplorer,
     providerModels,
     requestProviderModels,
-    draftInputs,
-    setDraftInputs,
+    getDraftInput,
+    saveDraftInput,
     queuedMessages,
     setQueuedMessages,
     requestDirectoryListing,

@@ -12,6 +12,7 @@ function createSnapshot(overrides?: Partial<AgentSnapshot>): AgentSnapshot {
     id: "agent-test",
     provider: "claude",
     cwd: "/tmp/project",
+    model: null,
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: null,

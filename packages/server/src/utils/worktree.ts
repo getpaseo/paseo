@@ -119,13 +119,13 @@ export function validateBranchSlug(slug: string): {
     return { valid: false, error: "Branch name too long (max 100 characters)" };
   }
 
-  // Check for valid characters: lowercase letters, numbers, hyphens
-  const validPattern = /^[a-z0-9-]+$/;
+  // Check for valid characters: lowercase letters, numbers, hyphens, forward slashes
+  const validPattern = /^[a-z0-9-/]+$/;
   if (!validPattern.test(slug)) {
     return {
       valid: false,
       error:
-        "Branch name must contain only lowercase letters, numbers, and hyphens",
+        "Branch name must contain only lowercase letters, numbers, hyphens, and forward slashes",
     };
   }
 

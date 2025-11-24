@@ -3,10 +3,11 @@ import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { v4 as uuidv4 } from "uuid";
+import { inferAudioExtension } from "./audio-utils.js";
 
 export interface STTConfig {
   apiKey: string;
-  model?: "whisper-1";
+  model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
   confidenceThreshold?: number; // Default: -3.0
 }
 
@@ -49,7 +50,7 @@ export async function transcribeAudio(
 
   try {
     // Map format to file extension
-    const ext = getFileExtension(format);
+    const ext = inferAudioExtension(format);
 
     // Write audio buffer to temporary file
     // OpenAI API requires file upload, not raw buffer
@@ -61,11 +62,15 @@ export async function transcribeAudio(
     );
 
     // Call OpenAI Whisper API
+    const modelToUse = config.model ?? "whisper-1";
+    const supportsLogprobs =
+      modelToUse === "gpt-4o-transcribe" || modelToUse === "gpt-4o-mini-transcribe";
+
     const response = await openaiClient.audio.transcriptions.create({
       file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
       language: "en",
-      model: config.model ?? "gpt-4o-transcribe",
-      include: ["logprobs"],
+      model: modelToUse,
+      ...(supportsLogprobs ? { include: ["logprobs"] as ["logprobs"] } : {}),
       response_format: "json", // Get language and duration info
     });
 
@@ -77,7 +82,9 @@ export async function transcribeAudio(
     // Analyze logprobs if available
     let avgLogprob: number | undefined;
     let isLowConfidence = false;
-    const logprobs = response.logprobs as LogprobToken[] | undefined;
+    const logprobs = supportsLogprobs
+      ? (response.logprobs as LogprobToken[] | undefined)
+      : undefined;
 
     if (logprobs && logprobs.length > 0) {
       // Calculate average logprob
@@ -117,6 +124,7 @@ export async function transcribeAudio(
       logprobs: logprobs,
       avgLogprob: avgLogprob,
       isLowConfidence: isLowConfidence,
+      language: (response as { language?: string }).language,
     };
   } catch (error: any) {
     console.error("[STT] Transcription error:", error);
@@ -132,23 +140,6 @@ export async function transcribeAudio(
     }
   }
 }
-
-function getFileExtension(format: string): string {
-  // Map mime types or format strings to file extensions
-  const formatLower = format.toLowerCase();
-
-  if (formatLower.includes("webm")) return "webm";
-  if (formatLower.includes("ogg")) return "ogg";
-  if (formatLower.includes("mp3")) return "mp3";
-  if (formatLower.includes("wav")) return "wav";
-  if (formatLower.includes("m4a")) return "m4a";
-  if (formatLower.includes("mp4")) return "mp4";
-  if (formatLower.includes("flac")) return "flac";
-
-  // Default to webm (common browser format)
-  return "webm";
-}
-
 export function isSTTInitialized(): boolean {
   return openaiClient !== null && config !== null;
 }

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 import {
   query,
@@ -105,7 +105,9 @@ function emptySdkMessageStream(): AsyncIterable<SDKUserMessage> {
 }
 
 function resolveCodexBinary(): string {
-  const repoRoot = path.resolve(fileURLToPath(new URL("../../../../..", import.meta.url)));
+  const repoRoot = path.resolve(
+    fileURLToPath(new URL("../../../../..", import.meta.url))
+  );
   const packageRoot = path.join(repoRoot, "node_modules", "@openai", "codex-sdk");
   const vendorDir = path.join(packageRoot, "vendor");
 
@@ -144,7 +146,7 @@ type CodexModelInfo = {
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 class CodexAppServerClient {

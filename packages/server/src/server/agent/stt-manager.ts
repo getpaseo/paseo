@@ -1,4 +1,17 @@
 import { transcribeAudio, type TranscriptionResult } from "./stt-openai.js";
+import { maybePersistDebugAudio } from "./stt-debug.js";
+
+interface TranscriptionMetadata {
+  agentId?: string;
+  requestId?: string;
+  label?: string;
+}
+
+export interface SessionTranscriptionResult extends TranscriptionResult {
+  debugRecordingPath?: string;
+  byteLength: number;
+  format: string;
+}
 
 /**
  * Per-session STT manager
@@ -16,11 +29,29 @@ export class STTManager {
    */
   public async transcribe(
     audio: Buffer,
-    format: string
-  ): Promise<TranscriptionResult> {
+    format: string,
+    metadata?: TranscriptionMetadata
+  ): Promise<SessionTranscriptionResult> {
+    const context = metadata?.label ? ` (${metadata.label})` : "";
     console.log(
-      `[STT-Manager ${this.sessionId}] Transcribing ${audio.length} bytes of ${format} audio`
+      `[STT-Manager ${this.sessionId}] Transcribing ${audio.length} bytes of ${format} audio${context}`
     );
+
+    let debugRecordingPath: string | null = null;
+    try {
+      debugRecordingPath = await maybePersistDebugAudio(audio, {
+        sessionId: this.sessionId,
+        agentId: metadata?.agentId,
+        requestId: metadata?.requestId,
+        label: metadata?.label,
+        format,
+      });
+    } catch (error) {
+      console.warn(
+        `[STT-Manager ${this.sessionId}] Failed to persist debug audio:`,
+        error
+      );
+    }
 
     const result = await transcribeAudio(audio, format);
 
@@ -34,6 +65,9 @@ export class STTManager {
       return {
         ...result,
         text: "",
+        byteLength: audio.length,
+        format,
+        debugRecordingPath: debugRecordingPath ?? undefined,
       };
     }
 
@@ -43,7 +77,12 @@ export class STTManager {
       }`
     );
 
-    return result;
+    return {
+      ...result,
+      debugRecordingPath: debugRecordingPath ?? undefined,
+      byteLength: audio.length,
+      format,
+    };
   }
 
   /**

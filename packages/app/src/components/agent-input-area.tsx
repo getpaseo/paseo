@@ -10,7 +10,7 @@ import {
   Text,
   ActivityIndicator,
 } from "react-native";
-import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, AudioLines, Square, Paperclip, X, Pencil } from "lucide-react-native";
 import Animated, {
@@ -29,6 +29,14 @@ import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
+import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
+import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
+
+type QueuedMessage = {
+  id: string;
+  text: string;
+  images?: Array<{ uri: string; mimeType: string }>;
+};
 
 interface AgentInputAreaProps {
   agentId: string;
@@ -68,8 +76,8 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     sendAgentAudio,
     agents,
     cancelAgentRun,
-    draftInputs,
-    setDraftInputs,
+    getDraftInput,
+    saveDraftInput,
     queuedMessages: queuedMessagesByAgent,
     setQueuedMessages: setQueuedMessagesByAgent,
   } = useSession();
@@ -84,6 +92,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [transcribingRequestId, setTranscribingRequestId] = useState<string | null>(null);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
+  const [audioDebugInfo, setAudioDebugInfo] = useState<AudioDebugInfo | null>(null);
   
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
@@ -91,7 +100,15 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   const baselineInputHeightRef = useRef<number | null>(null);
   const overlayTransition = useSharedValue(0);
   const { pickImages } = useImageAttachmentPicker();
-  
+  const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
+  const pendingTranscriptionRef = useRef<{ requestId: string } | null>(null);
+  const agentIdRef = useRef(agentId);
+  const sendAgentMessageRef = useRef(sendAgentMessage);
+  const agentStatusRef = useRef<string | undefined>(undefined);
+  const updateQueueRef = useRef<
+    ((updater: (current: QueuedMessage[]) => QueuedMessage[]) => void) | null
+  >(null);
+
   const audioRecorder = useAudioRecorder({
     onAudioLevel: (level) => {
       setRecordingVolume(level);
@@ -107,6 +124,14 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
   useEffect(() => {
     inputHeightRef.current = inputHeight;
   }, [inputHeight]);
+
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
+  useEffect(() => {
+    sendAgentMessageRef.current = sendAgentMessage;
+  }, [sendAgentMessage]);
 
   async function handleSendMessage() {
     if (!userInput.trim() || !ws.isConnected) return;
@@ -153,7 +178,11 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     if (isRealtimeMode) {
       return;
     }
-    
+
+    if (shouldShowAudioDebug) {
+      setAudioDebugInfo(null);
+    }
+
     // Start recording
     try {
       await audioRecorder.start();
@@ -208,16 +237,20 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
         // Generate request ID for tracking transcription
         const requestId = generateMessageId();
         setTranscribingRequestId(requestId);
+        pendingTranscriptionRef.current = {
+          requestId,
+        };
         console.log("[AgentInput] Audio recorded:", audioData.size, "bytes", "requestId:", requestId);
 
         try {
           // Send audio to agent for transcription and processing
-          await sendAgentAudio(agentId, audioData, requestId);
+          await sendAgentAudio(agentId, audioData, requestId, { mode: "transcribe_only" });
           console.log("[AgentInput] Audio sent to agent");
         } catch (error) {
           console.error("[AgentInput] Failed to send audio:", error);
           // Clear transcribing state on error
           setTranscribingRequestId(null);
+          pendingTranscriptionRef.current = null;
           overlayTransition.value = withTiming(0, { duration: 250 });
         }
       } else {
@@ -228,29 +261,81 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
       console.error("[AgentInput] Failed to stop recording:", error);
       setIsRecording(false);
       setTranscribingRequestId(null);
+      pendingTranscriptionRef.current = null;
       overlayTransition.value = withTiming(0, { duration: 250 });
     }
   }
 
-  // Listen for transcription completion
   useEffect(() => {
-    if (!transcribingRequestId) return;
-
     const unsubscribe = ws.on("transcription_result", (message) => {
-      if (message.type !== "transcription_result") return;
-      
-      // Check if this transcription result matches our request
-      if (message.payload.requestId === transcribingRequestId) {
-        console.log("[AgentInput] Transcription completed for requestId:", transcribingRequestId);
-        setTranscribingRequestId(null);
-        overlayTransition.value = withTiming(0, { duration: 250 });
+      if (message.type !== "transcription_result") {
+        return;
       }
+
+      const pending = pendingTranscriptionRef.current;
+      if (!pending || !message.payload.requestId) {
+        return;
+      }
+
+      if (message.payload.requestId !== pending.requestId) {
+        return;
+      }
+
+      console.log("[AgentInput] Transcription completed for requestId:", pending.requestId);
+      pendingTranscriptionRef.current = null;
+      setTranscribingRequestId(null);
+      overlayTransition.value = withTiming(0, { duration: 250 });
+
+      if (shouldShowAudioDebug) {
+        setAudioDebugInfo({
+          requestId: pending.requestId,
+          transcript: message.payload.text?.trim(),
+          debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
+          format: message.payload.format,
+          byteLength: message.payload.byteLength,
+          duration: message.payload.duration,
+          avgLogprob: message.payload.avgLogprob,
+          isLowConfidence: message.payload.isLowConfidence,
+        });
+      }
+
+      const transcriptText = message.payload.text?.trim();
+      if (!transcriptText) {
+        return;
+      }
+
+      const shouldQueue = agentStatusRef.current === "running";
+      if (shouldQueue) {
+        updateQueueRef.current?.((current) => [
+          ...current,
+          {
+            id: generateMessageId(),
+            text: transcriptText,
+          },
+        ]);
+        return;
+      }
+
+      void (async () => {
+        try {
+          await sendAgentMessageRef.current?.(agentIdRef.current, transcriptText);
+        } catch (error) {
+          console.error("[AgentInput] Failed to send transcribed message:", error);
+          updateQueueRef.current?.((current) => [
+            ...current,
+            {
+              id: generateMessageId(),
+              text: transcriptText,
+            },
+          ]);
+        }
+      })();
     });
 
     return () => {
       unsubscribe();
     };
-  }, [transcribingRequestId, ws, overlayTransition]);
+  }, [ws, overlayTransition, shouldShowAudioDebug]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -412,13 +497,29 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
   const agent = agents.get(agentId);
   const isAgentRunning = agent?.status === "running";
+  agentStatusRef.current = agent?.status;
   const hasText = userInput.trim().length > 0;
   const hasImages = selectedImages.length > 0;
   const hasSendableContent = hasText || hasImages;
   const shouldShowSendButton = !isAgentRunning && hasSendableContent;
-  const shouldShowVoiceControls = !isAgentRunning && !hasSendableContent;
+  const shouldShowVoiceControls = !hasSendableContent;
   const queuedMessages = queuedMessagesByAgent.get(agentId) ?? [];
   const shouldHandleDesktopSubmit = IS_WEB;
+
+  const updateQueue = useCallback(
+    (updater: (current: QueuedMessage[]) => QueuedMessage[]) => {
+      setQueuedMessagesByAgent((prev) => {
+        const next = new Map(prev);
+        next.set(agentId, updater(prev.get(agentId) ?? []));
+        return next;
+      });
+    },
+    [agentId, setQueuedMessagesByAgent],
+  );
+  useEffect(() => {
+    updateQueueRef.current = updateQueue;
+  }, [updateQueue]);
+
 
   useLayoutEffect(() => {
     if (!IS_WEB) {
@@ -509,7 +610,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
   // Hydrate draft only when switching agents
   useEffect(() => {
-    const draft = draftInputs.get(agentId);
+    const draft = getDraftInput(agentId);
     if (!draft) {
       setUserInput("");
       setSelectedImages([]);
@@ -518,28 +619,23 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
     setUserInput(draft.text);
     setSelectedImages(draft.images);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId]);
+  }, [agentId, getDraftInput]);
 
-  // Persist drafts into context with change detection to avoid render loops
+  // Persist drafts into the shared session store with change detection to avoid redundant work
   useEffect(() => {
-    setDraftInputs((prev) => {
-      const existing = prev.get(agentId);
-      const isSameText = existing?.text === userInput;
-      const existingImages = existing?.images ?? [];
-      const isSameImages =
-        existingImages.length === selectedImages.length &&
-        existingImages.every((img, idx) => img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType);
+    const existing = getDraftInput(agentId);
+    const isSameText = existing?.text === userInput;
+    const existingImages = existing?.images ?? [];
+    const isSameImages =
+      existingImages.length === selectedImages.length &&
+      existingImages.every((img, idx) => img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType);
 
-      if (isSameText && isSameImages) {
-        return prev;
-      }
+    if (isSameText && isSameImages) {
+      return;
+    }
 
-      const next = new Map(prev);
-      next.set(agentId, { text: userInput, images: selectedImages });
-      return next;
-    });
-  }, [agentId, userInput, selectedImages, setDraftInputs]);
+    saveDraftInput(agentId, { text: userInput, images: selectedImages });
+  }, [agentId, userInput, selectedImages, getDraftInput, saveDraftInput]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -580,14 +676,6 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     }
     setIsCancellingAgent(true);
     cancelAgentRun(agentId);
-  }
-
-  function updateQueue(updater: (current: typeof queuedMessages) => typeof queuedMessages) {
-    setQueuedMessagesByAgent((prev) => {
-      const next = new Map(prev);
-      next.set(agentId, updater(prev.get(agentId) ?? []));
-      return next;
-    });
   }
 
   function handleQueueCurrentInput() {
@@ -643,6 +731,24 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     </Pressable>
   );
 
+  const voiceButton = (
+    <Pressable
+      onPress={handleVoicePress}
+      disabled={!ws.isConnected || isRealtimeMode}
+      style={[
+        styles.voiceButton as any,
+        (!ws.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
+        (isRecording ? styles.voiceButtonRecording : undefined) as any,
+      ]}
+    >
+      {isRecording ? (
+        <Square size={14} color="white" fill="white" />
+      ) : (
+        <Mic size={20} color={theme.colors.foreground} />
+      )}
+    </Pressable>
+  );
+
   return (
     <View style={styles.container}>
       {/* Border separator */}
@@ -664,6 +770,12 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
         <View style={styles.inputAreaContent}>
           {/* Regular input controls */}
           <Animated.View style={[styles.inputContainer, inputAnimatedStyle]}>
+            {shouldShowAudioDebug && audioDebugInfo ? (
+              <AudioDebugNotice
+                info={audioDebugInfo}
+                onDismiss={() => setAudioDebugInfo(null)}
+              />
+            ) : null}
           {/* Queue list */}
           {queuedMessages.length > 0 && (
             <View style={styles.queueContainer}>
@@ -741,6 +853,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
             <View style={styles.rightButtonGroup}>
               {isAgentRunning ? (
                 <>
+                  {shouldShowVoiceControls && voiceButton}
                   {hasSendableContent && (
                     <Pressable
                       onPress={handleQueueCurrentInput}
@@ -784,26 +897,12 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
                 >
                   <ArrowUp size={20} color="white" />
                 </Pressable>
-              ) : shouldShowVoiceControls ? (
-                <>
-                  <Pressable
-                    onPress={handleVoicePress}
-                    disabled={!ws.isConnected || isRealtimeMode}
-                    style={[
-                      styles.voiceButton as any,
-                      (!ws.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
-                      (isRecording ? styles.voiceButtonRecording : undefined) as any,
-                    ]}
-                  >
-                    {isRecording ? (
-                      <Square size={14} color="white" fill="white" />
-                    ) : (
-                      <Mic size={20} color={theme.colors.foreground} />
-                    )}
-                  </Pressable>
-                  {realtimeButton}
-                </>
-              ) : null}
+                  ) : shouldShowVoiceControls ? (
+                    <>
+                      {voiceButton}
+                      {realtimeButton}
+                    </>
+                  ) : null}
             </View>
           </View>
           </Animated.View>

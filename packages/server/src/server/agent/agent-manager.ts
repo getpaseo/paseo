@@ -19,6 +19,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
+import { resolveAgentModel } from "./model-resolver.js";
 
 export type AgentLifecycleStatus =
   | "initializing"
@@ -31,6 +32,7 @@ export type AgentSnapshot = {
   id: string;
   provider: AgentProvider;
   cwd: string;
+  model: string | null;
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;
@@ -203,9 +205,14 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId?: string
   ): Promise<AgentSnapshot> {
-    const client = this.requireClient(config.provider);
-    const session = await client.createSession(config);
-    return this.registerSession(session, config, agentId ?? this.idFactory());
+    const normalizedConfig = await this.normalizeConfig(config);
+    const client = this.requireClient(normalizedConfig.provider);
+    const session = await client.createSession(normalizedConfig);
+    return this.registerSession(
+      session,
+      normalizedConfig,
+      agentId ?? this.idFactory()
+    );
   }
 
   async resumeAgent(
@@ -213,17 +220,22 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string
   ): Promise<AgentSnapshot> {
-    const client = this.requireClient(handle.provider);
-    const session = await client.resumeSession(handle, overrides);
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const mergedConfig = {
       ...metadata,
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
+    const normalizedConfig = await this.normalizeConfig(mergedConfig);
+    const resumeOverrides =
+      normalizedConfig.model !== mergedConfig.model
+        ? { ...overrides, model: normalizedConfig.model }
+        : overrides;
+    const client = this.requireClient(handle.provider);
+    const session = await client.resumeSession(handle, resumeOverrides);
     return this.registerSession(
       session,
-      mergedConfig,
+      normalizedConfig,
       agentId ?? this.idFactory()
     );
   }
@@ -608,6 +620,7 @@ export class AgentManager {
       id: agent.id,
       provider: agent.provider,
       cwd: agent.cwd,
+      model: agent.config.model ?? null,
       createdAt: agent.createdAt,
       updatedAt: agent.updatedAt,
       lastUserMessageAt: agent.lastUserMessageAt,
@@ -621,6 +634,26 @@ export class AgentManager {
       lastUsage: agent.lastUsage,
       lastError: agent.lastError,
     };
+  }
+
+  private async normalizeConfig(
+    config: AgentSessionConfig
+  ): Promise<AgentSessionConfig> {
+    const normalized: AgentSessionConfig = { ...config };
+    const resolvedModel = await resolveAgentModel({
+      provider: normalized.provider,
+      requestedModel: normalized.model,
+      cwd: normalized.cwd,
+    });
+
+    if (resolvedModel) {
+      normalized.model = resolvedModel;
+    } else if (typeof normalized.model === "string") {
+      const trimmed = normalized.model.trim();
+      normalized.model = trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    return normalized;
   }
 
   private requireClient(provider: AgentProvider): AgentClient {

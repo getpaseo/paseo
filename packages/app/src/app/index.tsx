@@ -1,5 +1,5 @@
 import { View } from "react-native";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HomeHeader } from "@/components/headers/home-header";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
-import { CreateAgentModal } from "@/components/create-agent-modal";
+import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
 import { useSession } from "@/contexts/session-context";
 
 export default function HomeScreen() {
@@ -15,6 +15,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { agents } = useSession();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [createModalMounted, setCreateModalMounted] = useState(false);
+  const [importModalMounted, setImportModalMounted] = useState(false);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -29,14 +32,31 @@ export default function HomeScreen() {
 
   const hasAgents = agents.size > 0;
 
-  function handleCreateAgent() {
+  const handleCreateAgent = useCallback(() => {
+    setCreateModalMounted(true);
     setShowCreateModal(true);
-  }
+  }, []);
+
+  const handleImportAgent = useCallback(() => {
+    setImportModalMounted(true);
+    setShowImportModal(true);
+  }, []);
+
+  const handleCloseCreateModal = useCallback(() => {
+    setShowCreateModal(false);
+  }, []);
+
+  const handleCloseImportModal = useCallback(() => {
+    setShowImportModal(false);
+  }, []);
 
   return (
     <View style={styles.container}>
       {/* Header */}
-      <HomeHeader onCreateAgent={handleCreateAgent} />
+      <HomeHeader
+        onCreateAgent={handleCreateAgent}
+        onImportAgent={handleImportAgent}
+      />
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
@@ -48,10 +68,12 @@ export default function HomeScreen() {
       </ReanimatedAnimated.View>
 
       {/* Create Agent Modal */}
-      <CreateAgentModal
-        isVisible={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-      />
+      {createModalMounted ? (
+        <CreateAgentModal isVisible={showCreateModal} onClose={handleCloseCreateModal} />
+      ) : null}
+      {importModalMounted ? (
+        <ImportAgentModal isVisible={showImportModal} onClose={handleCloseImportModal} />
+      ) : null}
     </View>
   );
 }

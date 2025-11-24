@@ -228,6 +228,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
+  model: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
@@ -254,6 +255,7 @@ export function serializeAgentSnapshot(
   const { createdAt, updatedAt, lastUserMessageAt, ...rest } = snapshot;
   return {
     ...rest,
+    model: snapshot.model,
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -334,6 +336,9 @@ export const SendAgentAudioSchema = z.object({
   format: z.string(),
   isLast: z.boolean(),
   requestId: z.string().optional(), // Client-provided ID for tracking transcription
+  mode: z
+    .enum(["transcribe_only", "auto_run"])
+    .optional(),
 });
 
 const GitSetupOptionsSchema = z.object({
@@ -531,6 +536,11 @@ export const TranscriptionResultMessageSchema = z.object({
     language: z.string().optional(),
     duration: z.number().optional(),
     requestId: z.string().optional(), // Echoed back from request for tracking
+    avgLogprob: z.number().optional(),
+    isLowConfidence: z.boolean().optional(),
+    byteLength: z.number().optional(),
+    format: z.string().optional(),
+    debugRecordingPath: z.string().optional(),
   }),
 });
 

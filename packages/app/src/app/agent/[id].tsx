@@ -13,10 +13,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MoreVertical, GitBranch, Folder, RotateCcw } from "lucide-react-native";
+import { MoreVertical, GitBranch, Folder, RotateCcw, PlusCircle } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { CreateAgentModal, type CreateAgentInitialValues } from "@/components/create-agent-modal";
 import { useSession } from "@/contexts/session-context";
 import type { Agent } from "@/contexts/session-context";
 import { useFooterControls } from "@/contexts/footer-controls-context";
@@ -92,7 +93,16 @@ export default function AgentScreen() {
   const [branchStatus, setBranchStatus] = useState<BranchStatus>("idle");
   const [branchLabel, setBranchLabel] = useState<string | null>(null);
   const [branchError, setBranchError] = useState<string | null>(null);
+  const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
+  const [createAgentInitialValues, setCreateAgentInitialValues] =
+    useState<CreateAgentInitialValues | undefined>();
   const repoInfoRequestIdRef = useRef<string | null>(null);
+  const hasPendingRepoRequest = repoInfoRequestIdRef.current !== null;
+  const branchDisplayValue =
+    branchStatus === "error"
+      ? branchError ?? "Unavailable"
+      : branchLabel ?? "Unknown";
+  const shouldListenForBranchInfo = menuVisible || hasPendingRepoRequest;
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -161,6 +171,9 @@ export default function AgentScreen() {
   }, [agent?.cwd, resetBranchState, sendGitRepoInfoRequest]);
 
   useEffect(() => {
+    if (!shouldListenForBranchInfo) {
+      return;
+    }
     const unsubscribe = ws.on("git_repo_info_response", (message) => {
       if (message.type !== "git_repo_info_response") {
         return;
@@ -195,7 +208,7 @@ export default function AgentScreen() {
     return () => {
       unsubscribe();
     };
-  }, [agent?.cwd, ws]);
+  }, [agent?.cwd, shouldListenForBranchInfo, ws]);
 
   useEffect(() => {
     if (!id) {
@@ -352,164 +365,196 @@ export default function AgentScreen() {
     refreshAgent({ agentId: id });
   }, [handleCloseMenu, id, refreshAgent]);
 
-  const branchDisplayValue =
-    branchStatus === "error"
-      ? branchError ?? "Unavailable"
-      : branchLabel ?? "Unknown";
+  const handleCreateNewAgent = useCallback(() => {
+    if (!agent) {
+      return;
+    }
+    handleCloseMenu();
+    setCreateAgentInitialValues({
+      workingDir: agent.cwd,
+      provider: agent.provider,
+      modeId: agent.currentModeId,
+      model: agentModel ?? undefined,
+    });
+    setShowCreateAgentModal(true);
+  }, [agent, agentModel, handleCloseMenu]);
+
+  const handleCloseCreateAgentModal = useCallback(() => {
+    setShowCreateAgentModal(false);
+  }, []);
+
+  const createAgentModal = (
+    <CreateAgentModal
+      isVisible={showCreateAgentModal}
+      onClose={handleCloseCreateAgentModal}
+      initialValues={createAgentInitialValues}
+    />
+  );
+
 
   if (!agent) {
     return (
-      <View style={styles.container}>
-        <BackHeader onBack={handleBackToHome} />
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
+      <>
+        <View style={styles.container}>
+          <BackHeader onBack={handleBackToHome} />
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>Agent not found</Text>
+          </View>
         </View>
-      </View>
+        {createAgentModal}
+      </>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <BackHeader 
-        title={agent.title || "Agent"}
-        onBack={handleBackToHome}
-        rightContent={
-          <View ref={menuButtonRef} collapsable={false}>
-            <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-              <MoreVertical size={20} color={theme.colors.foreground} />
-            </Pressable>
-          </View>
-        }
-      />
-
-      {/* Content Area with Keyboard Animation */}
-      <View style={styles.contentContainer}>
-        <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-          {isInitializing ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={theme.colors.primary} />
-              <Text style={styles.loadingText}>Loading agent...</Text>
+    <>
+      <View style={styles.container}>
+        {/* Header */}
+        <BackHeader
+          title={agent.title || "Agent"}
+          onBack={handleBackToHome}
+          rightContent={
+            <View ref={menuButtonRef} collapsable={false}>
+              <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
+                <MoreVertical size={20} color={theme.colors.foreground} />
+              </Pressable>
             </View>
-          ) : (
-            <AgentStreamView
-              agentId={id!}
-              agent={agent}
-              streamItems={streamItems}
-              pendingPermissions={agentPermissions}
-              onPermissionResponse={(agentId, requestId, response) =>
-                respondToPermission(agentId, requestId, response)
-              }
-            />
-          )}
-        </ReanimatedAnimated.View>
-      </View>
+          }
+        />
 
-      {/* Dropdown Menu */}
-      <Modal
-        visible={menuVisible}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={handleCloseMenu}
-      >
-        <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={handleCloseMenu} />
-          <View
-            style={[
-              styles.dropdownMenu,
-              {
-                position: "absolute",
-                top: menuPosition.top,
-                left: menuPosition.left,
-                width: DROPDOWN_WIDTH,
-              },
-            ]}
-            onLayout={handleMenuLayout}
-          >
-            <View style={styles.menuMetaContainer}>
-              <View style={styles.menuMetaRow}>
-                <Text style={styles.menuMetaLabel}>Directory</Text>
-                <Text
-                  style={styles.menuMetaValue}
-                  numberOfLines={2}
-                  ellipsizeMode="middle"
-                >
-                  {agent.cwd}
-                </Text>
+        {/* Content Area with Keyboard Animation */}
+        <View style={styles.contentContainer}>
+          <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
+            {isInitializing ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <Text style={styles.loadingText}>Loading agent...</Text>
               </View>
+            ) : (
+              <AgentStreamView
+                agentId={id!}
+                agent={agent}
+                streamItems={streamItems}
+                pendingPermissions={agentPermissions}
+                onPermissionResponse={(agentId, requestId, response) =>
+                  respondToPermission(agentId, requestId, response)
+                }
+              />
+            )}
+          </ReanimatedAnimated.View>
+        </View>
 
-              <View style={styles.menuMetaRow}>
-                <Text style={styles.menuMetaLabel}>Model</Text>
-                <Text
-                  style={styles.menuMetaValue}
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {modelDisplayValue}
-                </Text>
-              </View>
+        {/* Dropdown Menu */}
+        <Modal
+          visible={menuVisible}
+          animationType="fade"
+          transparent={true}
+          onRequestClose={handleCloseMenu}
+        >
+          <View style={styles.menuOverlay}>
+            <Pressable style={styles.menuBackdrop} onPress={handleCloseMenu} />
+            <View
+              style={[
+                styles.dropdownMenu,
+                {
+                  position: "absolute",
+                  top: menuPosition.top,
+                  left: menuPosition.left,
+                  width: DROPDOWN_WIDTH,
+                },
+              ]}
+              onLayout={handleMenuLayout}
+            >
+              <View style={styles.menuMetaContainer}>
+                <View style={styles.menuMetaRow}>
+                  <Text style={styles.menuMetaLabel}>Directory</Text>
+                  <Text
+                    style={styles.menuMetaValue}
+                    numberOfLines={2}
+                    ellipsizeMode="middle"
+                  >
+                    {agent.cwd}
+                  </Text>
+                </View>
 
-              <View style={styles.menuMetaRow}>
-                <Text style={styles.menuMetaLabel}>Branch</Text>
-                <View style={styles.menuMetaValueRow}>
-                  {branchStatus === "loading" ? (
-                    <>
-                      <ActivityIndicator
-                        size="small"
-                        color={theme.colors.mutedForeground}
-                      />
-                      <Text style={styles.menuMetaPendingText}>Fetching…</Text>
-                    </>
-                  ) : (
-                    <Text
-                      style={[
-                        styles.menuMetaValue,
-                        branchStatus === "error" ? styles.menuMetaValueError : null,
-                      ]}
-                      numberOfLines={1}
-                      ellipsizeMode="middle"
-                    >
-                      {branchDisplayValue}
-                    </Text>
-                  )}
+                <View style={styles.menuMetaRow}>
+                  <Text style={styles.menuMetaLabel}>Model</Text>
+                  <Text
+                    style={styles.menuMetaValue}
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                  >
+                    {modelDisplayValue}
+                  </Text>
+                </View>
+
+                <View style={styles.menuMetaRow}>
+                  <Text style={styles.menuMetaLabel}>Branch</Text>
+                  <View style={styles.menuMetaValueRow}>
+                    {branchStatus === "loading" ? (
+                      <>
+                        <ActivityIndicator
+                          size="small"
+                          color={theme.colors.mutedForeground}
+                        />
+                        <Text style={styles.menuMetaPendingText}>Fetching…</Text>
+                      </>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.menuMetaValue,
+                          branchStatus === "error" ? styles.menuMetaValueError : null,
+                        ]}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {branchDisplayValue}
+                      </Text>
+                    )}
+                  </View>
                 </View>
               </View>
+
+              <View style={styles.menuDivider} />
+
+              <Pressable onPress={handleViewChanges} style={styles.menuItem}>
+                <GitBranch size={20} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>View Changes</Text>
+              </Pressable>
+              <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
+                <Folder size={20} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>Browse Files</Text>
+              </Pressable>
+              <Pressable onPress={handleCreateNewAgent} style={styles.menuItem}>
+                <PlusCircle size={20} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>New Agent</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleRefreshAgent}
+                style={[
+                  styles.menuItem,
+                  isInitializing ? styles.menuItemDisabled : null,
+                ]}
+                disabled={isInitializing}
+              >
+                <RotateCcw size={20} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>
+                  {isInitializing ? "Refreshing..." : "Refresh"}
+                </Text>
+                {isInitializing && (
+                  <ActivityIndicator
+                    size="small"
+                    color={theme.colors.primary}
+                    style={styles.menuItemSpinner}
+                  />
+                )}
+              </Pressable>
             </View>
-
-            <View style={styles.menuDivider} />
-
-            <Pressable onPress={handleViewChanges} style={styles.menuItem}>
-              <GitBranch size={20} color={theme.colors.foreground} />
-              <Text style={styles.menuItemText}>View Changes</Text>
-            </Pressable>
-            <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
-              <Folder size={20} color={theme.colors.foreground} />
-              <Text style={styles.menuItemText}>Browse Files</Text>
-            </Pressable>
-            <Pressable
-              onPress={handleRefreshAgent}
-              style={[
-                styles.menuItem,
-                isInitializing ? styles.menuItemDisabled : null,
-              ]}
-              disabled={isInitializing}
-            >
-              <RotateCcw size={20} color={theme.colors.foreground} />
-              <Text style={styles.menuItemText}>
-                {isInitializing ? "Refreshing..." : "Refresh"}
-              </Text>
-              {isInitializing && (
-                <ActivityIndicator
-                  size="small"
-                  color={theme.colors.primary}
-                  style={styles.menuItemSpinner}
-                />
-              )}
-            </Pressable>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </View>
+      {createAgentModal}
+    </>
   );
 }
 

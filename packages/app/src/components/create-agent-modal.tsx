@@ -35,13 +35,17 @@ import Animated, {
   Easing,
   runOnJS,
 } from "react-native-reanimated";
-import { StyleSheet } from "react-native-unistyles";
-import { X, ChevronDown } from "lucide-react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Mic, Check, X, ChevronDown } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useSession } from "@/contexts/session-context";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
+import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { VolumeMeter } from "@/components/volume-meter";
+import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
+import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
@@ -56,9 +60,24 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import type { WSInboundMessage } from "@server/server/messages";
 
-interface CreateAgentModalProps {
+export type CreateAgentInitialValues = {
+  workingDir?: string;
+  provider?: AgentProvider;
+  modeId?: string | null;
+  model?: string | null;
+};
+
+interface AgentFlowModalProps {
   isVisible: boolean;
   onClose: () => void;
+  flow: "create" | "import";
+  initialValues?: CreateAgentInitialValues;
+}
+
+interface ModalWrapperProps {
+  isVisible: boolean;
+  onClose: () => void;
+  initialValues?: CreateAgentInitialValues;
 }
 
 const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
@@ -71,11 +90,12 @@ const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
 const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
   fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
-const RESUME_PAGE_SIZE = 20;
+const IMPORT_PAGE_SIZE = 20;
 const PROMPT_MIN_HEIGHT = 64;
 const PROMPT_MAX_HEIGHT = 200;
 const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 const IS_WEB = Platform.OS === "web";
+const DICTATION_AGENT_ID = "__dictation__";
 
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
@@ -109,7 +129,7 @@ const isTextAreaLike = (node: unknown): node is TextAreaHandle => {
   return true;
 };
 
-type ResumeCandidate = {
+type ImportCandidate = {
   provider: AgentProvider;
   sessionId: string;
   cwd: string;
@@ -119,7 +139,6 @@ type ResumeCandidate = {
   timeline: AgentTimelineItem[];
 };
 
-type ResumeTab = "new" | "resume";
 type ProviderFilter = "all" | AgentProvider;
 type DropdownKey = "assistant" | "permissions" | "model" | "workingDir" | "baseBranch";
 
@@ -152,7 +171,7 @@ function formatRelativeTime(date: Date): string {
   return `${days}d ago`;
 }
 
-function getResumePreview(candidate: ResumeCandidate): string {
+function getImportPreview(candidate: ImportCandidate): string {
   for (const item of candidate.timeline) {
     if (item.type === "user_message") {
       const text = item.text.trim();
@@ -164,10 +183,12 @@ function getResumePreview(candidate: ResumeCandidate): string {
   return candidate.title || candidate.cwd;
 }
 
-export function CreateAgentModal({
+function AgentFlowModal({
   isVisible,
   onClose,
-}: CreateAgentModalProps) {
+  flow,
+  initialValues,
+}: AgentFlowModalProps) {
   const insets = useSafeAreaInsets();
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const slideOffset = useSharedValue(screenHeight);
@@ -176,16 +197,20 @@ export function CreateAgentModal({
   const isCompactLayout = screenWidth < 720;
   const shouldHandlePromptDesktopSubmit = IS_WEB;
   const shouldAutoFocusPrompt = IS_WEB;
+  const isImportFlow = flow === "import";
+  const isCreateFlow = !isImportFlow;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
   const {
     ws,
     createAgent,
     resumeAgent,
+    sendAgentAudio,
     agents,
     providerModels,
     requestProviderModels,
   } = useSession();
+  const isWsConnected = ws.isConnected;
   const router = useRouter();
 
   const [isMounted, setIsMounted] = useState(isVisible);
@@ -207,15 +232,18 @@ export function CreateAgentModal({
   const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<ResumeTab>("new");
-  const [resumeProviderFilter, setResumeProviderFilter] =
+  const [importProviderFilter, setImportProviderFilter] =
     useState<ProviderFilter>("all");
-  const [resumeSearchQuery, setResumeSearchQuery] = useState("");
-  const [resumeCandidates, setResumeCandidates] = useState<ResumeCandidate[]>(
+  const [importSearchQuery, setImportSearchQuery] = useState("");
+  const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>(
     []
   );
-  const [isResumeLoading, setIsResumeLoading] = useState(false);
-  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [isImportLoading, setIsImportLoading] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isDictating, setIsDictating] = useState(false);
+  const [isDictationProcessing, setIsDictationProcessing] = useState(false);
+  const [dictationVolume, setDictationVolume] = useState(0);
+  const [dictationDebugInfo, setDictationDebugInfo] = useState<AudioDebugInfo | null>(null);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const [repoInfo, setRepoInfo] = useState<RepoInfoState | null>(null);
   const [repoInfoStatus, setRepoInfoStatus] = useState<
@@ -237,6 +265,19 @@ export function CreateAgentModal({
     model: false,
     workingDir: false,
   });
+  const prevVisibilityRef = useRef(isVisible);
+  const dictationRequestIdRef = useRef<string | null>(null);
+  const dictationRecorder = useAudioRecorder({
+    onAudioLevel: (level) => {
+      setDictationVolume(level);
+    },
+  });
+  const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
+  const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
+  const hasPendingDictation = dictationRequestIdRef.current !== null;
+  const shouldListenForStatus = isVisible || hasPendingCreateOrResume;
+  const shouldListenForDictation =
+    isCreateFlow && (isVisible || hasPendingDictation);
 
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
   const openDropdownSheet = useCallback((key: DropdownKey) => {
@@ -275,6 +316,41 @@ export function CreateAgentModal({
     },
     [setWorkingDirFromUser]
   );
+
+  const applyInitialValues = useCallback(() => {
+    if (!isCreateFlow || !initialValues) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(initialValues, "workingDir")) {
+      const providedWorkingDir = initialValues.workingDir ?? "";
+      userEditedPreferencesRef.current.workingDir = true;
+      setWorkingDir(providedWorkingDir);
+    }
+
+    if (initialValues.provider && providerDefinitionMap.has(initialValues.provider)) {
+      userEditedPreferencesRef.current.provider = true;
+      setSelectedProvider(initialValues.provider);
+    }
+
+    if (typeof initialValues.modeId === "string" && initialValues.modeId.length > 0) {
+      userEditedPreferencesRef.current.mode = true;
+      setSelectedMode(initialValues.modeId);
+    }
+
+    if (typeof initialValues.model === "string" && initialValues.model.length > 0) {
+      userEditedPreferencesRef.current.model = true;
+      setSelectedModel(initialValues.model);
+    }
+  }, [initialValues, isCreateFlow]);
+
+  useEffect(() => {
+    const wasVisible = prevVisibilityRef.current;
+    if (isVisible && !wasVisible) {
+      applyInitialValues();
+    }
+    prevVisibilityRef.current = isVisible;
+  }, [applyInitialValues, isVisible]);
 
   const refreshProviderModels = useCallback(() => {
     const trimmed = workingDir.trim();
@@ -373,13 +449,6 @@ export function CreateAgentModal({
     void persist();
   }, [selectedMode, selectedProvider, workingDir]);
 
-  const tabOptions = useMemo(
-    () => [
-      { id: "new" as ResumeTab, label: "New Agent" },
-      { id: "resume" as ResumeTab, label: "Resume Agent" },
-    ],
-    []
-  );
   const providerFilterOptions = useMemo(
     () => [
       { id: "all" as ProviderFilter, label: "All" },
@@ -403,6 +472,9 @@ export function CreateAgentModal({
   const modelError = modelState?.error ?? null;
 
   useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
     const trimmed = workingDir.trim();
     const currentState = providerModels.get(selectedProvider);
     if (currentState?.models?.length || currentState?.isLoading) {
@@ -411,7 +483,7 @@ export function CreateAgentModal({
     requestProviderModels(selectedProvider, {
       cwd: trimmed.length > 0 ? trimmed : undefined,
     });
-  }, [providerModels, requestProviderModels, selectedProvider, workingDir]);
+  }, [isVisible, providerModels, requestProviderModels, selectedProvider, workingDir]);
   const setPromptHeight = useCallback((nextHeight: number) => {
     const bounded = Math.min(
       PROMPT_MAX_HEIGHT,
@@ -538,10 +610,10 @@ export function CreateAgentModal({
     });
     return ids;
   }, [agents]);
-  const filteredResumeCandidates = useMemo(() => {
-    const providerFilter = resumeProviderFilter;
-    const query = resumeSearchQuery.trim().toLowerCase();
-    return resumeCandidates
+  const filteredImportCandidates = useMemo(() => {
+    const providerFilter = importProviderFilter;
+    const query = importSearchQuery.trim().toLowerCase();
+    return importCandidates
       .filter((candidate) => !activeSessionIds.has(candidate.sessionId))
       .filter(
         (candidate) =>
@@ -558,9 +630,9 @@ export function CreateAgentModal({
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
   }, [
     activeSessionIds,
-    resumeCandidates,
-    resumeProviderFilter,
-    resumeSearchQuery,
+    importCandidates,
+    importProviderFilter,
+    importSearchQuery,
   ]);
 
   useEffect(() => {
@@ -595,11 +667,11 @@ export function CreateAgentModal({
     if (!shouldAutoFocusPrompt) {
       return;
     }
-    if (!isVisible || activeTab !== "new") {
+    if (!isVisible || !isCreateFlow) {
       return;
     }
     focusPromptInput();
-  }, [activeTab, focusPromptInput, isVisible, shouldAutoFocusPrompt]);
+  }, [focusPromptInput, isCreateFlow, isVisible, shouldAutoFocusPrompt]);
 
   const resetFormState = useCallback(() => {
     setInitialPrompt("");
@@ -622,7 +694,73 @@ export function CreateAgentModal({
     pendingRequestIdRef.current = null;
     repoInfoRequestIdRef.current = null;
     shouldSyncBaseBranchRef.current = true;
+    dictationRequestIdRef.current = null;
+    setIsDictating(false);
+    setIsDictationProcessing(false);
+    setDictationVolume(0);
+    setDictationDebugInfo(null);
+    if (dictationRecorder.isRecording?.()) {
+      void dictationRecorder.stop().catch(() => {});
+    }
   }, [setPromptHeight]);
+
+  const handleDictationStart = useCallback(async () => {
+    if (!isCreateFlow || isLoading || !isWsConnected || isDictating || isDictationProcessing) {
+      return;
+    }
+    try {
+      if (shouldShowAudioDebug) {
+        setDictationDebugInfo(null);
+      }
+      await dictationRecorder.start();
+      setIsDictating(true);
+      setDictationVolume(0);
+      setErrorMessage("");
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to start dictation:", error);
+    }
+  }, [dictationRecorder, isCreateFlow, isDictating, isDictationProcessing, isLoading, isWsConnected, shouldShowAudioDebug]);
+
+  const handleDictationCancel = useCallback(async () => {
+    if (!isDictating) {
+      return;
+    }
+    try {
+      await dictationRecorder.stop();
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to cancel dictation:", error);
+    } finally {
+      setIsDictating(false);
+      setDictationVolume(0);
+    }
+  }, [dictationRecorder, isDictating]);
+
+  const handleDictationConfirm = useCallback(async () => {
+    if (!isDictating || isDictationProcessing) {
+      return;
+    }
+    try {
+      const audioData = await dictationRecorder.stop();
+      setIsDictating(false);
+      setDictationVolume(0);
+      if (!audioData) {
+        return;
+      }
+      const requestId = generateMessageId();
+      dictationRequestIdRef.current = requestId;
+      setIsDictationProcessing(true);
+      await sendAgentAudio(
+        DICTATION_AGENT_ID,
+        audioData,
+        requestId,
+        { mode: "transcribe_only" }
+      );
+    } catch (error) {
+      console.error("[CreateAgentModal] Failed to complete dictation:", error);
+      dictationRequestIdRef.current = null;
+      setIsDictationProcessing(false);
+    }
+  }, [dictationRecorder, isDictating, isDictationProcessing, sendAgentAudio]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
     const agentId = pendingNavigationAgentIdRef.current;
@@ -643,16 +781,16 @@ export function CreateAgentModal({
     navigateToAgentIfNeeded();
   }, [navigateToAgentIfNeeded, resetFormState]);
 
-  const requestResumeCandidates = useCallback(
+  const requestImportCandidates = useCallback(
     (provider?: AgentProvider) => {
-      setIsResumeLoading(true);
-      setResumeError(null);
+      setIsImportLoading(true);
+      setImportError(null);
       const msg: WSInboundMessage = {
         type: "session",
         message: {
           type: "list_persisted_agents_request",
           ...(provider ? { provider } : {}),
-          limit: RESUME_PAGE_SIZE,
+          limit: IMPORT_PAGE_SIZE,
         },
       };
       try {
@@ -662,8 +800,8 @@ export function CreateAgentModal({
           "[CreateAgentModal] Failed to request persisted agents:",
           error
         );
-        setIsResumeLoading(false);
-        setResumeError("Unable to load saved agents. Please try again.");
+        setIsImportLoading(false);
+        setImportError("Unable to load agents to import. Please try again.");
       }
     },
     [ws]
@@ -736,6 +874,23 @@ export function CreateAgentModal({
     handleCloseAnimationComplete,
   ]);
 
+  useEffect(() => {
+    if (isVisible || !dictationRecorder.isRecording?.()) {
+      return;
+    }
+    void dictationRecorder.stop().catch(() => {});
+    setIsDictating(false);
+    setDictationVolume(0);
+  }, [dictationRecorder, isVisible]);
+
+  useEffect(() => {
+    return () => {
+      if (dictationRecorder.isRecording?.()) {
+        void dictationRecorder.stop().catch(() => {});
+      }
+    };
+  }, [dictationRecorder]);
+
   const footerAnimatedStyle = useAnimatedStyle(() => {
     "worklet";
     const absoluteHeight = Math.abs(keyboardHeight.value);
@@ -779,10 +934,10 @@ export function CreateAgentModal({
         };
       }
 
-      if (!/^[a-z0-9-]+$/.test(name)) {
+      if (!/^[a-z0-9-/]+$/.test(name)) {
         return {
           valid: false,
-          error: "Must contain only lowercase letters, numbers, and hyphens",
+          error: "Must contain only lowercase letters, numbers, hyphens, and forward slashes",
         };
       }
 
@@ -847,14 +1002,23 @@ export function CreateAgentModal({
   );
 
   useEffect(() => {
+    if (!isCreateFlow || !isVisible) {
+      return;
+    }
     shouldSyncBaseBranchRef.current = true;
-  }, [workingDir]);
+  }, [isCreateFlow, isVisible, workingDir]);
 
   useEffect(() => {
+    if (!isCreateFlow || !isVisible) {
+      return;
+    }
     requestRepoInfo(workingDir);
-  }, [requestRepoInfo, workingDir]);
+  }, [isCreateFlow, isVisible, requestRepoInfo, workingDir]);
 
   useEffect(() => {
+    if (!isCreateFlow || !isVisible) {
+      return;
+    }
     const unsubscribe = ws.on("git_repo_info_response", (message) => {
       if (message.type !== "git_repo_info_response") {
         return;
@@ -899,7 +1063,7 @@ export function CreateAgentModal({
     return () => {
       unsubscribe();
     };
-  }, [ws]);
+  }, [isCreateFlow, isVisible, ws]);
 
   const handleCreate = useCallback(async () => {
     const trimmedPath = workingDir.trim();
@@ -1000,8 +1164,8 @@ export function CreateAgentModal({
     createAgent,
   ]);
 
-  const handleResumeCandidatePress = useCallback(
-    (candidate: ResumeCandidate) => {
+  const handleImportCandidatePress = useCallback(
+    (candidate: ImportCandidate) => {
       if (isLoading) {
         return;
       }
@@ -1017,16 +1181,16 @@ export function CreateAgentModal({
     [isLoading, resumeAgent]
   );
 
-  const renderResumeItem = useCallback<ListRenderItem<ResumeCandidate>>(
+  const renderImportItem = useCallback<ListRenderItem<ImportCandidate>>(
     ({ item }) => (
       <Pressable
-        onPress={() => handleResumeCandidatePress(item)}
+        onPress={() => handleImportCandidatePress(item)}
         disabled={isLoading}
         style={styles.resumeItem}
       >
         <View style={styles.resumeItemHeader}>
           <Text style={styles.resumeItemTitle} numberOfLines={1}>
-            {getResumePreview(item)}
+            {getImportPreview(item)}
           </Text>
           <Text style={styles.resumeItemTimestamp}>
             {formatRelativeTime(item.lastActivityAt)}
@@ -1041,14 +1205,17 @@ export function CreateAgentModal({
               {getProviderLabel(item.provider)}
             </Text>
           </View>
-          <Text style={styles.resumeItemHint}>Tap to resume</Text>
+          <Text style={styles.resumeItemHint}>Tap to import</Text>
         </View>
       </Pressable>
     ),
-    [getProviderLabel, handleResumeCandidatePress, isLoading]
+    [getProviderLabel, handleImportCandidatePress, isLoading]
   );
 
   useEffect(() => {
+    if (!isImportFlow || !isVisible) {
+      return;
+    }
     const unsubscribe = ws.on("list_persisted_agents_response", (message) => {
       if (message.type !== "list_persisted_agents_response") {
         return;
@@ -1061,18 +1228,21 @@ export function CreateAgentModal({
         lastActivityAt: new Date(item.lastActivityAt),
         persistence: item.persistence,
         timeline: item.timeline ?? [],
-      })) as ResumeCandidate[];
+      })) as ImportCandidate[];
 
-      setResumeCandidates(mapped);
-      setIsResumeLoading(false);
+      setImportCandidates(mapped);
+      setIsImportLoading(false);
     });
 
     return () => {
       unsubscribe();
     };
-  }, [ws]);
+  }, [isImportFlow, isVisible, ws]);
 
   useEffect(() => {
+    if (!shouldListenForStatus) {
+      return;
+    }
     const unsubscribe = ws.on("status", (message) => {
       if (message.type !== "status") {
         return;
@@ -1122,24 +1292,81 @@ export function CreateAgentModal({
     return () => {
       unsubscribe();
     };
-  }, [ws, handleClose]);
+  }, [handleClose, shouldListenForStatus, ws]);
 
   useEffect(() => {
-    if (!isVisible || activeTab !== "resume") {
+    if (!shouldListenForDictation) {
+      return;
+    }
+    const unsubscribe = ws.on("transcription_result", (message) => {
+      if (message.type !== "transcription_result") {
+        return;
+      }
+      const pendingId = dictationRequestIdRef.current;
+      if (!pendingId || message.payload.requestId !== pendingId) {
+        return;
+      }
+      dictationRequestIdRef.current = null;
+      setIsDictationProcessing(false);
+      if (shouldShowAudioDebug) {
+        setDictationDebugInfo({
+          requestId: pendingId,
+          transcript: message.payload.text?.trim(),
+          debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
+          format: message.payload.format,
+          byteLength: message.payload.byteLength,
+          duration: message.payload.duration,
+          avgLogprob: message.payload.avgLogprob,
+          isLowConfidence: message.payload.isLowConfidence,
+        });
+      }
+      const transcriptText = message.payload.text?.trim();
+      if (!transcriptText) {
+        return;
+      }
+      setInitialPrompt((prev) => {
+        if (!prev) {
+          return transcriptText;
+        }
+        const needsSpace = /\s$/.test(prev);
+        return `${prev}${needsSpace ? "" : " "}${transcriptText}`;
+      });
+      focusPromptInput();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [focusPromptInput, shouldListenForDictation, ws, shouldShowAudioDebug]);
+
+  useEffect(() => {
+    if (!isVisible || !isImportFlow) {
       return;
     }
     const provider =
-      resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
-    requestResumeCandidates(provider);
-  }, [activeTab, isVisible, requestResumeCandidates, resumeProviderFilter]);
+      importProviderFilter === "all" ? undefined : importProviderFilter;
+    requestImportCandidates(provider);
+  }, [importProviderFilter, isImportFlow, isVisible, requestImportCandidates]);
 
-  const refreshResumeList = useCallback(() => {
+  const refreshImportList = useCallback(() => {
     const provider =
-      resumeProviderFilter === "all" ? undefined : resumeProviderFilter;
-    requestResumeCandidates(provider);
-  }, [requestResumeCandidates, resumeProviderFilter]);
+      importProviderFilter === "all" ? undefined : importProviderFilter;
+    requestImportCandidates(provider);
+  }, [requestImportCandidates, importProviderFilter]);
 
   const shouldRender = isVisible || isMounted;
+  const modalTitle = isImportFlow ? "Import Agent" : "Create New Agent";
+  const dictationAccessory = isCreateFlow ? (
+    <PromptDictationControls
+      isRecording={isDictating}
+      isProcessing={isDictationProcessing}
+      disabled={isLoading || !isWsConnected}
+      volume={dictationVolume}
+      onStart={handleDictationStart}
+      onCancel={handleDictationCancel}
+      onConfirm={handleDictationConfirm}
+    />
+  ) : null;
 
   const gitBlockingError = useMemo(() => {
     const trimmedBase = baseBranch.trim();
@@ -1158,7 +1385,7 @@ export function CreateAgentModal({
       const validation = validateWorktreeName(slug);
       if (!slug || !validation.valid) {
         return `Invalid branch name: ${
-          validation.error ?? "Must use lowercase letters, numbers, or hyphens"
+          validation.error ?? "Must use lowercase letters, numbers, hyphens, or forward slashes"
         }`;
       }
     }
@@ -1273,44 +1500,9 @@ export function CreateAgentModal({
               paddingLeft={horizontalPaddingLeft}
               paddingRight={horizontalPaddingRight}
               onClose={handleClose}
-              title={
-                activeTab === "resume" ? "Resume Agent" : "Create New Agent"
-              }
+              title={modalTitle}
             />
-            <View
-              style={[
-                styles.tabSelector,
-                {
-                  paddingLeft: horizontalPaddingLeft,
-                  paddingRight: horizontalPaddingRight,
-                },
-              ]}
-            >
-              {tabOptions.map((tab) => {
-                const isActive = activeTab === tab.id;
-                return (
-                  <Pressable
-                    key={tab.id}
-                    onPress={() => setActiveTab(tab.id)}
-                    style={[
-                      styles.tabButton,
-                      isActive && styles.tabButtonActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.tabButtonText,
-                        isActive && styles.tabButtonTextActive,
-                      ]}
-                    >
-                      {tab.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {activeTab === "new" ? (
+            {isCreateFlow ? (
               <>
                 <ScrollView
                   style={styles.scroll}
@@ -1338,7 +1530,16 @@ export function CreateAgentModal({
                     onDesktopSubmit={handlePromptDesktopSubmitKeyPress}
                     autoFocus={shouldAutoFocusPrompt}
                     scrollEnabled={promptInputHeight >= PROMPT_MAX_HEIGHT}
+                    accessory={dictationAccessory}
                   />
+
+                  {shouldShowAudioDebug && dictationDebugInfo ? (
+                    <AudioDebugNotice
+                      info={dictationDebugInfo}
+                      onDismiss={() => setDictationDebugInfo(null)}
+                      title="Prompt Dictation Debug"
+                    />
+                  ) : null}
 
                   <View
                     style={[
@@ -1502,11 +1703,11 @@ export function CreateAgentModal({
                 <View style={styles.resumeFilters}>
                   <View style={styles.providerFilterRow}>
                     {providerFilterOptions.map((option) => {
-                      const isActive = resumeProviderFilter === option.id;
+                      const isActive = importProviderFilter === option.id;
                       return (
                         <Pressable
                           key={option.id}
-                          onPress={() => setResumeProviderFilter(option.id)}
+                          onPress={() => setImportProviderFilter(option.id)}
                           style={[
                             styles.providerFilterButton,
                             isActive && styles.providerFilterButtonActive,
@@ -1529,48 +1730,48 @@ export function CreateAgentModal({
                       style={styles.resumeSearchInput}
                       placeholder="Search by title or path"
                       placeholderTextColor={defaultTheme.colors.mutedForeground}
-                      value={resumeSearchQuery}
-                      onChangeText={setResumeSearchQuery}
+                      value={importSearchQuery}
+                      onChangeText={setImportSearchQuery}
                     />
                     <Pressable
                       style={styles.refreshButton}
-                      onPress={refreshResumeList}
-                      disabled={isResumeLoading}
+                      onPress={refreshImportList}
+                      disabled={isImportLoading}
                     >
                       <Text style={styles.refreshButtonText}>Refresh</Text>
                     </Pressable>
                   </View>
                 </View>
-                {resumeError ? (
-                  <Text style={styles.resumeErrorText}>{resumeError}</Text>
+                {importError ? (
+                  <Text style={styles.importErrorText}>{importError}</Text>
                 ) : null}
-                {isResumeLoading ? (
+                {isImportLoading ? (
                   <View style={styles.resumeLoading}>
                     <ActivityIndicator
                       color={defaultTheme.colors.mutedForeground}
                     />
                     <Text style={styles.resumeLoadingText}>
-                      Loading saved agents...
+                      Loading agents to import...
                     </Text>
                   </View>
-                ) : filteredResumeCandidates.length === 0 ? (
+                ) : filteredImportCandidates.length === 0 ? (
                   <View style={styles.resumeEmptyState}>
-                    <Text style={styles.resumeEmptyTitle}>No agents found</Text>
+                    <Text style={styles.resumeEmptyTitle}>No agents to import</Text>
                     <Text style={styles.resumeEmptySubtitle}>
                       We'll load the latest Claude and Codex sessions from your
-                      local history.
+                      local history so you can import them.
                     </Text>
                     <Pressable
                       style={styles.refreshButtonAlt}
-                      onPress={refreshResumeList}
+                      onPress={refreshImportList}
                     >
                       <Text style={styles.refreshButtonAltText}>Try Again</Text>
                     </Pressable>
                   </View>
                 ) : (
                   <FlatList
-                    data={filteredResumeCandidates}
-                    renderItem={renderResumeItem}
+                    data={filteredImportCandidates}
+                    renderItem={renderImportItem}
                     keyExtractor={(item) =>
                       `${item.provider}:${item.sessionId}`
                     }
@@ -1588,6 +1789,14 @@ export function CreateAgentModal({
       </View>
     </Modal>
   );
+}
+
+export function CreateAgentModal(props: ModalWrapperProps) {
+  return <AgentFlowModal {...props} flow="create" />;
+}
+
+export function ImportAgentModal(props: ModalWrapperProps) {
+  return <AgentFlowModal {...props} flow="import" />;
 }
 
 interface ModalHeaderProps {
@@ -2078,6 +2287,7 @@ interface PromptSectionProps {
   onDesktopSubmit?: (event: WebTextInputKeyPressEvent) => void;
   autoFocus?: boolean;
   scrollEnabled: boolean;
+  accessory?: ReactNode;
 }
 
 function PromptSection({
@@ -2090,10 +2300,14 @@ function PromptSection({
   onDesktopSubmit,
   autoFocus,
   scrollEnabled,
+  accessory,
 }: PromptSectionProps): ReactElement {
   return (
     <View style={styles.formSection}>
-      <Text style={styles.label}>Initial Prompt</Text>
+      <View style={styles.labelRow}>
+        <Text style={styles.label}>Initial Prompt</Text>
+        {accessory}
+      </View>
       <TextInput
         ref={inputRef}
         style={[
@@ -2120,6 +2334,86 @@ function PromptSection({
         blurOnSubmit={false}
         onKeyPress={onDesktopSubmit}
       />
+    </View>
+  );
+}
+
+interface PromptDictationControlsProps {
+  isRecording: boolean;
+  isProcessing: boolean;
+  disabled: boolean;
+  volume: number;
+  onStart: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function PromptDictationControls({
+  isRecording,
+  isProcessing,
+  disabled,
+  volume,
+  onStart,
+  onCancel,
+  onConfirm,
+}: PromptDictationControlsProps): ReactElement {
+  const { theme } = useUnistyles();
+
+  if (!isRecording && !isProcessing) {
+    return (
+      <Pressable
+        onPress={onStart}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel="Start voice dictation"
+        style={[styles.dictationButton, disabled && styles.dictationButtonDisabled]}
+      >
+        <Mic size={16} color={theme.colors.foreground} />
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={styles.dictationActiveContainer}>
+      <View style={styles.dictationMeterWrapper}>
+        <VolumeMeter
+          volume={volume}
+          isMuted={false}
+          isDetecting
+          isSpeaking={false}
+          orientation="horizontal"
+        />
+      </View>
+      <View style={styles.dictationActionGroup}>
+        <Pressable
+          onPress={onCancel}
+          disabled={isProcessing}
+          accessibilityLabel="Cancel dictation"
+          style={[
+            styles.dictationActionButton,
+            styles.dictationActionButtonCancel,
+            isProcessing ? styles.dictationActionButtonDisabled : undefined,
+          ]}
+        >
+          <X size={14} color={theme.colors.foreground} />
+        </Pressable>
+        <Pressable
+          onPress={onConfirm}
+          disabled={isProcessing}
+          accessibilityLabel="Insert transcription"
+          style={[
+            styles.dictationActionButton,
+            styles.dictationActionButtonConfirm,
+            isProcessing ? styles.dictationActionButtonDisabled : undefined,
+          ]}
+        >
+          {isProcessing ? (
+            <ActivityIndicator size="small" color={theme.colors.background} />
+          ) : (
+            <Check size={14} color={theme.colors.background} />
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -2401,35 +2695,6 @@ const styles = StyleSheet.create(((theme: any) => ({
     alignItems: "center",
     justifyContent: "center",
   },
-  tabSelector: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[4],
-  },
-  tabButton: {
-    flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    paddingVertical: theme.spacing[3],
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.background,
-  },
-  tabButtonActive: {
-    backgroundColor: theme.colors.muted,
-    borderColor: theme.colors.palette.blue[500],
-  },
-  tabButtonText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  tabButtonTextActive: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
   scroll: {
     flex: 1,
   },
@@ -2439,6 +2704,12 @@ const styles = StyleSheet.create(((theme: any) => ({
     gap: theme.spacing[6],
   },
   formSection: {
+    gap: theme.spacing[3],
+  },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: theme.spacing[3],
   },
   label: {
@@ -2587,6 +2858,50 @@ const styles = StyleSheet.create(((theme: any) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
   },
+  dictationButton: {
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.full,
+    padding: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dictationButtonDisabled: {
+    opacity: theme.opacity[50],
+  },
+  dictationActiveContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  dictationMeterWrapper: {
+    width: 48,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dictationActionGroup: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  dictationActionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: theme.borderWidth[1],
+  },
+  dictationActionButtonCancel: {
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  dictationActionButtonConfirm: {
+    borderColor: theme.colors.foreground,
+    backgroundColor: theme.colors.foreground,
+  },
+  dictationActionButtonDisabled: {
+    opacity: theme.opacity[40],
+  },
   selectorRow: {
     flexDirection: "row",
     gap: theme.spacing[4],
@@ -2727,7 +3042,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
-  resumeErrorText: {
+  importErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.sm,
   },
