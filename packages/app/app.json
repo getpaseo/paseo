@@ -17,7 +17,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "This app needs access to the microphone for voice commands."
+        "NSMicrophoneUsageDescription": "This app needs access to the microphone for voice commands.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.moboudra.paseo"
     },
