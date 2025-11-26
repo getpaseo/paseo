@@ -41,7 +41,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 ### 3. Simplify Settings Screen
 - [x] Remove the standalone "Test Connection" form/URL input at the top of settings.
   - Removed the global host selector/Test UI from `packages/app/src/app/settings.tsx` so configuration happens per-host within their cards/forms, and ran `npm run typecheck --workspace=@paseo/app`.
-- [ ] Keep the per-host "Test" button in each host row (already exists).
+- [x] Keep the per-host "Test" button in each host row (already exists).
+  - Verified `SettingsScreen` still renders the per-host Test CTA inside each `DaemonCard`, confirmed the button invokes `handleTestDaemonConnection`, and ran `npm run typecheck --workspace=@paseo/app`.
 
 ### 4. Transparent Connection Management
 - [ ] When a host is added, the app auto-connects and keeps the connection alive.
@@ -54,10 +55,13 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
 - [ ] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
   - Context (review): `packages/app/src/app/git-diff.tsx:229-242` still renders the destructive error container and tells users "Connect this host or switch to another one to continue," so the UI still contradicts the auto-connect guidance even after the wording change.
+  - Context (review follow-up): `packages/app/src/app/git-diff.tsx:214-240` only swapped "Server" → "Host"—the state is still styled as an error with a "Connect this host" CTA instead of a neutral "we'll reconnect automatically" panel.
 - [ ] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
   - Context (review): `packages/app/src/app/file-explorer.tsx:690-699` still uses the destructive error styling and the "Connect this host and try again" CTA instead of the neutral offline messaging the new philosophy calls for.
+  - Context (review follow-up): `packages/app/src/app/file-explorer.tsx:680-700` still shows the destructive error container after the terminology pass; we need the neutral offline design + auto-reconnect copy instead of "Connect this host and try again."
 - [ ] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
   - Context: `packages/app/src/app/agent/[serverId]/[agentId].tsx:651-660` and `packages/app/src/components/agent-list.tsx:149` continue to show destructive states directing users to manually connect before managing agents.
+  - Context (review follow-up): Agent detail `AgentSessionUnavailableState` still renders `styles.centerState` with the "Connect this host or switch to another one to continue" message—it needs the neutral offline treatment that reassures the user we'll reconnect automatically.
 
 ### 6. Agent Creation Flow
 - [ ] Remove reliance on "primary" or "active" daemon for agent creation.
@@ -68,3 +72,6 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Remove grouping of agents by host—show a single flat list.
   - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
   - [ ] Sort agents by recent activity or alphabetically (not by host).
+
+### Review: Git Diff Metadata Cleanup
+- [ ] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
