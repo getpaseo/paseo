@@ -105,8 +105,8 @@ export default function LegacyAgentRedirectScreen() {
         <View style={styles.centerState}>
           <Text style={styles.title}>Agent not found</Text>
           <Text style={styles.subtitle}>
-            We could not find {agentId} on any connected daemon. Make sure the daemon is online
-            or reopen the agent from the Home screen after it reconnects.
+            We could not find {agentId} on any connected host. Make sure the host is online or
+            reopen the agent from the Home screen after it reconnects.
           </Text>
           <Pressable style={styles.primaryButton} onPress={handleGoHome}>
             <Text style={styles.primaryButtonText}>Go Home</Text>
@@ -116,9 +116,9 @@ export default function LegacyAgentRedirectScreen() {
   } else if (matches.length > 1) {
     body = (
       <View style={styles.centerState}>
-        <Text style={styles.title}>Pick a daemon</Text>
+        <Text style={styles.title}>Pick a host</Text>
         <Text style={styles.subtitle}>
-          Multiple daemons have an agent with this id. Choose the one you intended to open.
+          Multiple hosts have an agent with this id. Choose the one you intended to open.
         </Text>
         <View style={styles.matchList}>
           {matches.map((match) => (

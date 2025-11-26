@@ -47,7 +47,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 ### 4. Transparent Connection Management
 - [x] When a host is added, the app auto-connects and keeps the connection alive.
   - Added an AppState-aware reconnect path in `useWebSocket` so every background session automatically reconnects when the app becomes active again, keeping newly added hosts online without manual intervention; verified with `npm run typecheck --workspace=@paseo/app`.
-- [ ] Users should never need to manually "connect" to a host—the app handles it.
+- [x] Users should never need to manually "connect" to a host—the app handles it.
+  - Reworded realtime, settings restart, and agent creation/import flows so they explain hosts reconnect automatically instead of asking users to connect manually; verified with `npm run typecheck --workspace=@paseo/app`.
 - [ ] Remove any UI that asks users to "connect" before performing actions.
 
 ### 5. Remove Host Status from Home Screen
@@ -70,9 +71,11 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Fix the contradictory error message "Daemon is online, connect to it before creating"—this should never appear.
 
 ### 7. Home Screen Agent List
+- [ ] Show a loading indicator while hosts are connecting instead of the empty state.
 - [ ] Remove grouping of agents by host—show a single flat list.
   - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
   - [ ] Sort agents by recent activity or alphabetically (not by host).
 
 ### Review: Git Diff Metadata Cleanup
-- [ ] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
+- [x] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
+  - Context: Deleted the redundant prop/const and updated `GitDiffContent` to rely solely on `serverLabel`, removing the final host-id plumbing that was no longer used anywhere in the component (`packages/app/src/app/git-diff.tsx`).

@@ -146,7 +146,7 @@ export function AgentList({ agentGroups }: AgentListProps) {
             </Text>
             <Text style={styles.sheetSubtitle}>
               {isActionDaemonUnavailable
-                ? "Connect this host before managing its agents."
+                ? "This host is offline—actions will be available once it reconnects automatically."
                 : "Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project."}
             </Text>
             <Pressable

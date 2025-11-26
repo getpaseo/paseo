@@ -688,15 +688,17 @@ function FileExplorerSessionUnavailable({
           <>
             <ActivityIndicator size="small" />
             <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We will load files once this daemon is online.</Text>
+            <Text style={styles.statusText}>We will load files once this host is online.</Text>
           </>
         ) : (
           <>
-            <Text style={styles.errorText}>
-              Cannot open files while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+            <Text style={styles.offlineTitle}>
+              {serverLabel} is currently {connectionStatusLabel.toLowerCase()}.
             </Text>
-            <Text style={styles.statusText}>Connect this daemon and try again.</Text>
-            {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
+            <Text style={styles.offlineDescription}>
+              We'll reconnect automatically and load files once the host is back online. No action needed.
+            </Text>
+            {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
           </>
         )}
       </View>
@@ -962,6 +964,22 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
   errorDetails: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+  },
+  offlineTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    textAlign: "center",
+  },
+  offlineDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  offlineDetails: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     textAlign: "center",

@@ -336,7 +336,7 @@ function AgentFlowModal({
   const daemonAvailabilityError = !hasSelectedDaemon
     ? "Select a host before creating or importing agents."
     : selectedDaemonIsUnavailable
-        ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
+        ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. We'll reconnect automatically and enable actions once it's online.${
             selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
           }`
         : null;
@@ -963,7 +963,7 @@ function AgentFlowModal({
       logOfflineDaemonAction("dictation");
       setErrorMessage(
         daemonAvailabilityError ??
-          "Connect to the selected host before using dictation."
+          "Dictation is unavailable until the selected host is online. Paseo reconnects automatically—try again once it comes back."
       );
       return;
     }
@@ -1035,8 +1035,8 @@ function AgentFlowModal({
         setIsImportLoading(false);
         logOfflineDaemonAction("import_list");
         setImportError(
-        daemonAvailabilityError ??
-          "Connect to the selected host to load import candidates."
+          daemonAvailabilityError ??
+            "Import candidates load automatically once the selected host is back online."
         );
         return;
       }
@@ -1288,7 +1288,8 @@ function AgentFlowModal({
   const trimmedWorkingDir = workingDir.trim();
   const shouldInspectRepo = isCreateFlow && isVisible && trimmedWorkingDir.length > 0;
   const repoAvailabilityError = shouldInspectRepo && (!isTargetDaemonReady || !isWsConnected)
-    ? daemonAvailabilityError ?? "Connect to the selected host to inspect the repository."
+    ? daemonAvailabilityError ??
+      "Repository details will load automatically once the selected host is back online."
     : null;
   const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
     ? "idle"
@@ -1367,7 +1368,7 @@ function AgentFlowModal({
       logOfflineDaemonAction("create");
       setErrorMessage(
         daemonAvailabilityError ??
-          "Connect to the selected host before creating an agent."
+          "Creating agents is temporarily unavailable while the selected host is offline. Paseo reconnects automatically—try again once it's online."
       );
       return;
     }
@@ -1463,8 +1464,8 @@ function AgentFlowModal({
       if (!resumeAgent || !isTargetDaemonReady) {
         logOfflineDaemonAction("resume");
         setImportError(
-        daemonAvailabilityError ??
-          "Connect to the selected host before importing an agent."
+          daemonAvailabilityError ??
+            "Importing agents will resume automatically once the selected host is online."
         );
         return;
       }

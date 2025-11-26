@@ -81,19 +81,23 @@ export default function GitDiffScreen() {
     );
   }
 
-  const routeServerId = resolvedServerId ?? session.serverId;
-
-  return <GitDiffContent session={session} agentId={agentId} routeServerId={routeServerId} />;
+  return (
+    <GitDiffContent
+      session={session}
+      agentId={agentId}
+      serverLabel={serverLabel}
+    />
+  );
 }
 
 function GitDiffContent({
   session,
   agentId,
-  routeServerId,
+  serverLabel,
 }: {
   session: SessionContextValue;
   agentId?: string;
-  routeServerId: string;
+  serverLabel: string;
 }) {
   const { agents, gitDiffs, requestGitDiff } = session;
   const [isLoading, setIsLoading] = useState(true);
@@ -127,7 +131,7 @@ function GitDiffContent({
     return (
       <View style={styles.container}>
         <BackHeader title="Changes" />
-        <Text style={styles.metaText}>Server: {routeServerId}</Text>
+        <Text style={styles.metaText}>Host: {serverLabel}</Text>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Agent not found</Text>
         </View>
@@ -142,7 +146,7 @@ function GitDiffContent({
   return (
     <View style={styles.container}>
       <BackHeader title="Changes" />
-      <Text style={styles.metaText}>Server: {routeServerId}</Text>
+      <Text style={styles.metaText}>Host: {serverLabel}</Text>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         {isLoading ? (
@@ -216,8 +220,8 @@ function SessionUnavailableState({
   return (
     <View style={styles.container}>
       <BackHeader title="Changes" />
-      <Text style={styles.metaText}>Server: {serverLabel}</Text>
-      <View style={styles.errorContainer}>
+      <Text style={styles.metaText}>Host: {serverLabel}</Text>
+      <View style={styles.sessionStateContainer}>
         {isConnecting ? (
           <>
             <ActivityIndicator size="large" />
@@ -226,11 +230,13 @@ function SessionUnavailableState({
           </>
         ) : (
           <>
-            <Text style={styles.errorText}>
-              Cannot load changes while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+            <Text style={styles.offlineTitle}>
+              {serverLabel} is currently {connectionStatusLabel.toLowerCase()}.
             </Text>
-            <Text style={styles.statusText}>Connect this daemon or switch to another one to continue.</Text>
-            {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
+            <Text style={styles.offlineDescription}>
+              We'll reconnect automatically and show changes once the host is back online. No action needed.
+            </Text>
+            {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
           </>
         )}
       </View>
@@ -242,6 +248,14 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  sessionStateContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: theme.spacing[16],
+    paddingHorizontal: theme.spacing[6],
+    gap: theme.spacing[3],
   },
   metaText: {
     paddingHorizontal: theme.spacing[6],
@@ -290,6 +304,22 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
     fontSize: theme.fontSize.xs,
     color: theme.colors.mutedForeground,
+  },
+  offlineTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    textAlign: "center",
+  },
+  offlineDescription: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.mutedForeground,
+    textAlign: "center",
+  },
+  offlineDetails: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    textAlign: "center",
   },
   emptyContainer: {
     flex: 1,

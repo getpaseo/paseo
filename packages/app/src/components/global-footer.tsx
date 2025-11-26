@@ -57,10 +57,21 @@ export function GlobalFooter() {
   const realtimeEligibleHosts = useMemo(() => {
     return Array.from(connectionStates.values()).filter((entry) => entry.status === "online");
   }, [connectionStates]);
+  const hasAnyConfiguredHosts = connectionStates.size > 0;
 
   const handleStartRealtime = useCallback(() => {
     if (realtimeEligibleHosts.length === 0) {
-      Alert.alert("No connected hosts", "Connect a host before starting realtime mode.");
+      if (!hasAnyConfiguredHosts) {
+        Alert.alert(
+          "No hosts available",
+          "Add a host in Settings before starting realtime mode."
+        );
+        return;
+      }
+      Alert.alert(
+        "Hosts reconnecting",
+        "Every host is offline right now. Paseo reconnects automatically—try realtime again once one comes online."
+      );
       return;
     }
     if (realtimeEligibleHosts.length === 1) {
@@ -71,7 +82,7 @@ export function GlobalFooter() {
       return;
     }
     setShowRealtimeHostPicker(true);
-  }, [realtimeEligibleHosts, startRealtime]);
+  }, [hasAnyConfiguredHosts, realtimeEligibleHosts, startRealtime]);
 
   const handleSelectRealtimeHost = useCallback(
     (daemonId: string) => {

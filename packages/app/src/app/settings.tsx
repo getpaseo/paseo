@@ -849,7 +849,10 @@ function DaemonCard({
     }
 
     if (!wsIsConnectedRef.current) {
-      Alert.alert("Not Connected", "Connect to the server before attempting a restart.");
+      Alert.alert(
+        "Host offline",
+        "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."
+      );
       return;
     }
 

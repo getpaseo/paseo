@@ -653,13 +653,13 @@ function AgentSessionUnavailableState({
           </>
         ) : (
           <>
-            <Text style={styles.errorText}>
-              Cannot open this agent while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+            <Text style={styles.offlineTitle}>
+              {serverLabel} is currently {connectionStatusLabel.toLowerCase()}.
             </Text>
-            <Text style={styles.statusText}>
-              Connect this host or switch to another one to continue.
+            <Text style={styles.offlineDescription}>
+              We'll reconnect automatically and show this agent as soon as the host comes back online.
             </Text>
-            {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
+            {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
           </>
         )}
       </View>
@@ -717,6 +717,22 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
     fontSize: theme.fontSize.xs,
     color: theme.colors.mutedForeground,
+  },
+  offlineTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    textAlign: "center",
+  },
+  offlineDescription: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.mutedForeground,
+    textAlign: "center",
+  },
+  offlineDetails: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    textAlign: "center",
   },
   menuButton: {
     padding: theme.spacing[3],
