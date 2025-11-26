@@ -3,15 +3,14 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
-import { SessionProvider } from "@/contexts/session-context";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator, Text } from "react-native";
 import { GlobalFooter } from "@/components/global-footer";
 import { useUnistyles } from "react-native-unistyles";
 import { FooterControlsProvider } from "@/contexts/footer-controls-context";
-import { DaemonRegistryProvider } from "@/contexts/daemon-registry-context";
-import { DaemonConnectionsProvider, useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
+import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
@@ -46,26 +45,19 @@ function AppContainer({ children }: { children: ReactNode }) {
 }
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
-  const { settings, isLoading: settingsLoading } = useAppSettings();
-  const { activeDaemon, isLoading: connectionsLoading } = useDaemonConnections();
+  const { isLoading: settingsLoading } = useAppSettings();
+  const { daemons, isLoading: registryLoading } = useDaemonRegistry();
+  const isLoading = settingsLoading || registryLoading;
 
-  if (settingsLoading || connectionsLoading) {
+  if (isLoading) {
     return <LoadingView />;
   }
 
-  if (!activeDaemon) {
+  if (daemons.length === 0) {
     return <MissingDaemonView />;
   }
 
-  return (
-    <SessionProvider
-      key={activeDaemon.id}
-      serverUrl={activeDaemon.wsUrl}
-      serverId={activeDaemon.id}
-    >
-      <RealtimeProvider>{children}</RealtimeProvider>
-    </SessionProvider>
-  );
+  return <RealtimeProvider>{children}</RealtimeProvider>;
 }
 
 function LoadingView() {

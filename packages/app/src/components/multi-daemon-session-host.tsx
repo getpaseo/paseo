@@ -1,22 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { SessionProvider } from "@/contexts/session-context";
 import { useDaemonRegistry, type DaemonProfile } from "@/contexts/daemon-registry-context";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 
 export function MultiDaemonSessionHost() {
   const { daemons } = useDaemonRegistry();
-  const { activeDaemonId, sessionAccessorRoles } = useDaemonConnections();
   const autoConnectStatesRef = useRef<Map<string, boolean>>(new Map());
-
-  const primaryDaemonIds = useMemo(() => {
-    const ids = new Set<string>();
-    sessionAccessorRoles.forEach((roles, daemonId) => {
-      if (roles.has("primary")) {
-        ids.add(daemonId);
-      }
-    });
-    return ids;
-  }, [sessionAccessorRoles]);
 
   useEffect(() => {
     const trackedStates = autoConnectStatesRef.current;
@@ -44,38 +32,18 @@ export function MultiDaemonSessionHost() {
     }
   }, [daemons]);
 
-  const backgroundDaemons = useMemo<DaemonProfile[]>(() => {
-    const shouldConnect = new Map<string, DaemonProfile>();
+  const connectedDaemons = useMemo<DaemonProfile[]>(() => {
+    return daemons.filter((daemon) => daemon.autoConnect !== false);
+  }, [daemons]);
 
-    for (const daemon of daemons) {
-      if (!daemon.autoConnect) {
-        continue;
-      }
-      if (daemon.id === activeDaemonId) {
-        continue;
-      }
-      if (primaryDaemonIds.has(daemon.id)) {
-        continue;
-      }
-      shouldConnect.set(daemon.id, daemon);
-    }
-
-    return Array.from(shouldConnect.values());
-  }, [daemons, activeDaemonId, primaryDaemonIds]);
-
-  if (backgroundDaemons.length === 0) {
+  if (connectedDaemons.length === 0) {
     return null;
   }
 
   return (
     <>
-      {backgroundDaemons.map((daemon) => (
-        <SessionProvider
-          key={daemon.id}
-          serverUrl={daemon.wsUrl}
-          serverId={daemon.id}
-          role="background"
-        >
+      {connectedDaemons.map((daemon) => (
+        <SessionProvider key={daemon.id} serverUrl={daemon.wsUrl} serverId={daemon.id}>
           {null}
         </SessionProvider>
       ))}

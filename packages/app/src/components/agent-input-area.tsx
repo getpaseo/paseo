@@ -10,7 +10,7 @@ import {
   Text,
   ActivityIndicator,
 } from "react-native";
-import { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useLayoutEffect, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, AudioLines, Square, Paperclip, X, Pencil } from "lucide-react-native";
 import Animated, {
@@ -31,6 +31,9 @@ import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
+import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import type { SessionContextValue, Agent } from "@/contexts/session-context";
+import type { SessionOutboundMessage } from "@server/server/messages";
 
 type QueuedMessage = {
   id: string;
@@ -71,17 +74,35 @@ type TextAreaHandle = {
 
 export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const {
-    ws,
-    sendAgentMessage,
-    sendAgentAudio,
-    agents,
-    cancelAgentRun,
-    getDraftInput,
-    saveDraftInput,
-    queuedMessages: queuedMessagesByAgent,
-    setQueuedMessages: setQueuedMessagesByAgent,
-  } = useDaemonSession(serverId);
+  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
+  const inertWebSocket = useMemo<UseWebSocketReturn>(
+    () => ({
+      isConnected: false,
+      isConnecting: false,
+      conversationId: null,
+      lastError: null,
+      send: () => {},
+      on: () => () => {},
+      sendPing: () => {},
+      sendUserMessage: () => {},
+    }),
+    []
+  );
+  const noopSendAgentMessage = useCallback<SessionContextValue["sendAgentMessage"]>(async () => {}, []);
+  const noopSendAgentAudio = useCallback<SessionContextValue["sendAgentAudio"]>(async () => {}, []);
+  const noopCancelAgentRun = useCallback<SessionContextValue["cancelAgentRun"]>(() => {}, []);
+  const noopGetDraftInput = useCallback<SessionContextValue["getDraftInput"]>(() => undefined, []);
+  const noopSaveDraftInput = useCallback<SessionContextValue["saveDraftInput"]>(() => {}, []);
+  const noopSetQueuedMessages = useCallback<SessionContextValue["setQueuedMessages"]>(() => {}, []);
+  const ws = session?.ws ?? inertWebSocket;
+  const sendAgentMessage = session?.sendAgentMessage ?? noopSendAgentMessage;
+  const sendAgentAudio = session?.sendAgentAudio ?? noopSendAgentAudio;
+  const agents = session?.agents ?? new Map<string, Agent>();
+  const cancelAgentRun = session?.cancelAgentRun ?? noopCancelAgentRun;
+  const getDraftInput = session?.getDraftInput ?? noopGetDraftInput;
+  const saveDraftInput = session?.saveDraftInput ?? noopSaveDraftInput;
+  const queuedMessagesByAgent = session?.queuedMessages ?? new Map<string, QueuedMessage[]>();
+  const setQueuedMessagesByAgent = session?.setQueuedMessages ?? noopSetQueuedMessages;
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
   const [userInput, setUserInput] = useState("");
@@ -268,7 +289,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }
 
   useEffect(() => {
-    const unsubscribe = ws.on("transcription_result", (message) => {
+    const unsubscribe = ws.on("transcription_result", (message: SessionOutboundMessage) => {
       if (message.type !== "transcription_result") {
         return;
       }
@@ -626,10 +647,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   useEffect(() => {
     const existing = getDraftInput(agentId);
     const isSameText = existing?.text === userInput;
-    const existingImages = existing?.images ?? [];
+    const existingImages: Array<{ uri: string; mimeType?: string }> = existing?.images ?? [];
     const isSameImages =
       existingImages.length === selectedImages.length &&
-      existingImages.every((img, idx) => img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType);
+      existingImages.every((img: { uri: string; mimeType?: string }, idx: number) => {
+        return img.uri === selectedImages[idx]?.uri && img.mimeType === selectedImages[idx]?.mimeType;
+      });
 
     if (isSameText && isSameImages) {
       return;
@@ -658,10 +681,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       if (isRealtimeMode) {
         await stopRealtime();
       } else {
-        if (!ws.isConnected) {
+        if (!ws.isConnected || !serverId) {
           return;
         }
-        await startRealtime();
+        await startRealtime(serverId);
       }
     } catch (error) {
       console.error("[AgentInput] Failed to toggle realtime mode:", error);

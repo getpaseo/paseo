@@ -1,21 +1,42 @@
 import { View } from "react-native";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { OrchestratorMessagesView } from "@/components/orchestrator-messages-view";
-import { useSession } from "@/contexts/session-context";
+import { useSessionDirectory } from "@/hooks/use-session-directory";
 import type { ScrollView } from "react-native";
 import type { Artifact } from "@/components/artifact-drawer";
+import type { MessageEntry } from "@/contexts/session-context";
 
 export default function OrchestratorScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { messages, currentAssistantMessage } = useSession();
+  const sessionDirectory = useSessionDirectory();
   const scrollViewRef = useRef<ScrollView>(null);
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
+  const aggregatedMessages = useMemo(() => {
+    const merged: MessageEntry[] = [];
+    sessionDirectory.forEach((session) => {
+      if (!session) {
+        return;
+      }
+      merged.push(...session.messages);
+    });
+    merged.sort((left, right) => left.timestamp - right.timestamp);
+    return merged;
+  }, [sessionDirectory]);
+
+  const streamingAssistantMessage = useMemo(() => {
+    for (const session of sessionDirectory.values()) {
+      if (session?.currentAssistantMessage) {
+        return session.currentAssistantMessage;
+      }
+    }
+    return "";
+  }, [sessionDirectory]);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -42,8 +63,8 @@ export default function OrchestratorScreen() {
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
         <OrchestratorMessagesView
           ref={scrollViewRef}
-          messages={messages}
-          currentAssistantMessage={currentAssistantMessage}
+          messages={aggregatedMessages}
+          currentAssistantMessage={streamingAssistantMessage}
           onArtifactClick={handleArtifactClick}
         />
       </ReanimatedAnimated.View>

@@ -8,7 +8,6 @@ import { HomeHeader } from "@/components/headers/home-header";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
 import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
-import { useSession } from "@/contexts/session-context";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone, type ConnectionStatusTone } from "@/utils/daemons";
@@ -17,9 +16,8 @@ import { useLocalSearchParams } from "expo-router";
 export default function HomeScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { agents } = useSession();
   const { connectionStates } = useDaemonConnections();
-  const aggregatedAgents = useAggregatedAgents(agents);
+  const aggregatedAgents = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [createModalMounted, setCreateModalMounted] = useState(false);
