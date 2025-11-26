@@ -35,7 +35,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Removed the legacy autoConnect state from daemon profiles and session hosts so every host hydrates automatically, refreshed the host-unavailable messaging/docs, and verified via `npm run typecheck --workspace=@paseo/app`.
 
 ### Review: No Silent Defaults
-- [ ] Review the changes to ensure we didn't just replace "active daemon" with "first host" (e.g., `hosts[0]}`. The goal is explicit user choice, not a hidden default.
+- [x] Review the changes to ensure we didn't just replace "active daemon" with "first host" (e.g., `hosts[0]}`). The goal is explicit user choice, not a hidden default.
+  - Create/import modal now requires explicit host selection (no first entry default) and `useAggregatedAgents` no longer fabricates a host id via `connectionStates.keys().next()`; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 3. Simplify Settings Screen
 - [ ] Remove the standalone "Test Connection" form/URL input at the top of settings.
@@ -50,6 +51,12 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
 - [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
+- [ ] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
+  - Context: `packages/app/src/app/git-diff.tsx:233-241` still renders the destructive error container and tells users "Connect this host or switch to another one to continue," violating the auto-connect guidance.
+- [ ] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
+  - Context: `packages/app/src/app/file-explorer.tsx:690-698` presents the offline host as an error and asks users to "Connect this host and try again."
+- [ ] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
+  - Context: `packages/app/src/app/agent/[serverId]/[agentId].tsx:651-660` and `packages/app/src/components/agent-list.tsx:149` continue to show destructive states directing users to manually connect before managing agents.
 
 ### 6. Agent Creation Flow
 - [ ] Remove reliance on "primary" or "active" daemon for agent creation.

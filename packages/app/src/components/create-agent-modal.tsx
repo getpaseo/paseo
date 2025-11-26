@@ -218,10 +218,11 @@ function AgentFlowModal({
   const { connectionStates } = useDaemonConnections();
   const daemonEntries = useMemo(() => Array.from(connectionStates.values()), [connectionStates]);
   const initialServerId = useMemo(() => {
-    if (serverId) {
-      return serverId;
+    if (!serverId) {
+      return null;
     }
-    return daemonEntries[0]?.daemon.id ?? null;
+    const exists = daemonEntries.some((entry) => entry.daemon.id === serverId);
+    return exists ? serverId : null;
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
   const selectedSession = useSessionForServer(selectedServerId);
@@ -229,21 +230,26 @@ function AgentFlowModal({
   const sessionDirectory = useSessionDirectory();
 
   useEffect(() => {
-    if (!selectedServerId) {
-      setSelectedServerId(initialServerId);
+    if (selectedServerId) {
+      const exists = daemonEntries.some((entry) => entry.daemon.id === selectedServerId);
+      if (!exists) {
+        setSelectedServerId(initialServerId);
+      }
       return;
     }
-    const exists = daemonEntries.some((entry) => entry.daemon.id === selectedServerId);
-    if (!exists) {
+    if (initialServerId && selectedServerId !== initialServerId) {
       setSelectedServerId(initialServerId);
     }
   }, [daemonEntries, selectedServerId, initialServerId]);
 
   useEffect(() => {
-    if (isVisible && initialServerId && selectedServerId !== initialServerId) {
+    if (!isVisible) {
+      return;
+    }
+    if (initialServerId && selectedServerId !== initialServerId) {
       setSelectedServerId(initialServerId);
     }
-  }, [isVisible, initialServerId]);
+  }, [isVisible, initialServerId, selectedServerId]);
 
   const ws = session?.ws ?? null;
   const inertWebSocket = useMemo<UseWebSocketReturn>(
@@ -323,15 +329,18 @@ function AgentFlowModal({
     selectedDaemonId ??
     "Selected host";
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
+  const hasSelectedDaemon = Boolean(selectedServerId);
   const selectedDaemonIsUnavailable =
     !session || selectedDaemonStatus !== "online" || !ws?.isConnected;
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
-  const daemonAvailabilityError = selectedDaemonIsUnavailable
-    ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
-        selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
-      }`
-    : null;
-  const isTargetDaemonReady = Boolean(session && !selectedDaemonIsUnavailable);
+  const daemonAvailabilityError = !hasSelectedDaemon
+    ? "Select a host before creating or importing agents."
+    : selectedDaemonIsUnavailable
+        ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
+            selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
+          }`
+        : null;
+  const isTargetDaemonReady = Boolean(hasSelectedDaemon && session && !selectedDaemonIsUnavailable);
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
