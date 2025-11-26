@@ -21,6 +21,7 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Context: Remaining "daemon" labels in git diff, file explorer, and agent detail screens now say "host" (updated `packages/app/src/app/git-diff.tsx`, `file-explorer.tsx`, `agent/[id].tsx`, and `agent/[serverId]/[agentId].tsx`).
   - Review: Confirmed the agent redirect, file explorer, and git diff screens reflect the updated host wording with no lingering user-facing "daemon" strings.
   - Review follow-up: Git Diff screen still showed the selected host as "Server"; updated the meta labels to "Host" to keep UI text consistent (`packages/app/src/app/git-diff.tsx`).
+  - Review follow-up (current): Found that the Git Diff header still surfaced the internal host ID instead of the friendly label; updated `GitDiffContent` to accept the computed `serverLabel` and verified via `npm run typecheck --workspace=@paseo/app`.
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
@@ -30,7 +31,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Eliminated the persisted `activeDaemonId`, flattened the session directory, and refactored `_layout`, realtime, settings, and agent UI to always resolve hosts explicitly so every host gets its own `SessionProvider`; verified via `npm run typecheck --workspace=@paseo/app`.
 - [x] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
   - Removed the toggle from the host form so entries always auto-connect and verified with `npm run typecheck --workspace=@paseo/app`.
-- [ ] Clean up any related state/UI that exposes these concepts to users.
+- [x] Clean up any related state/UI that exposes these concepts to users.
+  - Removed the legacy autoConnect state from daemon profiles and session hosts so every host hydrates automatically, refreshed the host-unavailable messaging/docs, and verified via `npm run typecheck --workspace=@paseo/app`.
 
 ### Review: No Silent Defaults
 - [ ] Review the changes to ensure we didn't just replace "active daemon" with "first host" (e.g., `hosts[0]}`. The goal is explicit user choice, not a hidden default.

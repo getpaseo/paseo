@@ -6,7 +6,7 @@
 - Make connectivity observable and resilient so screens gracefully handle offline daemons.
 
 ## Registry (what daemons exist?)
-- Backed by `DaemonRegistryProvider` (`packages/app/src/contexts/daemon-registry-context.tsx`). Profiles live in AsyncStorage under `@paseo:daemon-registry` (legacy `@paseo:settings` is migrated) with fields: `id`, `label`, `wsUrl`, optional `restUrl`, `autoConnect`, timestamps, and optional metadata.
+- Backed by `DaemonRegistryProvider` (`packages/app/src/contexts/daemon-registry-context.tsx`). Profiles live in AsyncStorage under `@paseo:daemon-registry` (legacy `@paseo:settings` is migrated) with fields: `id`, `label`, `wsUrl`, optional `restUrl`, timestamps, and optional metadata.
 - React Query caches the registry (`staleTime/gcTime` Infinity) so reads are synchronous after first load. Writes update the cache and persist to storage.
 - Removing the last entry seeds a local fallback profile so the UI never renders with an empty registry.
 
@@ -17,7 +17,7 @@
 
 ## Session hosts & directory (how do we read/send data per daemon?)
 - Root `_layout.tsx` defers all websocket management to `MultiDaemonSessionHost` and consumes session snapshots via `RealtimeProvider`, `useSessionDirectory`, and `useDaemonSession`.
-- `MultiDaemonSessionHost` (`packages/app/src/components/multi-daemon-session-host.tsx`) spins up `SessionProvider`s for every `autoConnect` daemon so all hosts stay hydrated simultaneously. These providers render `null`—they exist purely to own the websocket and publish state into the session directory.
+- `MultiDaemonSessionHost` (`packages/app/src/components/multi-daemon-session-host.tsx`) spins up `SessionProvider`s for every daemon so all hosts stay hydrated simultaneously. These providers render `null`—they exist purely to own the websocket and publish state into the session directory.
 - `SessionProvider` (`packages/app/src/contexts/session-context.tsx`):
   - Manages the websocket (`useWebSocket` with exponential backoff) and full session state (agents, streams, permissions, file explorer, provider models, drafts, queued messages, etc.).
   - Registers itself with `registerSessionAccessor(serverId, entry)` so the directory can serve `getSnapshot()` for that daemon. It also notifies directory listeners on every state change.
