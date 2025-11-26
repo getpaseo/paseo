@@ -9,6 +9,11 @@ export interface AggregatedAgentGroup {
   agents: Agent[];
 }
 
+export interface AggregatedAgentsResult {
+  groups: AggregatedAgentGroup[];
+  isLoading: boolean;
+}
+
 const sortAgents = (agents: Agent[]): Agent[] => {
   return [...agents].sort((left, right) => {
     const leftRunning = left.status === "running";
@@ -25,8 +30,8 @@ const sortAgents = (agents: Agent[]): Agent[] => {
   });
 };
 
-export function useAggregatedAgents(): AggregatedAgentGroup[] {
-  const { connectionStates } = useDaemonConnections();
+export function useAggregatedAgents(): AggregatedAgentsResult {
+  const { connectionStates, isLoading: registryLoading } = useDaemonConnections();
   const sessionDirectory = useSessionDirectory();
 
   return useMemo(() => {
@@ -76,6 +81,19 @@ export function useAggregatedAgents(): AggregatedAgentGroup[] {
       return left.serverLabel.localeCompare(right.serverLabel);
     });
 
-    return aggregatedGroups;
-  }, [sessionDirectory, connectionStates]);
+    // Loading if registry is still loading, or if any host is connecting and hasn't
+    // reported agents yet (idle hosts that haven't connected don't block loading)
+    let isLoading = registryLoading;
+    if (!isLoading && connectionStates.size > 0) {
+      for (const [serverId, record] of connectionStates) {
+        const hasSession = sessionDirectory.has(serverId);
+        if (record.status === "connecting" && !hasSession) {
+          isLoading = true;
+          break;
+        }
+      }
+    }
+
+    return { groups: aggregatedGroups, isLoading };
+  }, [sessionDirectory, connectionStates, registryLoading]);
 }

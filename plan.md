@@ -62,11 +62,14 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Removed the connection status banner, associated state (`connectionIssues`, `statusColors`), styles, and unused imports (`useDaemonConnections`, `formatConnectionStatus`, `getConnectionStatusTone`, `Text`, `useUnistyles`) from `packages/app/src/app/index.tsx`; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 6. Fix Error Philosophy
-- [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
+- [x] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
   - Context (review): The home connection banner still prints destructive red `connectionError` text for every offline host entry, so the screen treats normal downtime as an error (`packages/app/src/app/index.tsx:123-140`).
   - Review (2025-11-26): The `connectionError` style unconditionally uses `theme.colors.destructive` (line 210-213) for `lastError` messages, even though `getConnectionStatusTone` correctly returns `warning` (amber) for `offline` status. The dot color respects the tone, but the error text does not.
-- [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
-- [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
+  - Review (2025-11-26, follow-up): N/A—Task 5 removed the connection banner entirely, so no error styling appears on the home screen now.
+- [x] Only show errors when the user tries to interact with an agent whose host is stopped.
+  - Review (2025-11-26): Verified in `agent-list.tsx:148-163`—the action sheet shows a neutral "offline" message and disables the delete button; no error styling is used.
+- [x] Update connection banners/indicators to show neutral "offline" state instead of error styling.
+  - Review (2025-11-26): N/A—connection banners no longer exist on the home screen (removed in Task 5). Settings still shows host status but that's expected (settings is the place to check host health per the guiding principles).
 - [x] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
   - Context (update): `SessionUnavailableState` in `packages/app/src/app/git-diff.tsx` now uses neutral copy/styling that reassures users we auto-reconnect; verified with `npm run typecheck --workspace=@paseo/app`.
 - [x] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
@@ -82,18 +85,52 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [x] Fix the contradictory error message "Daemon is online, connect to it before creating"—this should never appear.
   - Review (2025-11-26): Searched the codebase for this message pattern—no matches found. The message has been removed or never existed in the current code.
 
-### 8. Home Screen Agent List
-- [ ] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
+### 8. Fix Create Agent Modal Availability Check
+- [ ] The create modal shows "[Host Name] is offline. We'll reconnect automatically..." even when the host is online.
+  - "Primary Daemon" is the host's label, not app copy—the availability check itself is broken.
+  - Both hosts are online but the modal thinks they're offline and blocks creation.
+
+### 9. Home Screen Agent List
+- [x] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
   - Don't block the home screen for offline hosts.
   - Handle edge cases: no hosts configured, no hosts connected, partial host connectivity.
-  - Context (review): `HomeScreen` still flips directly to the "New/Import Agent" empty state whenever `aggregatedAgents` is empty, so offline hosts with agents appear as if there are zero agents and there's no neutral loading indicator (`packages/app/src/app/index.tsx:105-161`).
+  - Context (review): `HomeScreen` still flips directly to the "New/Import Agent" empty state whenever `aggregatedAgents` is empty, so offline hosts with agents appear as if there are zero agents and there's no neutral loading indicator (`packages/app/src/app/index.tsx:109-116`).
+  - Review (2025-11-26): This task is still open. The home screen shows an empty state immediately if `aggregatedCount === 0`, with no distinction between "loading" and "truly empty." Offline hosts that may have agents will show zero agents until they reconnect.
+  - Completed: Updated `useAggregatedAgents` to return `{ groups, isLoading }` where `isLoading` is true while the daemon registry loads or while hosts are `connecting` without a session yet. Updated `HomeScreen` to show an `ActivityIndicator` during loading, then either the agent list or empty state. Offline hosts don't block loading—only `connecting` hosts do.
 - [ ] Remove grouping of agents by host—show a single flat list.
   - Context (review): `packages/app/src/components/agent-list.tsx:67-131` still maps `agentGroups` into host-specific sections with headers, so grouping hasn't been removed.
+  - Review (2025-11-26): Still open. The `AgentList` component iterates over `agentGroups` and renders a section header (`sectionLabel`) per host.
   - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
     - Context (review): Agent rows only render cwd/provider/status/time (`packages/app/src/components/agent-list.tsx:87-125`), so there's no host metadata visible per row yet.
+    - Review (2025-11-26): Still open. To flatten the list, host metadata must move into each row since section headers will be removed.
   - [ ] Sort agents by recent activity or alphabetically (not by host).
     - Context (review): `packages/app/src/hooks/use-aggregated-agents.ts:25-66` sorts sections by host registration order and only orders agents within a host, so we still bias the list ordering by host rather than recency across all agents.
+    - Review (2025-11-26): Still open. The current `useAggregatedAgents` hook returns grouped data; it needs refactoring to return a flat, globally-sorted array.
 
 ### 9. Review: Git Diff Metadata Cleanup
 - [x] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
   - Context: Deleted the redundant prop/const and updated `GitDiffContent` to rely solely on `serverLabel`, removing the final host-id plumbing that was no longer used anywhere in the component (`packages/app/src/app/git-diff.tsx`).
+
+---
+
+## Review Summary (2025-11-26)
+
+**Completed:**
+- Tasks 1–7 and Task 9 are complete
+- Internal code correctly uses "daemon" terminology while UI says "host"
+- Connection banners removed from home screen
+- Error philosophy fixed for Git Diff, File Explorer, and agent action sheets
+- Settings screen retains host status indicators (correct per guiding principles)
+- Typecheck passes
+
+**Remaining Work (Task 8):**
+The home screen agent list still needs refactoring:
+1. **Loading indicator**: Home shows empty state immediately when `aggregatedAgents` is empty—no loading state
+2. **Flat list**: `AgentList` still renders sections with host headers via `agentGroups.map()`
+3. **Host metadata per row**: Agent rows don't show which host they belong to (required once sections are removed)
+4. **Global sorting**: Agents are still grouped by host order; need to flatten and sort by recency across all hosts
+
+**Files to modify for Task 8:**
+- `packages/app/src/hooks/use-aggregated-agents.ts` — return flat array sorted by activity
+- `packages/app/src/components/agent-list.tsx` — remove section headers, add host badge to rows
+- `packages/app/src/app/index.tsx` — add loading state before agents resolve

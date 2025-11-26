@@ -1,9 +1,9 @@
-import { View } from "react-native";
+import { View, ActivityIndicator } from "react-native";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HomeHeader } from "@/components/headers/home-header";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
@@ -13,7 +13,8 @@ import { useLocalSearchParams } from "expo-router";
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const aggregatedAgents = useAggregatedAgents();
+  const { theme } = useUnistyles();
+  const { groups: aggregatedAgents, isLoading } = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [createModalMounted, setCreateModalMounted] = useState(false);
@@ -106,7 +107,11 @@ export default function HomeScreen() {
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        {hasAgents ? (
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.mutedForeground} />
+          </View>
+        ) : hasAgents ? (
           <AgentList agentGroups={aggregatedAgents} />
         ) : (
           <EmptyState
@@ -141,5 +146,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
 }));
