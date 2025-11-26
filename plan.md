@@ -86,9 +86,16 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Review (2025-11-26): Searched the codebase for this message pattern—no matches found. The message has been removed or never existed in the current code.
 
 ### 8. Fix Create Agent Modal Availability Check
-- [ ] The create modal shows "[Host Name] is offline. We'll reconnect automatically..." even when the host is online.
+- [x] The create modal shows "[Host Name] is offline. We'll reconnect automatically..." even when the host is online.
   - "Primary Daemon" is the host's label, not app copy—the availability check itself is broken.
   - Both hosts are online but the modal thinks they're offline and blocks creation.
+  - Review (2025-11-26): Root cause identified at `packages/app/src/components/create-agent-modal.tsx:333-334`. The check `!session || selectedDaemonStatus !== "online" || !ws?.isConnected` has a timing issue:
+    1. `session` comes from `useSessionForServer(selectedServerId)` which reads from `sessionAccessors`
+    2. `sessionAccessors` is populated via `registerSessionAccessor` in a `useEffect` inside `SessionProvider`
+    3. There's a timing window where `connectionStates` shows "online" but `session` is still null (SessionProvider hasn't run its registration effect yet)
+    4. Additionally, checking both `selectedDaemonStatus !== "online"` AND `!ws?.isConnected` is redundant since `connectionStates` status is derived from `ws` in `SessionProvider`
+  - Fix: Use `connectionStates` as the single source of truth for availability. Replace the check with `selectedDaemonStatus !== "online"` without requiring `session` to exist for availability purposes.
+  - Completed: Changed `selectedDaemonIsUnavailable` to `selectedDaemonIsOffline` which only checks `selectedDaemonStatus !== "online"`. The `session` and `ws?.isConnected` checks were removed from the availability condition since `connectionStates` already reflects the true connection state. The `isTargetDaemonReady` check still requires `session` for actual operations (creating/resuming agents). Verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 9. Home Screen Agent List
 - [x] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
@@ -116,21 +123,30 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 ## Review Summary (2025-11-26)
 
 **Completed:**
-- Tasks 1–7 and Task 9 are complete
+- Tasks 1–7 are complete
+- Task 9 loading indicator is complete
 - Internal code correctly uses "daemon" terminology while UI says "host"
 - Connection banners removed from home screen
 - Error philosophy fixed for Git Diff, File Explorer, and agent action sheets
 - Settings screen retains host status indicators (correct per guiding principles)
 - Typecheck passes
 
-**Remaining Work (Task 8):**
-The home screen agent list still needs refactoring:
-1. **Loading indicator**: Home shows empty state immediately when `aggregatedAgents` is empty—no loading state
-2. **Flat list**: `AgentList` still renders sections with host headers via `agentGroups.map()`
-3. **Host metadata per row**: Agent rows don't show which host they belong to (required once sections are removed)
-4. **Global sorting**: Agents are still grouped by host order; need to flatten and sort by recency across all hosts
+**Remaining Work:**
 
-**Files to modify for Task 8:**
+### Task 8: Create Agent Modal Availability Check
+The modal incorrectly shows hosts as offline when they're actually online. Root cause is a timing issue where `session` is null during the brief window between `connectionStates` updating and `SessionProvider` registering its session accessor.
+
+**Fix required in `packages/app/src/components/create-agent-modal.tsx`:**
+- Line 333-334: Change `selectedDaemonIsUnavailable` to only check `selectedDaemonStatus !== "online"`
+- Don't require `session` to exist for the availability check—`session` is only needed for actual operations
+- The availability UX should use `connectionStates` as single source of truth
+
+### Task 9: Home Screen Agent List (partial)
+The loading indicator is complete. Still need:
+1. **Flat list**: `AgentList` still renders sections with host headers via `agentGroups.map()`
+2. **Host metadata per row**: Agent rows don't show which host they belong to (required once sections are removed)
+3. **Global sorting**: Agents are still grouped by host order; need to flatten and sort by recency across all hosts
+
+**Files to modify for Task 9:**
 - `packages/app/src/hooks/use-aggregated-agents.ts` — return flat array sorted by activity
 - `packages/app/src/components/agent-list.tsx` — remove section headers, add host badge to rows
-- `packages/app/src/app/index.tsx` — add loading state before agents resolve

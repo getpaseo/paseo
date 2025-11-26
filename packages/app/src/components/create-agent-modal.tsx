@@ -330,17 +330,16 @@ function AgentFlowModal({
     "Selected host";
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
   const hasSelectedDaemon = Boolean(selectedServerId);
-  const selectedDaemonIsUnavailable =
-    !session || selectedDaemonStatus !== "online" || !ws?.isConnected;
+  const selectedDaemonIsOffline = selectedDaemonStatus !== "online";
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
   const daemonAvailabilityError = !hasSelectedDaemon
     ? "Select a host before creating or importing agents."
-    : selectedDaemonIsUnavailable
+    : selectedDaemonIsOffline
         ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. We'll reconnect automatically and enable actions once it's online.${
             selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
           }`
         : null;
-  const isTargetDaemonReady = Boolean(hasSelectedDaemon && session && !selectedDaemonIsUnavailable);
+  const isTargetDaemonReady = Boolean(hasSelectedDaemon && session && !selectedDaemonIsOffline);
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
