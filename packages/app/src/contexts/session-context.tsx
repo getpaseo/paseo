@@ -29,7 +29,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
-import { useDaemonConnections, type SessionAccessorRole } from "./daemon-connections-context";
+import { useDaemonConnections } from "./daemon-connections-context";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -388,11 +388,9 @@ interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
-  role?: SessionAccessorRole;
 }
 
-export function SessionProvider({ children, serverUrl, serverId, role }: SessionProviderProps) {
-  const sessionRole = role ?? "primary";
+export function SessionProvider({ children, serverUrl, serverId }: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
   const wsIsConnected = ws.isConnected;
   const {
@@ -1796,11 +1794,11 @@ export function SessionProvider({ children, serverUrl, serverId, role }: Session
   );
 
   useEffect(() => {
-    registerSessionAccessor(serverId, sessionDirectoryEntry, sessionRole);
+    registerSessionAccessor(serverId, sessionDirectoryEntry);
     return () => {
-      unregisterSessionAccessor(serverId, sessionRole);
+      unregisterSessionAccessor(serverId);
     };
-  }, [serverId, sessionRole, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
+  }, [serverId, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
 
   return (
     <SessionContext.Provider value={value}>

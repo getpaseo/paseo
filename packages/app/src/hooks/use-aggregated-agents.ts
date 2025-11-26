@@ -9,6 +9,8 @@ export interface AggregatedAgentGroup {
   agents: Agent[];
 }
 
+const EMPTY_AGENT_MAP: Map<string, Agent> = new Map();
+
 const sortAgents = (agents: Agent[]): Agent[] => {
   return [...agents].sort((left, right) => {
     const leftRunning = left.status === "running";
@@ -25,9 +27,10 @@ const sortAgents = (agents: Agent[]): Agent[] => {
   });
 };
 
-export function useAggregatedAgents(fallbackAgents: Map<string, Agent>): AggregatedAgentGroup[] {
+export function useAggregatedAgents(fallbackAgents?: Map<string, Agent>): AggregatedAgentGroup[] {
   const { connectionStates } = useDaemonConnections();
   const sessionDirectory = useSessionDirectory();
+  const fallback = fallbackAgents ?? EMPTY_AGENT_MAP;
 
   return useMemo(() => {
     const groups = new Map<string, { serverLabel: string; agents: Agent[] }>();
@@ -55,10 +58,10 @@ export function useAggregatedAgents(fallbackAgents: Map<string, Agent>): Aggrega
       });
     }
 
-    if (groups.size === 0) {
+    if (groups.size === 0 && fallback.size > 0) {
       const fallbackServerId = connectionStates.keys().next().value ?? "default";
       const label = connectionStates.get(fallbackServerId)?.daemon.label ?? fallbackServerId;
-      const fallbackList = Array.from(fallbackAgents.values());
+      const fallbackList = Array.from(fallback.values());
       if (fallbackList.length > 0) {
         groups.set(fallbackServerId, { serverLabel: label, agents: fallbackList });
       }
@@ -86,5 +89,5 @@ export function useAggregatedAgents(fallbackAgents: Map<string, Agent>): Aggrega
     });
 
     return aggregatedGroups;
-  }, [sessionDirectory, fallbackAgents, connectionStates]);
+  }, [sessionDirectory, fallback, connectionStates]);
 }

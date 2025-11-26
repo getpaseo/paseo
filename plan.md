@@ -19,13 +19,14 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Internal code can keep "daemon" terminology; this is UI-only.
   - Updated every user-facing string (settings, modals, placeholders, defaults) to say "host" and spot-checked via targeted searches; no automated tests were run.
   - Context: Remaining "daemon" labels in git diff, file explorer, and agent detail screens now say "host" (updated `packages/app/src/app/git-diff.tsx`, `file-explorer.tsx`, `agent/[id].tsx`, and `agent/[serverId]/[agentId].tsx`).
+  - Review: Confirmed the agent redirect, file explorer, and git diff screens reflect the updated host wording with no lingering user-facing "daemon" strings.
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
   - Summary: Home/footer actions, create/import flows, and agent navigation now route directly via explicit host IDs with analytics/docs/aggregated list updates, verified with `npm run typecheck --workspace=@paseo/app`.
   - Context: `GlobalFooter`, the create/import modals, the agent screen, and the agent list previously read/write `activeDaemonId`, forcing a global active host before routing; they now rely on explicit host IDs instead.
-- [ ] Remove the concept of "primary daemon"—no default host for actions.
-  - Context: `DaemonConnectionsProvider` still persists `activeDaemonId` in AsyncStorage and `MultiDaemonSessionHost` filters by `primary` roles to decide which hosts stay backgrounded, so the “primary/default” pipeline is intact and needs to be unwound.
+- [x] Remove the concept of "primary daemon"—no default host for actions.
+  - Eliminated the persisted `activeDaemonId`, flattened the session directory, and refactored `_layout`, realtime, settings, and agent UI to always resolve hosts explicitly so every host gets its own `SessionProvider`; verified via `npm run typecheck --workspace=@paseo/app`.
 - [ ] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
 - [ ] Clean up any related state/UI that exposes these concepts to users.
 

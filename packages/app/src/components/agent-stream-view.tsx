@@ -71,9 +71,24 @@ export function AgentStreamView({
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
   const router = useRouter();
-  const session = useDaemonSession(serverId);
-  const { requestDirectoryListing, requestFilePreview, ws } = session;
-  const resolvedServerId = serverId ?? session.serverId;
+  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
+  const inertWebSocket = useMemo<UseWebSocketReturn>(
+    () => ({
+      isConnected: false,
+      isConnecting: false,
+      conversationId: null,
+      lastError: null,
+      send: () => {},
+      on: () => () => {},
+      sendPing: () => {},
+      sendUserMessage: () => {},
+    }),
+    []
+  );
+  const ws = session?.ws ?? inertWebSocket;
+  const requestDirectoryListing = session?.requestDirectoryListing ?? (() => {});
+  const requestFilePreview = session?.requestFilePreview ?? (() => {});
+  const resolvedServerId = serverId ?? session?.serverId ?? agent.serverId ?? "";
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";

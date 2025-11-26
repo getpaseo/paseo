@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { View, Pressable, Text, Platform } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { View, Pressable, Text, Platform, Modal, Alert } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AudioLines, Users, Plus, Download } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
-import { useSession } from "@/contexts/session-context";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useFooterControls, FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
 import { RealtimeControls } from "./realtime-controls";
 import { CreateAgentModal, ImportAgentModal } from "./create-agent-modal";
@@ -22,10 +22,11 @@ export function GlobalFooter() {
   const pathname = usePathname();
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
-  const { ws } = useSession();
+  const { connectionStates } = useDaemonConnections();
   const { controls } = useFooterControls();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showRealtimeHostPicker, setShowRealtimeHostPicker] = useState(false);
   // Guard Reanimated entry/exit transitions on Android to avoid ViewGroup.dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -52,6 +53,40 @@ export function GlobalFooter() {
     },
     [bottomInset],
   );
+
+  const realtimeEligibleHosts = useMemo(() => {
+    return Array.from(connectionStates.values()).filter((entry) => entry.status === "online");
+  }, [connectionStates]);
+
+  const handleStartRealtime = useCallback(() => {
+    if (realtimeEligibleHosts.length === 0) {
+      Alert.alert("No connected hosts", "Connect a host before starting realtime mode.");
+      return;
+    }
+    if (realtimeEligibleHosts.length === 1) {
+      void startRealtime(realtimeEligibleHosts[0].daemon.id).catch((error) => {
+        console.error("[GlobalFooter] Failed to start realtime", error);
+        Alert.alert("Realtime failed", "Unable to start realtime mode for this host.");
+      });
+      return;
+    }
+    setShowRealtimeHostPicker(true);
+  }, [realtimeEligibleHosts, startRealtime]);
+
+  const handleSelectRealtimeHost = useCallback(
+    (daemonId: string) => {
+      setShowRealtimeHostPicker(false);
+      void startRealtime(daemonId).catch((error) => {
+        console.error("[GlobalFooter] Failed to start realtime", error);
+        Alert.alert("Realtime failed", "Unable to start realtime mode for this host.");
+      });
+    },
+    [startRealtime]
+  );
+
+  const handleDismissHostPicker = useCallback(() => {
+    setShowRealtimeHostPicker(false);
+  }, []);
 
   if (showAgentControls) {
     return (
@@ -162,12 +197,12 @@ export function GlobalFooter() {
             </Pressable>
 
             <Pressable
-              onPress={startRealtime}
-              disabled={!ws.isConnected}
+              onPress={handleStartRealtime}
+              disabled={realtimeEligibleHosts.length === 0}
               style={({ pressed }) => [
                 styles.footerButton,
-                !ws.isConnected && styles.buttonDisabled,
-                pressed && !ws.isConnected && styles.buttonPressed,
+                realtimeEligibleHosts.length === 0 && styles.buttonDisabled,
+                pressed && realtimeEligibleHosts.length === 0 && styles.buttonPressed,
               ]}
             >
               <View style={styles.footerIconWrapper}>
@@ -191,6 +226,31 @@ export function GlobalFooter() {
         isVisible={showImportModal}
         onClose={() => setShowImportModal(false)}
       />
+      <Modal
+        visible={showRealtimeHostPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={handleDismissHostPicker}
+      >
+        <View style={styles.hostPickerOverlay}>
+          <Pressable style={styles.hostPickerBackdrop} onPress={handleDismissHostPicker} />
+          <View style={styles.hostPickerContainer}>
+            <Text style={styles.hostPickerTitle}>Choose a host</Text>
+            {realtimeEligibleHosts.map((entry) => (
+              <Pressable
+                key={entry.daemon.id}
+                style={styles.hostPickerButton}
+                onPress={() => handleSelectRealtimeHost(entry.daemon.id)}
+              >
+                <Text style={styles.hostPickerButtonText}>{entry.daemon.label}</Text>
+              </Pressable>
+            ))}
+            <Pressable style={styles.hostPickerCancel} onPress={handleDismissHostPicker}>
+              <Text style={styles.hostPickerCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -239,5 +299,44 @@ const styles = StyleSheet.create((theme) => ({
   },
   buttonPressed: {
     opacity: 0.5,
+  },
+  hostPickerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  hostPickerBackdrop: {
+    flex: 1,
+  },
+  hostPickerContainer: {
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing[4],
+    borderTopLeftRadius: theme.borderRadius.xl,
+    borderTopRightRadius: theme.borderRadius.xl,
+    gap: theme.spacing[3],
+  },
+  hostPickerTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    textAlign: "center",
+  },
+  hostPickerButton: {
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.muted,
+  },
+  hostPickerButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  hostPickerCancel: {
+    paddingVertical: theme.spacing[3],
+  },
+  hostPickerCancelText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
 }));

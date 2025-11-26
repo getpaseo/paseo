@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import {
   View,
@@ -58,6 +58,31 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[4],
+  },
+  hostSelectorRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[3],
+  },
+  hostSelectorChip: {
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.card,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  hostSelectorChipSelected: {
+    backgroundColor: theme.colors.foreground,
+    borderColor: theme.colors.foreground,
+  },
+  hostSelectorChipText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+  },
+  hostSelectorChipTextSelected: {
+    color: theme.colors.background,
   },
   label: {
     color: theme.colors.mutedForeground,
@@ -324,12 +349,19 @@ type DaemonTestState = {
 export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
   const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon } = useDaemonRegistry();
-  const { activeDaemon, activeDaemonId, setActiveDaemonId, connectionStates, updateConnectionStatus } = useDaemonConnections();
-  const activeDaemonSession = useSessionForServer(activeDaemonId ?? null);
-  const activeDaemonConnection = activeDaemonId ? connectionStates.get(activeDaemonId) : null;
-  const activeDaemonStatusLabel = activeDaemonConnection ? formatConnectionStatus(activeDaemonConnection.status) : null;
+  const { connectionStates, updateConnectionStatus } = useDaemonConnections();
+  const [selectedDaemonId, setSelectedDaemonId] = useState<string | null>(null);
+  const selectedDaemon = useMemo(() => {
+    if (!selectedDaemonId) {
+      return null;
+    }
+    return daemons.find((daemon) => daemon.id === selectedDaemonId) ?? null;
+  }, [daemons, selectedDaemonId]);
+  const selectedDaemonSession = useSessionForServer(selectedDaemonId);
+  const selectedDaemonConnection = selectedDaemonId ? connectionStates.get(selectedDaemonId) : null;
+  const selectedDaemonStatusLabel = selectedDaemonConnection ? formatConnectionStatus(selectedDaemonConnection.status) : null;
 
-  const [serverUrl, setServerUrl] = useState(activeDaemon?.wsUrl ?? "");
+  const [serverUrl, setServerUrl] = useState(selectedDaemon?.wsUrl ?? "");
   const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
   const [keepScreenOn, setKeepScreenOn] = useState(settings.keepScreenOn);
   const [theme, setTheme] = useState<"dark" | "light" | "auto">(settings.theme);
@@ -346,17 +378,27 @@ export default function SettingsScreen() {
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
   const [daemonTestStates, setDaemonTestStates] = useState<Map<string, DaemonTestState>>(() => new Map());
   const isLoading = settingsLoading || daemonLoading;
-  const baselineServerUrl = activeDaemon?.wsUrl ?? "";
+  const baselineServerUrl = selectedDaemon?.wsUrl ?? "";
   const isMountedRef = useRef(true);
-  const isServerConfigLocked = Boolean(activeDaemon && !activeDaemonSession);
-  const serverDescriptionText = activeDaemon
-    ? `${activeDaemon.label}${activeDaemonStatusLabel ? ` - ${activeDaemonStatusLabel}` : ""}${
+  const isServerConfigLocked = Boolean(selectedDaemon && !selectedDaemonSession);
+  const serverDescriptionText = selectedDaemon
+    ? `${selectedDaemon.label}${selectedDaemonStatusLabel ? ` - ${selectedDaemonStatusLabel}` : ""}${
         isServerConfigLocked ? " - Session unavailable" : ""
       }`
     : "Add a host to configure its server URL.";
   const serverHelperText = isServerConfigLocked
-    ? `Connect to ${activeDaemon?.label ?? "this host"} to edit its server URL.`
+    ? `Connect to ${selectedDaemon?.label ?? "this host"} to edit its server URL.`
     : "Must be a valid WebSocket URL (ws:// or wss://)";
+
+  useEffect(() => {
+    if (daemons.length === 0) {
+      setSelectedDaemonId(null);
+      return;
+    }
+    if (!selectedDaemonId || !daemons.some((daemon) => daemon.id === selectedDaemonId)) {
+      setSelectedDaemonId(daemons[0].id);
+    }
+  }, [daemons, selectedDaemonId]);
 
   useEffect(() => {
     return () => {
@@ -472,10 +514,10 @@ export default function SettingsScreen() {
       };
       if (daemonForm.id) {
         await updateDaemon(daemonForm.id, payload);
-        setActiveDaemonId(daemonForm.id, { source: "settings_save_daemon" });
+        setSelectedDaemonId(daemonForm.id);
       } else {
         const created = await addDaemon(payload);
-        setActiveDaemonId(created.id, { source: "settings_save_daemon" });
+        setSelectedDaemonId(created.id);
       }
       handleCloseDaemonForm();
     } catch (error) {
@@ -484,7 +526,7 @@ export default function SettingsScreen() {
     } finally {
       setIsSavingDaemon(false);
     }
-  }, [daemonForm, addDaemon, updateDaemon, handleCloseDaemonForm, setActiveDaemonId]);
+  }, [daemonForm, addDaemon, updateDaemon, handleCloseDaemonForm]);
 
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
@@ -549,8 +591,8 @@ export default function SettingsScreen() {
   }, [settings]);
 
   useEffect(() => {
-    setServerUrl(activeDaemon?.wsUrl ?? "");
-  }, [activeDaemon?.wsUrl]);
+    setServerUrl(selectedDaemon?.wsUrl ?? "");
+  }, [selectedDaemon?.wsUrl]);
 
   // Track changes
   useEffect(() => {
@@ -600,17 +642,19 @@ export default function SettingsScreen() {
         theme,
       });
 
-      if (activeDaemon) {
-        await updateDaemon(activeDaemon.id, {
+      if (selectedDaemon) {
+        await updateDaemon(selectedDaemon.id, {
           wsUrl: trimmedUrl,
-          label: activeDaemon.label || deriveDaemonLabel(trimmedUrl),
+          label: selectedDaemon.label || deriveDaemonLabel(trimmedUrl),
         });
+        setSelectedDaemonId(selectedDaemon.id);
       } else {
-        await addDaemon({
+        const created = await addDaemon({
           label: deriveDaemonLabel(trimmedUrl),
           wsUrl: trimmedUrl,
           autoConnect: true,
         });
+        setSelectedDaemonId(created.id);
       }
 
       Alert.alert(
@@ -666,7 +710,7 @@ export default function SettingsScreen() {
     if (isServerConfigLocked) {
       Alert.alert(
         "Session unavailable",
-        `${activeDaemon?.label ?? "This host"} is not connected. Connect to it before testing the URL.`
+        `${selectedDaemon?.label ?? "This host"} is not connected. Connect to it before testing the URL.`
       );
       return;
     }
@@ -720,6 +764,27 @@ export default function SettingsScreen() {
           {/* Server Configuration */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Server Configuration</Text>
+            {daemons.length > 0 ? (
+              <View style={styles.hostSelectorRow}>
+                {daemons.map((daemon) => {
+                  const isSelected = daemon.id === selectedDaemonId;
+                  return (
+                    <Pressable
+                      key={daemon.id}
+                      style={[styles.hostSelectorChip, isSelected && styles.hostSelectorChipSelected]}
+                      onPress={() => setSelectedDaemonId(daemon.id)}
+                    >
+                      <Text
+                        style={[styles.hostSelectorChipText, isSelected && styles.hostSelectorChipTextSelected]}
+                        numberOfLines={1}
+                      >
+                        {daemon.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
             <Text style={styles.helperText}>{serverDescriptionText}</Text>
 
             <Text style={styles.label}>WebSocket URL</Text>

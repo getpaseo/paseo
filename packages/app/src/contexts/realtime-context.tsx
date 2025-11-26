@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useMemo } from "react";
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
-import { useSession } from "./session-context";
+import { useSessionDirectory } from "@/hooks/use-session-directory";
+import type { SessionContextValue } from "./session-context";
 import { generateMessageId } from "@/types/stream";
 import type { WSInboundMessage } from "@server/server/messages";
 
@@ -11,9 +12,10 @@ interface RealtimeContextValue {
   isDetecting: boolean;
   isSpeaking: boolean;
   segmentDuration: number;
-  startRealtime: () => Promise<void>;
+  startRealtime: (serverId: string) => Promise<void>;
   stopRealtime: () => Promise<void>;
   toggleMute: () => void;
+  activeServerId: string | null;
 }
 
 const RealtimeContext = createContext<RealtimeContextValue | null>(null);
@@ -31,13 +33,9 @@ interface RealtimeProviderProps {
 }
 
 export function RealtimeProvider({ children }: RealtimeProviderProps) {
-  const {
-    ws,
-    audioPlayer,
-    isPlayingAudio,
-    setMessages,
-    setVoiceDetectionFlags,
-  } = useSession();
+  const sessionDirectory = useSessionDirectory();
+  const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const realtimeSessionRef = useRef<SessionContextValue | null>(null);
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
   const bargeInPlaybackStopRef = useRef<number | null>(null);
 
@@ -45,22 +43,29 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     onSpeechStart: () => {
       console.log("[Realtime] Speech detected");
       // Stop audio playback if playing
-      if (isPlayingAudio) {
+      const session = realtimeSessionRef.current;
+      const sessionAudioPlayer = session?.audioPlayer;
+      const sessionWs = session?.ws;
+      const sessionIsPlayingAudio = session?.isPlayingAudio ?? false;
+
+      if (sessionIsPlayingAudio && sessionAudioPlayer) {
         if (bargeInPlaybackStopRef.current === null) {
           bargeInPlaybackStopRef.current = Date.now();
         }
-        audioPlayer.stop();
+        sessionAudioPlayer.stop();
       }
 
       // Abort any in-flight orchestrator turn before the new speech segment streams
       try {
-        const abortMessage: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "abort_request",
-          },
-        };
-        ws.send(abortMessage);
+        if (sessionWs) {
+          const abortMessage: WSInboundMessage = {
+            type: "session",
+            message: {
+              type: "abort_request",
+            },
+          };
+          sessionWs.send(abortMessage);
+        }
         console.log("[Realtime] Sent abort_request before streaming audio");
       } catch (error) {
         console.error("[Realtime] Failed to send abort_request:", error);
@@ -78,8 +83,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       );
 
       // Send audio segment to server (realtime always goes to orchestrator)
+      const session = realtimeSessionRef.current;
       try {
-        ws.send({
+        session?.ws.send({
           type: "session",
           message: {
             type: "realtime_audio_chunk",
@@ -94,16 +100,19 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     },
     onError: (error) => {
       console.error("[Realtime] Audio error:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: "activity",
-          id: generateMessageId(),
-          timestamp: Date.now(),
-          activityType: "error",
-          message: `Realtime audio error: ${error.message}`,
-        },
-      ]);
+      const session = realtimeSessionRef.current;
+      if (session) {
+        session.setMessages((prev) => [
+          ...prev,
+          {
+            type: "activity",
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            activityType: "error",
+            message: `Realtime audio error: ${error.message}`,
+          },
+        ]);
+      }
     },
     volumeThreshold: 0.3,
     silenceDuration: 2000,
@@ -113,8 +122,22 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
   // Update voice detection flags whenever they change
   useEffect(() => {
-    setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
-  }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking, setVoiceDetectionFlags]);
+    const session = realtimeSessionRef.current;
+    session?.setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
+  }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking]);
+
+  const activeSession = useMemo(() => {
+    if (!activeServerId) {
+      return null;
+    }
+    return sessionDirectory.get(activeServerId) ?? null;
+  }, [activeServerId, sessionDirectory]);
+
+  useEffect(() => {
+    realtimeSessionRef.current = activeSession;
+  }, [activeSession]);
+
+  const isPlayingAudio = activeSession?.isPlayingAudio ?? false;
 
   useEffect(() => {
     if (!isPlayingAudio && bargeInPlaybackStopRef.current !== null) {
@@ -128,47 +151,61 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     }
   }, [isPlayingAudio]);
 
-  const startRealtime = useCallback(async () => {
-    try {
-      await realtimeAudio.start();
-      setIsRealtimeMode(true);
-      console.log("[Realtime] Mode enabled");
+  const startRealtime = useCallback(
+    async (serverId: string) => {
+      const session = sessionDirectory.get(serverId) ?? null;
+      if (!session) {
+        throw new Error(`Host ${serverId} is not connected`);
+      }
 
-      // Notify server
-      const modeMessage: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "set_realtime_mode",
-          enabled: true,
-        },
-      };
-      ws.send(modeMessage);
-    } catch (error: any) {
-      console.error("[Realtime] Failed to start:", error);
-      throw error;
-    }
-  }, [realtimeAudio, ws]);
+      try {
+        realtimeSessionRef.current = session;
+        setActiveServerId(serverId);
+        await realtimeAudio.start();
+        setIsRealtimeMode(true);
+        console.log("[Realtime] Mode enabled");
+
+        const modeMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "set_realtime_mode",
+            enabled: true,
+          },
+        };
+        session.ws.send(modeMessage);
+      } catch (error: any) {
+        console.error("[Realtime] Failed to start:", error);
+        setActiveServerId((current) => (current === serverId ? null : current));
+        throw error;
+      }
+    },
+    [realtimeAudio, sessionDirectory]
+  );
 
   const stopRealtime = useCallback(async () => {
     try {
+      const session = realtimeSessionRef.current;
+      session?.audioPlayer.stop();
       await realtimeAudio.stop();
       setIsRealtimeMode(false);
+      setActiveServerId(null);
       console.log("[Realtime] Mode disabled");
 
-      // Notify server
-      const modeMessage: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "set_realtime_mode",
-          enabled: false,
-        },
-      };
-      ws.send(modeMessage);
+      if (session) {
+        const modeMessage: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "set_realtime_mode",
+            enabled: false,
+          },
+        };
+        session.ws.send(modeMessage);
+      }
     } catch (error: any) {
       console.error("[Realtime] Failed to stop:", error);
       throw error;
     }
-  }, [realtimeAudio, ws]);
+  }, [realtimeAudio]);
 
   const value: RealtimeContextValue = {
     isRealtimeMode,
@@ -180,6 +217,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     startRealtime,
     stopRealtime,
     toggleMute: realtimeAudio.toggleMute,
+    activeServerId,
   };
 
   return (

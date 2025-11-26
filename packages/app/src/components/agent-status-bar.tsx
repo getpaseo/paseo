@@ -1,9 +1,10 @@
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
+import type { SessionContextValue, Agent } from "@/contexts/session-context";
 
 interface AgentStatusBarProps {
   agentId: string;
@@ -12,7 +13,10 @@ interface AgentStatusBarProps {
 
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const { theme } = useUnistyles();
-  const { agents, setAgentMode } = useDaemonSession(serverId);
+  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
+  const noopSetAgentMode = useCallback<SessionContextValue["setAgentMode"]>(() => {}, []);
+  const agents = session?.agents ?? new Map<string, Agent>();
+  const setAgentMode = session?.setAgentMode ?? noopSetAgentMode;
   const [showModeSelector, setShowModeSelector] = useState(false);
 
   const agent = agents.get(agentId);

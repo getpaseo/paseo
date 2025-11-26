@@ -62,7 +62,7 @@ import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/messages";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { trackAnalyticsEvent } from "@/utils/analytics";
-import { useSession, type SessionContextValue } from "@/contexts/session-context";
+import type { SessionContextValue } from "@/contexts/session-context";
 import { useSessionDirectory, useSessionForServer } from "@/hooks/use-session-directory";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 
@@ -224,10 +224,8 @@ function AgentFlowModal({
     return daemonEntries[0]?.daemon.id ?? null;
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
-  const activeSession = useSession();
   const selectedSession = useSessionForServer(selectedServerId);
-  const session =
-    selectedServerId === null ? activeSession : selectedSession ?? null;
+  const session = selectedSession ?? null;
   const sessionDirectory = useSessionDirectory();
 
   useEffect(() => {
