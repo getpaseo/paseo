@@ -56,12 +56,15 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Updated the host-unavailable alert, agent-not-found message, and settings restart failure copy to reassure that hosts reconnect automatically instead of asking users to connect manually; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 5. Remove Host Status from Home Screen
-- [ ] Remove connection status banners/indicators from the home screen—settings is the place to check host health.
+- [x] Remove connection status banners/indicators from the home screen—settings is the place to check host health.
   - Context (review): `packages/app/src/app/index.tsx:47-144` still renders `connectionBanner` cards that surface per-host offline/error states directly on Home, so host health is still exposed outside Settings.
+  - Review (2025-11-26): The `connectionIssues` filter includes `offline`, `connecting`, and `error` statuses, so any host that isn't `online` shows up in the banner. This contradicts the guiding principle that a stopped host is not an error.
+  - Removed the connection status banner, associated state (`connectionIssues`, `statusColors`), styles, and unused imports (`useDaemonConnections`, `formatConnectionStatus`, `getConnectionStatusTone`, `Text`, `useUnistyles`) from `packages/app/src/app/index.tsx`; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 6. Fix Error Philosophy
 - [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
   - Context (review): The home connection banner still prints destructive red `connectionError` text for every offline host entry, so the screen treats normal downtime as an error (`packages/app/src/app/index.tsx:123-140`).
+  - Review (2025-11-26): The `connectionError` style unconditionally uses `theme.colors.destructive` (line 210-213) for `lastError` messages, even though `getConnectionStatusTone` correctly returns `warning` (amber) for `offline` status. The dot color respects the tone, but the error text does not.
 - [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
 - [x] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
@@ -71,12 +74,15 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [x] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
   - Context (update): `AgentSessionUnavailableState` and the delete sheet subtitle in `packages/app/src/components/agent-list.tsx` now explain that offline hosts reconnect automatically, removing the manual "connect" instruction.
 
-### 6. Agent Creation Flow
-- [ ] Remove reliance on "primary" or "active" daemon for agent creation.
-- [ ] Require explicit host selection when creating an agent—user must choose where to deploy.
-- [ ] Fix the contradictory error message "Daemon is online, connect to it before creating"—this should never appear.
+### 7. Agent Creation Flow
+- [x] Remove reliance on "primary" or "active" daemon for agent creation.
+  - Review (2025-11-26): Verified that `create-agent-modal.tsx` no longer uses or falls back to any "active" or "primary" daemon; the modal requires explicit host selection and shows "Select a host before creating or importing agents" when none is chosen.
+- [x] Require explicit host selection when creating an agent—user must choose where to deploy.
+  - Review (2025-11-26): The `selectedServerId` state controls host selection, and `daemonAvailabilityError` blocks creation until a host is selected (`packages/app/src/components/create-agent-modal.tsx:336-342`).
+- [x] Fix the contradictory error message "Daemon is online, connect to it before creating"—this should never appear.
+  - Review (2025-11-26): Searched the codebase for this message pattern—no matches found. The message has been removed or never existed in the current code.
 
-### 7. Home Screen Agent List
+### 8. Home Screen Agent List
 - [ ] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
   - Don't block the home screen for offline hosts.
   - Handle edge cases: no hosts configured, no hosts connected, partial host connectivity.
@@ -88,6 +94,6 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - [ ] Sort agents by recent activity or alphabetically (not by host).
     - Context (review): `packages/app/src/hooks/use-aggregated-agents.ts:25-66` sorts sections by host registration order and only orders agents within a host, so we still bias the list ordering by host rather than recency across all agents.
 
-### Review: Git Diff Metadata Cleanup
+### 9. Review: Git Diff Metadata Cleanup
 - [x] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
   - Context: Deleted the redundant prop/const and updated `GitDiffContent` to rely solely on `serverLabel`, removing the final host-id plumbing that was no longer used anywhere in the component (`packages/app/src/app/git-diff.tsx`).

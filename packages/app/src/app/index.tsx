@@ -1,22 +1,18 @@
-import { View, Text } from "react-native";
+import { View } from "react-native";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { HomeHeader } from "@/components/headers/home-header";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
 import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { formatConnectionStatus, getConnectionStatusTone, type ConnectionStatusTone } from "@/utils/daemons";
 import { useLocalSearchParams } from "expo-router";
 
 export default function HomeScreen() {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { connectionStates } = useDaemonConnections();
   const aggregatedAgents = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -44,17 +40,6 @@ export default function HomeScreen() {
 
   const aggregatedCount = aggregatedAgents.reduce((count, group) => count + group.agents.length, 0);
   const hasAgents = aggregatedCount > 0;
-  const connectionIssues = useMemo(() => {
-    return Array.from(connectionStates.values()).filter(
-      (entry) => entry.status === "connecting" || entry.status === "offline" || entry.status === "error"
-    );
-  }, [connectionStates]);
-  const statusColors: Record<ConnectionStatusTone, string> = {
-    success: theme.colors.palette.green[400],
-    warning: theme.colors.palette.amber[500],
-    error: theme.colors.destructive,
-    muted: theme.colors.mutedForeground,
-  };
 
   const handleCreateAgent = useCallback(() => {
     setCreateModalMounted(true);
@@ -119,30 +104,6 @@ export default function HomeScreen() {
         onImportAgent={handleImportAgent}
       />
 
-      {connectionIssues.length > 0 ? (
-        <View style={styles.connectionBanner}>
-          {connectionIssues.map((entry) => {
-            const tone = getConnectionStatusTone(entry.status);
-            const statusColor = statusColors[tone];
-            return (
-              <View key={entry.daemon.id} style={styles.connectionRow}>
-                <View style={styles.connectionHeader}>
-                  <View style={[styles.connectionDot, { backgroundColor: statusColor }]} />
-                  <Text style={styles.connectionLabel}>
-                    {entry.daemon.label} · {formatConnectionStatus(entry.status)}
-                  </Text>
-                </View>
-                {entry.lastError ? (
-                  <Text style={styles.connectionError} numberOfLines={2}>
-                    {entry.lastError}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
-
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
         {hasAgents ? (
@@ -177,39 +138,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  connectionBanner: {
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
-    gap: theme.spacing[2],
-  },
-  connectionRow: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    gap: theme.spacing[1],
-  },
-  connectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: theme.borderRadius.full,
-  },
-  connectionLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  connectionError: {
-    color: theme.colors.destructive,
-    fontSize: theme.fontSize.xs,
   },
   content: {
     flex: 1,
