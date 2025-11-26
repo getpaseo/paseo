@@ -101,16 +101,16 @@ export default function LegacyAgentRedirectScreen() {
       </View>
     );
   } else if (matches.length === 0) {
-    body = (
-      <View style={styles.centerState}>
-        <Text style={styles.title}>Agent not found</Text>
-        <Text style={styles.subtitle}>
-          We couldn't find "{agentId}" on any connected daemon. Make sure the daemon is online
-          or reopen the agent from the Home screen after it reconnects.
-        </Text>
-        <Pressable style={styles.primaryButton} onPress={handleGoHome}>
-          <Text style={styles.primaryButtonText}>Go Home</Text>
-        </Pressable>
+      body = (
+        <View style={styles.centerState}>
+          <Text style={styles.title}>Agent not found</Text>
+          <Text style={styles.subtitle}>
+            We could not find {agentId} on any connected daemon. Make sure the daemon is online
+            or reopen the agent from the Home screen after it reconnects.
+          </Text>
+          <Pressable style={styles.primaryButton} onPress={handleGoHome}>
+            <Text style={styles.primaryButtonText}>Go Home</Text>
+          </Pressable>
       </View>
     );
   } else if (matches.length > 1) {

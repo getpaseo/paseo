@@ -23,7 +23,7 @@ import { useFooterControls } from "@/contexts/footer-controls-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { SessionOutboundMessage } from "@server/server/messages";
 
@@ -78,20 +78,15 @@ function extractAgentModel(agent?: Agent | null): string | null {
 }
 
 export default function AgentScreen() {
-  const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { serverId, agentId } = useLocalSearchParams<{ serverId: string; agentId: string }>();
   const resolvedAgentId = typeof agentId === "string" ? agentId : undefined;
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
-  const handleBackToHome = useCallback(() => {
-    router.replace("/");
-  }, [router]);
   const { connectionStates, activeDaemonId, setActiveDaemonId } = useDaemonConnections();
-  let session: SessionContextValue | null = null;
+  const hasConnectionEntry = resolvedServerId ? connectionStates.has(resolvedServerId) : false;
 
   useEffect(() => {
-    if (!resolvedServerId) {
+    if (!resolvedServerId || !hasConnectionEntry) {
       return;
     }
 
@@ -99,25 +94,25 @@ export default function AgentScreen() {
       return;
     }
 
-    setActiveDaemonId(resolvedServerId);
-  }, [resolvedServerId, activeDaemonId, setActiveDaemonId]);
+    setActiveDaemonId(resolvedServerId, { source: "agent_route" });
+  }, [resolvedServerId, hasConnectionEntry, activeDaemonId, setActiveDaemonId]);
 
-  try {
-    session = useDaemonSession(resolvedServerId, { suppressUnavailableAlert: true });
-  } catch (error) {
-    if (error instanceof DaemonSessionUnavailableError) {
-      session = null;
-    } else {
-      throw error;
-    }
-  }
+  const session = useDaemonSession(resolvedServerId, {
+    suppressUnavailableAlert: true,
+    allowUnavailable: true,
+  });
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
   const serverLabel = connection?.daemon.label ?? connectionServerId ?? "Selected daemon";
-  const connectionStatus = connection?.status ?? "idle";
+  const isUnknownDaemon = Boolean(connectionServerId && !connection);
+  const connectionStatus = connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastConnectionError = connection?.lastError ?? null;
+
+  const handleBackToHome = useCallback(() => {
+    router.replace("/");
+  }, [router]);
 
   if (!session) {
     return (
@@ -127,21 +122,34 @@ export default function AgentScreen() {
         connectionStatus={connectionStatus}
         connectionStatusLabel={connectionStatusLabel}
         lastError={lastConnectionError}
+        isUnknownDaemon={isUnknownDaemon}
       />
     );
   }
 
-  const {
-    agents,
-    agentStreamState,
-    initializingAgents,
-    pendingPermissions,
-    initializeAgent,
-    refreshAgent,
-    setFocusedAgentId,
-    ws,
-  } = session;
   const routeServerId = resolvedServerId ?? session.serverId;
+
+  return (
+    <AgentScreenContent
+      session={session}
+      agentId={resolvedAgentId}
+      routeServerId={routeServerId}
+      onBack={handleBackToHome}
+    />
+  );
+}
+
+type AgentScreenContentProps = {
+  session: SessionContextValue;
+  agentId?: string;
+  routeServerId: string;
+  onBack: () => void;
+};
+
+function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentScreenContentProps) {
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -153,7 +161,18 @@ export default function AgentScreen() {
   const [createAgentInitialValues, setCreateAgentInitialValues] =
     useState<CreateAgentInitialValues | undefined>();
 
-  // Keyboard animation
+  const {
+    agents,
+    agentStreamState,
+    initializingAgents,
+    pendingPermissions,
+    initializeAgent,
+    refreshAgent,
+    setFocusedAgentId,
+    ws,
+  } = session;
+  const resolvedAgentId = agentId;
+
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const bottomInset = useSharedValue(insets.bottom);
 
@@ -303,11 +322,11 @@ export default function AgentScreen() {
           // Position menu below button using the raw coordinates from measureInWindow
           const buttonBottom = y + height;
           const top = buttonBottom + verticalOffset;
-          
+
           // If menu would go off screen, clamp to visible area
           const bottomEdge = top + menuContentHeight;
           const maxBottom = windowHeight - horizontalMargin;
-          const clampedTop = bottomEdge > maxBottom 
+          const clampedTop = bottomEdge > maxBottom
             ? Math.max(verticalOffset, maxBottom - menuContentHeight)
             : top;
 
@@ -435,7 +454,7 @@ export default function AgentScreen() {
     return (
       <>
         <View style={styles.container}>
-          <BackHeader onBack={handleBackToHome} />
+          <BackHeader onBack={onBack} />
           <View style={styles.errorContainer}>
             <Text style={styles.errorText}>Agent not found</Text>
           </View>
@@ -452,7 +471,7 @@ export default function AgentScreen() {
         {/* Header */}
         <BackHeader
           title={agent.title || "Agent"}
-          onBack={handleBackToHome}
+          onBack={onBack}
           rightContent={
             <View ref={menuButtonRef} collapsable={false}>
               <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
@@ -607,13 +626,31 @@ function AgentSessionUnavailableState({
   connectionStatus,
   connectionStatusLabel,
   lastError,
+  isUnknownDaemon = false,
 }: {
   onBack: () => void;
   serverLabel: string;
   connectionStatus: ConnectionStatus;
   connectionStatusLabel: string;
   lastError: string | null;
+  isUnknownDaemon?: boolean;
 }) {
+  if (isUnknownDaemon) {
+    return (
+      <View style={styles.container}>
+        <BackHeader title="Agent" onBack={onBack} />
+        <View style={styles.centerState}>
+          <Text style={styles.errorText}>
+            Cannot open this agent because {serverLabel} is not configured on this device.
+          </Text>
+          <Text style={styles.statusText}>
+            Add the daemon in Settings or open an agent on a configured server to continue.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   const isConnecting = connectionStatus === "connecting";
 
   return (
@@ -624,12 +661,12 @@ function AgentSessionUnavailableState({
           <>
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We'll show this agent once the daemon is online.</Text>
+            <Text style={styles.statusText}>We will show this agent once the daemon is online.</Text>
           </>
         ) : (
           <>
             <Text style={styles.errorText}>
-              Can't open this agent while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+              Cannot open this agent while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
             </Text>
             <Text style={styles.statusText}>
               Connect this daemon or switch to another one to continue.

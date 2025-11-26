@@ -7,7 +7,7 @@ import type { SessionContextValue } from "@/contexts/session-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 interface ParsedDiffFile {
   path: string;
@@ -58,18 +58,10 @@ export default function GitDiffScreen() {
   const { agentId, serverId } = useLocalSearchParams<{ agentId: string; serverId?: string }>();
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
-
-  let session: SessionContextValue | null = null;
-
-  try {
-    session = useDaemonSession(resolvedServerId, { suppressUnavailableAlert: true });
-  } catch (error) {
-    if (error instanceof DaemonSessionUnavailableError) {
-      session = null;
-    } else {
-      throw error;
-    }
-  }
+  const session = useDaemonSession(resolvedServerId, {
+    suppressUnavailableAlert: true,
+    allowUnavailable: true,
+  });
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
@@ -230,12 +222,12 @@ function SessionUnavailableState({
           <>
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We'll show changes once this session is online.</Text>
+            <Text style={styles.statusText}>We will show changes once this session is online.</Text>
           </>
         ) : (
           <>
             <Text style={styles.errorText}>
-              Can't load changes while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+              Cannot load changes while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
             </Text>
             <Text style={styles.statusText}>Connect this daemon or switch to another one to continue.</Text>
             {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}

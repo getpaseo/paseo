@@ -49,7 +49,7 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
 } from "@server/server/agent/provider-manifest";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import type {
   AgentProvider,
   AgentMode,
@@ -61,8 +61,9 @@ import type {
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/messages";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useSession } from "@/contexts/session-context";
-import { useSessionForServer } from "@/hooks/use-session-directory";
+import { trackAnalyticsEvent } from "@/utils/analytics";
+import { useSession, type SessionContextValue } from "@/contexts/session-context";
+import { useSessionDirectory, useSessionForServer } from "@/hooks/use-session-directory";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 
 export type CreateAgentInitialValues = {
@@ -230,6 +231,7 @@ function AgentFlowModal({
   const selectedSession = useSessionForServer(selectedServerId);
   const session =
     selectedServerId === null ? activeSession : selectedSession ?? null;
+  const sessionDirectory = useSessionDirectory();
 
   useEffect(() => {
     if (!selectedServerId) {
@@ -307,21 +309,29 @@ function AgentFlowModal({
   const isWsConnected = ws?.isConnected ?? false;
   const router = useRouter();
   const activeServerId = session?.serverId ?? null;
-  const selectedDaemonConnection = selectedServerId
-    ? connectionStates.get(selectedServerId)
+  const selectedDaemonId = selectedServerId ?? activeServerId;
+  const selectedDaemonConnection = selectedDaemonId
+    ? connectionStates.get(selectedDaemonId)
     : null;
+  const selectedDaemonStatus: ConnectionStatus =
+    selectedDaemonConnection?.status ??
+    (ws?.isConnected
+      ? "online"
+      : ws?.isConnecting
+        ? "connecting"
+        : ws?.lastError
+          ? "error"
+          : "offline");
   const selectedDaemonLabel =
     selectedDaemonConnection?.daemon.label ??
     selectedDaemonConnection?.daemon.wsUrl ??
-    selectedServerId ??
+    selectedDaemonId ??
     "Selected daemon";
-  const selectedDaemonStatusLabel = selectedDaemonConnection
-    ? formatConnectionStatus(selectedDaemonConnection.status)
-    : "offline";
-  const selectedDaemonIsUnavailable = Boolean(
-    selectedServerId &&
-    (!session || selectedDaemonConnection?.status !== "online")
-  );
+  const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
+  const selectedDaemonIsUnavailable =
+    !session || selectedDaemonStatus !== "online" || !ws?.isConnected;
+  const isBackgroundDaemonTarget =
+    Boolean(selectedDaemonId && activeDaemonId && selectedDaemonId !== activeDaemonId);
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
   const daemonAvailabilityError = selectedDaemonIsUnavailable
     ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
@@ -390,6 +400,12 @@ function AgentFlowModal({
   const shouldListenForDictation =
     isCreateFlow && (isVisible || hasPendingDictation);
 
+  const providerModelRequestTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+  const idleProviderPrefetchHandleRef = useRef<ReturnType<
+    typeof InteractionManager.runAfterInteractions
+  > | null>(null);
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
   const openDropdownSheet = useCallback((key: DropdownKey) => {
     setOpenDropdown(key);
@@ -397,6 +413,46 @@ function AgentFlowModal({
   const closeDropdown = useCallback(() => {
     setOpenDropdown(null);
   }, []);
+  const clearQueuedProviderModelRequest = useCallback((serverId: string | null) => {
+    if (!serverId) {
+      return;
+    }
+    const timer = providerModelRequestTimersRef.current.get(serverId);
+    if (timer) {
+      clearTimeout(timer);
+      providerModelRequestTimersRef.current.delete(serverId);
+    }
+  }, []);
+  const queueProviderModelFetch = useCallback(
+    (
+      serverId: string | null,
+      targetSession: SessionContextValue | null,
+      options?: { cwd?: string; delayMs?: number }
+    ) => {
+      if (!serverId || !targetSession?.requestProviderModels) {
+        clearQueuedProviderModelRequest(serverId);
+        return;
+      }
+      const currentState = targetSession.providerModels?.get(selectedProvider);
+      if (currentState?.models?.length || currentState?.isLoading) {
+        clearQueuedProviderModelRequest(serverId);
+        return;
+      }
+
+      const delayMs = options?.delayMs ?? 0;
+      const trigger = () => {
+        providerModelRequestTimersRef.current.delete(serverId);
+        targetSession.requestProviderModels(selectedProvider, options?.cwd ? { cwd: options.cwd } : undefined);
+      };
+      clearQueuedProviderModelRequest(serverId);
+      if (delayMs > 0) {
+        providerModelRequestTimersRef.current.set(serverId, setTimeout(trigger, delayMs));
+      } else {
+        trigger();
+      }
+    },
+    [clearQueuedProviderModelRequest, selectedProvider]
+  );
 
   const setProviderFromUser = useCallback((provider: AgentProvider) => {
     userEditedPreferencesRef.current.provider = true;
@@ -586,18 +642,28 @@ function AgentFlowModal({
   const modelError = modelState?.error ?? null;
 
   useEffect(() => {
-    if (!isVisible || !providerModels || !requestProviderModels || !isTargetDaemonReady) {
+    const targetServerId = selectedServerId ?? session?.serverId ?? null;
+    if (!isVisible || !isTargetDaemonReady || !targetServerId || !session) {
+      clearQueuedProviderModelRequest(targetServerId);
       return;
     }
     const trimmed = workingDir.trim();
-    const currentState = providerModels.get(selectedProvider);
-    if (currentState?.models?.length || currentState?.isLoading) {
-      return;
-    }
-    requestProviderModels(selectedProvider, {
+    queueProviderModelFetch(targetServerId, session, {
       cwd: trimmed.length > 0 ? trimmed : undefined,
+      delayMs: 180,
     });
-  }, [isVisible, providerModels, requestProviderModels, selectedProvider, workingDir, isTargetDaemonReady]);
+    return () => {
+      clearQueuedProviderModelRequest(targetServerId);
+    };
+  }, [
+    clearQueuedProviderModelRequest,
+    isTargetDaemonReady,
+    isVisible,
+    queueProviderModelFetch,
+    selectedServerId,
+    session,
+    workingDir,
+  ]);
   const setPromptHeight = useCallback((nextHeight: number) => {
     const bounded = Math.min(
       PROMPT_MAX_HEIGHT,
@@ -790,6 +856,51 @@ function AgentFlowModal({
     focusPromptInput();
   }, [focusPromptInput, isCreateFlow, isVisible, shouldAutoFocusPrompt]);
 
+  const logOfflineDaemonAction = useCallback(
+    (action: "create" | "resume" | "dictation" | "import_list", reason?: string | null) => {
+      trackAnalyticsEvent({
+        type: "offline_daemon_action_attempt",
+        action,
+        daemonId: selectedDaemonId,
+        activeDaemonId,
+        status: selectedDaemonStatus ?? null,
+        isBackground: isBackgroundDaemonTarget,
+        reason: reason ?? daemonAvailabilityError,
+      });
+    },
+    [
+      activeDaemonId,
+      daemonAvailabilityError,
+      isBackgroundDaemonTarget,
+      selectedDaemonId,
+      selectedDaemonStatus,
+    ]
+  );
+
+  const logBackgroundAgentAction = useCallback(
+    (
+      action: "create" | "resume",
+      payload: { cwd?: string; provider?: string; modeId?: string; model?: string; baseBranch?: string }
+    ) => {
+      if (!isBackgroundDaemonTarget || !selectedDaemonId) {
+        return;
+      }
+      trackAnalyticsEvent({
+        type: "background_agent_action",
+        action,
+        daemonId: selectedDaemonId,
+        activeDaemonId,
+        isBackground: true,
+        cwd: payload.cwd,
+        provider: payload.provider,
+        modeId: payload.modeId,
+        model: payload.model,
+        baseBranch: payload.baseBranch,
+      });
+    },
+    [activeDaemonId, isBackgroundDaemonTarget, selectedDaemonId]
+  );
+
   const resetFormState = useCallback(() => {
     setInitialPrompt("");
     promptBaselineHeightRef.current = null;
@@ -820,7 +931,14 @@ function AgentFlowModal({
   }, [cancelRepoInfo, resetRepoInfo, setPromptHeight]);
 
   const handleDictationStart = useCallback(async () => {
-    if (!isCreateFlow || isLoading || !isWsConnected || isDictating || isDictationProcessing) {
+    if (!isCreateFlow || isLoading || isDictating || isDictationProcessing) {
+      return;
+    }
+    if (!isTargetDaemonReady || !isWsConnected) {
+      logOfflineDaemonAction(
+        "dictation",
+        daemonAvailabilityError ?? "WebSocket disconnected"
+      );
       return;
     }
     try {
@@ -834,7 +952,18 @@ function AgentFlowModal({
     } catch (error) {
       console.error("[CreateAgentModal] Failed to start dictation:", error);
     }
-  }, [dictationRecorder, isCreateFlow, isDictating, isDictationProcessing, isLoading, isWsConnected, shouldShowAudioDebug]);
+  }, [
+    daemonAvailabilityError,
+    dictationRecorder,
+    isCreateFlow,
+    isDictating,
+    isDictationProcessing,
+    isLoading,
+    isTargetDaemonReady,
+    isWsConnected,
+    logOfflineDaemonAction,
+    shouldShowAudioDebug,
+  ]);
 
   const handleDictationCancel = useCallback(async () => {
     if (!isDictating) {
@@ -854,7 +983,8 @@ function AgentFlowModal({
     if (!isDictating || isDictationProcessing) {
       return;
     }
-    if (!sendAgentAudio) {
+    if (!sendAgentAudio || !isTargetDaemonReady) {
+      logOfflineDaemonAction("dictation");
       setErrorMessage(
         daemonAvailabilityError ??
           "Connect to the selected daemon before using dictation."
@@ -887,6 +1017,8 @@ function AgentFlowModal({
     dictationRecorder,
     isDictating,
     isDictationProcessing,
+    isTargetDaemonReady,
+    logOfflineDaemonAction,
     sendAgentAudio,
   ]);
 
@@ -898,7 +1030,7 @@ function AgentFlowModal({
 
     pendingNavigationAgentIdRef.current = null;
     if (activeDaemonId !== activeServerId) {
-      setActiveDaemonId(activeServerId);
+      setActiveDaemonId(activeServerId, { source: "agent_create_resume_nav" });
     }
     InteractionManager.runAfterInteractions(() => {
       router.push({
@@ -926,6 +1058,7 @@ function AgentFlowModal({
     (provider?: AgentProvider) => {
       if (!isTargetDaemonReady || !ws || !ws.isConnected) {
         setIsImportLoading(false);
+        logOfflineDaemonAction("import_list");
         setImportError(
           daemonAvailabilityError ??
             "Connect to the selected daemon to load import candidates."
@@ -953,7 +1086,7 @@ function AgentFlowModal({
         setImportError("Unable to load agents to import. Please try again.");
       }
     },
-    [daemonAvailabilityError, isTargetDaemonReady, ws]
+    [daemonAvailabilityError, isTargetDaemonReady, logOfflineDaemonAction, ws]
   );
 
   useEffect(() => {
@@ -1039,6 +1172,16 @@ function AgentFlowModal({
       }
     };
   }, [dictationRecorder]);
+
+  useEffect(() => {
+    return () => {
+      providerModelRequestTimersRef.current.forEach((timer) => {
+        clearTimeout(timer);
+      });
+      providerModelRequestTimersRef.current.clear();
+      idleProviderPrefetchHandleRef.current?.cancel?.();
+    };
+  }, []);
 
   const footerAnimatedStyle = useAnimatedStyle(() => {
     "worklet";
@@ -1129,6 +1272,44 @@ function AgentFlowModal({
     shouldSyncBaseBranchRef.current = true;
   }, [isCreateFlow, isVisible, workingDir]);
 
+  useEffect(() => {
+    const activeServerIds = new Set(daemonEntries.map(({ daemon }) => daemon.id));
+    providerModelRequestTimersRef.current.forEach((timer, serverId) => {
+      if (!activeServerIds.has(serverId)) {
+        clearTimeout(timer);
+        providerModelRequestTimersRef.current.delete(serverId);
+      }
+    });
+
+    idleProviderPrefetchHandleRef.current?.cancel?.();
+    idleProviderPrefetchHandleRef.current = InteractionManager.runAfterInteractions(() => {
+      daemonEntries.forEach(({ daemon, status }) => {
+        const serverId = daemon.id;
+        const isSelected = serverId === selectedServerId;
+        const isReady = status === "online" || status === "idle";
+        if (isSelected || !isReady) {
+          clearQueuedProviderModelRequest(serverId);
+          return;
+        }
+        const daemonSession = sessionDirectory.get(serverId) ?? null;
+        if (!daemonSession?.ws?.isConnected) {
+          return;
+        }
+        queueProviderModelFetch(serverId, daemonSession, { delayMs: 320 });
+      });
+    });
+    return () => {
+      idleProviderPrefetchHandleRef.current?.cancel?.();
+    };
+  }, [
+    clearQueuedProviderModelRequest,
+    daemonEntries,
+    queueProviderModelFetch,
+    selectedProvider,
+    selectedServerId,
+    sessionDirectory,
+  ]);
+
   const trimmedWorkingDir = workingDir.trim();
   const shouldInspectRepo = isCreateFlow && isVisible && trimmedWorkingDir.length > 0;
   const repoAvailabilityError = shouldInspectRepo && (!isTargetDaemonReady || !isWsConnected)
@@ -1208,6 +1389,7 @@ function AgentFlowModal({
     }
 
     if (!createAgent || !isTargetDaemonReady) {
+      logOfflineDaemonAction("create");
       setErrorMessage(
         daemonAvailabilityError ??
           "Connect to the selected daemon before creating an agent."
@@ -1257,9 +1439,17 @@ function AgentFlowModal({
                 createWorktree: true,
                 worktreeSlug: (worktreeSlug || branchName).trim(),
               }
-            : {}),
+          : {}),
         }
       : undefined;
+
+    logBackgroundAgentAction("create", {
+      cwd: trimmedPath,
+      provider: selectedProvider,
+      modeId,
+      model: trimmedModel,
+      baseBranch: trimmedBaseBranch || undefined,
+    });
 
     try {
       createAgent({
@@ -1285,6 +1475,8 @@ function AgentFlowModal({
     repoInfo,
     selectedMode,
     modeOptions,
+    logBackgroundAgentAction,
+    logOfflineDaemonAction,
     selectedProvider,
     isLoading,
     validateWorktreeName,
@@ -1300,12 +1492,17 @@ function AgentFlowModal({
         return;
       }
       if (!resumeAgent || !isTargetDaemonReady) {
+        logOfflineDaemonAction("resume");
         setImportError(
           daemonAvailabilityError ??
             "Connect to the selected daemon before importing an agent."
         );
         return;
       }
+      logBackgroundAgentAction("resume", {
+        cwd: candidate.cwd,
+        provider: candidate.provider,
+      });
       setErrorMessage("");
       const requestId = generateMessageId();
       pendingRequestIdRef.current = requestId;
@@ -1318,6 +1515,8 @@ function AgentFlowModal({
     [
       daemonAvailabilityError,
       isLoading,
+      logBackgroundAgentAction,
+      logOfflineDaemonAction,
       isTargetDaemonReady,
       resumeAgent,
       setImportError,
@@ -1955,7 +2154,7 @@ function AgentFlowModal({
                   <View style={styles.resumeEmptyState}>
                     <Text style={styles.resumeEmptyTitle}>No agents to import</Text>
                     <Text style={styles.resumeEmptySubtitle}>
-                      We'll load the latest Claude and Codex sessions from your
+                      We will load the latest Claude and Codex sessions from your
                       local history so you can import them.
                     </Text>
                     <Pressable
@@ -2422,7 +2621,7 @@ function WorkingDirectoryDropdown({
         />
         {!hasRecentPaths && !showCustomOption ? (
           <Text style={styles.helperText}>
-            We'll remember the directories you use most often.
+            We will remember the directories you use most often.
           </Text>
         ) : null}
         {showCustomOption ? (

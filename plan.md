@@ -57,6 +57,8 @@
 - [x] Restore the Import Agent flow (modal entry, mutation wiring, navigation) without undoing the multi-daemon routing work from previous steps.
   - After reworking Home/Header and the modals, the import trigger disappeared and existing deep links no longer reach a functioning flow. Bring the Import CTA back (Home, footer, agent screen), ensure it accepts a daemon id, and verify the import mutation routes to the selected daemon without regressing the new server-aware navigation.
   - Rewired the import buttons across Home (header + empty state with deep-link auto open), the global footer, and the agent action menu so every trigger passes the correct daemon id into `ImportAgentModal`, and ran `npm run typecheck --workspace=@paseo/app`.
+- [x] Guard Create/Resume/Dictation actions when the active daemon is offline and no explicit daemon is selected.
+  - The offline gate only ran for an explicitly chosen `serverId`, so opening the modal on an offline active daemon still fired create/resume/dictation websocket sends; `packages/app/src/components/create-agent-modal.tsx` now derives availability from the effective daemon id and requires an online websocket before enabling those flows.
 
 ### 4. Connection State & Persistence
 - [x] Stop the Settings daemon list from firing “Daemon unavailable” alerts when background daemons are offline by reading session snapshots via `useSessionForServer` and only performing restart/test flows when a session is actually mounted.
@@ -75,18 +77,35 @@
 ### 5. Performance & UX Polish
 - [x] Ensure agent image attachments preserve MIME metadata and are base64 encoded before hitting the daemon.
   - `packages/app/src/contexts/session-context.tsx:1198` now accepts `{ uri, mimeType }` attachments and reads them via `expo-file-system`, and `packages/app/src/components/agent-input-area.tsx:140` forwards the stored metadata so queued sends no longer drop screenshots (`npm run typecheck` passes).
-- [ ] Profile the Create Agent modal—debounce expensive effects (e.g., provider model fetches) per server and prefetch metadata when daemons are idle to eliminate the visible lag when switching targets.
-- [ ] Audit websocket usage so background `SessionProvider`s never duplicate connections for the active daemon (one live connection per daemon id).
-- [ ] Enforce “impossible states are impossible” across UI/data models (strict typing, discriminated unions, exhaustive switches) so complex flows remain clean without relying on Expo E2E tests.
+- [x] Profile the Create Agent modal—debounce expensive effects (e.g., provider model fetches) per server and prefetch metadata when daemons are idle to eliminate the visible lag when switching targets.
+  - Added per-server debounce + cleanup around provider model requests, scheduled idle-time prefetch for online daemons via the session directory, and verified with `npm run typecheck --workspace=@paseo/app`.
+- [x] Audit websocket usage so background `SessionProvider`s never duplicate connections for the active daemon (one live connection per daemon id).
+  - Tracked session accessors by role, had background hosts register as `background`, filtered out daemons that already have a primary session before spinning up background connections, and ran `npm run typecheck --workspace=@paseo/app`.
+- [x] Enforce “impossible states are impossible” across UI/data models (strict typing, discriminated unions, exhaustive switches) so complex flows remain clean without relying on Expo E2E tests.
+  - Tightened daemon connection state to a discriminated union with exhaustiveness checks, added an `assertUnreachable` helper for status switches, and re-ran `npm run typecheck --workspace=@paseo/app`.
 
 ### 6. Observability & Tooling
-- [ ] Add structured logging for daemon connection lifecycle (connect, error, auto-connect skip) so we can diagnose “multi daemon” issues from device logs.
-- [ ] Emit analytics when users create/resume agents on background daemons, attempt actions while those daemons are offline, or switch default daemons—helps prioritize reconnection UX.
-- [ ] Document the architecture in `docs/multi-daemon.md` (registry, sessions, routing rules) so future contributors understand how to extend it.
-- [ ] Land the accumulated multi-daemon changes in source control with a clean commit (linted, type-checked, plan updated).
+- [x] Add structured logging for daemon connection lifecycle (connect, error, auto-connect skip) so we can diagnose “multi daemon” issues from device logs.
+  - Added connection state transition logs with daemon ids/labels plus auto-connect skip logs for disabled daemons, and ran `npm run typecheck --workspace=@paseo/app`.
+- [x] Emit analytics when users create/resume agents on background daemons, attempt actions while those daemons are offline, or switch default daemons—helps prioritize reconnection UX.
+  - Added a centralized analytics helper, instrumented active-daemon switches plus background create/resume flows (including offline/blocked actions like dictation and import refresh), and ran `npm run typecheck --workspace=@paseo/app`.
+- [x] Document the architecture in `docs/multi-daemon.md` (registry, sessions, routing rules) so future contributors understand how to extend it.
+  - Added a multi-daemon architecture guide detailing the registry, connection/session hosts, session directory access, routing rules, and extension guidelines (docs-only change; no tests needed).
+- [x] Land the accumulated multi-daemon changes in source control with a clean commit (linted, type-checked, plan updated).
+  - Fixed lint violations around guarded daemon screens, added an opt-in nullable `useDaemonSession`, reran `npm run lint --workspace=@paseo/app` (warnings only) and `npm run typecheck --workspace=@paseo/app`, and prepared the tree for a clean commit.
 
 ### Review
 - [x] 2025-11-26 Reviewer sanity check for the recent multi-daemon rollout work.
   - Confirmed the new `useDaemonSession` hook, guarded Agent/Git Diff/File Explorer screens, and server-aware Create/Import flows align with the documented fixes; no regressions or missing follow-ups spotted, so no additional tasks were opened.
 - [x] 2025-11-26 Reviewer follow-up on session isolation across daemons.
   - Found that the active `SessionProvider` kept its React state when switching daemons, so stale agents/permissions could leak between server contexts; fixed by keying the provider in `_layout.tsx` so the tree remounts on each daemon change.
+- [x] 2025-11-26 Reviewer pass on provider model prefetch/perf work in CreateAgentModal.
+  - Idle provider-model prefetch timers could still fire after a daemon was removed; cleared stale timers before scheduling background fetches so requests don't target deleted entries (`packages/app/src/components/create-agent-modal.tsx:1198`) and re-ran `npm run typecheck --workspace=@paseo/app`.
+- [x] 2025-11-26 Reviewer pass on connection-state/SessionProvider role refactor.
+  - Checked the new discriminated `ConnectionState`, role-aware session accessor registry, and `MultiDaemonSessionHost` filters to avoid duplicate websocket sessions; reran `npm run typecheck --workspace=@paseo/app` and didn't spot regressions or new follow-ups to open.
+- [x] 2025-11-26 Reviewer pass on agent route daemon selection.
+  - Deep links with unregistered daemon ids repeatedly forced `setActiveDaemonId`, remounting the root `SessionProvider` and flashing the missing-daemon screen; `/agent/[serverId]/[agentId]` now ignores unknown daemons and shows a clear unavailable state instead.
+- [x] 2025-11-27 Reviewer pass on connection status UX.
+  - Offline daemons were rendered with a muted tone via `getConnectionStatusTone`, hiding them in the connection banners; mapped offline to `warning` so settings/home surface disconnected daemons in amber (`packages/app/src/utils/daemons.ts`).
+- [x] 2025-11-27 Reviewer fix for provider model fetching on the active daemon.
+  - `CreateAgentModal` skipped provider model requests whenever no daemon was explicitly selected (active daemon fallback), so the model list never refreshed after changing the working directory. The effect now targets the effective daemon id instead of requiring `selectedServerId`, and `npm run typecheck --workspace=@paseo/app` passes (`packages/app/src/components/create-agent-modal.tsx`).

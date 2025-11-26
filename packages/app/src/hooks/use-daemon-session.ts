@@ -28,15 +28,24 @@ export function getSessionForServer(
 
 type UseDaemonSessionOptions = {
   suppressUnavailableAlert?: boolean;
+  allowUnavailable?: boolean;
 };
 
+export function useDaemonSession(
+  serverId?: string,
+  options?: UseDaemonSessionOptions & { allowUnavailable?: false }
+): SessionContextValue;
+export function useDaemonSession(
+  serverId: string | undefined,
+  options: UseDaemonSessionOptions & { allowUnavailable: true }
+): SessionContextValue | null;
 export function useDaemonSession(serverId?: string, options?: UseDaemonSessionOptions) {
   const activeSession = useSession();
   const sessionDirectory = useSessionDirectory();
   const { connectionStates } = useDaemonConnections();
   const alertedDaemonsRef = useRef<Set<string>>(new Set());
   const loggedDaemonsRef = useRef<Set<string>>(new Set());
-  const { suppressUnavailableAlert = false } = options ?? {};
+  const { suppressUnavailableAlert = false, allowUnavailable = false } = options ?? {};
 
   const targetServerId = serverId ?? activeSession.serverId;
   const isActiveSession = targetServerId === activeSession.serverId;
@@ -63,6 +72,10 @@ export function useDaemonSession(serverId?: string, options?: UseDaemonSessionOp
       if (!loggedDaemonsRef.current.has(targetServerId)) {
         loggedDaemonsRef.current.add(targetServerId);
         console.warn(`[useDaemonSession] Session unavailable for daemon "${label}" (${status}).`);
+      }
+
+      if (allowUnavailable) {
+        return null;
       }
     }
     throw error;

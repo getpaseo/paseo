@@ -1,4 +1,5 @@
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
+import { assertUnreachable } from "./exhaustive";
 
 export function formatConnectionStatus(status: ConnectionStatus): string {
   switch (status) {
@@ -10,8 +11,10 @@ export function formatConnectionStatus(status: ConnectionStatus): string {
       return "Offline";
     case "error":
       return "Error";
-    default:
+    case "idle":
       return "Idle";
+    default:
+      return assertUnreachable(status);
   }
 }
 
@@ -25,7 +28,11 @@ export function getConnectionStatusTone(status: ConnectionStatus): ConnectionSta
       return "warning";
     case "error":
       return "error";
-    default:
+    case "offline":
+      return "warning";
+    case "idle":
       return "muted";
+    default:
+      return assertUnreachable(status);
   }
 }

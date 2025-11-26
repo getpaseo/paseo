@@ -8,7 +8,7 @@ import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { type AggregatedAgentGroup } from "@/hooks/use-aggregated-agents";
-import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 interface AgentListProps {
   agentGroups: AggregatedAgentGroup[];
@@ -19,29 +19,20 @@ export function AgentList({ agentGroups }: AgentListProps) {
   const { setActiveDaemonId } = useDaemonConnections();
   const [actionAgent, setActionAgent] = useState<Agent | null>(null);
   const [actionAgentServerId, setActionAgentServerId] = useState<string | null>(null);
-  let actionSession = null;
-  let actionSessionUnavailable = false;
-
-  try {
-    actionSession = useDaemonSession(actionAgentServerId ?? undefined, { suppressUnavailableAlert: true });
-  } catch (error) {
-    if (error instanceof DaemonSessionUnavailableError) {
-      actionSessionUnavailable = true;
-      actionSession = null;
-    } else {
-      throw error;
-    }
-  }
+  const actionSession = useDaemonSession(actionAgentServerId ?? undefined, {
+    suppressUnavailableAlert: true,
+    allowUnavailable: true,
+  });
 
   const deleteAgent = actionSession?.deleteAgent;
   const isActionSheetVisible = actionAgent !== null;
-  const isActionDaemonUnavailable = Boolean(actionAgentServerId && actionSessionUnavailable);
+  const isActionDaemonUnavailable = Boolean(actionAgentServerId && !actionSession);
 
   const handleAgentPress = useCallback((serverId: string, agentId: string) => {
     if (isActionSheetVisible) {
       return;
     }
-    setActiveDaemonId(serverId);
+    setActiveDaemonId(serverId, { source: "agent_row_press" });
     router.push({
       pathname: "/agent/[serverId]/[agentId]",
       params: {
