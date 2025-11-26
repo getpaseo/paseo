@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { MutableRefObject } from "react";
 import {
   View,
@@ -59,31 +59,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[4],
   },
-  hostSelectorRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-  },
-  hostSelectorChip: {
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.card,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  hostSelectorChipSelected: {
-    backgroundColor: theme.colors.foreground,
-    borderColor: theme.colors.foreground,
-  },
-  hostSelectorChipText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-  },
-  hostSelectorChipTextSelected: {
-    color: theme.colors.background,
-  },
   label: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
@@ -95,51 +70,6 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
-  },
-  inputDisabled: {
-    opacity: theme.opacity[50],
-  },
-  helperText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    marginBottom: theme.spacing[3],
-  },
-  testButton: {
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[3],
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.palette.blue[600],
-  },
-  testButtonDisabled: {
-    backgroundColor: theme.colors.muted,
-  },
-  testButtonText: {
-    color: theme.colors.palette.white,
-    fontWeight: theme.fontWeight.semibold,
-    marginLeft: theme.spacing[2],
-  },
-  testResultSuccess: {
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.palette.green[900],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.palette.green[600],
-  },
-  testResultError: {
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.palette.red[900],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.palette.red[600],
-  },
-  testResultTextSuccess: {
-    color: theme.colors.palette.green[200],
-  },
-  testResultTextError: {
-    color: theme.colors.palette.red[200],
   },
   settingCard: {
     backgroundColor: theme.colors.card,
@@ -350,53 +280,16 @@ export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
   const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon } = useDaemonRegistry();
   const { connectionStates, updateConnectionStatus } = useDaemonConnections();
-  const [selectedDaemonId, setSelectedDaemonId] = useState<string | null>(null);
-  const selectedDaemon = useMemo(() => {
-    if (!selectedDaemonId) {
-      return null;
-    }
-    return daemons.find((daemon) => daemon.id === selectedDaemonId) ?? null;
-  }, [daemons, selectedDaemonId]);
-  const selectedDaemonSession = useSessionForServer(selectedDaemonId);
-  const selectedDaemonConnection = selectedDaemonId ? connectionStates.get(selectedDaemonId) : null;
-  const selectedDaemonStatusLabel = selectedDaemonConnection ? formatConnectionStatus(selectedDaemonConnection.status) : null;
-
-  const [serverUrl, setServerUrl] = useState(selectedDaemon?.wsUrl ?? "");
   const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
   const [keepScreenOn, setKeepScreenOn] = useState(settings.keepScreenOn);
   const [theme, setTheme] = useState<"dark" | "light" | "auto">(settings.theme);
   const [hasChanges, setHasChanges] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    success: boolean;
-    message: string;
-  } | null>(null);
   const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
   const [daemonForm, setDaemonForm] = useState<{ id: string | null; label: string; wsUrl: string }>({ id: null, label: "", wsUrl: "" });
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
   const [daemonTestStates, setDaemonTestStates] = useState<Map<string, DaemonTestState>>(() => new Map());
   const isLoading = settingsLoading || daemonLoading;
-  const baselineServerUrl = selectedDaemon?.wsUrl ?? "";
   const isMountedRef = useRef(true);
-  const isServerConfigLocked = Boolean(selectedDaemon && !selectedDaemonSession);
-  const serverDescriptionText = selectedDaemon
-    ? `${selectedDaemon.label}${selectedDaemonStatusLabel ? ` - ${selectedDaemonStatusLabel}` : ""}${
-        isServerConfigLocked ? " - Session unavailable" : ""
-      }`
-    : "Add a host to configure its server URL.";
-  const serverHelperText = isServerConfigLocked
-    ? `Connect to ${selectedDaemon?.label ?? "this host"} to edit its server URL.`
-    : "Must be a valid WebSocket URL (ws:// or wss://)";
-
-  useEffect(() => {
-    if (daemons.length === 0) {
-      setSelectedDaemonId(null);
-      return;
-    }
-    if (!selectedDaemonId || !daemons.some((daemon) => daemon.id === selectedDaemonId)) {
-      setSelectedDaemonId(daemons[0].id);
-    }
-  }, [daemons, selectedDaemonId]);
 
   useEffect(() => {
     return () => {
@@ -510,10 +403,8 @@ export default function SettingsScreen() {
       };
       if (daemonForm.id) {
         await updateDaemon(daemonForm.id, payload);
-        setSelectedDaemonId(daemonForm.id);
       } else {
-        const created = await addDaemon(payload);
-        setSelectedDaemonId(created.id);
+        await addDaemon(payload);
       }
       handleCloseDaemonForm();
     } catch (error) {
@@ -586,19 +477,14 @@ export default function SettingsScreen() {
     setTheme(settings.theme);
   }, [settings]);
 
-  useEffect(() => {
-    setServerUrl(selectedDaemon?.wsUrl ?? "");
-  }, [selectedDaemon?.wsUrl]);
-
   // Track changes
   useEffect(() => {
     const changed =
-      serverUrl !== baselineServerUrl ||
       useSpeaker !== settings.useSpeaker ||
       keepScreenOn !== settings.keepScreenOn ||
       theme !== settings.theme;
     setHasChanges(changed);
-  }, [serverUrl, baselineServerUrl, useSpeaker, keepScreenOn, theme, settings]);
+  }, [useSpeaker, keepScreenOn, theme, settings]);
 
   function validateServerUrl(url: string): boolean {
     try {
@@ -609,48 +495,13 @@ export default function SettingsScreen() {
     }
   }
 
-  function deriveDaemonLabel(url: string): string {
-    try {
-      const parsed = new URL(url);
-      return parsed.hostname || "Host";
-    } catch {
-      return "Host";
-    }
-  }
-
   async function handleSave() {
-    // Validate server URL
-    if (!validateServerUrl(serverUrl)) {
-      Alert.alert(
-        "Invalid URL",
-        "Server URL must be a valid WebSocket URL (ws:// or wss://)",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
     try {
-      const trimmedUrl = serverUrl.trim();
-
       await updateSettings({
         useSpeaker,
         keepScreenOn,
         theme,
       });
-
-      if (selectedDaemon) {
-        await updateDaemon(selectedDaemon.id, {
-          wsUrl: trimmedUrl,
-          label: selectedDaemon.label || deriveDaemonLabel(trimmedUrl),
-        });
-        setSelectedDaemonId(selectedDaemon.id);
-      } else {
-        const created = await addDaemon({
-          label: deriveDaemonLabel(trimmedUrl),
-          wsUrl: trimmedUrl,
-        });
-        setSelectedDaemonId(created.id);
-      }
 
       Alert.alert(
         "Settings Saved",
@@ -700,48 +551,6 @@ export default function SettingsScreen() {
   const restartConfirmationMessage =
     "This will immediately stop the Voice Dev backend process. The app will disconnect until it restarts.";
 
-
-  async function handleTestConnection() {
-    if (isServerConfigLocked) {
-      Alert.alert(
-        "Session unavailable",
-        `${selectedDaemon?.label ?? "This host"} is not connected. Connect to it before testing the URL.`
-      );
-      return;
-    }
-
-    if (!validateServerUrl(serverUrl)) {
-      Alert.alert(
-        "Invalid URL",
-        "Server URL must be a valid WebSocket URL (ws:// or wss://)",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
-    setIsTesting(true);
-    setTestResult(null);
-
-    try {
-      await testServerConnection(serverUrl);
-      setTestResult({
-        success: true,
-        message: "Connection successful",
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Connection failed - check URL and network";
-      setTestResult({
-        success: false,
-        message,
-      });
-    } finally {
-      setIsTesting(false);
-    }
-  }
-
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -756,94 +565,6 @@ export default function SettingsScreen() {
 
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>
-          {/* Server Configuration */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Server Configuration</Text>
-            {daemons.length > 0 ? (
-              <View style={styles.hostSelectorRow}>
-                {daemons.map((daemon) => {
-                  const isSelected = daemon.id === selectedDaemonId;
-                  return (
-                    <Pressable
-                      key={daemon.id}
-                      style={[styles.hostSelectorChip, isSelected && styles.hostSelectorChipSelected]}
-                      onPress={() => setSelectedDaemonId(daemon.id)}
-                    >
-                      <Text
-                        style={[styles.hostSelectorChipText, isSelected && styles.hostSelectorChipTextSelected]}
-                        numberOfLines={1}
-                      >
-                        {daemon.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            ) : null}
-            <Text style={styles.helperText}>{serverDescriptionText}</Text>
-
-            <Text style={styles.label}>WebSocket URL</Text>
-            <TextInput
-              style={[styles.input, isServerConfigLocked && styles.inputDisabled]}
-              placeholder="wss://example.com/ws"
-              placeholderTextColor={defaultTheme.colors.mutedForeground}
-              value={serverUrl}
-              onChangeText={(text) => {
-                setServerUrl(text);
-                setTestResult(null);
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              editable={!isServerConfigLocked}
-              selectTextOnFocus={!isServerConfigLocked}
-            />
-            <Text style={styles.helperText}>
-              {serverHelperText}
-            </Text>
-
-            {/* Test Connection Button */}
-            <Pressable
-              onPress={handleTestConnection}
-              disabled={isTesting || !validateServerUrl(serverUrl)}
-              style={[
-                styles.testButton,
-                (isTesting || !validateServerUrl(serverUrl) || isServerConfigLocked) &&
-                  styles.testButtonDisabled,
-              ]}
-            >
-              {isTesting ? (
-                <>
-                  <ActivityIndicator size="small" color="#fff" />
-                  <Text style={styles.testButtonText}>Testing...</Text>
-                </>
-              ) : (
-                <Text style={styles.testButtonText}>Test Connection</Text>
-              )}
-            </Pressable>
-
-            {/* Test Result */}
-            {testResult && (
-              <View
-                style={
-                  testResult.success
-                    ? styles.testResultSuccess
-                    : styles.testResultError
-                }
-              >
-                <Text
-                  style={
-                    testResult.success
-                      ? styles.testResultTextSuccess
-                      : styles.testResultTextError
-                  }
-                >
-                  {testResult.message}
-                </Text>
-              </View>
-            )}
-          </View>
-
           {/* Host Management */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Hosts</Text>
