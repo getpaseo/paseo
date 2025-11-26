@@ -1,131 +1,143 @@
 import { View, Text, Pressable, ScrollView, Modal } from "react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { Agent } from "@/contexts/session-context";
-import { useSession } from "@/contexts/session-context";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { type AggregatedAgentGroup } from "@/hooks/use-aggregated-agents";
+import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
 
 interface AgentListProps {
-  agents: Map<string, Agent>;
+  agentGroups: AggregatedAgentGroup[];
 }
 
-export function AgentList({ agents }: AgentListProps) {
+export function AgentList({ agentGroups }: AgentListProps) {
   const { theme } = useUnistyles();
-  const { deleteAgent } = useSession();
+  const { setActiveDaemonId } = useDaemonConnections();
   const [actionAgent, setActionAgent] = useState<Agent | null>(null);
+  const [actionAgentServerId, setActionAgentServerId] = useState<string | null>(null);
+  let actionSession = null;
+  let actionSessionUnavailable = false;
+
+  try {
+    actionSession = useDaemonSession(actionAgentServerId ?? undefined, { suppressUnavailableAlert: true });
+  } catch (error) {
+    if (error instanceof DaemonSessionUnavailableError) {
+      actionSessionUnavailable = true;
+      actionSession = null;
+    } else {
+      throw error;
+    }
+  }
+
+  const deleteAgent = actionSession?.deleteAgent;
   const isActionSheetVisible = actionAgent !== null;
-  
-  // Sort agents by status so running agents stay at the top, then fall back to the
-  // persisted timestamp of the last user message, and finally their last activity
-  const agentArray = useMemo(() => {
-    return Array.from(agents.values()).sort((a, b) => {
-      const aIsRunning = a.status === "running";
-      const bIsRunning = b.status === "running";
+  const isActionDaemonUnavailable = Boolean(actionAgentServerId && actionSessionUnavailable);
 
-      if (aIsRunning && !bIsRunning) {
-        return -1;
-      }
-      if (!aIsRunning && bIsRunning) {
-        return 1;
-      }
-
-      const sortA = (a.lastUserMessageAt ?? a.lastActivityAt).getTime();
-      const sortB = (b.lastUserMessageAt ?? b.lastActivityAt).getTime();
-      return sortB - sortA;
-    });
-  }, [agents]);
-
-  const handleAgentPress = useCallback((agentId: string) => {
+  const handleAgentPress = useCallback((serverId: string, agentId: string) => {
     if (isActionSheetVisible) {
       return;
     }
-    router.push(`/agent/${agentId}`);
-  }, [isActionSheetVisible]);
+    setActiveDaemonId(serverId);
+    router.push({
+      pathname: "/agent/[serverId]/[agentId]",
+      params: {
+        serverId,
+        agentId,
+      },
+    });
+  }, [isActionSheetVisible, setActiveDaemonId]);
 
-  const handleAgentLongPress = useCallback((agent: Agent) => {
+  const handleAgentLongPress = useCallback((serverId: string, agent: Agent) => {
+    setActionAgentServerId(serverId);
     setActionAgent(agent);
   }, []);
 
   const handleCloseActionSheet = useCallback(() => {
     setActionAgent(null);
+    setActionAgentServerId(null);
   }, []);
 
   const handleDeleteAgent = useCallback(() => {
-    if (!actionAgent) {
+    if (!actionAgent || !deleteAgent) {
       return;
     }
     deleteAgent(actionAgent.id);
     setActionAgent(null);
+    setActionAgentServerId(null);
   }, [actionAgent, deleteAgent]);
 
   return (
     <>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {agentArray.map((agent) => {
-          const statusColor = getAgentStatusColor(agent.status);
-          const statusLabel = getAgentStatusLabel(agent.status);
-          const timeAgo = formatTimeAgo(agent.lastActivityAt);
-          const providerLabel = getAgentProviderDefinition(agent.provider).label;
+        {agentGroups.map(({ serverId, serverLabel, agents }) => (
+          <View key={serverId} style={styles.section}>
+            <Text style={styles.sectionLabel}>{serverLabel}</Text>
+            {agents.map((agent) => {
+              const statusColor = getAgentStatusColor(agent.status);
+              const statusLabel = getAgentStatusLabel(agent.status);
+              const timeAgo = formatTimeAgo(agent.lastActivityAt);
+              const providerLabel = getAgentProviderDefinition(agent.provider).label;
+              const rowServerId = agent.serverId ?? serverId;
 
-          return (
-            <Pressable
-              key={agent.id}
-              style={({ pressed }) => [
-                styles.agentItem,
-                pressed && styles.agentItemPressed,
-              ]}
-              onPress={() => handleAgentPress(agent.id)}
-              onLongPress={() => handleAgentLongPress(agent)}
-            >
-              <View style={styles.agentContent}>
-                <Text
-                  style={styles.agentTitle}
-                  numberOfLines={1}
+              return (
+                <Pressable
+                  key={`${rowServerId}:${agent.id}`}
+                  style={({ pressed }) => [
+                    styles.agentItem,
+                    pressed && styles.agentItemPressed,
+                  ]}
+                  onPress={() => handleAgentPress(rowServerId, agent.id)}
+                  onLongPress={() => handleAgentLongPress(rowServerId, agent)}
                 >
-                  {agent.title || "New Agent"}
-                </Text>
-
-                <Text
-                  style={styles.agentDirectory}
-                  numberOfLines={1}
-                >
-                  {agent.cwd}
-                </Text>
-
-                <View style={styles.statusRow}>
-                  <View style={styles.statusGroup}>
-                    <View
-                      style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                  <View style={styles.agentContent}>
+                    <Text
+                      style={styles.agentTitle}
+                      numberOfLines={1}
                     >
-                      <Text
-                        style={[styles.providerText, { color: theme.colors.mutedForeground }]}
-                        numberOfLines={1}
-                      >
-                        {providerLabel}
-                      </Text>
-                    </View>
+                      {agent.title || "New Agent"}
+                    </Text>
 
-                    <View style={styles.statusBadge}>
-                      <View
-                        style={[styles.statusDot, { backgroundColor: statusColor }]}
-                      />
-                      <Text style={[styles.statusText, { color: statusColor }]}>
-                        {statusLabel}
+                    <Text style={styles.agentDirectory} numberOfLines={1}>
+                      {agent.cwd}
+                    </Text>
+
+                    <View style={styles.statusRow}>
+                      <View style={styles.statusGroup}>
+                        <View
+                          style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                        >
+                          <Text
+                            style={[styles.providerText, { color: theme.colors.mutedForeground }]}
+                            numberOfLines={1}
+                          >
+                            {providerLabel}
+                          </Text>
+                        </View>
+
+                        <View style={styles.statusBadge}>
+                          <View
+                            style={[styles.statusDot, { backgroundColor: statusColor }]}
+                          />
+                          <Text style={[styles.statusText, { color: statusColor }]}>
+                            {statusLabel}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.timeAgo}>
+                        {timeAgo}
                       </Text>
                     </View>
                   </View>
-
-                  <Text style={styles.timeAgo}>
-                    {timeAgo}
-                  </Text>
-                </View>
-              </View>
-            </Pressable>
-          );
-        })}
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
       </ScrollView>
 
       <Modal
@@ -142,13 +154,23 @@ export function AgentList({ agents }: AgentListProps) {
               {actionAgent?.title || "Delete agent"}
             </Text>
             <Text style={styles.sheetSubtitle}>
-              Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project.
+              {isActionDaemonUnavailable
+                ? "Connect this daemon before managing its agents."
+                : "Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project."}
             </Text>
             <Pressable
+              disabled={!deleteAgent || isActionDaemonUnavailable}
               style={[styles.sheetButton, styles.sheetDeleteButton]}
               onPress={handleDeleteAgent}
             >
-              <Text style={styles.sheetDeleteText}>Delete agent</Text>
+              <Text
+                style={[
+                  styles.sheetDeleteText,
+                  (!deleteAgent || isActionDaemonUnavailable) && styles.sheetDeleteTextDisabled,
+                ]}
+              >
+                {isActionDaemonUnavailable ? "Daemon offline" : "Delete agent"}
+              </Text>
             </Pressable>
             <Pressable
               style={[styles.sheetButton, styles.sheetCancelButton]}
@@ -168,6 +190,17 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
+  },
+  section: {
+    marginBottom: theme.spacing[4],
+  },
+  sectionLabel: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.mutedForeground,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: theme.spacing[2],
   },
   agentItem: {
     paddingVertical: theme.spacing[4],
@@ -280,6 +313,9 @@ const styles = StyleSheet.create((theme) => ({
   sheetDeleteText: {
     color: theme.colors.destructiveForeground,
     fontWeight: theme.fontWeight.semibold,
+  },
+  sheetDeleteTextDisabled: {
+    opacity: 0.5,
   },
   sheetCancelButton: {
     backgroundColor: theme.colors.muted,

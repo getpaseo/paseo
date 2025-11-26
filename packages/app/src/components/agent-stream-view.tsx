@@ -10,6 +10,7 @@ import {
   NativeSyntheticEvent,
   InteractionManager,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,7 +32,10 @@ import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
-import { useSession } from "@/contexts/session-context";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useDaemonRequest } from "@/hooks/use-daemon-request";
+import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import type { SessionOutboundMessage } from "@server/server/messages";
 import {
   extractCommandDetails,
   extractEditEntries,
@@ -39,20 +43,24 @@ import {
 } from "@/utils/tool-call-parsers";
 
 const MAX_CHAT_WIDTH = 960;
+type PermissionResolvedMessage = Extract<
+  SessionOutboundMessage,
+  { type: "agent_permission_resolved" }
+>;
 export interface AgentStreamViewProps {
   agentId: string;
+  serverId?: string;
   agent: Agent;
   streamItems: StreamItem[];
   pendingPermissions: Map<string, PendingPermission>;
-  onPermissionResponse: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }
 
 export function AgentStreamView({
   agentId,
+  serverId,
   agent,
   streamItems,
   pendingPermissions,
-  onPermissionResponse,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const insets = useSafeAreaInsets();
@@ -63,7 +71,9 @@ export function AgentStreamView({
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
   const router = useRouter();
-  const { requestDirectoryListing, requestFilePreview } = useSession();
+  const session = useDaemonSession(serverId);
+  const { requestDirectoryListing, requestFilePreview, ws } = session;
+  const resolvedServerId = serverId ?? session.serverId;
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -97,6 +107,7 @@ export function AgentStreamView({
         params: {
           agentId,
           path: normalized.directory,
+          serverId: resolvedServerId,
           ...(normalized.file ? { file: normalized.file } : {}),
           ...(target.lineStart !== undefined
             ? { lineStart: String(target.lineStart) }
@@ -107,7 +118,7 @@ export function AgentStreamView({
         },
       });
     },
-    [agentId, requestDirectoryListing, requestFilePreview, router]
+    [agentId, requestDirectoryListing, requestFilePreview, resolvedServerId, router]
   );
 
   const handleScroll = useCallback(
@@ -316,11 +327,7 @@ export function AgentStreamView({
           {pendingPermissionItems.length > 0 ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
-                <PermissionRequestCard
-                  key={permission.key}
-                  permission={permission}
-                  onResponse={onPermissionResponse}
-                />
+                <PermissionRequestCard key={permission.key} permission={permission} ws={ws} />
               ))}
             </View>
           ) : null}
@@ -333,7 +340,7 @@ export function AgentStreamView({
         </View>
       </View>
     );
-  }, [onPermissionResponse, pendingPermissionItems, showWorkingIndicator]);
+  }, [pendingPermissionItems, showWorkingIndicator, ws]);
 
   const flatListData = useMemo(() => {
     return [...streamItems].reverse();
@@ -512,10 +519,10 @@ function WorkingIndicator() {
 // Permission Request Card Component
 function PermissionRequestCard({
   permission,
-  onResponse,
+  ws,
 }: {
   permission: PendingPermission;
-  onResponse: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
+  ws: UseWebSocketReturn;
 }) {
   const { theme } = useUnistyles();
 
@@ -615,6 +622,50 @@ function PermissionRequestCard({
       },
     }),
     [theme]
+  );
+
+  const permissionResponse = useDaemonRequest<
+    { agentId: string; requestId: string; response: AgentPermissionResponse },
+    { agentId: string; requestId: string },
+    PermissionResolvedMessage
+  >({
+    ws,
+    responseType: "agent_permission_resolved",
+    buildRequest: ({ params }) => ({
+      type: "session",
+      message: {
+        type: "agent_permission_response",
+        agentId: params?.agentId ?? "",
+        requestId: params?.requestId ?? "",
+        response: params?.response ?? { behavior: "deny" },
+      },
+    }),
+    matchResponse: (message, context) =>
+      message.payload.agentId === context.params?.agentId &&
+      message.payload.requestId === context.params?.requestId,
+    getRequestKey: (params) =>
+      params ? `${params.agentId}:${params.requestId}` : "default",
+    selectData: (message) => ({
+      agentId: message.payload.agentId,
+      requestId: message.payload.requestId,
+    }),
+    timeoutMs: 15000,
+    keepPreviousData: false,
+  });
+  const isResponding = permissionResponse.isLoading;
+  const handleResponse = useCallback(
+    (response: AgentPermissionResponse) => {
+      permissionResponse
+        .execute({
+          agentId: permission.agentId,
+          requestId: permission.request.id,
+          response,
+        })
+        .catch((error) => {
+          console.error("[PermissionRequestCard] Failed to respond to permission:", error);
+        });
+    },
+    [permission.agentId, permission.request.id, permissionResponse]
   );
 
   return (
@@ -778,18 +829,21 @@ function PermissionRequestCard({
             permissionStyles.optionButton,
             { backgroundColor: theme.colors.primary },
           ]}
-          onPress={() =>
-            onResponse(permission.agentId, request.id, { behavior: "allow" })
-          }
+          onPress={() => handleResponse({ behavior: "allow" })}
+          disabled={isResponding}
         >
-          <Text
-            style={[
-              permissionStyles.optionText,
-              { color: theme.colors.primaryForeground },
-            ]}
-          >
-            Allow
-          </Text>
+          {isResponding ? (
+            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+          ) : (
+            <Text
+              style={[
+                permissionStyles.optionText,
+                { color: theme.colors.primaryForeground },
+              ]}
+            >
+              Allow
+            </Text>
+          )}
         </Pressable>
         <Pressable
           style={[
@@ -797,20 +851,25 @@ function PermissionRequestCard({
             { backgroundColor: theme.colors.destructive },
           ]}
           onPress={() =>
-            onResponse(permission.agentId, request.id, {
+            handleResponse({
               behavior: "deny",
               message: "Denied by user",
             })
           }
+          disabled={isResponding}
         >
-          <Text
-            style={[
-              permissionStyles.optionText,
-              { color: theme.colors.primaryForeground },
-            ]}
-          >
-            Deny
-          </Text>
+          {isResponding ? (
+            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+          ) : (
+            <Text
+              style={[
+                permissionStyles.optionText,
+                { color: theme.colors.primaryForeground },
+              ]}
+            >
+              Deny
+            </Text>
+          )}
         </Pressable>
       </View>
     </View>

@@ -22,7 +22,7 @@ interface AgentSidebarProps {
   agents: Agent[];
   activeAgentId: string | null;
   onClose: () => void;
-  onSelectAgent: (agentId: string) => void;
+  onSelectAgent: (serverId: string, agentId: string) => void;
   onNewAgent: () => void;
   edgeSwipeTranslateX?: SharedValue<number> | null;
 }
@@ -72,8 +72,8 @@ export function AgentSidebar({
     }
   }, [isOpen]);
 
-  function handleAgentSelect(agentId: string) {
-    onSelectAgent(agentId);
+  function handleAgentSelect(agentId: string, serverId: string) {
+    onSelectAgent(serverId, agentId);
     onClose();
   }
 
@@ -189,7 +189,7 @@ export function AgentSidebar({
                     styles.agentItem,
                     { backgroundColor: isActive ? theme.colors.secondary : "transparent" },
                   ]}
-                  onPress={() => handleAgentSelect(agent.id)}
+                  onPress={() => handleAgentSelect(agent.id, agent.serverId)}
                 >
                   <View style={styles.agentContent}>
                     <Text

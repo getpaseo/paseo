@@ -1,54 +1,123 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type {
   WSInboundMessage,
   WSOutboundMessage,
-  SessionOutboundMessage
-} from '@server/server/messages';
+  SessionOutboundMessage,
+} from "@server/server/messages";
 
 export interface UseWebSocketReturn {
   isConnected: boolean;
+  isConnecting: boolean;
   conversationId: string | null;
+  lastError: string | null;
   send: (message: WSInboundMessage) => void;
-  on: (type: SessionOutboundMessage['type'], handler: (message: SessionOutboundMessage) => void) => () => void;
+  on: (
+    type: SessionOutboundMessage["type"],
+    handler: (message: SessionOutboundMessage) => void
+  ) => () => void;
   sendPing: () => void;
   sendUserMessage: (message: string) => void;
 }
 
+const RECONNECT_BASE_DELAY_MS = 1500;
+const RECONNECT_MAX_DELAY_MS = 30000;
+
 export function useWebSocket(url: string, conversationId?: string | null): UseWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const handlersRef = useRef<Map<SessionOutboundMessage['type'], Set<(message: SessionOutboundMessage) => void>>>(new Map());
+  const handlersRef =
+    useRef<Map<SessionOutboundMessage["type"], Set<(message: SessionOutboundMessage) => void>>>(new Map());
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const reconnectAttemptRef = useRef(0);
+  const shouldReconnectRef = useRef(true);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
+
+    let scheduledReconnect = false;
+    const scheduleReconnect = (reason?: string) => {
+      if (scheduledReconnect || !shouldReconnectRef.current) {
+        return;
+      }
+      scheduledReconnect = true;
+
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          // no-op
+        }
+        wsRef.current = null;
+      }
+
+      if (typeof reason === "string" && reason.trim().length > 0) {
+        setLastError(reason.trim());
+      }
+
+      setIsConnected(false);
+      setIsConnecting(false);
+
+      const attempt = reconnectAttemptRef.current;
+      const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
+      reconnectAttemptRef.current = attempt + 1;
+
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+
+      reconnectTimeoutRef.current = setTimeout(() => {
+        reconnectTimeoutRef.current = undefined;
+        if (!shouldReconnectRef.current) {
+          return;
+        }
+        setIsConnecting(true);
+        connect();
+      }, delay);
+    };
 
     try {
       // Add conversation ID to URL if provided
       const wsUrl = conversationId ? `${url}?conversationId=${conversationId}` : url;
       const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      setIsConnecting(true);
 
       ws.onopen = () => {
-        console.log('[WS] Connected to server');
+        console.log("[WS] Connected to server");
         setIsConnected(true);
+        setIsConnecting(false);
+        setLastError(null);
+        reconnectAttemptRef.current = 0;
       };
 
-      ws.onclose = () => {
-        console.log('[WS] Disconnected from server');
+      ws.onclose = (event) => {
+        console.log("[WS] Disconnected from server");
+        const reason =
+          typeof event?.reason === "string" && event.reason.trim().length > 0
+            ? event.reason.trim()
+            : `Socket closed (code ${event?.code ?? "unknown"})`;
         setIsConnected(false);
-
-        // Attempt to reconnect after 3 seconds
-        reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('[WS] Attempting to reconnect...');
-          connect();
-        }, 3000);
+        scheduleReconnect(reason);
       };
 
-      ws.onerror = (error) => {
-        console.warn('[WS] Error:', error);
+      ws.onerror = (errorEvent) => {
+        let reason = "WebSocket error";
+        if (
+          errorEvent &&
+          typeof errorEvent === "object" &&
+          "message" in errorEvent &&
+          typeof (errorEvent as { message: unknown }).message === "string"
+        ) {
+          const message = ((errorEvent as { message: string }).message || "").trim();
+          reason = message.length > 0 ? message : reason;
+        }
+        console.warn("[WS] Error:", errorEvent);
+        scheduleReconnect(reason);
       };
 
       ws.onmessage = (event) => {
@@ -56,12 +125,12 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
           const wsMessage: WSOutboundMessage = JSON.parse(event.data);
 
           // Only session messages trigger handlers
-          if (wsMessage.type === 'session') {
+          if (wsMessage.type === "session") {
             const sessionMessage = wsMessage.message;
             console.log(`[WS] Received session message type: ${sessionMessage.type}`);
 
             // Track conversation ID when loaded
-            if (sessionMessage.type === 'conversation_loaded') {
+            if (sessionMessage.type === "conversation_loaded") {
               setCurrentConversationId(sessionMessage.payload.conversationId);
             }
 
@@ -81,20 +150,23 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
             console.log(`[WS] Received ${wsMessage.type}`);
           }
         } catch (err) {
-          console.error('[WS] Failed to parse message:', err);
+          console.error("[WS] Failed to parse message:", err);
         }
       };
-
-      wsRef.current = ws;
     } catch (err) {
-      console.warn('[WS] Failed to create WebSocket:', err);
+      console.warn("[WS] Failed to create WebSocket:", err);
+      const reason = err instanceof Error ? err.message : "Failed to create WebSocket";
+      scheduleReconnect(reason);
     }
   }, [url, conversationId]);
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
+    setIsConnecting(true);
     connect();
 
     return () => {
+      shouldReconnectRef.current = false;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -108,41 +180,41 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
-      console.warn('[WS] Cannot send message - not connected');
+      console.warn("[WS] Cannot send message - not connected");
     }
   }, []);
 
-  const on = useCallback((
-    type: SessionOutboundMessage['type'],
-    handler: (message: SessionOutboundMessage) => void
-  ) => {
-    if (!handlersRef.current.has(type)) {
-      handlersRef.current.set(type, new Set());
-    }
-    handlersRef.current.get(type)!.add(handler);
-
-    // Return cleanup function
-    return () => {
-      const handlers = handlersRef.current.get(type);
-      if (handlers) {
-        handlers.delete(handler);
-        if (handlers.size === 0) {
-          handlersRef.current.delete(type);
-        }
+  const on = useCallback(
+    (type: SessionOutboundMessage["type"], handler: (message: SessionOutboundMessage) => void) => {
+      if (!handlersRef.current.has(type)) {
+        handlersRef.current.set(type, new Set());
       }
-    };
-  }, []);
+      handlersRef.current.get(type)!.add(handler);
+
+      // Return cleanup function
+      return () => {
+        const handlers = handlersRef.current.get(type);
+        if (handlers) {
+          handlers.delete(handler);
+          if (handlers.size === 0) {
+            handlersRef.current.delete(type);
+          }
+        }
+      };
+    },
+    []
+  );
 
   const sendPing = useCallback(() => {
-    send({ type: 'ping' });
+    send({ type: "ping" });
   }, [send]);
 
   const sendUserMessage = useCallback(
     (message: string) => {
       send({
-        type: 'session',
+        type: "session",
         message: {
-          type: 'user_text',
+          type: "user_text",
           text: message,
         },
       });
@@ -153,12 +225,14 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
   return useMemo(
     () => ({
       isConnected,
+      isConnecting,
       conversationId: currentConversationId,
+      lastError,
       send,
       on,
       sendPing,
       sendUserMessage,
     }),
-    [isConnected, currentConversationId, send, on, sendPing, sendUserMessage]
+    [isConnected, isConnecting, currentConversationId, lastError, send, on, sendPing, sendUserMessage]
   );
 }
