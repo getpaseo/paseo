@@ -326,7 +326,7 @@ function AgentFlowModal({
     selectedDaemonConnection?.daemon.label ??
     selectedDaemonConnection?.daemon.wsUrl ??
     selectedDaemonId ??
-    "Selected daemon";
+    "Selected host";
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
   const selectedDaemonIsUnavailable =
     !session || selectedDaemonStatus !== "online" || !ws?.isConnected;
@@ -987,7 +987,7 @@ function AgentFlowModal({
       logOfflineDaemonAction("dictation");
       setErrorMessage(
         daemonAvailabilityError ??
-          "Connect to the selected daemon before using dictation."
+          "Connect to the selected host before using dictation."
       );
       return;
     }
@@ -1060,8 +1060,8 @@ function AgentFlowModal({
         setIsImportLoading(false);
         logOfflineDaemonAction("import_list");
         setImportError(
-          daemonAvailabilityError ??
-            "Connect to the selected daemon to load import candidates."
+        daemonAvailabilityError ??
+          "Connect to the selected host to load import candidates."
         );
         return;
       }
@@ -1313,7 +1313,7 @@ function AgentFlowModal({
   const trimmedWorkingDir = workingDir.trim();
   const shouldInspectRepo = isCreateFlow && isVisible && trimmedWorkingDir.length > 0;
   const repoAvailabilityError = shouldInspectRepo && (!isTargetDaemonReady || !isWsConnected)
-    ? daemonAvailabilityError ?? "Connect to the selected daemon to inspect the repository."
+    ? daemonAvailabilityError ?? "Connect to the selected host to inspect the repository."
     : null;
   const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
     ? "idle"
@@ -1392,7 +1392,7 @@ function AgentFlowModal({
       logOfflineDaemonAction("create");
       setErrorMessage(
         daemonAvailabilityError ??
-          "Connect to the selected daemon before creating an agent."
+          "Connect to the selected host before creating an agent."
       );
       return;
     }
@@ -1494,8 +1494,8 @@ function AgentFlowModal({
       if (!resumeAgent || !isTargetDaemonReady) {
         logOfflineDaemonAction("resume");
         setImportError(
-          daemonAvailabilityError ??
-            "Connect to the selected daemon before importing an agent."
+        daemonAvailabilityError ??
+          "Connect to the selected host before importing an agent."
         );
         return;
       }
@@ -1861,9 +1861,9 @@ function AgentFlowModal({
                   showsVerticalScrollIndicator={false}
                 >
                   <View style={styles.daemonSelectorSection}>
-                    <Text style={styles.daemonSelectorLabel}>Target Daemon</Text>
+                    <Text style={styles.daemonSelectorLabel}>Target Host</Text>
                     {daemonEntries.length === 0 ? (
-                      <Text style={styles.daemonChipText}>No daemons available</Text>
+                      <Text style={styles.daemonChipText}>No hosts available</Text>
                     ) : (
                       <ScrollView
                         horizontal

@@ -56,7 +56,7 @@ export default function FileExplorerScreen() {
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
-  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Selected daemon";
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Selected host";
   const connectionStatus = connection?.status ?? "idle";
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastError = connection?.lastError ?? null;

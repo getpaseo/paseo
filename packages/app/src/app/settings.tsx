@@ -357,9 +357,9 @@ export default function SettingsScreen() {
     ? `${activeDaemon.label}${activeDaemonStatusLabel ? ` - ${activeDaemonStatusLabel}` : ""}${
         isServerConfigLocked ? " - Session unavailable" : ""
       }`
-    : "No active daemon selected.";
+    : "No active host selected.";
   const serverHelperText = isServerConfigLocked
-    ? `Connect to ${activeDaemon?.label ?? "this daemon"} to edit its server URL.`
+    ? `Connect to ${activeDaemon?.label ?? "this host"} to edit its server URL.`
     : "Must be a valid WebSocket URL (ws:// or wss://)";
 
   useEffect(() => {
@@ -459,11 +459,11 @@ export default function SettingsScreen() {
 
   const handleSubmitDaemonForm = useCallback(async () => {
     if (!daemonForm.label.trim()) {
-      Alert.alert("Label required", "Please enter a label for the daemon.");
+      Alert.alert("Label required", "Please enter a label for the host.");
       return;
     }
     if (!validateServerUrl(daemonForm.wsUrl)) {
-      Alert.alert("Invalid URL", "Daemon URL must be ws:// or wss://");
+      Alert.alert("Invalid URL", "Host URL must be ws:// or wss://");
       return;
     }
 
@@ -484,7 +484,7 @@ export default function SettingsScreen() {
       handleCloseDaemonForm();
     } catch (error) {
       console.error("[Settings] Failed to save daemon", error);
-      Alert.alert("Error", "Unable to save daemon");
+      Alert.alert("Error", "Unable to save host");
     } finally {
       setIsSavingDaemon(false);
     }
@@ -493,7 +493,7 @@ export default function SettingsScreen() {
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
       Alert.alert(
-        "Remove Daemon",
+        "Remove Host",
         `Remove ${profile.label}?`,
         [
           { text: "Cancel", style: "cancel" },
@@ -505,7 +505,7 @@ export default function SettingsScreen() {
                 await removeDaemon(profile.id);
               } catch (error) {
                 console.error("[Settings] Failed to remove daemon", error);
-                Alert.alert("Error", "Unable to remove daemon");
+                Alert.alert("Error", "Unable to remove host");
               }
             },
           },
@@ -541,7 +541,7 @@ export default function SettingsScreen() {
     async (profile: DaemonProfile) => {
       const url = profile.wsUrl;
       if (!validateServerUrl(url)) {
-        Alert.alert("Invalid URL", "Daemon URL must be ws:// or wss://");
+        Alert.alert("Invalid URL", "Host URL must be ws:// or wss://");
         return;
       }
       updateDaemonTestState(profile.id, { status: "testing" });
@@ -592,9 +592,9 @@ export default function SettingsScreen() {
   function deriveDaemonLabel(url: string): string {
     try {
       const parsed = new URL(url);
-      return parsed.hostname || "Daemon";
+      return parsed.hostname || "Host";
     } catch {
-      return "Daemon";
+      return "Host";
     }
   }
 
@@ -685,7 +685,7 @@ export default function SettingsScreen() {
     if (isServerConfigLocked) {
       Alert.alert(
         "Session unavailable",
-        `${activeDaemon?.label ?? "This daemon"} is not connected. Connect to it before testing the URL.`
+        `${activeDaemon?.label ?? "This host"} is not connected. Connect to it before testing the URL.`
       );
       return;
     }
@@ -803,13 +803,13 @@ export default function SettingsScreen() {
             )}
           </View>
 
-          {/* Daemon Management */}
+          {/* Host Management */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Daemons</Text>
+            <Text style={styles.sectionTitle}>Hosts</Text>
 
             {daemons.length === 0 ? (
               <View style={styles.settingCard}>
-                <Text style={styles.settingDescription}>No daemons configured.</Text>
+                <Text style={styles.settingDescription}>No hosts configured.</Text>
               </View>
             ) : (
               daemons.map((daemon) => {
@@ -841,7 +841,7 @@ export default function SettingsScreen() {
 
             {isDaemonFormVisible ? (
               <View style={styles.settingCard}>
-                <Text style={styles.settingTitle}>{daemonForm.id ? "Edit Daemon" : "Add Daemon"}</Text>
+                <Text style={styles.settingTitle}>{daemonForm.id ? "Edit Host" : "Add Host"}</Text>
                 <Text style={styles.label}>Label</Text>
                 <TextInput
                   style={styles.input}
@@ -886,14 +886,14 @@ export default function SettingsScreen() {
                     disabled={isSavingDaemon}
                   >
                     <Text style={[styles.daemonActionText, styles.daemonActionPrimaryText]}>
-                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save Daemon" : "Add Daemon"}
+                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save Host" : "Add Host"}
                     </Text>
                   </Pressable>
                 </View>
               </View>
             ) : (
               <Pressable style={styles.addButton} onPress={() => handleOpenDaemonForm()}>
-                <Text style={styles.addButtonText}>Add Daemon</Text>
+                <Text style={styles.addButtonText}>Add Host</Text>
               </Pressable>
             )}
           </View>
@@ -1103,7 +1103,7 @@ function DaemonCard({
   const beginServerRestart = useCallback(() => {
     if (!daemonSession) {
       Alert.alert(
-        "Daemon unavailable",
+        "Host unavailable",
         `${daemon.label} is not connected. Select it to connect before restarting.`
       );
       return;
@@ -1133,7 +1133,7 @@ function DaemonCard({
   const handleRestartPress = useCallback(() => {
     if (!daemonSession) {
       Alert.alert(
-        "Daemon unavailable",
+        "Host unavailable",
         `${daemon.label} is not connected. Select it to connect before restarting.`
       );
       return;

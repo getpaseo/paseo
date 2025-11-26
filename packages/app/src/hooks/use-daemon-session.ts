@@ -9,7 +9,7 @@ export class DaemonSessionUnavailableError extends Error {
   serverId: string;
 
   constructor(serverId: string) {
-    super(`Daemon session "${serverId}" is unavailable`);
+    super(`Host session "${serverId}" is unavailable`);
     this.name = "DaemonSessionUnavailableError";
     this.serverId = serverId;
   }
@@ -66,7 +66,7 @@ export function useDaemonSession(serverId?: string, options?: UseDaemonSessionOp
 
       if (!suppressUnavailableAlert && !alertedDaemonsRef.current.has(targetServerId)) {
         alertedDaemonsRef.current.add(targetServerId);
-        Alert.alert("Daemon unavailable", message.trim());
+        Alert.alert("Host unavailable", message.trim());
       }
 
       if (!loggedDaemonsRef.current.has(targetServerId)) {

@@ -102,7 +102,7 @@ function MissingDaemonView() {
           textAlign: "center",
         }}
       >
-        No daemon configured. Open Settings to add a server URL.
+        No host configured. Open Settings to add a server URL.
       </Text>
     </View>
   );

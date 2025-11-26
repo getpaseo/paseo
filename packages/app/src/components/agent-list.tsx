@@ -146,7 +146,7 @@ export function AgentList({ agentGroups }: AgentListProps) {
             </Text>
             <Text style={styles.sheetSubtitle}>
               {isActionDaemonUnavailable
-                ? "Connect this daemon before managing its agents."
+                ? "Connect this host before managing its agents."
                 : "Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project."}
             </Text>
             <Pressable
@@ -160,7 +160,7 @@ export function AgentList({ agentGroups }: AgentListProps) {
                   (!deleteAgent || isActionDaemonUnavailable) && styles.sheetDeleteTextDisabled,
                 ]}
               >
-                {isActionDaemonUnavailable ? "Daemon offline" : "Delete agent"}
+                {isActionDaemonUnavailable ? "Host offline" : "Delete agent"}
               </Text>
             </Pressable>
             <Pressable

@@ -108,7 +108,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
   const removeDaemon = useCallback(async (id: string) => {
     const remaining = readDaemons().filter((daemon) => daemon.id !== id);
     const normalized = normalizeDefaults(remaining);
-    await persist(normalized.length > 0 ? normalized : [createProfile("Local Daemon", FALLBACK_DAEMON_URL, true)]);
+    await persist(normalized.length > 0 ? normalized : [createProfile("Local Host", FALLBACK_DAEMON_URL, true)]);
   }, [persist, readDaemons]);
 
   const setDefaultDaemon = useCallback(async (id: string) => {
@@ -154,9 +154,9 @@ function generateDaemonId(): string {
 function deriveLabelFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
-    return parsed.hostname || "Unnamed Daemon";
+    return parsed.hostname || "Unnamed Host";
   } catch {
-    return "Unnamed Daemon";
+    return "Unnamed Host";
   }
 }
 
@@ -202,13 +202,13 @@ async function loadDaemonRegistryFromStorage(): Promise<DaemonProfile[]> {
       const legacyParsed = JSON.parse(legacy) as Record<string, unknown>;
       const legacyUrl = typeof legacyParsed.serverUrl === "string" ? legacyParsed.serverUrl : null;
       if (legacyUrl) {
-        const migrated = [createProfile("Primary Daemon", legacyUrl, true)];
+        const migrated = [createProfile("Primary Host", legacyUrl, true)];
         await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
     }
 
-    const fallback = [createProfile("Local Daemon", FALLBACK_DAEMON_URL, true)];
+    const fallback = [createProfile("Local Host", FALLBACK_DAEMON_URL, true)];
     await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(fallback));
     return fallback;
   } catch (error) {

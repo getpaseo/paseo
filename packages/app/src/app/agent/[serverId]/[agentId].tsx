@@ -104,7 +104,7 @@ export default function AgentScreen() {
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
-  const serverLabel = connection?.daemon.label ?? connectionServerId ?? "Selected daemon";
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? "Selected host";
   const isUnknownDaemon = Boolean(connectionServerId && !connection);
   const connectionStatus = connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
