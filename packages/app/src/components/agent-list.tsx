@@ -6,7 +6,6 @@ import type { Agent } from "@/contexts/session-context";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { type AggregatedAgentGroup } from "@/hooks/use-aggregated-agents";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
 
@@ -16,7 +15,6 @@ interface AgentListProps {
 
 export function AgentList({ agentGroups }: AgentListProps) {
   const { theme } = useUnistyles();
-  const { setActiveDaemonId } = useDaemonConnections();
   const [actionAgent, setActionAgent] = useState<Agent | null>(null);
   const [actionAgentServerId, setActionAgentServerId] = useState<string | null>(null);
   const actionSession = useDaemonSession(actionAgentServerId ?? undefined, {
@@ -28,19 +26,21 @@ export function AgentList({ agentGroups }: AgentListProps) {
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgentServerId && !actionSession);
 
-  const handleAgentPress = useCallback((serverId: string, agentId: string) => {
-    if (isActionSheetVisible) {
-      return;
-    }
-    setActiveDaemonId(serverId, { source: "agent_row_press" });
-    router.push({
-      pathname: "/agent/[serverId]/[agentId]",
-      params: {
-        serverId,
-        agentId,
-      },
-    });
-  }, [isActionSheetVisible, setActiveDaemonId]);
+  const handleAgentPress = useCallback(
+    (serverId: string, agentId: string) => {
+      if (isActionSheetVisible) {
+        return;
+      }
+      router.push({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: {
+          serverId,
+          agentId,
+        },
+      });
+    },
+    [isActionSheetVisible]
+  );
 
   const handleAgentLongPress = useCallback((serverId: string, agent: Agent) => {
     setActionAgentServerId(serverId);

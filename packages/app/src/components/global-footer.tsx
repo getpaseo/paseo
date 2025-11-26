@@ -7,7 +7,6 @@ import { AudioLines, Users, Plus, Download } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
 import { useFooterControls, FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { RealtimeControls } from "./realtime-controls";
 import { CreateAgentModal, ImportAgentModal } from "./create-agent-modal";
 import Animated, {
@@ -24,7 +23,6 @@ export function GlobalFooter() {
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { ws } = useSession();
-  const { activeDaemonId } = useDaemonConnections();
   const { controls } = useFooterControls();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -188,12 +186,10 @@ export function GlobalFooter() {
       <CreateAgentModal
         isVisible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        serverId={activeDaemonId}
       />
       <ImportAgentModal
         isVisible={showImportModal}
         onClose={() => setShowImportModal(false)}
-        serverId={activeDaemonId}
       />
     </>
   );

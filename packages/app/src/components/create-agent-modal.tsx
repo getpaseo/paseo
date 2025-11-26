@@ -215,17 +215,14 @@ function AgentFlowModal({
   const isCreateFlow = !isImportFlow;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
-  const { connectionStates, activeDaemonId, setActiveDaemonId } = useDaemonConnections();
+  const { connectionStates } = useDaemonConnections();
   const daemonEntries = useMemo(() => Array.from(connectionStates.values()), [connectionStates]);
   const initialServerId = useMemo(() => {
     if (serverId) {
       return serverId;
     }
-    if (activeDaemonId) {
-      return activeDaemonId;
-    }
     return daemonEntries[0]?.daemon.id ?? null;
-  }, [serverId, activeDaemonId, daemonEntries]);
+  }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
   const activeSession = useSession();
   const selectedSession = useSessionForServer(selectedServerId);
@@ -308,8 +305,8 @@ function AgentFlowModal({
   } = gitRepoInfoRequest;
   const isWsConnected = ws?.isConnected ?? false;
   const router = useRouter();
-  const activeServerId = session?.serverId ?? null;
-  const selectedDaemonId = selectedServerId ?? activeServerId;
+  const sessionServerId = session?.serverId ?? null;
+  const selectedDaemonId = selectedServerId ?? sessionServerId;
   const selectedDaemonConnection = selectedDaemonId
     ? connectionStates.get(selectedDaemonId)
     : null;
@@ -330,8 +327,6 @@ function AgentFlowModal({
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
   const selectedDaemonIsUnavailable =
     !session || selectedDaemonStatus !== "online" || !ws?.isConnected;
-  const isBackgroundDaemonTarget =
-    Boolean(selectedDaemonId && activeDaemonId && selectedDaemonId !== activeDaemonId);
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
   const daemonAvailabilityError = selectedDaemonIsUnavailable
     ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
@@ -407,6 +402,7 @@ function AgentFlowModal({
     typeof InteractionManager.runAfterInteractions
   > | null>(null);
   const pendingNavigationAgentIdRef = useRef<string | null>(null);
+  const pendingNavigationServerIdRef = useRef<string | null>(null);
   const openDropdownSheet = useCallback((key: DropdownKey) => {
     setOpenDropdown(key);
   }, []);
@@ -862,43 +858,15 @@ function AgentFlowModal({
         type: "offline_daemon_action_attempt",
         action,
         daemonId: selectedDaemonId,
-        activeDaemonId,
         status: selectedDaemonStatus ?? null,
-        isBackground: isBackgroundDaemonTarget,
         reason: reason ?? daemonAvailabilityError,
       });
     },
     [
-      activeDaemonId,
       daemonAvailabilityError,
-      isBackgroundDaemonTarget,
       selectedDaemonId,
       selectedDaemonStatus,
     ]
-  );
-
-  const logBackgroundAgentAction = useCallback(
-    (
-      action: "create" | "resume",
-      payload: { cwd?: string; provider?: string; modeId?: string; model?: string; baseBranch?: string }
-    ) => {
-      if (!isBackgroundDaemonTarget || !selectedDaemonId) {
-        return;
-      }
-      trackAnalyticsEvent({
-        type: "background_agent_action",
-        action,
-        daemonId: selectedDaemonId,
-        activeDaemonId,
-        isBackground: true,
-        cwd: payload.cwd,
-        provider: payload.provider,
-        modeId: payload.modeId,
-        model: payload.model,
-        baseBranch: payload.baseBranch,
-      });
-    },
-    [activeDaemonId, isBackgroundDaemonTarget, selectedDaemonId]
   );
 
   const resetFormState = useCallback(() => {
@@ -918,6 +886,7 @@ function AgentFlowModal({
     resetRepoInfo();
     setOpenDropdown(null);
     pendingRequestIdRef.current = null;
+    pendingNavigationServerIdRef.current = null;
     shouldSyncBaseBranchRef.current = true;
     dictationRequestIdRef.current = null;
     setIsDictating(false);
@@ -1024,24 +993,23 @@ function AgentFlowModal({
 
   const navigateToAgentIfNeeded = useCallback(() => {
     const agentId = pendingNavigationAgentIdRef.current;
-    if (!agentId || !activeServerId) {
+    const targetServerId = pendingNavigationServerIdRef.current ?? selectedDaemonId;
+    if (!agentId || !targetServerId) {
       return;
     }
 
     pendingNavigationAgentIdRef.current = null;
-    if (activeDaemonId !== activeServerId) {
-      setActiveDaemonId(activeServerId, { source: "agent_create_resume_nav" });
-    }
+    pendingNavigationServerIdRef.current = null;
     InteractionManager.runAfterInteractions(() => {
       router.push({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
-          serverId: activeServerId,
+          serverId: targetServerId,
           agentId,
         },
       });
     });
-  }, [activeDaemonId, activeServerId, router, setActiveDaemonId]);
+  }, [router, selectedDaemonId]);
 
   const handleSelectServer = useCallback((serverId: string) => {
     setSelectedServerId(serverId);
@@ -1408,6 +1376,7 @@ function AgentFlowModal({
     const requestId = generateMessageId();
 
     pendingRequestIdRef.current = requestId;
+    pendingNavigationServerIdRef.current = selectedDaemonId ?? null;
     setIsLoading(true);
     setErrorMessage("");
 
@@ -1443,14 +1412,6 @@ function AgentFlowModal({
         }
       : undefined;
 
-    logBackgroundAgentAction("create", {
-      cwd: trimmedPath,
-      provider: selectedProvider,
-      modeId,
-      model: trimmedModel,
-      baseBranch: trimmedBaseBranch || undefined,
-    });
-
     try {
       createAgent({
         config,
@@ -1463,6 +1424,7 @@ function AgentFlowModal({
       setErrorMessage("Failed to create agent. Please try again.");
       setIsLoading(false);
       pendingRequestIdRef.current = null;
+      pendingNavigationServerIdRef.current = null;
     }
   }, [
     workingDir,
@@ -1475,7 +1437,6 @@ function AgentFlowModal({
     repoInfo,
     selectedMode,
     modeOptions,
-    logBackgroundAgentAction,
     logOfflineDaemonAction,
     selectedProvider,
     isLoading,
@@ -1484,6 +1445,7 @@ function AgentFlowModal({
     createAgent,
     daemonAvailabilityError,
     isTargetDaemonReady,
+    selectedDaemonId,
   ]);
 
   const handleImportCandidatePress = useCallback(
@@ -1499,13 +1461,10 @@ function AgentFlowModal({
         );
         return;
       }
-      logBackgroundAgentAction("resume", {
-        cwd: candidate.cwd,
-        provider: candidate.provider,
-      });
       setErrorMessage("");
       const requestId = generateMessageId();
       pendingRequestIdRef.current = requestId;
+      pendingNavigationServerIdRef.current = selectedDaemonId ?? null;
       setIsLoading(true);
       resumeAgent({
         handle: candidate.persistence,
@@ -1515,10 +1474,10 @@ function AgentFlowModal({
     [
       daemonAvailabilityError,
       isLoading,
-      logBackgroundAgentAction,
       logOfflineDaemonAction,
       isTargetDaemonReady,
       resumeAgent,
+      selectedDaemonId,
       setImportError,
     ]
   );
@@ -1603,6 +1562,7 @@ function AgentFlowModal({
           return;
         }
         pendingRequestIdRef.current = null;
+        pendingNavigationServerIdRef.current = null;
         setIsLoading(false);
         setErrorMessage(
           payload.error ??

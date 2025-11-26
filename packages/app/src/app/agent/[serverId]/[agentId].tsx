@@ -82,20 +82,8 @@ export default function AgentScreen() {
   const { serverId, agentId } = useLocalSearchParams<{ serverId: string; agentId: string }>();
   const resolvedAgentId = typeof agentId === "string" ? agentId : undefined;
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
-  const { connectionStates, activeDaemonId, setActiveDaemonId } = useDaemonConnections();
+  const { connectionStates } = useDaemonConnections();
   const hasConnectionEntry = resolvedServerId ? connectionStates.has(resolvedServerId) : false;
-
-  useEffect(() => {
-    if (!resolvedServerId || !hasConnectionEntry) {
-      return;
-    }
-
-    if (activeDaemonId === resolvedServerId) {
-      return;
-    }
-
-    setActiveDaemonId(resolvedServerId, { source: "agent_route" });
-  }, [resolvedServerId, hasConnectionEntry, activeDaemonId, setActiveDaemonId]);
 
   const session = useDaemonSession(resolvedServerId, {
     suppressUnavailableAlert: true,
@@ -644,7 +632,7 @@ function AgentSessionUnavailableState({
             Cannot open this agent because {serverLabel} is not configured on this device.
           </Text>
           <Text style={styles.statusText}>
-            Add the daemon in Settings or open an agent on a configured server to continue.
+            Add the host in Settings or open an agent on a configured server to continue.
           </Text>
         </View>
       </View>
@@ -661,7 +649,7 @@ function AgentSessionUnavailableState({
           <>
             <ActivityIndicator size="large" />
             <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We will show this agent once the daemon is online.</Text>
+            <Text style={styles.statusText}>We will show this agent once the host is online.</Text>
           </>
         ) : (
           <>
@@ -669,7 +657,7 @@ function AgentSessionUnavailableState({
               Cannot open this agent while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
             </Text>
             <Text style={styles.statusText}>
-              Connect this daemon or switch to another one to continue.
+              Connect this host or switch to another one to continue.
             </Text>
             {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
           </>

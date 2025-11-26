@@ -22,11 +22,15 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
-  - Removed the Settings "Set Active" controls/labels, scrubbed the copy that mentioned an active host (including git diff fallback text), and left the per-host cards focused on status/default/test actions; no automated tests were run.
-- [x] Remove the concept of "primary daemon"—no default host for actions.
-  - Removed the Default host toggle/state in the registry and settings UI, updated host docs, and kept connection fallback logic simple; tests not run (not requested).
+  - Summary: Home/footer actions, create/import flows, and agent navigation now route directly via explicit host IDs with analytics/docs/aggregated list updates, verified with `npm run typecheck --workspace=@paseo/app`.
+  - Context: `GlobalFooter`, the create/import modals, the agent screen, and the agent list previously read/write `activeDaemonId`, forcing a global active host before routing; they now rely on explicit host IDs instead.
+- [ ] Remove the concept of "primary daemon"—no default host for actions.
+  - Context: `DaemonConnectionsProvider` still persists `activeDaemonId` in AsyncStorage and `MultiDaemonSessionHost` filters by `primary` roles to decide which hosts stay backgrounded, so the “primary/default” pipeline is intact and needs to be unwound.
 - [ ] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
 - [ ] Clean up any related state/UI that exposes these concepts to users.
+
+### Review: No Silent Defaults
+- [ ] Review the changes to ensure we didn't just replace "active daemon" with "first host" (e.g., `hosts[0]}`. The goal is explicit user choice, not a hidden default.
 
 ### 3. Simplify Settings Screen
 - [ ] Remove the standalone "Test Connection" form/URL input at the top of settings.
@@ -49,5 +53,5 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 
 ### 7. Home Screen Agent List
 - [ ] Remove grouping of agents by host—show a single flat list.
-- [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
-- [ ] Sort agents by recent activity or alphabetically (not by host).
+  - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
+  - [ ] Sort agents by recent activity or alphabetically (not by host).

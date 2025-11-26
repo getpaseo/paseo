@@ -1,4 +1,3 @@
-type BackgroundAgentAction = "create" | "resume";
 type OfflineAction =
   | "create"
   | "resume"
@@ -13,24 +12,10 @@ type AnalyticsEvent =
       source?: string;
     }
   | {
-    type: "background_agent_action";
-    action: BackgroundAgentAction;
-    daemonId: string;
-    activeDaemonId: string | null;
-    isBackground: boolean;
-    cwd?: string;
-    provider?: string;
-    modeId?: string;
-    model?: string;
-    baseBranch?: string;
-  }
-  | {
       type: "offline_daemon_action_attempt";
       action: OfflineAction;
       daemonId: string | null;
-      activeDaemonId: string | null;
       status: string | null;
-      isBackground: boolean;
       reason?: string | null;
     };
 
