@@ -13,7 +13,6 @@ export type DaemonProfile = {
   label: string;
   wsUrl: string;
   restUrl?: string | null;
-  autoConnect: boolean;
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, unknown> | null;
@@ -23,7 +22,6 @@ type CreateDaemonInput = {
   label: string;
   wsUrl: string;
   restUrl?: string | null;
-  autoConnect?: boolean;
 };
 
 type UpdateDaemonInput = Partial<Omit<DaemonProfile, "id" | "createdAt">>;
@@ -76,7 +74,6 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
       label: input.label.trim() || deriveLabelFromUrl(input.wsUrl),
       wsUrl: input.wsUrl,
       restUrl: input.restUrl ?? null,
-      autoConnect: input.autoConnect ?? true,
       createdAt: timestamp,
       updatedAt: timestamp,
       metadata: null,
@@ -143,7 +140,6 @@ function createProfile(label: string, wsUrl: string): DaemonProfile {
     label,
     wsUrl,
     restUrl: null,
-    autoConnect: true,
     createdAt: timestamp,
     updatedAt: timestamp,
     metadata: null,

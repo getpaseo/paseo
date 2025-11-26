@@ -648,7 +648,6 @@ export default function SettingsScreen() {
         const created = await addDaemon({
           label: deriveDaemonLabel(trimmedUrl),
           wsUrl: trimmedUrl,
-          autoConnect: true,
         });
         setSelectedDaemonId(created.id);
       }
