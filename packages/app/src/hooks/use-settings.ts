@@ -1,78 +1,114 @@
-import { useState, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-const STORAGE_KEY = '@paseo:settings';
+const APP_SETTINGS_KEY = "@paseo:app-settings";
+const LEGACY_SETTINGS_KEY = "@paseo:settings";
+const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
-export interface Settings {
-  serverUrl: string;
+export interface AppSettings {
   useSpeaker: boolean;
   keepScreenOn: boolean;
-  theme: 'dark' | 'light' | 'auto';
+  theme: "dark" | "light" | "auto";
 }
 
-const DEFAULT_SETTINGS: Settings = {
-  serverUrl: 'wss://mohameds-macbook-pro.tail8fe838.ts.net/ws',
+const DEFAULT_APP_SETTINGS: AppSettings = {
   useSpeaker: true,
   keepScreenOn: true,
-  theme: 'dark',
+  theme: "dark",
 };
 
-export interface UseSettingsReturn {
-  settings: Settings;
+export interface UseAppSettingsReturn {
+  settings: AppSettings;
   isLoading: boolean;
-  updateSettings: (updates: Partial<Settings>) => Promise<void>;
+  error: unknown | null;
+  updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
   resetSettings: () => Promise<void>;
 }
 
-export function useSettings(): UseSettingsReturn {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [isLoading, setIsLoading] = useState(true);
+export function useAppSettings(): UseAppSettingsReturn {
+  const queryClient = useQueryClient();
+  const { data, isPending, error } = useQuery({
+    queryKey: APP_SETTINGS_QUERY_KEY,
+    queryFn: loadSettingsFromStorage,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
 
-  // Load settings from AsyncStorage on mount
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  async function loadSettings() {
-    try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Partial<Settings>;
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+  const updateSettings = useCallback(
+    async (updates: Partial<AppSettings>) => {
+      try {
+        const prev = queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_APP_SETTINGS;
+        const next = { ...prev, ...updates };
+        queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+        await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      } catch (err) {
+        console.error("[AppSettings] Failed to save settings:", err);
+        throw err;
       }
-    } catch (error) {
-      console.error('[Settings] Failed to load settings:', error);
-      // Continue with default settings
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  const updateSettings = useCallback(async (updates: Partial<Settings>) => {
-    try {
-      const newSettings = { ...settings, ...updates };
-      setSettings(newSettings);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newSettings));
-    } catch (error) {
-      console.error('[Settings] Failed to save settings:', error);
-      throw error;
-    }
-  }, [settings]);
+    },
+    [queryClient]
+  );
 
   const resetSettings = useCallback(async () => {
     try {
-      setSettings(DEFAULT_SETTINGS);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
-    } catch (error) {
-      console.error('[Settings] Failed to reset settings:', error);
-      throw error;
+      const next = { ...DEFAULT_APP_SETTINGS };
+      queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
+      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+    } catch (err) {
+      console.error("[AppSettings] Failed to reset settings:", err);
+      throw err;
     }
-  }, []);
+  }, [queryClient]);
 
   return {
-    settings,
-    isLoading,
+    settings: data ?? DEFAULT_APP_SETTINGS,
+    isLoading: isPending,
+    error: error ?? null,
     updateSettings,
     resetSettings,
   };
 }
+
+async function loadSettingsFromStorage(): Promise<AppSettings> {
+  try {
+    const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<AppSettings>;
+      return { ...DEFAULT_APP_SETTINGS, ...parsed };
+    }
+
+    const legacyStored = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
+    if (legacyStored) {
+      const legacyParsed = JSON.parse(legacyStored) as Record<string, unknown>;
+      const next = {
+        ...DEFAULT_APP_SETTINGS,
+        ...pickAppSettingsFromLegacy(legacyParsed),
+      } satisfies AppSettings;
+      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    }
+
+    await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS));
+    return DEFAULT_APP_SETTINGS;
+  } catch (error) {
+    console.error("[AppSettings] Failed to load settings:", error);
+    throw error;
+  }
+}
+
+function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<AppSettings> {
+  const result: Partial<AppSettings> = {};
+  if (typeof legacy.useSpeaker === "boolean") {
+    result.useSpeaker = legacy.useSpeaker;
+  }
+  if (typeof legacy.keepScreenOn === "boolean") {
+    result.keepScreenOn = legacy.keepScreenOn;
+  }
+  if (legacy.theme === "dark" || legacy.theme === "light" || legacy.theme === "auto") {
+    result.theme = legacy.theme;
+  }
+  return result;
+}
+
+export const useSettings = useAppSettings;

@@ -1,5 +1,7 @@
-import { createContext, useContext, useState, useRef, ReactNode, useCallback, useEffect } from "react";
+import { createContext, useContext, useState, useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
+import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { reduceStreamUpdate, generateMessageId, hydrateStreamState, type StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
@@ -9,6 +11,7 @@ import type {
   AgentStreamEventPayload,
   WSInboundMessage,
   GitSetupOptions,
+  SessionOutboundMessage,
 } from "@server/server/messages";
 import type {
   AgentLifecycleStatus,
@@ -26,6 +29,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
+import { useDaemonConnections } from "./daemon-connections-context";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -42,6 +46,16 @@ type DraftInput = {
   text: string;
   images: Array<{ uri: string; mimeType: string }>;
 };
+
+type GitDiffResponseMessage = Extract<
+  SessionOutboundMessage,
+  { type: "git_diff_response" }
+>;
+
+type FileExplorerResponseMessage = Extract<
+  SessionOutboundMessage,
+  { type: "file_explorer_response" }
+>;
 
 export type MessageEntry =
   | {
@@ -91,6 +105,7 @@ type ProviderModelState = {
 };
 
 export interface Agent {
+  serverId: string;
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
@@ -183,6 +198,48 @@ const pushHistory = (history: string[], path: string): string[] => {
   return [...normalizedHistory, path];
 };
 
+const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
+
+type PersistedSessionSnapshot = {
+  agents: AgentSnapshotPayload[];
+  commands: Command[];
+  savedAt: string;
+};
+
+const getSessionSnapshotStorageKey = (serverId: string): string => {
+  return `${SESSION_SNAPSHOT_STORAGE_PREFIX}${serverId}`;
+};
+
+async function loadPersistedSessionSnapshot(serverId: string): Promise<PersistedSessionSnapshot | null> {
+  try {
+    const raw = await AsyncStorage.getItem(getSessionSnapshotStorageKey(serverId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as PersistedSessionSnapshot;
+    if (!Array.isArray(parsed?.agents) || !Array.isArray(parsed?.commands)) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.error(`[Session] Failed to load persisted snapshot for ${serverId}`, error);
+    return null;
+  }
+}
+
+async function persistSessionSnapshot(serverId: string, snapshot: { agents: AgentSnapshotPayload[]; commands: Command[] }) {
+  try {
+    const payload: PersistedSessionSnapshot = {
+      agents: snapshot.agents,
+      commands: snapshot.commands,
+      savedAt: new Date().toISOString(),
+    };
+    await AsyncStorage.setItem(getSessionSnapshotStorageKey(serverId), JSON.stringify(payload));
+  } catch (error) {
+    console.error(`[Session] Failed to persist snapshot for ${serverId}`, error);
+  }
+}
+
 type PendingAgentLifecycleRequest = {
   kind: "initialize" | "refresh";
   params: {
@@ -191,11 +248,12 @@ type PendingAgentLifecycleRequest = {
   };
 };
 
-function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
+function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string): Agent {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
   const lastUserMessageAt = snapshot.lastUserMessageAt ? new Date(snapshot.lastUserMessageAt) : null;
   return {
+    serverId,
     id: snapshot.id,
     provider: snapshot.provider,
     status: snapshot.status as AgentLifecycleStatus,
@@ -217,8 +275,25 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload): Agent {
   };
 }
 
+function buildSessionStateFromSnapshots(serverId: string, snapshots: AgentSnapshotPayload[]) {
+  const agents = new Map<string, Agent>();
+  const pendingPermissions = new Map<string, PendingPermission>();
 
-interface SessionContextValue {
+  for (const snapshot of snapshots) {
+    const agent = normalizeAgentSnapshot(snapshot, serverId);
+    agents.set(agent.id, agent);
+    for (const request of agent.pendingPermissions) {
+      const key = derivePendingPermissionKey(agent.id, request);
+      pendingPermissions.set(key, { key, agentId: agent.id, request });
+    }
+  }
+
+  return { agents, pendingPermissions };
+}
+
+
+export interface SessionContextValue {
+  serverId: string;
   // WebSocket
   ws: UseWebSocketReturn;
 
@@ -275,7 +350,11 @@ interface SessionContextValue {
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   refreshAgent: (params: { agentId: string; requestId?: string }) => void;
   cancelAgentRun: (agentId: string) => void;
-  sendAgentMessage: (agentId: string, message: string, imageUris?: string[]) => Promise<void>;
+  sendAgentMessage: (
+    agentId: string,
+    message: string,
+    images?: Array<{ uri: string; mimeType?: string }>
+  ) => Promise<void>;
   sendAgentAudio: (
     agentId: string,
     audioBlob: Blob,
@@ -308,11 +387,46 @@ export function useSession() {
 interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
+  serverId: string;
 }
 
-export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
+export function SessionProvider({ children, serverUrl, serverId }: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
   const wsIsConnected = ws.isConnected;
+  const {
+    updateConnectionStatus,
+    registerSessionAccessor,
+    unregisterSessionAccessor,
+    notifySessionDirectoryChange,
+  } = useDaemonConnections();
+
+  useEffect(() => {
+    if (ws.isConnected) {
+      updateConnectionStatus(serverId, "online", {
+        lastOnlineAt: new Date().toISOString(),
+        lastError: null,
+      });
+      return;
+    }
+
+    if (ws.isConnecting) {
+      updateConnectionStatus(serverId, "connecting");
+      return;
+    }
+
+    if (ws.lastError) {
+      updateConnectionStatus(serverId, "error", { lastError: ws.lastError });
+      return;
+    }
+
+    updateConnectionStatus(serverId, "offline");
+  }, [serverId, updateConnectionStatus, ws.isConnected, ws.isConnecting, ws.lastError]);
+
+  useEffect(() => {
+    return () => {
+      updateConnectionStatus(serverId, "offline", { lastError: null });
+    };
+  }, [serverId, updateConnectionStatus]);
   
   // State for voice detection flags (will be set by RealtimeContext)
   const isDetectingRef = useRef(false);
@@ -353,6 +467,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
   const pendingAgentLifecycleRequestsRef = useRef<PendingAgentLifecycleRequest[]>([]);
+  const hasHydratedSnapshotRef = useRef(false);
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -367,6 +482,54 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   const setFocusedAgentId = useCallback((agentId: string | null) => {
     setFocusedAgentOverride(agentId);
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const hydrateFromSnapshot = async () => {
+      if (hasHydratedSnapshotRef.current) {
+        return;
+      }
+      hasHydratedSnapshotRef.current = true;
+      const snapshot = await loadPersistedSessionSnapshot(serverId);
+      if (!snapshot || !isMounted) {
+        return;
+      }
+
+      const { agents: hydratedAgents, pendingPermissions: hydratedPermissions } = buildSessionStateFromSnapshots(
+        serverId,
+        snapshot.agents
+      );
+
+      let applied = false;
+      setAgents((prev) => {
+        if (prev.size > 0) {
+          return prev;
+        }
+        applied = true;
+        return hydratedAgents;
+      });
+
+      if (!applied) {
+        return;
+      }
+
+      setPendingPermissions(hydratedPermissions);
+      const commandEntries = snapshot.commands ?? [];
+      setCommands((prev) => {
+        if (prev.size > 0) {
+          return prev;
+        }
+        return new Map(commandEntries.map((command) => [command.id, command]));
+      });
+    };
+
+    void hydrateFromSnapshot();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [serverId]);
 
   useEffect(() => {
     if (focusedAgentOverride) {
@@ -407,6 +570,91 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     },
     []
   );
+
+  const gitDiffRequest = useDaemonRequest<
+    { agentId: string },
+    { agentId: string; diff: string },
+    GitDiffResponseMessage
+  >({
+    ws,
+    responseType: "git_diff_response",
+    buildRequest: ({ params }) => ({
+      type: "session",
+      message: {
+        type: "git_diff_request",
+        agentId: params?.agentId ?? "",
+      },
+    }),
+    matchResponse: (message, context) =>
+      message.payload.agentId === context.params?.agentId,
+    getRequestKey: (params) => params?.agentId ?? "default",
+    selectData: (message) => ({
+      agentId: message.payload.agentId,
+      diff: message.payload.diff ?? "",
+    }),
+    extractError: (message) =>
+      message.payload.error ? new Error(message.payload.error) : null,
+    timeoutMs: 10000,
+    keepPreviousData: false,
+  });
+
+  const directoryListingRequest = useDaemonRequest<
+    { agentId: string; path: string },
+    FileExplorerResponseMessage["payload"],
+    FileExplorerResponseMessage
+  >({
+    ws,
+    responseType: "file_explorer_response",
+    buildRequest: ({ params }) => ({
+      type: "session",
+      message: {
+        type: "file_explorer_request",
+        agentId: params?.agentId ?? "",
+        path: params?.path,
+        mode: "list",
+      },
+    }),
+    matchResponse: (message, context) =>
+      message.payload.mode === "list" &&
+      message.payload.agentId === context.params?.agentId &&
+      message.payload.path === context.params?.path,
+    getRequestKey: (params) =>
+      params ? `${params.agentId}:list:${params.path}` : "default",
+    selectData: (message) => message.payload,
+    extractError: (message) =>
+      message.payload.error ? new Error(message.payload.error) : null,
+    timeoutMs: 10000,
+    keepPreviousData: false,
+  });
+
+  const filePreviewRequest = useDaemonRequest<
+    { agentId: string; path: string },
+    FileExplorerResponseMessage["payload"],
+    FileExplorerResponseMessage
+  >({
+    ws,
+    responseType: "file_explorer_response",
+    buildRequest: ({ params }) => ({
+      type: "session",
+      message: {
+        type: "file_explorer_request",
+        agentId: params?.agentId ?? "",
+        path: params?.path,
+        mode: "file",
+      },
+    }),
+    matchResponse: (message, context) =>
+      message.payload.mode === "file" &&
+      message.payload.agentId === context.params?.agentId &&
+      message.payload.path === context.params?.path,
+    getRequestKey: (params) =>
+      params ? `${params.agentId}:file:${params.path}` : "default",
+    selectData: (message) => message.payload,
+    extractError: (message) =>
+      message.payload.error ? new Error(message.payload.error) : null,
+    timeoutMs: 10000,
+    keepPreviousData: false,
+  });
 
   const sendAgentLifecycleRequest = useCallback(
     (request: PendingAgentLifecycleRequest) => {
@@ -452,21 +700,15 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
       console.log("[Session] Session state:", agentsList.length, "agents,", commandsList.length, "commands");
 
-      const nextAgents = new Map<string, Agent>();
-      const nextPermissions = new Map<string, PendingPermission>();
+      const { agents: hydratedAgents, pendingPermissions: hydratedPermissions } = buildSessionStateFromSnapshots(
+        serverId,
+        agentsList
+      );
+      const normalizedCommands = commandsList.map((command) => command as Command);
 
-      for (const snapshot of agentsList) {
-        const agent = normalizeAgentSnapshot(snapshot);
-        nextAgents.set(agent.id, agent);
-        for (const request of agent.pendingPermissions) {
-          const key = derivePendingPermissionKey(agent.id, request);
-          nextPermissions.set(key, { key, agentId: agent.id, request });
-        }
-      }
-
-      setAgents(nextAgents);
-      setPendingPermissions(nextPermissions);
-      setCommands(new Map(commandsList.map((c) => [c.id, c as Command])));
+      setAgents(hydratedAgents);
+      setPendingPermissions(hydratedPermissions);
+      setCommands(new Map(normalizedCommands.map((command) => [command.id, command])));
       setAgentStreamState((prev) => {
         if (prev.size === 0) {
           return prev;
@@ -503,12 +745,13 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
         return changed ? next : prev;
       });
+      void persistSessionSnapshot(serverId, { agents: agentsList, commands: normalizedCommands });
     });
 
     const unsubAgentState = ws.on("agent_state", (message) => {
       if (message.type !== "agent_state") return;
       const snapshot = message.payload;
-      const agent = normalizeAgentSnapshot(snapshot);
+      const agent = normalizeAgentSnapshot(snapshot, serverId);
 
       console.log("[Session] Agent state update:", agent.id, agent.status);
 
@@ -912,62 +1155,6 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       }
     });
 
-    // Git diff response handler
-    const unsubGitDiff = ws.on("git_diff_response", (message) => {
-      if (message.type !== "git_diff_response") return;
-      const { agentId, diff, error } = message.payload;
-
-      console.log("[Session] Git diff response for agent:", agentId, error ? `(error: ${error})` : "");
-
-      if (error) {
-        console.error("[Session] Git diff error:", error);
-        setGitDiffs((prev) => new Map(prev).set(agentId, `Error: ${error}`));
-      } else {
-        setGitDiffs((prev) => new Map(prev).set(agentId, diff || ""));
-      }
-    });
-
-    const unsubFileExplorer = ws.on("file_explorer_response", (message) => {
-      if (message.type !== "file_explorer_response") {
-        return;
-      }
-      const { agentId, directory, file, mode, error } = message.payload;
-
-      console.log(
-        "[Session] File explorer response for agent:",
-        agentId,
-        mode,
-        error ? `(error: ${error})` : ""
-      );
-
-      updateExplorerState(agentId, (state) => {
-        const nextState: AgentFileExplorerState = {
-          ...state,
-          isLoading: false,
-          lastError: error ?? null,
-          pendingRequest: null,
-          directories: state.directories,
-          files: state.files,
-        };
-
-        if (!error) {
-          if (mode === "list" && directory) {
-            const directories = new Map(state.directories);
-            directories.set(directory.path, directory);
-            nextState.directories = directories;
-          }
-
-          if (mode === "file" && file) {
-            const files = new Map(state.files);
-            files.set(file.path, file);
-            nextState.files = files;
-          }
-        }
-
-        return nextState;
-      });
-    });
-
     const unsubProviderModels = ws.on(
       "list_provider_models_response",
       (message) => {
@@ -1074,8 +1261,6 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       unsubActivity();
       unsubChunk();
       unsubTranscription();
-      unsubGitDiff();
-      unsubFileExplorer();
       unsubProviderModels();
       unsubAgentDeleted();
     };
@@ -1166,7 +1351,11 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     ws.send(msg);
   }, [ws]);
 
-  const sendAgentMessage = useCallback(async (agentId: string, message: string, imageUris?: string[]) => {
+  const sendAgentMessage = useCallback(async (
+    agentId: string,
+    message: string,
+    images?: Array<{ uri: string; mimeType?: string }>
+  ) => {
     // Generate unique message ID for deduplication
     const messageId = generateMessageId();
 
@@ -1186,24 +1375,28 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
 
     // Convert images to base64 if provided
     let imagesData: Array<{ data: string; mimeType: string }> | undefined;
-    if (imageUris && imageUris.length > 0) {
-      imagesData = [];
-      for (const imageUri of imageUris) {
-        try {
-          // Use FileSystem.File to read the image as base64
-          const file = new FileSystem.File(imageUri);
-          const base64 = file.base64Sync();
-
-          // Get MIME type from the file
-          const mimeType = file.type || 'image/jpeg';
-
-          imagesData.push({
-            data: base64,
-            mimeType,
-          });
-        } catch (error) {
-          console.error('[Session] Failed to convert image:', error);
-        }
+    if (images && images.length > 0) {
+      const encodedImages = await Promise.all(
+        images.map(async ({ uri, mimeType }) => {
+          try {
+            const data = await FileSystem.readAsStringAsync(uri, {
+              encoding: "base64",
+            });
+            return {
+              data,
+              mimeType: mimeType ?? "image/jpeg",
+            };
+          } catch (error) {
+            console.error("[Session] Failed to convert image:", error);
+            return null;
+          }
+        })
+      );
+      const validImages = encodedImages.filter(
+        (entry): entry is { data: string; mimeType: string } => entry !== null
+      );
+      if (validImages.length > 0) {
+        imagesData = validImages;
       }
     }
 
@@ -1229,7 +1422,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
         const queue = queuedMessages.get(agentId);
         if (queue && queue.length > 0) {
           const [next, ...rest] = queue;
-          void sendAgentMessage(agentId, next.text, next.images?.map((img) => img.uri));
+          void sendAgentMessage(agentId, next.text, next.images);
           setQueuedMessages((prev) => {
             const updated = new Map(prev);
             updated.set(agentId, rest);
@@ -1389,15 +1582,15 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   }, []);
 
   const requestGitDiff = useCallback((agentId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "git_diff_request",
-        agentId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
+    gitDiffRequest
+      .execute({ agentId })
+      .then((result) => {
+        setGitDiffs((prev) => new Map(prev).set(result.agentId, result.diff));
+      })
+      .catch((error) => {
+        setGitDiffs((prev) => new Map(prev).set(agentId, `Error: ${error.message}`));
+      });
+  }, [gitDiffRequest, setGitDiffs]);
 
   const requestDirectoryListing = useCallback((agentId: string, path: string, options?: { recordHistory?: boolean }) => {
     const normalizedPath = path && path.length > 0 ? path : ".";
@@ -1413,17 +1606,37 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       lastVisitedPath: normalizedPath,
     }));
 
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "file_explorer_request",
-        agentId,
-        path: normalizedPath,
-        mode: "list",
-      },
-    };
-    ws.send(msg);
-  }, [updateExplorerState, ws]);
+    directoryListingRequest
+      .execute({ agentId, path: normalizedPath })
+      .then((payload) => {
+        updateExplorerState(agentId, (state) => {
+          const nextState: AgentFileExplorerState = {
+            ...state,
+            isLoading: false,
+            lastError: payload.error ?? null,
+            pendingRequest: null,
+            directories: state.directories,
+            files: state.files,
+          };
+
+          if (!payload.error && payload.directory) {
+            const directories = new Map(state.directories);
+            directories.set(payload.directory.path, payload.directory);
+            nextState.directories = directories;
+          }
+
+          return nextState;
+        });
+      })
+      .catch((error) => {
+        updateExplorerState(agentId, (state) => ({
+          ...state,
+          isLoading: false,
+          lastError: error.message,
+          pendingRequest: null,
+        }));
+      });
+  }, [directoryListingRequest, updateExplorerState]);
 
   const requestFilePreview = useCallback((agentId: string, path: string) => {
     const normalizedPath = path && path.length > 0 ? path : ".";
@@ -1434,17 +1647,37 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
       pendingRequest: { path: normalizedPath, mode: "file" },
     }));
 
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "file_explorer_request",
-        agentId,
-        path: normalizedPath,
-        mode: "file",
-      },
-    };
-    ws.send(msg);
-  }, [updateExplorerState, ws]);
+    filePreviewRequest
+      .execute({ agentId, path: normalizedPath })
+      .then((payload) => {
+        updateExplorerState(agentId, (state) => {
+          const nextState: AgentFileExplorerState = {
+            ...state,
+            isLoading: false,
+            lastError: payload.error ?? null,
+            pendingRequest: null,
+            directories: state.directories,
+            files: state.files,
+          };
+
+          if (!payload.error && payload.file) {
+            const files = new Map(state.files);
+            files.set(payload.file.path, payload.file);
+            nextState.files = files;
+          }
+
+          return nextState;
+        });
+      })
+      .catch((error) => {
+        updateExplorerState(agentId, (state) => ({
+          ...state,
+          isLoading: false,
+          lastError: error.message,
+          pendingRequest: null,
+        }));
+      });
+  }, [filePreviewRequest, updateExplorerState]);
 
   const navigateExplorerBack = useCallback((agentId: string) => {
     let targetPath: string | null = null;
@@ -1485,6 +1718,7 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
   }, [updateExplorerState, ws]);
 
   const value: SessionContextValue = {
+    serverId,
     ws,
     audioPlayer,
     isPlayingAudio,
@@ -1529,6 +1763,42 @@ export function SessionProvider({ children, serverUrl }: SessionProviderProps) {
     setAgentMode,
     respondToPermission,
   };
+
+  const sessionValueRef = useRef<SessionContextValue>(value);
+  const sessionListenersRef = useRef(new Set<() => void>());
+  useEffect(() => {
+    sessionValueRef.current = value;
+    sessionListenersRef.current.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        console.error("[SessionProvider] Session listener failed", error);
+      }
+    });
+    notifySessionDirectoryChange();
+  }, [value, notifySessionDirectoryChange]);
+
+  const sessionAccessor = useCallback(() => sessionValueRef.current, []);
+  const subscribeToSession = useCallback((listener: () => void) => {
+    sessionListenersRef.current.add(listener);
+    return () => {
+      sessionListenersRef.current.delete(listener);
+    };
+  }, []);
+  const sessionDirectoryEntry = useMemo(
+    () => ({
+      getSnapshot: sessionAccessor,
+      subscribe: subscribeToSession,
+    }),
+    [sessionAccessor, subscribeToSession]
+  );
+
+  useEffect(() => {
+    registerSessionAccessor(serverId, sessionDirectoryEntry);
+    return () => {
+      unregisterSessionAccessor(serverId);
+    };
+  }, [serverId, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
 
   return (
     <SessionContext.Provider value={value}>

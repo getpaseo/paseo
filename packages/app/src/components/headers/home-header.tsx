@@ -1,9 +1,8 @@
-import { useCallback, useState } from "react";
-import { Modal, Pressable, Text, View } from "react-native";
+import { useCallback } from "react";
+import { Pressable } from "react-native";
 import { router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Settings, MessageSquare, MoreVertical, Plus } from "lucide-react-native";
+import { Settings, MessageSquare, Download, Plus } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
 
 interface HomeHeaderProps {
@@ -13,69 +12,40 @@ interface HomeHeaderProps {
 
 export function HomeHeader({ onCreateAgent, onImportAgent }: HomeHeaderProps) {
   const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
-  const [isMenuVisible, setIsMenuVisible] = useState(false);
-
-  const openMenu = useCallback(() => setIsMenuVisible(true), []);
-  const closeMenu = useCallback(() => setIsMenuVisible(false), []);
+  const handleCreatePress = useCallback(() => {
+    onCreateAgent();
+  }, [onCreateAgent]);
   const handleImportPress = useCallback(() => {
-    closeMenu();
     onImportAgent();
-  }, [closeMenu, onImportAgent]);
+  }, [onImportAgent]);
 
   return (
-    <>
-      <ScreenHeader
-        left={
+    <ScreenHeader
+      left={
+        <Pressable
+          onPress={() => router.push("/settings")}
+          style={styles.iconButton}
+        >
+          <Settings size={20} color={theme.colors.foreground} />
+        </Pressable>
+      }
+      right={
+        <>
           <Pressable
-            onPress={() => router.push("/settings")}
+            onPress={() => router.push("/orchestrator")}
             style={styles.iconButton}
           >
-            <Settings size={20} color={theme.colors.foreground} />
+            <MessageSquare size={20} color={theme.colors.foreground} />
           </Pressable>
-        }
-        right={
-          <>
-            <Pressable
-              onPress={() => router.push("/orchestrator")}
-              style={styles.iconButton}
-            >
-              <MessageSquare size={20} color={theme.colors.foreground} />
-            </Pressable>
-            <Pressable onPress={onCreateAgent} style={styles.iconButton}>
-              <Plus size={20} color={theme.colors.foreground} />
-            </Pressable>
-            <Pressable onPress={openMenu} style={styles.iconButton}>
-              <MoreVertical size={20} color={theme.colors.foreground} />
-            </Pressable>
-          </>
-        }
-      />
-
-      <Modal
-        visible={isMenuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeMenu}
-      >
-        <View style={styles.menuOverlay}>
-          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
-          <View
-            style={[
-              styles.menuContainer,
-              {
-                top: insets.top + theme.spacing[4],
-                right: theme.spacing[3],
-              },
-            ]}
-          >
-            <Pressable style={styles.menuItem} onPress={handleImportPress}>
-              <Text style={styles.menuItemText}>Import Agent</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-    </>
+          <Pressable onPress={handleImportPress} style={styles.iconButton}>
+            <Download size={20} color={theme.colors.foreground} />
+          </Pressable>
+          <Pressable onPress={handleCreatePress} style={styles.iconButton}>
+            <Plus size={20} color={theme.colors.foreground} />
+          </Pressable>
+        </>
+      }
+    />
   );
 }
 
@@ -83,33 +53,5 @@ const styles = StyleSheet.create((theme) => ({
   iconButton: {
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-  },
-  menuOverlay: {
-    flex: 1,
-  },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  menuContainer: {
-    position: "absolute",
-    minWidth: 180,
-    borderRadius: theme.borderRadius.xl,
-    backgroundColor: theme.colors.background,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  menuItem: {
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-  },
-  menuItemText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
 }));

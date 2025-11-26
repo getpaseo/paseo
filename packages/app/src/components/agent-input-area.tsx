@@ -20,7 +20,6 @@ import Animated, {
   FadeIn,
   FadeOut,
 } from "react-native-reanimated";
-import { useSession } from "@/contexts/session-context";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
@@ -31,6 +30,7 @@ import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 type QueuedMessage = {
   id: string;
@@ -40,6 +40,7 @@ type QueuedMessage = {
 
 interface AgentInputAreaProps {
   agentId: string;
+  serverId?: string;
 }
 
 const MIN_INPUT_HEIGHT = 50;
@@ -68,7 +69,7 @@ type TextAreaHandle = {
   } & Record<string, unknown>;
 };
 
-export function AgentInputArea({ agentId }: AgentInputAreaProps) {
+export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const {
     ws,
@@ -80,7 +81,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     saveDraftInput,
     queuedMessages: queuedMessagesByAgent,
     setQueuedMessages: setQueuedMessagesByAgent,
-  } = useSession();
+  } = useDaemonSession(serverId);
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
   const [userInput, setUserInput] = useState("");
@@ -137,7 +138,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     if (!userInput.trim() || !ws.isConnected) return;
 
     const message = userInput.trim();
-    const imageUris = selectedImages.length > 0 ? selectedImages.map(img => img.uri) : undefined;
+    const imageAttachments = selectedImages.length > 0 ? selectedImages : undefined;
     
     setUserInput("");
     setSelectedImages([]);
@@ -145,7 +146,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
     setIsProcessing(true);
 
     try {
-      await sendAgentMessage(agentId, message, imageUris);
+      await sendAgentMessage(agentId, message, imageAttachments);
     } catch (error) {
       console.error("[AgentInput] Failed to send message:", error);
     } finally {
@@ -710,7 +711,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
 
     // Cancels current agent run before sending queued prompt
     handleCancelAgent();
-    await sendAgentMessage(agentId, item.text, item.images?.map((img) => img.uri));
+    await sendAgentMessage(agentId, item.text, item.images);
   }
 
   const realtimeButton = (
@@ -846,7 +847,7 @@ export function AgentInputArea({ agentId }: AgentInputAreaProps) {
               >
                 <Paperclip size={20} color={theme.colors.foreground} />
               </Pressable>
-              <AgentStatusBar agentId={agentId} />
+              <AgentStatusBar agentId={agentId} serverId={serverId} />
             </View>
 
             {/* Right button group */}

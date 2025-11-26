@@ -29,26 +29,104 @@ import {
   X,
 } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
-import { useSession, type ExplorerEntry } from "@/contexts/session-context";
+import type { ExplorerEntry, SessionContextValue } from "@/contexts/session-context";
+import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { formatConnectionStatus } from "@/utils/daemons";
+import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
 
 export default function FileExplorerScreen() {
-  const { theme } = useUnistyles();
   const {
     agentId,
     path: pathParamRaw,
     file: fileParamRaw,
+    serverId,
   } = useLocalSearchParams<{
     agentId: string;
     path?: string | string[];
     file?: string | string[];
+    serverId?: string;
   }>();
+  const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
+  const { connectionStates } = useDaemonConnections();
+
+  let session: SessionContextValue | null = null;
+
+  try {
+    session = useDaemonSession(resolvedServerId, { suppressUnavailableAlert: true });
+  } catch (error) {
+    if (error instanceof DaemonSessionUnavailableError) {
+      session = null;
+    } else {
+      throw error;
+    }
+  }
+
+  const connectionServerId = resolvedServerId ?? null;
+  const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Selected daemon";
+  const connectionStatus = connection?.status ?? "idle";
+  const connectionStatusLabel = formatConnectionStatus(connectionStatus);
+  const lastError = connection?.lastError ?? null;
+
+  if (!session) {
+    return (
+      <FileExplorerSessionUnavailable
+        agentId={agentId}
+        serverId={resolvedServerId}
+        serverLabel={serverLabel}
+        connectionStatus={connectionStatus}
+        connectionStatusLabel={connectionStatusLabel}
+        lastError={lastError}
+      />
+    );
+  }
+
+  const routeServerId = resolvedServerId ?? session.serverId;
+
+  return (
+    <FileExplorerContent
+      session={session}
+      agentId={agentId}
+      pathParamRaw={pathParamRaw}
+      fileParamRaw={fileParamRaw}
+      routeServerId={routeServerId}
+    />
+  );
+}
+
+type FileExplorerContentProps = {
+  session: SessionContextValue;
+  agentId?: string;
+  pathParamRaw?: string | string[];
+  fileParamRaw?: string | string[];
+  routeServerId: string;
+};
+
+type FileExplorerSessionUnavailableProps = {
+  agentId?: string;
+  serverId?: string;
+  serverLabel: string;
+  connectionStatus: ConnectionStatus;
+  connectionStatusLabel: string;
+  lastError: string | null;
+};
+
+function FileExplorerContent({
+  session,
+  agentId,
+  pathParamRaw,
+  fileParamRaw,
+  routeServerId,
+}: FileExplorerContentProps) {
+  const { theme } = useUnistyles();
   const {
     agents,
     fileExplorer,
     requestDirectoryListing,
     requestFilePreview,
     navigateExplorerBack,
-  } = useSession();
+  } = session;
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const pendingPathParamRef = useRef<string | null>(null);
@@ -258,12 +336,15 @@ export default function FileExplorerScreen() {
 
   const handleCloseExplorer = useCallback(() => {
     if (agentId) {
-      router.replace({ pathname: "/agent/[id]", params: { id: agentId } });
+      router.replace({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: { serverId: routeServerId, agentId },
+      });
       return;
     }
 
     router.back();
-  }, [agentId]);
+  }, [agentId, routeServerId]);
 
   const handleBackNavigation = useCallback(() => {
     if (!agentId) {
@@ -576,6 +657,61 @@ export default function FileExplorerScreen() {
   );
 }
 
+function FileExplorerSessionUnavailable({
+  agentId,
+  serverId,
+  serverLabel,
+  connectionStatus,
+  connectionStatusLabel,
+  lastError,
+}: FileExplorerSessionUnavailableProps) {
+  const { theme } = useUnistyles();
+
+  const handleClose = useCallback(() => {
+    if (agentId && serverId) {
+      router.replace({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: { serverId, agentId },
+      });
+      return;
+    }
+    router.back();
+  }, [agentId, serverId]);
+
+  const isConnecting = connectionStatus === "connecting";
+
+  return (
+    <View style={styles.container}>
+      <BackHeader
+        title="Files"
+        onBack={handleClose}
+        rightContent={
+          <Pressable style={styles.closeButton} onPress={handleClose}>
+            <X size={18} color={theme.colors.foreground} />
+          </Pressable>
+        }
+      />
+      <View style={styles.centerState}>
+        {isConnecting ? (
+          <>
+            <ActivityIndicator size="small" />
+            <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
+            <Text style={styles.statusText}>We'll load files once this daemon is online.</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.errorText}>
+              Can't open files while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+            </Text>
+            <Text style={styles.statusText}>Connect this daemon and try again.</Text>
+            {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
 function ViewToggle({
   viewMode,
   onChange,
@@ -826,6 +962,16 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.destructive,
     fontSize: theme.fontSize.base,
+    textAlign: "center",
+  },
+  statusText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+  errorDetails: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
     textAlign: "center",
   },
   emptyText: {

@@ -3,7 +3,11 @@ import { View, Text, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
-import { useSession } from "@/contexts/session-context";
+import type { SessionContextValue } from "@/contexts/session-context";
+import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { formatConnectionStatus } from "@/utils/daemons";
+import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
 
 interface ParsedDiffFile {
   path: string;
@@ -51,8 +55,55 @@ function parseDiff(diffText: string): ParsedDiffFile[] {
 }
 
 export default function GitDiffScreen() {
-  const { agentId } = useLocalSearchParams<{ agentId: string }>();
-  const { agents, gitDiffs, requestGitDiff } = useSession();
+  const { agentId, serverId } = useLocalSearchParams<{ agentId: string; serverId?: string }>();
+  const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
+  const { connectionStates } = useDaemonConnections();
+
+  let session: SessionContextValue | null = null;
+
+  try {
+    session = useDaemonSession(resolvedServerId, { suppressUnavailableAlert: true });
+  } catch (error) {
+    if (error instanceof DaemonSessionUnavailableError) {
+      session = null;
+    } else {
+      throw error;
+    }
+  }
+
+  const connectionServerId = resolvedServerId ?? null;
+  const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Active daemon";
+  const connectionStatus = connection?.status ?? "idle";
+  const connectionStatusLabel = formatConnectionStatus(connectionStatus);
+  const lastError = connection?.lastError ?? null;
+
+  if (!session) {
+    return (
+      <SessionUnavailableState
+        serverLabel={serverLabel}
+        connectionStatus={connectionStatus}
+        connectionStatusLabel={connectionStatusLabel}
+        lastError={lastError}
+      />
+    );
+  }
+
+  const routeServerId = resolvedServerId ?? session.serverId;
+
+  return <GitDiffContent session={session} agentId={agentId} routeServerId={routeServerId} />;
+}
+
+function GitDiffContent({
+  session,
+  agentId,
+  routeServerId,
+}: {
+  session: SessionContextValue;
+  agentId?: string;
+  routeServerId: string;
+}) {
+  const { agents, gitDiffs, requestGitDiff } = session;
   const [isLoading, setIsLoading] = useState(true);
 
   const agent = agentId ? agents.get(agentId) : undefined;
@@ -64,7 +115,6 @@ export default function GitDiffScreen() {
       return;
     }
 
-    // Always request fresh diff when screen mounts
     setIsLoading(true);
     requestGitDiff(agentId);
 
@@ -85,6 +135,7 @@ export default function GitDiffScreen() {
     return (
       <View style={styles.container}>
         <BackHeader title="Changes" />
+        <Text style={styles.metaText}>Server: {routeServerId}</Text>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Agent not found</Text>
         </View>
@@ -99,6 +150,7 @@ export default function GitDiffScreen() {
   return (
     <View style={styles.container}>
       <BackHeader title="Changes" />
+      <Text style={styles.metaText}>Server: {routeServerId}</Text>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         {isLoading ? (
@@ -156,10 +208,54 @@ export default function GitDiffScreen() {
   );
 }
 
+function SessionUnavailableState({
+  serverLabel,
+  connectionStatus,
+  connectionStatusLabel,
+  lastError,
+}: {
+  serverLabel: string;
+  connectionStatus: ConnectionStatus;
+  connectionStatusLabel: string;
+  lastError: string | null;
+}) {
+  const isConnecting = connectionStatus === "connecting";
+
+  return (
+    <View style={styles.container}>
+      <BackHeader title="Changes" />
+      <Text style={styles.metaText}>Server: {serverLabel}</Text>
+      <View style={styles.errorContainer}>
+        {isConnecting ? (
+          <>
+            <ActivityIndicator size="large" />
+            <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
+            <Text style={styles.statusText}>We'll show changes once this session is online.</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.errorText}>
+              Can't load changes while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+            </Text>
+            <Text style={styles.statusText}>Connect this daemon or switch to another one to continue.</Text>
+            {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  metaText: {
+    paddingHorizontal: theme.spacing[6],
+    marginBottom: theme.spacing[2],
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
   },
   scrollView: {
     flex: 1,
@@ -190,6 +286,18 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.destructive,
     textAlign: "center",
+  },
+  statusText: {
+    marginTop: theme.spacing[3],
+    textAlign: "center",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.mutedForeground,
+  },
+  errorDetails: {
+    marginTop: theme.spacing[2],
+    textAlign: "center",
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
   },
   emptyContainer: {
     flex: 1,

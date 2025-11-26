@@ -14,7 +14,7 @@ export interface ActiveProcessesProps {
   }>;
   viewMode: "orchestrator" | "agent";
   activeAgentId: string | null;
-  onSelectAgent: (id: string) => void;
+  onSelectAgent: (serverId: string, id: string) => void;
   onSelectOrchestrator: () => void;
 }
 
@@ -174,7 +174,7 @@ export function ActiveProcesses({
           return (
             <Pressable
               key={`agent-${agent.id}`}
-              onPress={() => onSelectAgent(agent.id)}
+              onPress={() => onSelectAgent(agent.serverId, agent.id)}
               style={({ pressed }) => [
                 styles.processItem,
                 isActive ? styles.processItemActive : styles.processItemInactive,

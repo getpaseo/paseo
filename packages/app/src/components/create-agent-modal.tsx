@@ -39,7 +39,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, Check, X, ChevronDown } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
-import { useSession } from "@/contexts/session-context";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
@@ -50,6 +49,7 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
 } from "@server/server/agent/provider-manifest";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type {
   AgentProvider,
   AgentMode,
@@ -58,7 +58,12 @@ import type {
   AgentTimelineItem,
   AgentModelDefinition,
 } from "@server/server/agent/agent-sdk-types";
-import type { WSInboundMessage } from "@server/server/messages";
+import { useDaemonRequest } from "@/hooks/use-daemon-request";
+import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/messages";
+import { formatConnectionStatus } from "@/utils/daemons";
+import { useSession } from "@/contexts/session-context";
+import { useSessionForServer } from "@/hooks/use-session-directory";
+import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 
 export type CreateAgentInitialValues = {
   workingDir?: string;
@@ -72,12 +77,14 @@ interface AgentFlowModalProps {
   onClose: () => void;
   flow: "create" | "import";
   initialValues?: CreateAgentInitialValues;
+  serverId?: string | null;
 }
 
 interface ModalWrapperProps {
   isVisible: boolean;
   onClose: () => void;
   initialValues?: CreateAgentInitialValues;
+  serverId?: string | null;
 }
 
 const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
@@ -150,6 +157,11 @@ type RepoInfoState = {
   isDirty: boolean;
 };
 
+type GitRepoInfoResponseMessage = Extract<
+  SessionOutboundMessage,
+  { type: "git_repo_info_response" }
+>;
+
 function formatRelativeTime(date: Date): string {
   const now = Date.now();
   const diffMs = now - date.getTime();
@@ -188,6 +200,7 @@ function AgentFlowModal({
   onClose,
   flow,
   initialValues,
+  serverId,
 }: AgentFlowModalProps) {
   const insets = useSafeAreaInsets();
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
@@ -201,17 +214,121 @@ function AgentFlowModal({
   const isCreateFlow = !isImportFlow;
 
   const { recentPaths, addRecentPath } = useRecentPaths();
+  const { connectionStates, activeDaemonId, setActiveDaemonId } = useDaemonConnections();
+  const daemonEntries = useMemo(() => Array.from(connectionStates.values()), [connectionStates]);
+  const initialServerId = useMemo(() => {
+    if (serverId) {
+      return serverId;
+    }
+    if (activeDaemonId) {
+      return activeDaemonId;
+    }
+    return daemonEntries[0]?.daemon.id ?? null;
+  }, [serverId, activeDaemonId, daemonEntries]);
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
+  const activeSession = useSession();
+  const selectedSession = useSessionForServer(selectedServerId);
+  const session =
+    selectedServerId === null ? activeSession : selectedSession ?? null;
+
+  useEffect(() => {
+    if (!selectedServerId) {
+      setSelectedServerId(initialServerId);
+      return;
+    }
+    const exists = daemonEntries.some((entry) => entry.daemon.id === selectedServerId);
+    if (!exists) {
+      setSelectedServerId(initialServerId);
+    }
+  }, [daemonEntries, selectedServerId, initialServerId]);
+
+  useEffect(() => {
+    if (isVisible && initialServerId && selectedServerId !== initialServerId) {
+      setSelectedServerId(initialServerId);
+    }
+  }, [isVisible, initialServerId]);
+
+  const ws = session?.ws ?? null;
+  const inertWebSocket = useMemo<UseWebSocketReturn>(
+    () => ({
+      isConnected: false,
+      isConnecting: false,
+      conversationId: null,
+      lastError: null,
+      send: () => {},
+      on: () => () => {},
+      sendPing: () => {},
+      sendUserMessage: () => {},
+    }),
+    []
+  );
+  const effectiveWs = ws ?? inertWebSocket;
+  const createAgent = session?.createAgent;
+  const resumeAgent = session?.resumeAgent;
+  const sendAgentAudio = session?.sendAgentAudio;
+  const agents = session?.agents;
+  const providerModels = session?.providerModels;
+  const requestProviderModels = session?.requestProviderModels;
+  const gitRepoInfoRequest = useDaemonRequest<
+    { cwd: string },
+    RepoInfoState,
+    GitRepoInfoResponseMessage
+  >({
+    ws: effectiveWs,
+    responseType: "git_repo_info_response",
+    buildRequest: ({ params, requestId }) => ({
+      type: "session",
+      message: {
+        type: "git_repo_info_request",
+        cwd: params?.cwd ?? ".",
+        requestId,
+      },
+    }),
+    getRequestKey: (params) => params?.cwd ?? "default",
+    selectData: (message) => ({
+      cwd: message.payload.cwd,
+      repoRoot: message.payload.repoRoot,
+      branches: message.payload.branches ?? [],
+      currentBranch: message.payload.currentBranch ?? null,
+      isDirty: Boolean(message.payload.isDirty),
+    }),
+    extractError: (message) =>
+      message.payload.error ? new Error(message.payload.error) : null,
+    keepPreviousData: false,
+  });
   const {
-    ws,
-    createAgent,
-    resumeAgent,
-    sendAgentAudio,
-    agents,
-    providerModels,
-    requestProviderModels,
-  } = useSession();
-  const isWsConnected = ws.isConnected;
+    status: repoRequestStatus,
+    data: repoInfo,
+    error: repoRequestError,
+    execute: inspectRepoInfo,
+    reset: resetRepoInfo,
+    cancel: cancelRepoInfo,
+  } = gitRepoInfoRequest;
+  const isWsConnected = ws?.isConnected ?? false;
   const router = useRouter();
+  const activeServerId = session?.serverId ?? null;
+  const selectedDaemonConnection = selectedServerId
+    ? connectionStates.get(selectedServerId)
+    : null;
+  const selectedDaemonLabel =
+    selectedDaemonConnection?.daemon.label ??
+    selectedDaemonConnection?.daemon.wsUrl ??
+    selectedServerId ??
+    "Selected daemon";
+  const selectedDaemonStatusLabel = selectedDaemonConnection
+    ? formatConnectionStatus(selectedDaemonConnection.status)
+    : "offline";
+  const selectedDaemonIsUnavailable = Boolean(
+    selectedServerId &&
+    (!session || selectedDaemonConnection?.status !== "online")
+  );
+  const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
+  const daemonAvailabilityError = selectedDaemonIsUnavailable
+    ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. Connect to it before creating or importing agents.${
+        selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
+      }`
+    : null;
+  const isTargetDaemonReady = Boolean(session && !selectedDaemonIsUnavailable);
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");
@@ -245,13 +362,7 @@ function AgentFlowModal({
   const [dictationVolume, setDictationVolume] = useState(0);
   const [dictationDebugInfo, setDictationDebugInfo] = useState<AudioDebugInfo | null>(null);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
-  const [repoInfo, setRepoInfo] = useState<RepoInfoState | null>(null);
-  const [repoInfoStatus, setRepoInfoStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
-  const [repoInfoError, setRepoInfoError] = useState<string | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
-  const repoInfoRequestIdRef = useRef<string | null>(null);
   const shouldSyncBaseBranchRef = useRef(true);
   const promptInputRef = useRef<
     TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
@@ -353,6 +464,9 @@ function AgentFlowModal({
   }, [applyInitialValues, isVisible]);
 
   const refreshProviderModels = useCallback(() => {
+    if (!requestProviderModels) {
+      return;
+    }
     const trimmed = workingDir.trim();
     requestProviderModels(selectedProvider, {
       cwd: trimmed.length > 0 ? trimmed : undefined,
@@ -466,13 +580,13 @@ function AgentFlowModal({
   );
   const agentDefinition = providerDefinitionMap.get(selectedProvider);
   const modeOptions = agentDefinition?.modes ?? [];
-  const modelState = providerModels.get(selectedProvider);
+  const modelState = providerModels?.get(selectedProvider);
   const availableModels = modelState?.models ?? [];
   const isModelLoading = modelState?.isLoading ?? false;
   const modelError = modelState?.error ?? null;
 
   useEffect(() => {
-    if (!isVisible) {
+    if (!isVisible || !providerModels || !requestProviderModels || !isTargetDaemonReady) {
       return;
     }
     const trimmed = workingDir.trim();
@@ -483,7 +597,7 @@ function AgentFlowModal({
     requestProviderModels(selectedProvider, {
       cwd: trimmed.length > 0 ? trimmed : undefined,
     });
-  }, [isVisible, providerModels, requestProviderModels, selectedProvider, workingDir]);
+  }, [isVisible, providerModels, requestProviderModels, selectedProvider, workingDir, isTargetDaemonReady]);
   const setPromptHeight = useCallback((nextHeight: number) => {
     const bounded = Math.min(
       PROMPT_MAX_HEIGHT,
@@ -599,6 +713,9 @@ function AgentFlowModal({
   }, [shouldAutoFocusPrompt]);
   const activeSessionIds = useMemo(() => {
     const ids = new Set<string>();
+    if (!agents) {
+      return ids;
+    }
     agents.forEach((agent) => {
       if (agent.sessionId) {
         ids.add(agent.sessionId);
@@ -687,12 +804,9 @@ function AgentFlowModal({
     setWorktreeSlugEdited(false);
     setErrorMessage("");
     setIsLoading(false);
-    setRepoInfo(null);
-    setRepoInfoStatus("idle");
-    setRepoInfoError(null);
+    resetRepoInfo();
     setOpenDropdown(null);
     pendingRequestIdRef.current = null;
-    repoInfoRequestIdRef.current = null;
     shouldSyncBaseBranchRef.current = true;
     dictationRequestIdRef.current = null;
     setIsDictating(false);
@@ -702,7 +816,8 @@ function AgentFlowModal({
     if (dictationRecorder.isRecording?.()) {
       void dictationRecorder.stop().catch(() => {});
     }
-  }, [setPromptHeight]);
+    cancelRepoInfo();
+  }, [cancelRepoInfo, resetRepoInfo, setPromptHeight]);
 
   const handleDictationStart = useCallback(async () => {
     if (!isCreateFlow || isLoading || !isWsConnected || isDictating || isDictationProcessing) {
@@ -739,6 +854,13 @@ function AgentFlowModal({
     if (!isDictating || isDictationProcessing) {
       return;
     }
+    if (!sendAgentAudio) {
+      setErrorMessage(
+        daemonAvailabilityError ??
+          "Connect to the selected daemon before using dictation."
+      );
+      return;
+    }
     try {
       const audioData = await dictationRecorder.stop();
       setIsDictating(false);
@@ -760,19 +882,38 @@ function AgentFlowModal({
       dictationRequestIdRef.current = null;
       setIsDictationProcessing(false);
     }
-  }, [dictationRecorder, isDictating, isDictationProcessing, sendAgentAudio]);
+  }, [
+    daemonAvailabilityError,
+    dictationRecorder,
+    isDictating,
+    isDictationProcessing,
+    sendAgentAudio,
+  ]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
     const agentId = pendingNavigationAgentIdRef.current;
-    if (!agentId) {
+    if (!agentId || !activeServerId) {
       return;
     }
 
     pendingNavigationAgentIdRef.current = null;
+    if (activeDaemonId !== activeServerId) {
+      setActiveDaemonId(activeServerId);
+    }
     InteractionManager.runAfterInteractions(() => {
-      router.push(`/agent/${agentId}`);
+      router.push({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: {
+          serverId: activeServerId,
+          agentId,
+        },
+      });
     });
-  }, [router]);
+  }, [activeDaemonId, activeServerId, router, setActiveDaemonId]);
+
+  const handleSelectServer = useCallback((serverId: string) => {
+    setSelectedServerId(serverId);
+  }, []);
 
   const handleCloseAnimationComplete = useCallback(() => {
     console.log("[CreateAgentModal] close animation complete – resetting form");
@@ -783,6 +924,14 @@ function AgentFlowModal({
 
   const requestImportCandidates = useCallback(
     (provider?: AgentProvider) => {
+      if (!isTargetDaemonReady || !ws || !ws.isConnected) {
+        setIsImportLoading(false);
+        setImportError(
+          daemonAvailabilityError ??
+            "Connect to the selected daemon to load import candidates."
+        );
+        return;
+      }
       setIsImportLoading(true);
       setImportError(null);
       const msg: WSInboundMessage = {
@@ -804,7 +953,7 @@ function AgentFlowModal({
         setImportError("Unable to load agents to import. Please try again.");
       }
     },
-    [ws]
+    [daemonAvailabilityError, isTargetDaemonReady, ws]
   );
 
   useEffect(() => {
@@ -973,34 +1122,6 @@ function AgentFlowModal({
     slugifyWorktreeName,
   ]);
 
-  const requestRepoInfo = useCallback(
-    (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) {
-        setRepoInfo(null);
-        setRepoInfoStatus("idle");
-        setRepoInfoError(null);
-        repoInfoRequestIdRef.current = null;
-        return;
-      }
-
-      const requestId = generateMessageId();
-      repoInfoRequestIdRef.current = requestId;
-      setRepoInfoStatus("loading");
-      setRepoInfoError(null);
-
-      ws.send({
-        type: "session",
-        message: {
-          type: "git_repo_info_request",
-          cwd: trimmed,
-          requestId,
-        },
-      });
-    },
-    [ws]
-  );
-
   useEffect(() => {
     if (!isCreateFlow || !isVisible) {
       return;
@@ -1008,62 +1129,61 @@ function AgentFlowModal({
     shouldSyncBaseBranchRef.current = true;
   }, [isCreateFlow, isVisible, workingDir]);
 
-  useEffect(() => {
-    if (!isCreateFlow || !isVisible) {
-      return;
-    }
-    requestRepoInfo(workingDir);
-  }, [isCreateFlow, isVisible, requestRepoInfo, workingDir]);
+  const trimmedWorkingDir = workingDir.trim();
+  const shouldInspectRepo = isCreateFlow && isVisible && trimmedWorkingDir.length > 0;
+  const repoAvailabilityError = shouldInspectRepo && (!isTargetDaemonReady || !isWsConnected)
+    ? daemonAvailabilityError ?? "Connect to the selected daemon to inspect the repository."
+    : null;
+  const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
+    ? "idle"
+    : repoAvailabilityError
+      ? "error"
+      : repoRequestStatus === "loading"
+        ? "loading"
+        : repoRequestStatus === "error"
+          ? "error"
+          : repoRequestStatus === "success"
+            ? "ready"
+            : "idle";
+  const repoInfoError = repoAvailabilityError ?? repoRequestError?.message ?? null;
 
   useEffect(() => {
-    if (!isCreateFlow || !isVisible) {
+    if (!shouldInspectRepo) {
+      cancelRepoInfo();
+      resetRepoInfo();
       return;
     }
-    const unsubscribe = ws.on("git_repo_info_response", (message) => {
-      if (message.type !== "git_repo_info_response") {
-        return;
-      }
 
-      if (
-        repoInfoRequestIdRef.current &&
-        message.payload.requestId &&
-        message.payload.requestId !== repoInfoRequestIdRef.current
-      ) {
-        return;
-      }
+    if (repoAvailabilityError) {
+      cancelRepoInfo();
+      return;
+    }
 
-      if (message.payload.error) {
-        setRepoInfo(null);
-        setRepoInfoStatus("error");
-        setRepoInfoError(message.payload.error);
-        return;
-      }
-
-      setRepoInfo({
-        cwd: message.payload.cwd,
-        repoRoot: message.payload.repoRoot,
-        branches: message.payload.branches ?? [],
-        currentBranch: message.payload.currentBranch ?? null,
-        isDirty: Boolean(message.payload.isDirty),
-      });
-      setRepoInfoStatus("ready");
-      setRepoInfoError(null);
-      setBaseBranch((prev) => {
-        if (
-          shouldSyncBaseBranchRef.current ||
-          prev.trim().length === 0
-        ) {
-          shouldSyncBaseBranchRef.current = false;
-          return message.payload.currentBranch ?? "";
-        }
-        return prev;
-      });
-    });
-
+    inspectRepoInfo({ cwd: trimmedWorkingDir }).catch(() => {});
     return () => {
-      unsubscribe();
+      cancelRepoInfo();
     };
-  }, [isCreateFlow, isVisible, ws]);
+  }, [
+    cancelRepoInfo,
+    inspectRepoInfo,
+    repoAvailabilityError,
+    resetRepoInfo,
+    shouldInspectRepo,
+    trimmedWorkingDir,
+  ]);
+
+  useEffect(() => {
+    if (!repoInfo) {
+      return;
+    }
+    setBaseBranch((prev) => {
+      if (shouldSyncBaseBranchRef.current || prev.trim().length === 0) {
+        shouldSyncBaseBranchRef.current = false;
+        return repoInfo.currentBranch ?? "";
+      }
+      return prev;
+    });
+  }, [repoInfo]);
 
   const handleCreate = useCallback(async () => {
     const trimmedPath = workingDir.trim();
@@ -1084,6 +1204,14 @@ function AgentFlowModal({
 
     if (gitBlockingError) {
       setErrorMessage(gitBlockingError);
+      return;
+    }
+
+    if (!createAgent || !isTargetDaemonReady) {
+      setErrorMessage(
+        daemonAvailabilityError ??
+          "Connect to the selected daemon before creating an agent."
+      );
       return;
     }
 
@@ -1162,11 +1290,20 @@ function AgentFlowModal({
     validateWorktreeName,
     addRecentPath,
     createAgent,
+    daemonAvailabilityError,
+    isTargetDaemonReady,
   ]);
 
   const handleImportCandidatePress = useCallback(
     (candidate: ImportCandidate) => {
       if (isLoading) {
+        return;
+      }
+      if (!resumeAgent || !isTargetDaemonReady) {
+        setImportError(
+          daemonAvailabilityError ??
+            "Connect to the selected daemon before importing an agent."
+        );
         return;
       }
       setErrorMessage("");
@@ -1178,14 +1315,20 @@ function AgentFlowModal({
         requestId,
       });
     },
-    [isLoading, resumeAgent]
+    [
+      daemonAvailabilityError,
+      isLoading,
+      isTargetDaemonReady,
+      resumeAgent,
+      setImportError,
+    ]
   );
 
   const renderImportItem = useCallback<ListRenderItem<ImportCandidate>>(
     ({ item }) => (
       <Pressable
         onPress={() => handleImportCandidatePress(item)}
-        disabled={isLoading}
+        disabled={isLoading || !isTargetDaemonReady}
         style={styles.resumeItem}
       >
         <View style={styles.resumeItemHeader}>
@@ -1209,11 +1352,11 @@ function AgentFlowModal({
         </View>
       </Pressable>
     ),
-    [getProviderLabel, handleImportCandidatePress, isLoading]
+    [getProviderLabel, handleImportCandidatePress, isLoading, isTargetDaemonReady]
   );
 
   useEffect(() => {
-    if (!isImportFlow || !isVisible) {
+    if (!isImportFlow || !isVisible || !ws) {
       return;
     }
     const unsubscribe = ws.on("list_persisted_agents_response", (message) => {
@@ -1240,7 +1383,7 @@ function AgentFlowModal({
   }, [isImportFlow, isVisible, ws]);
 
   useEffect(() => {
-    if (!shouldListenForStatus) {
+    if (!shouldListenForStatus || !ws) {
       return;
     }
     const unsubscribe = ws.on("status", (message) => {
@@ -1295,7 +1438,7 @@ function AgentFlowModal({
   }, [handleClose, shouldListenForStatus, ws]);
 
   useEffect(() => {
-    if (!shouldListenForDictation) {
+    if (!shouldListenForDictation || !ws) {
       return;
     }
     const unsubscribe = ws.on("transcription_result", (message) => {
@@ -1360,7 +1503,7 @@ function AgentFlowModal({
     <PromptDictationControls
       isRecording={isDictating}
       isProcessing={isDictationProcessing}
-      disabled={isLoading || !isWsConnected}
+      disabled={isLoading || !isWsConnected || !isTargetDaemonReady}
       volume={dictationVolume}
       onStart={handleDictationStart}
       onCancel={handleDictationCancel}
@@ -1426,7 +1569,8 @@ function AgentFlowModal({
     workingDirIsEmpty ||
     promptIsEmpty ||
     Boolean(gitBlockingError) ||
-    isLoading;
+    isLoading ||
+    !isTargetDaemonReady;
   const handlePromptDesktopSubmitKeyPress = useCallback(
     (event: WebTextInputKeyPressEvent) => {
       if (!shouldHandlePromptDesktopSubmit) {
@@ -1517,6 +1661,54 @@ function AgentFlowModal({
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
+                  <View style={styles.daemonSelectorSection}>
+                    <Text style={styles.daemonSelectorLabel}>Target Daemon</Text>
+                    {daemonEntries.length === 0 ? (
+                      <Text style={styles.daemonChipText}>No daemons available</Text>
+                    ) : (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.daemonSelectorChips}
+                      >
+                        {daemonEntries.map(({ daemon, status }) => {
+                          const isSelected = daemon.id === selectedServerId;
+                          const label = daemon.label || daemon.wsUrl;
+                          return (
+                            <Pressable
+                              key={daemon.id}
+                              onPress={() => handleSelectServer(daemon.id)}
+                              style={[styles.daemonChip, isSelected && styles.daemonChipSelected]}
+                            >
+                              <Text
+                                style={[
+                                  styles.daemonChipText,
+                                  isSelected && styles.daemonChipTextSelected,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {label}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.daemonChipStatus,
+                                  isSelected && styles.daemonChipTextSelected,
+                                ]}
+                              >
+                                {formatConnectionStatus(status)}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                    {daemonAvailabilityError ? (
+                      <Text style={styles.daemonAvailabilityText}>
+                        {daemonAvailabilityError}
+                      </Text>
+                    ) : null}
+                  </View>
+
                   <PromptSection
                     value={initialPrompt}
                     isLoading={isLoading}
@@ -1700,6 +1892,11 @@ function AgentFlowModal({
                   },
                 ]}
               >
+                {daemonAvailabilityError ? (
+                  <Text style={styles.daemonAvailabilityText}>
+                    {daemonAvailabilityError}
+                  </Text>
+                ) : null}
                 <View style={styles.resumeFilters}>
                   <View style={styles.providerFilterRow}>
                     {providerFilterOptions.map((option) => {
@@ -1736,7 +1933,7 @@ function AgentFlowModal({
                     <Pressable
                       style={styles.refreshButton}
                       onPress={refreshImportList}
-                      disabled={isImportLoading}
+                      disabled={isImportLoading || !isTargetDaemonReady}
                     >
                       <Text style={styles.refreshButtonText}>Refresh</Text>
                     </Pressable>
@@ -1764,6 +1961,7 @@ function AgentFlowModal({
                     <Pressable
                       style={styles.refreshButtonAlt}
                       onPress={refreshImportList}
+                      disabled={isImportLoading || !isTargetDaemonReady}
                     >
                       <Text style={styles.refreshButtonAltText}>Try Again</Text>
                     </Pressable>
@@ -2955,6 +3153,50 @@ const styles = StyleSheet.create(((theme: any) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
+  },
+  daemonSelectorSection: {
+    marginBottom: theme.spacing[6],
+  },
+  daemonSelectorLabel: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: theme.spacing[2],
+  },
+  daemonSelectorChips: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  daemonChip: {
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    marginRight: theme.spacing[2],
+  },
+  daemonChipSelected: {
+    backgroundColor: theme.colors.palette.blue[900],
+    borderColor: theme.colors.palette.blue[500],
+  },
+  daemonChipText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  daemonChipTextSelected: {
+    color: theme.colors.palette.white,
+  },
+  daemonChipStatus: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+  },
+  daemonAvailabilityText: {
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   footer: {
     borderTopWidth: theme.borderWidth[1],

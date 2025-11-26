@@ -1,17 +1,18 @@
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useSession } from "@/contexts/session-context";
 import { useState } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 interface AgentStatusBarProps {
   agentId: string;
+  serverId?: string;
 }
 
-export function AgentStatusBar({ agentId }: AgentStatusBarProps) {
+export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const { theme } = useUnistyles();
-  const { agents, setAgentMode } = useSession();
+  const { agents, setAgentMode } = useDaemonSession(serverId);
   const [showModeSelector, setShowModeSelector] = useState(false);
 
   const agent = agents.get(agentId);

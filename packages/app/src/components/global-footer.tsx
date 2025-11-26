@@ -3,12 +3,13 @@ import { View, Pressable, Text, Platform } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AudioLines, Users, Plus } from "lucide-react-native";
+import { AudioLines, Users, Plus, Download } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useSession } from "@/contexts/session-context";
 import { useFooterControls, FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { RealtimeControls } from "./realtime-controls";
-import { CreateAgentModal } from "./create-agent-modal";
+import { CreateAgentModal, ImportAgentModal } from "./create-agent-modal";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -23,8 +24,10 @@ export function GlobalFooter() {
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { ws } = useSession();
+  const { activeDaemonId } = useDaemonConnections();
   const { controls } = useFooterControls();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   // Guard Reanimated entry/exit transitions on Android to avoid ViewGroup.dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -72,7 +75,7 @@ export function GlobalFooter() {
     return null;
   }
 
-  // For home and orchestrator screens, show three buttons with realtime stacked on top
+  // For home and orchestrator screens, show action buttons with realtime stacked on top
   const nonAgentFooterHeight = isRealtimeMode
     ? FOOTER_HEIGHT * 2 + insets.bottom
     : FOOTER_HEIGHT + insets.bottom;
@@ -104,8 +107,8 @@ export function GlobalFooter() {
             </Animated.View>
           )}
 
-          {/* Three button menu - always visible */}
-          <View style={styles.threeButtonContainer}>
+          {/* Action menu */}
+          <View style={styles.actionButtonContainer}>
             <Pressable
               onPress={() => router.push("/")}
               style={({ pressed }) => [
@@ -121,6 +124,23 @@ export function GlobalFooter() {
                 />
               </View>
               <Text style={styles.footerButtonText}>Agents</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShowImportModal(true)}
+              style={({ pressed }) => [
+                styles.footerButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              <View style={styles.footerIconWrapper}>
+                <Download
+                  size={iconSize}
+                  color={theme.colors.foreground}
+                  style={iconStyle}
+                />
+              </View>
+              <Text style={styles.footerButtonText}>Import</Text>
             </Pressable>
 
             <Pressable
@@ -168,6 +188,12 @@ export function GlobalFooter() {
       <CreateAgentModal
         isVisible={showCreateModal}
         onClose={() => setShowCreateModal(false)}
+        serverId={activeDaemonId}
+      />
+      <ImportAgentModal
+        isVisible={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        serverId={activeDaemonId}
       />
     </>
   );
@@ -187,7 +213,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
-  threeButtonContainer: {
+  actionButtonContainer: {
     flexDirection: "row",
     padding: theme.spacing[4],
     gap: theme.spacing[3],
