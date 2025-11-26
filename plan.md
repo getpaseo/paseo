@@ -39,7 +39,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Create/import modal now requires explicit host selection (no first entry default) and `useAggregatedAgents` no longer fabricates a host id via `connectionStates.keys().next()`; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 3. Simplify Settings Screen
-- [ ] Remove the standalone "Test Connection" form/URL input at the top of settings.
+- [x] Remove the standalone "Test Connection" form/URL input at the top of settings.
+  - Removed the global host selector/Test UI from `packages/app/src/app/settings.tsx` so configuration happens per-host within their cards/forms, and ran `npm run typecheck --workspace=@paseo/app`.
 - [ ] Keep the per-host "Test" button in each host row (already exists).
 
 ### 4. Transparent Connection Management
@@ -52,9 +53,9 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
 - [ ] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
-  - Context: `packages/app/src/app/git-diff.tsx:233-241` still renders the destructive error container and tells users "Connect this host or switch to another one to continue," violating the auto-connect guidance.
+  - Context (review): `packages/app/src/app/git-diff.tsx:229-242` still renders the destructive error container and tells users "Connect this host or switch to another one to continue," so the UI still contradicts the auto-connect guidance even after the wording change.
 - [ ] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
-  - Context: `packages/app/src/app/file-explorer.tsx:690-698` presents the offline host as an error and asks users to "Connect this host and try again."
+  - Context (review): `packages/app/src/app/file-explorer.tsx:690-699` still uses the destructive error styling and the "Connect this host and try again" CTA instead of the neutral offline messaging the new philosophy calls for.
 - [ ] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
   - Context: `packages/app/src/app/agent/[serverId]/[agentId].tsx:651-660` and `packages/app/src/components/agent-list.tsx:149` continue to show destructive states directing users to manually connect before managing agents.
 
