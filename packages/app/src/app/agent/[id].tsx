@@ -105,8 +105,8 @@ export default function LegacyAgentRedirectScreen() {
         <View style={styles.centerState}>
           <Text style={styles.title}>Agent not found</Text>
           <Text style={styles.subtitle}>
-            We could not find {agentId} on any connected host. Make sure the host is online or
-            reopen the agent from the Home screen after it reconnects.
+            We could not find {agentId} on any host right now. Hosts reconnect automatically—open it
+            again from the Agents screen after it comes back online.
           </Text>
           <Pressable style={styles.primaryButton} onPress={handleGoHome}>
             <Text style={styles.primaryButtonText}>Go Home</Text>
