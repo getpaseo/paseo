@@ -3,82 +3,50 @@ import type { Agent } from "@/contexts/session-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionDirectory } from "@/hooks/use-session-directory";
 
-export interface AggregatedAgentGroup {
+export interface AggregatedAgent extends Agent {
   serverId: string;
   serverLabel: string;
-  agents: Agent[];
 }
 
 export interface AggregatedAgentsResult {
-  groups: AggregatedAgentGroup[];
+  agents: AggregatedAgent[];
   isLoading: boolean;
 }
-
-const sortAgents = (agents: Agent[]): Agent[] => {
-  return [...agents].sort((left, right) => {
-    const leftRunning = left.status === "running";
-    const rightRunning = right.status === "running";
-    if (leftRunning && !rightRunning) {
-      return -1;
-    }
-    if (!leftRunning && rightRunning) {
-      return 1;
-    }
-    const leftTime = (left.lastUserMessageAt ?? left.lastActivityAt).getTime();
-    const rightTime = (right.lastUserMessageAt ?? right.lastActivityAt).getTime();
-    return rightTime - leftTime;
-  });
-};
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates, isLoading: registryLoading } = useDaemonConnections();
   const sessionDirectory = useSessionDirectory();
 
   return useMemo(() => {
-    const groups = new Map<string, { serverLabel: string; agents: Agent[] }>();
-    const daemonOrder = new Map<string, number>();
-    Array.from(connectionStates.keys()).forEach((serverId, index) => {
-      daemonOrder.set(serverId, index);
+    const allAgents: AggregatedAgent[] = [];
+
+    sessionDirectory.forEach((session, serverId) => {
+      if (!session) {
+        return;
+      }
+      const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
+      for (const agent of session.agents.values()) {
+        allAgents.push({
+          ...agent,
+          serverId,
+          serverLabel,
+        });
+      }
     });
 
-    if (sessionDirectory.size > 0) {
-      sessionDirectory.forEach((session, serverId) => {
-        if (!session) {
-          return;
-        }
-        const label = connectionStates.get(serverId)?.daemon.label ?? serverId;
-        const sessionAgents = Array.from(session.agents.values());
-        if (sessionAgents.length === 0) {
-          return;
-        }
-        const existing = groups.get(serverId);
-        if (existing) {
-          existing.agents.push(...sessionAgents);
-        } else {
-          groups.set(serverId, { serverLabel: label, agents: sessionAgents });
-        }
-      });
-    }
-
-    const aggregatedGroups = Array.from(groups.entries()).map(([serverId, { serverLabel, agents }]) => ({
-      serverId,
-      serverLabel,
-      agents: sortAgents(agents),
-    }));
-
-    aggregatedGroups.sort((left, right) => {
-      const leftIndex = daemonOrder.get(left.serverId);
-      const rightIndex = daemonOrder.get(right.serverId);
-      if (leftIndex !== undefined && rightIndex !== undefined && leftIndex !== rightIndex) {
-        return leftIndex - rightIndex;
-      }
-      if (leftIndex !== undefined) {
+    // Sort by: running agents first, then by most recent activity
+    allAgents.sort((left, right) => {
+      const leftRunning = left.status === "running";
+      const rightRunning = right.status === "running";
+      if (leftRunning && !rightRunning) {
         return -1;
       }
-      if (rightIndex !== undefined) {
+      if (!leftRunning && rightRunning) {
         return 1;
       }
-      return left.serverLabel.localeCompare(right.serverLabel);
+      const leftTime = (left.lastUserMessageAt ?? left.lastActivityAt).getTime();
+      const rightTime = (right.lastUserMessageAt ?? right.lastActivityAt).getTime();
+      return rightTime - leftTime;
     });
 
     // Loading if registry is still loading, or if any host is connecting and hasn't
@@ -94,6 +62,6 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       }
     }
 
-    return { groups: aggregatedGroups, isLoading };
+    return { agents: allAgents, isLoading };
   }, [sessionDirectory, connectionStates, registryLoading]);
 }

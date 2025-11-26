@@ -104,15 +104,18 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Context (review): `HomeScreen` still flips directly to the "New/Import Agent" empty state whenever `aggregatedAgents` is empty, so offline hosts with agents appear as if there are zero agents and there's no neutral loading indicator (`packages/app/src/app/index.tsx:109-116`).
   - Review (2025-11-26): This task is still open. The home screen shows an empty state immediately if `aggregatedCount === 0`, with no distinction between "loading" and "truly empty." Offline hosts that may have agents will show zero agents until they reconnect.
   - Completed: Updated `useAggregatedAgents` to return `{ groups, isLoading }` where `isLoading` is true while the daemon registry loads or while hosts are `connecting` without a session yet. Updated `HomeScreen` to show an `ActivityIndicator` during loading, then either the agent list or empty state. Offline hosts don't block loading—only `connecting` hosts do.
-- [ ] Remove grouping of agents by host—show a single flat list.
+- [x] Remove grouping of agents by host—show a single flat list.
   - Context (review): `packages/app/src/components/agent-list.tsx:67-131` still maps `agentGroups` into host-specific sections with headers, so grouping hasn't been removed.
   - Review (2025-11-26): Still open. The `AgentList` component iterates over `agentGroups` and renders a section header (`sectionLabel`) per host.
-  - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
+  - Completed: Refactored `useAggregatedAgents` to return a flat `AggregatedAgent[]` array (each agent carries `serverId` and `serverLabel`). Updated `AgentList` to render a flat list with a host badge in each row's title area. Removed section headers and grouping logic entirely.
+  - [x] Each agent row displays its host name as metadata (badge, subtitle, etc.).
     - Context (review): Agent rows only render cwd/provider/status/time (`packages/app/src/components/agent-list.tsx:87-125`), so there's no host metadata visible per row yet.
     - Review (2025-11-26): Still open. To flatten the list, host metadata must move into each row since section headers will be removed.
-  - [ ] Sort agents by recent activity or alphabetically (not by host).
+    - Completed: Added `hostBadge` to each agent row showing `serverLabel` in a muted badge next to the agent title.
+  - [x] Sort agents by recent activity or alphabetically (not by host).
     - Context (review): `packages/app/src/hooks/use-aggregated-agents.ts:25-66` sorts sections by host registration order and only orders agents within a host, so we still bias the list ordering by host rather than recency across all agents.
     - Review (2025-11-26): Still open. The current `useAggregatedAgents` hook returns grouped data; it needs refactoring to return a flat, globally-sorted array.
+    - Completed: Agents are now sorted globally by status (running first) then by most recent activity (`lastUserMessageAt` or `lastActivityAt`), not by host.
 
 ### 9. Review: Git Diff Metadata Cleanup
 - [x] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.
@@ -120,33 +123,16 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 
 ---
 
-## Review Summary (2025-11-26)
+## Review Summary (2025-11-26, updated)
 
 **Completed:**
-- Tasks 1–7 are complete
-- Task 9 loading indicator is complete
+- Tasks 1–9 are complete
 - Internal code correctly uses "daemon" terminology while UI says "host"
 - Connection banners removed from home screen
 - Error philosophy fixed for Git Diff, File Explorer, and agent action sheets
 - Settings screen retains host status indicators (correct per guiding principles)
+- Create agent modal availability check fixed (uses `connectionStates` as single source of truth)
+- Home screen agent list is now a flat list sorted by activity with host badges per row
 - Typecheck passes
 
-**Remaining Work:**
-
-### Task 8: Create Agent Modal Availability Check
-The modal incorrectly shows hosts as offline when they're actually online. Root cause is a timing issue where `session` is null during the brief window between `connectionStates` updating and `SessionProvider` registering its session accessor.
-
-**Fix required in `packages/app/src/components/create-agent-modal.tsx`:**
-- Line 333-334: Change `selectedDaemonIsUnavailable` to only check `selectedDaemonStatus !== "online"`
-- Don't require `session` to exist for the availability check—`session` is only needed for actual operations
-- The availability UX should use `connectionStates` as single source of truth
-
-### Task 9: Home Screen Agent List (partial)
-The loading indicator is complete. Still need:
-1. **Flat list**: `AgentList` still renders sections with host headers via `agentGroups.map()`
-2. **Host metadata per row**: Agent rows don't show which host they belong to (required once sections are removed)
-3. **Global sorting**: Agents are still grouped by host order; need to flatten and sort by recency across all hosts
-
-**Files to modify for Task 9:**
-- `packages/app/src/hooks/use-aggregated-agents.ts` — return flat array sorted by activity
-- `packages/app/src/components/agent-list.tsx` — remove section headers, add host badge to rows
+**All tasks complete.**

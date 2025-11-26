@@ -14,7 +14,7 @@ import { useLocalSearchParams } from "expo-router";
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
-  const { groups: aggregatedAgents, isLoading } = useAggregatedAgents();
+  const { agents: aggregatedAgents, isLoading } = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [createModalMounted, setCreateModalMounted] = useState(false);
@@ -39,8 +39,7 @@ export default function HomeScreen() {
     };
   });
 
-  const aggregatedCount = aggregatedAgents.reduce((count, group) => count + group.agents.length, 0);
-  const hasAgents = aggregatedCount > 0;
+  const hasAgents = aggregatedAgents.length > 0;
 
   const handleCreateAgent = useCallback(() => {
     setCreateModalMounted(true);
@@ -112,7 +111,7 @@ export default function HomeScreen() {
             <ActivityIndicator size="large" color={theme.colors.mutedForeground} />
           </View>
         ) : hasAgents ? (
-          <AgentList agentGroups={aggregatedAgents} />
+          <AgentList agents={aggregatedAgents} />
         ) : (
           <EmptyState
             onCreateAgent={handleCreateAgent}

@@ -2,29 +2,27 @@ import { View, Text, Pressable, ScrollView, Modal } from "react-native";
 import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { Agent } from "@/contexts/session-context";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
-import { type AggregatedAgentGroup } from "@/hooks/use-aggregated-agents";
+import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 interface AgentListProps {
-  agentGroups: AggregatedAgentGroup[];
+  agents: AggregatedAgent[];
 }
 
-export function AgentList({ agentGroups }: AgentListProps) {
+export function AgentList({ agents }: AgentListProps) {
   const { theme } = useUnistyles();
-  const [actionAgent, setActionAgent] = useState<Agent | null>(null);
-  const [actionAgentServerId, setActionAgentServerId] = useState<string | null>(null);
-  const actionSession = useDaemonSession(actionAgentServerId ?? undefined, {
+  const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+  const actionSession = useDaemonSession(actionAgent?.serverId, {
     suppressUnavailableAlert: true,
     allowUnavailable: true,
   });
 
   const deleteAgent = actionSession?.deleteAgent;
   const isActionSheetVisible = actionAgent !== null;
-  const isActionDaemonUnavailable = Boolean(actionAgentServerId && !actionSession);
+  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionSession);
 
   const handleAgentPress = useCallback(
     (serverId: string, agentId: string) => {
@@ -42,14 +40,12 @@ export function AgentList({ agentGroups }: AgentListProps) {
     [isActionSheetVisible]
   );
 
-  const handleAgentLongPress = useCallback((serverId: string, agent: Agent) => {
-    setActionAgentServerId(serverId);
+  const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
     setActionAgent(agent);
   }, []);
 
   const handleCloseActionSheet = useCallback(() => {
     setActionAgent(null);
-    setActionAgentServerId(null);
   }, []);
 
   const handleDeleteAgent = useCallback(() => {
@@ -58,77 +54,80 @@ export function AgentList({ agentGroups }: AgentListProps) {
     }
     deleteAgent(actionAgent.id);
     setActionAgent(null);
-    setActionAgentServerId(null);
   }, [actionAgent, deleteAgent]);
 
   return (
     <>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {agentGroups.map(({ serverId, serverLabel, agents }) => (
-          <View key={serverId} style={styles.section}>
-            <Text style={styles.sectionLabel}>{serverLabel}</Text>
-            {agents.map((agent) => {
-              const statusColor = getAgentStatusColor(agent.status);
-              const statusLabel = getAgentStatusLabel(agent.status);
-              const timeAgo = formatTimeAgo(agent.lastActivityAt);
-              const providerLabel = getAgentProviderDefinition(agent.provider).label;
-              const rowServerId = agent.serverId ?? serverId;
+        {agents.map((agent) => {
+          const statusColor = getAgentStatusColor(agent.status);
+          const statusLabel = getAgentStatusLabel(agent.status);
+          const timeAgo = formatTimeAgo(agent.lastActivityAt);
+          const providerLabel = getAgentProviderDefinition(agent.provider).label;
 
-              return (
-                <Pressable
-                  key={`${rowServerId}:${agent.id}`}
-                  style={({ pressed }) => [
-                    styles.agentItem,
-                    pressed && styles.agentItemPressed,
-                  ]}
-                  onPress={() => handleAgentPress(rowServerId, agent.id)}
-                  onLongPress={() => handleAgentLongPress(rowServerId, agent)}
-                >
-                  <View style={styles.agentContent}>
+          return (
+            <Pressable
+              key={`${agent.serverId}:${agent.id}`}
+              style={({ pressed }) => [
+                styles.agentItem,
+                pressed && styles.agentItemPressed,
+              ]}
+              onPress={() => handleAgentPress(agent.serverId, agent.id)}
+              onLongPress={() => handleAgentLongPress(agent)}
+            >
+              <View style={styles.agentContent}>
+                <View style={styles.titleRow}>
+                  <Text
+                    style={styles.agentTitle}
+                    numberOfLines={1}
+                  >
+                    {agent.title || "New Agent"}
+                  </Text>
+                  <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
                     <Text
-                      style={styles.agentTitle}
+                      style={[styles.hostText, { color: theme.colors.mutedForeground }]}
                       numberOfLines={1}
                     >
-                      {agent.title || "New Agent"}
+                      {agent.serverLabel}
                     </Text>
+                  </View>
+                </View>
 
-                    <Text style={styles.agentDirectory} numberOfLines={1}>
-                      {agent.cwd}
-                    </Text>
+                <Text style={styles.agentDirectory} numberOfLines={1}>
+                  {agent.cwd}
+                </Text>
 
-                    <View style={styles.statusRow}>
-                      <View style={styles.statusGroup}>
-                        <View
-                          style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
-                        >
-                          <Text
-                            style={[styles.providerText, { color: theme.colors.mutedForeground }]}
-                            numberOfLines={1}
-                          >
-                            {providerLabel}
-                          </Text>
-                        </View>
+                <View style={styles.statusRow}>
+                  <View style={styles.statusGroup}>
+                    <View
+                      style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                    >
+                      <Text
+                        style={[styles.providerText, { color: theme.colors.mutedForeground }]}
+                        numberOfLines={1}
+                      >
+                        {providerLabel}
+                      </Text>
+                    </View>
 
-                        <View style={styles.statusBadge}>
-                          <View
-                            style={[styles.statusDot, { backgroundColor: statusColor }]}
-                          />
-                          <Text style={[styles.statusText, { color: statusColor }]}>
-                            {statusLabel}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <Text style={styles.timeAgo}>
-                        {timeAgo}
+                    <View style={styles.statusBadge}>
+                      <View
+                        style={[styles.statusDot, { backgroundColor: statusColor }]}
+                      />
+                      <Text style={[styles.statusText, { color: statusColor }]}>
+                        {statusLabel}
                       </Text>
                     </View>
                   </View>
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
+
+                  <Text style={styles.timeAgo}>
+                    {timeAgo}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
       <Modal
@@ -182,17 +181,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
   },
-  section: {
-    marginBottom: theme.spacing[4],
-  },
-  sectionLabel: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.mutedForeground,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: theme.spacing[2],
-  },
   agentItem: {
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
@@ -207,11 +195,27 @@ const styles = StyleSheet.create((theme) => ({
   agentContent: {
     flex: 1,
   },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[1],
+  },
   agentTitle: {
+    flex: 1,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
-    marginBottom: theme.spacing[1],
+  },
+  hostBadge: {
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+  },
+  hostText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
   },
   agentDirectory: {
     fontSize: theme.fontSize.sm,
