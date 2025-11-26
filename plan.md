@@ -18,9 +18,11 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Settings screen, connection banners, error messages, modals, etc.
   - Internal code can keep "daemon" terminology; this is UI-only.
   - Updated every user-facing string (settings, modals, placeholders, defaults) to say "host" and spot-checked via targeted searches; no automated tests were run.
+  - Context: Remaining "daemon" labels in git diff, file explorer, and agent detail screens now say "host" (updated `packages/app/src/app/git-diff.tsx`, `file-explorer.tsx`, `agent/[id].tsx`, and `agent/[serverId]/[agentId].tsx`).
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
-- [ ] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
+- [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
+  - Removed the Settings "Set Active" controls/labels, scrubbed the copy that mentioned an active host (including git diff fallback text), and left the per-host cards focused on status/default/test actions; no automated tests were run.
 - [ ] Remove the concept of "primary daemon"—no default host for actions.
 - [ ] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
 - [ ] Clean up any related state/UI that exposes these concepts to users.

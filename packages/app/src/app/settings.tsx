@@ -125,10 +125,6 @@ const styles = StyleSheet.create((theme) => ({
   daemonCard: {
     gap: theme.spacing[2],
   },
-  daemonCardActive: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.palette.blue[500],
-  },
   settingRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -357,7 +353,7 @@ export default function SettingsScreen() {
     ? `${activeDaemon.label}${activeDaemonStatusLabel ? ` - ${activeDaemonStatusLabel}` : ""}${
         isServerConfigLocked ? " - Session unavailable" : ""
       }`
-    : "No active host selected.";
+    : "Add a host to configure its server URL.";
   const serverHelperText = isServerConfigLocked
     ? `Connect to ${activeDaemon?.label ?? "this host"} to edit its server URL.`
     : "Must be a valid WebSocket URL (ws:// or wss://)";
@@ -520,13 +516,6 @@ export default function SettingsScreen() {
       void setDefaultDaemon(profile.id);
     },
     [setDefaultDaemon]
-  );
-
-  const handleSetActiveDaemon = useCallback(
-    (profile: DaemonProfile) => {
-      setActiveDaemonId(profile.id, { source: "settings_switch" });
-    },
-    [setActiveDaemonId]
   );
 
   const updateDaemonTestState = useCallback((daemonId: string, state: { status: "idle" | "testing" | "success" | "error"; message?: string }) => {
@@ -821,11 +810,9 @@ export default function SettingsScreen() {
                   <DaemonCard
                     key={daemon.id}
                     daemon={daemon}
-                    isActive={daemon.id === activeDaemonId}
                     connectionStatus={connectionStatus}
                     lastError={lastConnectionError}
                     testState={testState}
-                    onSetActive={handleSetActiveDaemon}
                     onSetDefault={handleSetDefaultDaemon}
                     onTestConnection={handleTestDaemonConnection}
                     onEdit={handleOpenDaemonForm}
@@ -1001,11 +988,9 @@ export default function SettingsScreen() {
 
 interface DaemonCardProps {
   daemon: DaemonProfile;
-  isActive: boolean;
   connectionStatus: ConnectionStatus;
   lastError: string | null;
   testState?: DaemonTestState;
-  onSetActive: (daemon: DaemonProfile) => void;
   onSetDefault: (daemon: DaemonProfile) => void;
   onTestConnection: (daemon: DaemonProfile) => void;
   onEdit: (daemon: DaemonProfile) => void;
@@ -1018,11 +1003,9 @@ interface DaemonCardProps {
 
 function DaemonCard({
   daemon,
-  isActive,
   connectionStatus,
   lastError,
   testState,
-  onSetActive,
   onSetDefault,
   onTestConnection,
   onEdit,
@@ -1043,7 +1026,7 @@ function DaemonCard({
         : statusTone === "error"
           ? theme.colors.destructive
           : theme.colors.mutedForeground;
-  const badgeText = isActive ? `Active · ${statusLabel}` : statusLabel;
+  const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
   const daemonSession = useSessionForServer(daemon.id);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -1104,7 +1087,7 @@ function DaemonCard({
     if (!daemonSession) {
       Alert.alert(
         "Host unavailable",
-        `${daemon.label} is not connected. Select it to connect before restarting.`
+        `${daemon.label} is not connected. Wait for it to come online before restarting.`
       );
       return;
     }
@@ -1134,7 +1117,7 @@ function DaemonCard({
     if (!daemonSession) {
       Alert.alert(
         "Host unavailable",
-        `${daemon.label} is not connected. Select it to connect before restarting.`
+        `${daemon.label} is not connected. Wait for it to come online before restarting.`
       );
       return;
     }
@@ -1165,7 +1148,7 @@ function DaemonCard({
   }, [beginServerRestart, daemon.label, daemonSession, restartConfirmationMessage]);
 
   return (
-    <View style={[styles.settingCard, styles.daemonCard, isActive && styles.daemonCardActive]}>
+    <View style={[styles.settingCard, styles.daemonCard]}>
       <View style={styles.daemonHeaderRow}>
         <Text style={styles.settingTitle}>{daemon.label}</Text>
         <View style={styles.connectionStatusBadge}>
@@ -1189,11 +1172,6 @@ function DaemonCard({
         </Text>
       ) : null}
       <View style={styles.daemonActionsRow}>
-        {!isActive ? (
-          <Pressable style={styles.daemonActionButton} onPress={() => onSetActive(daemon)}>
-            <Text style={styles.daemonActionText}>Set Active</Text>
-          </Pressable>
-        ) : null}
         <Pressable style={styles.daemonActionButton} onPress={() => onSetDefault(daemon)}>
           <Text style={styles.daemonActionText}>{daemon.isDefault ? "Default" : "Make Default"}</Text>
         </Pressable>

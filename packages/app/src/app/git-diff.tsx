@@ -65,7 +65,7 @@ export default function GitDiffScreen() {
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
-  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Active host";
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Current host";
   const connectionStatus = connection?.status ?? "idle";
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastError = connection?.lastError ?? null;
