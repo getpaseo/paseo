@@ -45,23 +45,24 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Verified `SettingsScreen` still renders the per-host Test CTA inside each `DaemonCard`, confirmed the button invokes `handleTestDaemonConnection`, and ran `npm run typecheck --workspace=@paseo/app`.
 
 ### 4. Transparent Connection Management
-- [ ] When a host is added, the app auto-connects and keeps the connection alive.
+- [x] When a host is added, the app auto-connects and keeps the connection alive.
+  - Added an AppState-aware reconnect path in `useWebSocket` so every background session automatically reconnects when the app becomes active again, keeping newly added hosts online without manual intervention; verified with `npm run typecheck --workspace=@paseo/app`.
 - [ ] Users should never need to manually "connect" to a host—the app handles it.
 - [ ] Remove any UI that asks users to "connect" before performing actions.
 
-### 5. Fix Error Philosophy
+### 5. Remove Host Status from Home Screen
+- [ ] Remove connection status banners/indicators from the home screen—settings is the place to check host health.
+
+### 6. Fix Error Philosophy
 - [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
 - [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
-- [ ] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
-  - Context (review): `packages/app/src/app/git-diff.tsx:229-242` still renders the destructive error container and tells users "Connect this host or switch to another one to continue," so the UI still contradicts the auto-connect guidance even after the wording change.
-  - Context (review follow-up): `packages/app/src/app/git-diff.tsx:214-240` only swapped "Server" → "Host"—the state is still styled as an error with a "Connect this host" CTA instead of a neutral "we'll reconnect automatically" panel.
-- [ ] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
-  - Context (review): `packages/app/src/app/file-explorer.tsx:690-699` still uses the destructive error styling and the "Connect this host and try again" CTA instead of the neutral offline messaging the new philosophy calls for.
-  - Context (review follow-up): `packages/app/src/app/file-explorer.tsx:680-700` still shows the destructive error container after the terminology pass; we need the neutral offline design + auto-reconnect copy instead of "Connect this host and try again."
-- [ ] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
-  - Context: `packages/app/src/app/agent/[serverId]/[agentId].tsx:651-660` and `packages/app/src/components/agent-list.tsx:149` continue to show destructive states directing users to manually connect before managing agents.
-  - Context (review follow-up): Agent detail `AgentSessionUnavailableState` still renders `styles.centerState` with the "Connect this host or switch to another one to continue" message—it needs the neutral offline treatment that reassures the user we'll reconnect automatically.
+- [x] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
+  - Context (update): `SessionUnavailableState` in `packages/app/src/app/git-diff.tsx` now uses neutral copy/styling that reassures users we auto-reconnect; verified with `npm run typecheck --workspace=@paseo/app`.
+- [x] Update the File Explorer offline state to match the new philosophy (neutral messaging, no manual connect CTA).
+  - Context (update): `FileExplorerSessionUnavailable` now shows the passive offline message with auto-reconnect guidance instead of destructive styles (`packages/app/src/app/file-explorer.tsx`).
+- [x] Audit the agent detail flows for the same issue (offline agent screen + delete sheet) and replace the "connect this host" requirement with passive/offline messaging.
+  - Context (update): `AgentSessionUnavailableState` and the delete sheet subtitle in `packages/app/src/components/agent-list.tsx` now explain that offline hosts reconnect automatically, removing the manual "connect" instruction.
 
 ### 6. Agent Creation Flow
 - [ ] Remove reliance on "primary" or "active" daemon for agent creation.

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { AppState } from "react-native";
 import type {
   WSInboundMessage,
   WSOutboundMessage,
@@ -173,6 +174,27 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
       if (wsRef.current) {
         wsRef.current.close();
       }
+    };
+  }, [connect]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+
+      const readyState = wsRef.current?.readyState;
+      if (readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING) {
+        return;
+      }
+
+      shouldReconnectRef.current = true;
+      setIsConnecting(true);
+      connect();
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, [connect]);
 
