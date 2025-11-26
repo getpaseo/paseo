@@ -231,8 +231,10 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
       return;
     }
 
-    const fallback = daemons.find((daemon) => daemon.isDefault) ?? daemons[0];
-    setActiveDaemonId(fallback.id, { source: "auto_fallback" });
+    const fallback = daemons[0];
+    if (fallback) {
+      setActiveDaemonId(fallback.id, { source: "auto_fallback" });
+    }
   }, [daemons, activeDaemonId, activeDaemonPreference.isPending, persistActiveDaemonId, setActiveDaemonId]);
 
   const activeDaemon = useMemo(() => {

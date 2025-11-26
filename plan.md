@@ -23,7 +23,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
   - Removed the Settings "Set Active" controls/labels, scrubbed the copy that mentioned an active host (including git diff fallback text), and left the per-host cards focused on status/default/test actions; no automated tests were run.
-- [ ] Remove the concept of "primary daemon"—no default host for actions.
+- [x] Remove the concept of "primary daemon"—no default host for actions.
+  - Removed the Default host toggle/state in the registry and settings UI, updated host docs, and kept connection fallback logic simple; tests not run (not requested).
 - [ ] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
 - [ ] Clean up any related state/UI that exposes these concepts to users.
 
