@@ -606,7 +606,7 @@ export default function SettingsScreen() {
                   style={styles.input}
                   value={daemonForm.label}
                   onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
-                  placeholder="My Server"
+                  placeholder="My Host"
                   placeholderTextColor={defaultTheme.colors.mutedForeground}
                 />
 
@@ -813,7 +813,7 @@ function DaemonCard({
           setIsRestarting(false);
           if (!reconnected) {
             Alert.alert(
-              "Server reachable",
+              "Host reachable",
               `${daemon.label} came back online but Paseo has not reconnected yet.`
             );
           }

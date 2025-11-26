@@ -22,6 +22,9 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Review: Confirmed the agent redirect, file explorer, and git diff screens reflect the updated host wording with no lingering user-facing "daemon" strings.
   - Review follow-up: Git Diff screen still showed the selected host as "Server"; updated the meta labels to "Host" to keep UI text consistent (`packages/app/src/app/git-diff.tsx`).
   - Review follow-up (current): Found that the Git Diff header still surfaced the internal host ID instead of the friendly label; updated `GitDiffContent` to accept the computed `serverLabel` and verified via `npm run typecheck --workspace=@paseo/app`.
+- [x] Review follow-up: Remove the lingering "Server" wording on the Settings add-host form and restart alert so everything says "host."
+  - Context: The add-host input placeholder still reads "My Server" and the restart success alert title says "Server reachable" (`packages/app/src/app/settings.tsx:609`, `packages/app/src/app/settings.tsx:804-820`).
+  - Updated placeholder from "My Server" to "My Host" and alert title from "Server reachable" to "Host reachable"; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
@@ -58,6 +61,7 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 
 ### 6. Fix Error Philosophy
 - [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
+  - Context (review): The home connection banner still prints destructive red `connectionError` text for every offline host entry, so the screen treats normal downtime as an error (`packages/app/src/app/index.tsx:123-140`).
 - [ ] Only show errors when the user tries to interact with an agent whose host is stopped.
 - [ ] Update connection banners/indicators to show neutral "offline" state instead of error styling.
 - [x] Make the Git Diff offline/unavailable state neutral and stop instructing users to "connect" manually.
@@ -76,6 +80,7 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
   - Don't block the home screen for offline hosts.
   - Handle edge cases: no hosts configured, no hosts connected, partial host connectivity.
+  - Context (review): `HomeScreen` still flips directly to the "New/Import Agent" empty state whenever `aggregatedAgents` is empty, so offline hosts with agents appear as if there are zero agents and there's no neutral loading indicator (`packages/app/src/app/index.tsx:105-161`).
 - [ ] Remove grouping of agents by host—show a single flat list.
   - Context (review): `packages/app/src/components/agent-list.tsx:67-131` still maps `agentGroups` into host-specific sections with headers, so grouping hasn't been removed.
   - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
