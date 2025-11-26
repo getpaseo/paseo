@@ -33,10 +33,10 @@
 ## Routing & data-shaping rules (which daemon does a screen use?)
 - Primary route shapes include both daemon and agent: `/agent/[serverId]/[agentId]`, with a compatibility shim `/agent/[id]` that resolves across daemons when old deep links omit the server id.
 - Child routes (git diff, file explorer, diff viewers) also accept `serverId`; they guard with `useDaemonSession(..., { suppressUnavailableAlert: true })` and render connection-aware placeholders when offline.
-- Agent screen sets `setActiveDaemonId(serverId, { source: "agent_route" })` so the root `SessionProvider`/`RealtimeProvider` match the daemon shown. Avoid swapping the active daemon for background actions; prefer `useDaemonSession` with an explicit `serverId` instead.
+- Agent screen uses `useDaemonSession(serverId, { suppressUnavailableAlert: true })` to scope data to the route daemon without mutating any global "active host" state.
 - Aggregated views pull data from the session directory: `useAggregatedAgents` merges `session.agents` per daemon with labels from `connectionStates`. Inline navigation always passes the daemon id (`router.push({ pathname: "/agent/[serverId]/[agentId]", params: { serverId, agentId } })`).
 - Mutations honor the target daemon:
-  - Create/Resume/Import modals accept a `serverId` and block actions when that daemon is offline; successful creates set the active daemon to the server returned by the payload before navigating.
+  - Create/Resume/Import modals accept a `serverId` and block actions when that daemon is offline; successful creates/resumes navigate directly to the daemon returned by the payload without touching any global active-host concept.
   - Inline agent/file actions should use `useDaemonSession(resolvedServerId)` to ensure websocket sends route to the correct daemon without changing the global active session.
 
 ## When extending the system

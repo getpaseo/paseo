@@ -18,7 +18,7 @@ export default function HomeScreen() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { agents } = useSession();
-  const { activeDaemonId, connectionStates } = useDaemonConnections();
+  const { connectionStates } = useDaemonConnections();
   const aggregatedAgents = useAggregatedAgents(agents);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -63,15 +63,11 @@ export default function HomeScreen() {
     setShowCreateModal(true);
   }, []);
 
-  const openImportModal = useCallback(
-    (serverIdOverride?: string | null) => {
-      const resolvedServerId = serverIdOverride ?? activeDaemonId ?? null;
-      setPendingImportServerId(resolvedServerId);
-      setImportModalMounted(true);
-      setShowImportModal(true);
-    },
-    [activeDaemonId]
-  );
+  const openImportModal = useCallback((serverIdOverride?: string | null) => {
+    setPendingImportServerId(serverIdOverride ?? null);
+    setImportModalMounted(true);
+    setShowImportModal(true);
+  }, []);
 
   const handleImportAgent = useCallback(() => {
     openImportModal();
@@ -166,14 +162,13 @@ export default function HomeScreen() {
         <CreateAgentModal
           isVisible={showCreateModal}
           onClose={handleCloseCreateModal}
-          serverId={activeDaemonId}
         />
       ) : null}
       {importModalMounted ? (
         <ImportAgentModal
           isVisible={showImportModal}
           onClose={handleCloseImportModal}
-          serverId={pendingImportServerId ?? activeDaemonId}
+          serverId={pendingImportServerId}
         />
       ) : null}
     </View>
