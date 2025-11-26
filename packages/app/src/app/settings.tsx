@@ -372,9 +372,7 @@ export default function SettingsScreen() {
     message: string;
   } | null>(null);
   const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
-  const [daemonForm, setDaemonForm] = useState<{ id: string | null; label: string; wsUrl: string; autoConnect: boolean }>(
-    { id: null, label: "", wsUrl: "", autoConnect: true }
-  );
+  const [daemonForm, setDaemonForm] = useState<{ id: string | null; label: string; wsUrl: string }>({ id: null, label: "", wsUrl: "" });
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
   const [daemonTestStates, setDaemonTestStates] = useState<Map<string, DaemonTestState>>(() => new Map());
   const isLoading = settingsLoading || daemonLoading;
@@ -482,17 +480,16 @@ export default function SettingsScreen() {
         id: profile.id,
         label: profile.label,
         wsUrl: profile.wsUrl,
-        autoConnect: profile.autoConnect,
       });
     } else {
-      setDaemonForm({ id: null, label: "", wsUrl: "", autoConnect: true });
+      setDaemonForm({ id: null, label: "", wsUrl: "" });
     }
     setIsDaemonFormVisible(true);
   }, []);
 
   const handleCloseDaemonForm = useCallback(() => {
     setIsDaemonFormVisible(false);
-    setDaemonForm({ id: null, label: "", wsUrl: "", autoConnect: true });
+    setDaemonForm({ id: null, label: "", wsUrl: "" });
   }, []);
 
   const handleSubmitDaemonForm = useCallback(async () => {
@@ -510,7 +507,6 @@ export default function SettingsScreen() {
       const payload = {
         label: daemonForm.label.trim(),
         wsUrl: daemonForm.wsUrl.trim(),
-        autoConnect: daemonForm.autoConnect,
       };
       if (daemonForm.id) {
         await updateDaemon(daemonForm.id, payload);
@@ -905,20 +901,6 @@ export default function SettingsScreen() {
                   autoCorrect={false}
                   keyboardType="url"
                 />
-
-                <View style={styles.settingRow}>
-                  <View style={styles.settingContent}>
-                    <Text style={styles.settingTitle}>Auto-connect</Text>
-                    <Text style={styles.settingDescription}>Connect automatically when Paseo launches.</Text>
-                  </View>
-                  <Switch
-                    value={daemonForm.autoConnect}
-                    onValueChange={(value) => setDaemonForm((prev) => ({ ...prev, autoConnect: value }))}
-                    trackColor={{ false: defaultTheme.colors.palette.gray[700], true: defaultTheme.colors.palette.blue[500] }}
-                    thumbColor={daemonForm.autoConnect ? defaultTheme.colors.palette.blue[400] : defaultTheme.colors.palette.gray[300]}
-                  />
-                </View>
-
                 <View style={styles.daemonFormActionsRow}>
                   <Pressable style={[styles.daemonActionButton, styles.daemonActionDestructive]} onPress={handleCloseDaemonForm}>
                     <Text style={[styles.daemonActionText, styles.daemonActionDestructiveText]}>Cancel</Text>

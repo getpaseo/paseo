@@ -20,6 +20,7 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Updated every user-facing string (settings, modals, placeholders, defaults) to say "host" and spot-checked via targeted searches; no automated tests were run.
   - Context: Remaining "daemon" labels in git diff, file explorer, and agent detail screens now say "host" (updated `packages/app/src/app/git-diff.tsx`, `file-explorer.tsx`, `agent/[id].tsx`, and `agent/[serverId]/[agentId].tsx`).
   - Review: Confirmed the agent redirect, file explorer, and git diff screens reflect the updated host wording with no lingering user-facing "daemon" strings.
+  - Review follow-up: Git Diff screen still showed the selected host as "Server"; updated the meta labels to "Host" to keep UI text consistent (`packages/app/src/app/git-diff.tsx`).
 
 ### 2. Remove Active/Primary/Auto-Connect Concepts
 - [x] Remove the concept of "active daemon" from the UI and simplify to just "hosts".
@@ -27,7 +28,8 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Context: `GlobalFooter`, the create/import modals, the agent screen, and the agent list previously read/write `activeDaemonId`, forcing a global active host before routing; they now rely on explicit host IDs instead.
 - [x] Remove the concept of "primary daemon"—no default host for actions.
   - Eliminated the persisted `activeDaemonId`, flattened the session directory, and refactored `_layout`, realtime, settings, and agent UI to always resolve hosts explicitly so every host gets its own `SessionProvider`; verified via `npm run typecheck --workspace=@paseo/app`.
-- [ ] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
+- [x] Remove the "auto-connect" toggle from host settings—hosts always auto-connect when added.
+  - Removed the toggle from the host form so entries always auto-connect and verified with `npm run typecheck --workspace=@paseo/app`.
 - [ ] Clean up any related state/UI that exposes these concepts to users.
 
 ### Review: No Silent Defaults
