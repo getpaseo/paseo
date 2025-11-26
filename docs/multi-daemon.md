@@ -6,13 +6,13 @@
 - Make connectivity observable and resilient so screens gracefully handle offline daemons.
 
 ## Registry (what daemons exist?)
-- Backed by `DaemonRegistryProvider` (`packages/app/src/contexts/daemon-registry-context.tsx`). Profiles live in AsyncStorage under `@paseo:daemon-registry` (legacy `@paseo:settings` is migrated) with fields: `id`, `label`, `wsUrl`, optional `restUrl`, `autoConnect`, `isDefault`, timestamps, and optional metadata.
+- Backed by `DaemonRegistryProvider` (`packages/app/src/contexts/daemon-registry-context.tsx`). Profiles live in AsyncStorage under `@paseo:daemon-registry` (legacy `@paseo:settings` is migrated) with fields: `id`, `label`, `wsUrl`, optional `restUrl`, `autoConnect`, timestamps, and optional metadata.
 - React Query caches the registry (`staleTime/gcTime` Infinity) so reads are synchronous after first load. Writes update the cache and persist to storage.
-- Defaults are normalized so at least one daemon is marked `isDefault`; removing the last entry seeds a local fallback profile.
+- Removing the last entry seeds a local fallback profile so the UI never renders with an empty registry.
 
 ## Active daemon + connection state (what are we talking to?)
 - `DaemonConnectionsProvider` (`packages/app/src/contexts/daemon-connections-context.tsx`) sits under the registry and tracks:
-  - `activeDaemonId`, persisted in AsyncStorage (`@paseo:active-daemon-id`) with a React Query mirror; it falls back to the default daemon if the stored id disappears.
+  - `activeDaemonId`, persisted in AsyncStorage (`@paseo:active-daemon-id`) with a React Query mirror; it falls back to the first daemon in the registry if the stored id disappears.
   - `connectionStates`: per-daemon discriminated union (`idle | connecting | online | offline | error`) with `lastError/lastOnlineAt`. Session providers call `updateConnectionStatus` so UI banners/settings stay accurate. Transitions are logged to console for observability.
   - A session accessor registry keyed by daemon id + role (`primary | background`) that feeds the session directory (see below). Roles prevent duplicate connections when multiple hosts mount.
 - `setActiveDaemonId` also emits `daemon_active_changed` analytics with the source of the change.

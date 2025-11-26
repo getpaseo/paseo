@@ -323,7 +323,7 @@ type DaemonTestState = {
 
 export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
-  const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon, setDefaultDaemon } = useDaemonRegistry();
+  const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon } = useDaemonRegistry();
   const { activeDaemon, activeDaemonId, setActiveDaemonId, connectionStates, updateConnectionStatus } = useDaemonConnections();
   const activeDaemonSession = useSessionForServer(activeDaemonId ?? null);
   const activeDaemonConnection = activeDaemonId ? connectionStates.get(activeDaemonId) : null;
@@ -511,13 +511,6 @@ export default function SettingsScreen() {
     [removeDaemon]
   );
 
-  const handleSetDefaultDaemon = useCallback(
-    (profile: DaemonProfile) => {
-      void setDefaultDaemon(profile.id);
-    },
-    [setDefaultDaemon]
-  );
-
   const updateDaemonTestState = useCallback((daemonId: string, state: { status: "idle" | "testing" | "success" | "error"; message?: string }) => {
     setDaemonTestStates((prev) => {
       const next = new Map(prev);
@@ -617,7 +610,6 @@ export default function SettingsScreen() {
           label: deriveDaemonLabel(trimmedUrl),
           wsUrl: trimmedUrl,
           autoConnect: true,
-          isDefault: true,
         });
       }
 
@@ -813,7 +805,6 @@ export default function SettingsScreen() {
                     connectionStatus={connectionStatus}
                     lastError={lastConnectionError}
                     testState={testState}
-                    onSetDefault={handleSetDefaultDaemon}
                     onTestConnection={handleTestDaemonConnection}
                     onEdit={handleOpenDaemonForm}
                     onRemove={handleRemoveDaemon}
@@ -991,7 +982,6 @@ interface DaemonCardProps {
   connectionStatus: ConnectionStatus;
   lastError: string | null;
   testState?: DaemonTestState;
-  onSetDefault: (daemon: DaemonProfile) => void;
   onTestConnection: (daemon: DaemonProfile) => void;
   onEdit: (daemon: DaemonProfile) => void;
   onRemove: (daemon: DaemonProfile) => void;
@@ -1006,7 +996,6 @@ function DaemonCard({
   connectionStatus,
   lastError,
   testState,
-  onSetDefault,
   onTestConnection,
   onEdit,
   onRemove,
@@ -1172,9 +1161,6 @@ function DaemonCard({
         </Text>
       ) : null}
       <View style={styles.daemonActionsRow}>
-        <Pressable style={styles.daemonActionButton} onPress={() => onSetDefault(daemon)}>
-          <Text style={styles.daemonActionText}>{daemon.isDefault ? "Default" : "Make Default"}</Text>
-        </Pressable>
         <Pressable
           style={[
             styles.daemonActionButton,

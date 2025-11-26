@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext } from "react";
 import type { ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +14,6 @@ export type DaemonProfile = {
   wsUrl: string;
   restUrl?: string | null;
   autoConnect: boolean;
-  isDefault: boolean;
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, unknown> | null;
@@ -25,7 +24,6 @@ type CreateDaemonInput = {
   wsUrl: string;
   restUrl?: string | null;
   autoConnect?: boolean;
-  isDefault?: boolean;
 };
 
 type UpdateDaemonInput = Partial<Omit<DaemonProfile, "id" | "createdAt">>;
@@ -34,11 +32,9 @@ interface DaemonRegistryContextValue {
   daemons: DaemonProfile[];
   isLoading: boolean;
   error: unknown | null;
-  defaultDaemon: DaemonProfile | null;
   addDaemon: (input: CreateDaemonInput) => Promise<DaemonProfile>;
   updateDaemon: (id: string, updates: UpdateDaemonInput) => Promise<void>;
   removeDaemon: (id: string) => Promise<void>;
-  setDefaultDaemon: (id: string) => Promise<void>;
 }
 
 const DaemonRegistryContext = createContext<DaemonRegistryContextValue | null>(null);
@@ -81,13 +77,12 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
       wsUrl: input.wsUrl,
       restUrl: input.restUrl ?? null,
       autoConnect: input.autoConnect ?? true,
-      isDefault: input.isDefault ?? existing.length === 0,
       createdAt: timestamp,
       updatedAt: timestamp,
       metadata: null,
     };
 
-    const next = normalizeDefaults([...existing, profile]);
+    const next = [...existing, profile];
     await persist(next);
     return profile;
   }, [persist, readDaemons]);
@@ -107,36 +102,17 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
 
   const removeDaemon = useCallback(async (id: string) => {
     const remaining = readDaemons().filter((daemon) => daemon.id !== id);
-    const normalized = normalizeDefaults(remaining);
-    await persist(normalized.length > 0 ? normalized : [createProfile("Local Host", FALLBACK_DAEMON_URL, true)]);
-  }, [persist, readDaemons]);
-
-  const setDefaultDaemon = useCallback(async (id: string) => {
-    const next = readDaemons().map((daemon) => ({
-      ...daemon,
-      isDefault: daemon.id === id,
-      updatedAt: daemon.id === id ? new Date().toISOString() : daemon.updatedAt,
-    }));
+    const next = remaining.length > 0 ? remaining : [createProfile("Local Host", FALLBACK_DAEMON_URL)];
     await persist(next);
   }, [persist, readDaemons]);
-
-  const defaultDaemon = useMemo(() => {
-    if (daemons.length === 0) {
-      return null;
-    }
-    const explicit = daemons.find((daemon) => daemon.isDefault);
-    return explicit ?? daemons[0];
-  }, [daemons]);
 
   const value: DaemonRegistryContextValue = {
     daemons,
     isLoading: isPending,
     error: error ?? null,
-    defaultDaemon,
     addDaemon,
     updateDaemon,
     removeDaemon,
-    setDefaultDaemon,
   };
 
   return (
@@ -160,7 +136,7 @@ function deriveLabelFromUrl(url: string): string {
   }
 }
 
-function createProfile(label: string, wsUrl: string, isDefault: boolean): DaemonProfile {
+function createProfile(label: string, wsUrl: string): DaemonProfile {
   const timestamp = new Date().toISOString();
   return {
     id: generateDaemonId(),
@@ -168,26 +144,10 @@ function createProfile(label: string, wsUrl: string, isDefault: boolean): Daemon
     wsUrl,
     restUrl: null,
     autoConnect: true,
-    isDefault,
     createdAt: timestamp,
     updatedAt: timestamp,
     metadata: null,
   };
-}
-
-function normalizeDefaults(profiles: DaemonProfile[]): DaemonProfile[] {
-  if (profiles.length === 0) {
-    return profiles;
-  }
-  const hasDefault = profiles.some((daemon) => daemon.isDefault);
-  if (hasDefault) {
-    return profiles;
-  }
-  const [first, ...rest] = profiles;
-  return [
-    { ...first, isDefault: true },
-    ...rest,
-  ];
 }
 
 async function loadDaemonRegistryFromStorage(): Promise<DaemonProfile[]> {
@@ -202,13 +162,13 @@ async function loadDaemonRegistryFromStorage(): Promise<DaemonProfile[]> {
       const legacyParsed = JSON.parse(legacy) as Record<string, unknown>;
       const legacyUrl = typeof legacyParsed.serverUrl === "string" ? legacyParsed.serverUrl : null;
       if (legacyUrl) {
-        const migrated = [createProfile("Primary Host", legacyUrl, true)];
+        const migrated = [createProfile("Primary Host", legacyUrl)];
         await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
     }
 
-    const fallback = [createProfile("Local Host", FALLBACK_DAEMON_URL, true)];
+    const fallback = [createProfile("Local Host", FALLBACK_DAEMON_URL)];
     await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(fallback));
     return fallback;
   } catch (error) {
