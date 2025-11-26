@@ -33,7 +33,7 @@ import type { ExplorerEntry, SessionContextValue } from "@/contexts/session-cont
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession, DaemonSessionUnavailableError } from "@/hooks/use-daemon-session";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 
 export default function FileExplorerScreen() {
   const {
@@ -49,18 +49,10 @@ export default function FileExplorerScreen() {
   }>();
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
-
-  let session: SessionContextValue | null = null;
-
-  try {
-    session = useDaemonSession(resolvedServerId, { suppressUnavailableAlert: true });
-  } catch (error) {
-    if (error instanceof DaemonSessionUnavailableError) {
-      session = null;
-    } else {
-      throw error;
-    }
-  }
+  const session = useDaemonSession(resolvedServerId, {
+    suppressUnavailableAlert: true,
+    allowUnavailable: true,
+  });
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
@@ -478,25 +470,6 @@ function FileExplorerContent({
     );
   }, [activePath, showListLoadingBanner, viewMode]);
 
-  if (!agent) {
-    return (
-      <View style={styles.container}>
-        <BackHeader
-          title="Files"
-          onBack={handleBackNavigation}
-          rightContent={
-            <Pressable style={styles.closeButton} onPress={handleCloseExplorer}>
-              <X size={18} color={theme.colors.foreground} />
-            </Pressable>
-          }
-        />
-        <View style={styles.centerState}>
-          <Text style={styles.errorText}>Agent not found</Text>
-        </View>
-      </View>
-    );
-  }
-
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
       if (!agentId || viewMode !== "grid") {
@@ -548,6 +521,25 @@ function FileExplorerContent({
     pendingThumbnailPathsRef.current.clear();
     setThumbnailLoadingMap({});
   }, [activePath, viewMode]);
+
+  if (!agent) {
+    return (
+      <View style={styles.container}>
+        <BackHeader
+          title="Files"
+          onBack={handleBackNavigation}
+          rightContent={
+            <Pressable style={styles.closeButton} onPress={handleCloseExplorer}>
+              <X size={18} color={theme.colors.foreground} />
+            </Pressable>
+          }
+        />
+        <View style={styles.centerState}>
+          <Text style={styles.errorText}>Agent not found</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -696,12 +688,12 @@ function FileExplorerSessionUnavailable({
           <>
             <ActivityIndicator size="small" />
             <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We'll load files once this daemon is online.</Text>
+            <Text style={styles.statusText}>We will load files once this daemon is online.</Text>
           </>
         ) : (
           <>
             <Text style={styles.errorText}>
-              Can't open files while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
+              Cannot open files while {serverLabel} is {connectionStatusLabel.toLowerCase()}.
             </Text>
             <Text style={styles.statusText}>Connect this daemon and try again.</Text>
             {lastError ? <Text style={styles.errorDetails}>{lastError}</Text> : null}

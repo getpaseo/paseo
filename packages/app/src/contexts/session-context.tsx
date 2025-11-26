@@ -29,7 +29,7 @@ import type {
 } from "@server/server/agent/agent-sdk-types";
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
-import { useDaemonConnections } from "./daemon-connections-context";
+import { useDaemonConnections, type SessionAccessorRole } from "./daemon-connections-context";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -388,9 +388,11 @@ interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
+  role?: SessionAccessorRole;
 }
 
-export function SessionProvider({ children, serverUrl, serverId }: SessionProviderProps) {
+export function SessionProvider({ children, serverUrl, serverId, role }: SessionProviderProps) {
+  const sessionRole = role ?? "primary";
   const ws = useWebSocket(serverUrl);
   const wsIsConnected = ws.isConnected;
   const {
@@ -402,29 +404,29 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   useEffect(() => {
     if (ws.isConnected) {
-      updateConnectionStatus(serverId, "online", {
+      updateConnectionStatus(serverId, {
+        status: "online",
         lastOnlineAt: new Date().toISOString(),
-        lastError: null,
       });
       return;
     }
 
     if (ws.isConnecting) {
-      updateConnectionStatus(serverId, "connecting");
+      updateConnectionStatus(serverId, { status: "connecting" });
       return;
     }
 
     if (ws.lastError) {
-      updateConnectionStatus(serverId, "error", { lastError: ws.lastError });
+      updateConnectionStatus(serverId, { status: "error", lastError: ws.lastError });
       return;
     }
 
-    updateConnectionStatus(serverId, "offline");
+    updateConnectionStatus(serverId, { status: "offline" });
   }, [serverId, updateConnectionStatus, ws.isConnected, ws.isConnecting, ws.lastError]);
 
   useEffect(() => {
     return () => {
-      updateConnectionStatus(serverId, "offline", { lastError: null });
+      updateConnectionStatus(serverId, { status: "offline", lastError: null });
     };
   }, [serverId, updateConnectionStatus]);
   
@@ -1794,11 +1796,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   );
 
   useEffect(() => {
-    registerSessionAccessor(serverId, sessionDirectoryEntry);
+    registerSessionAccessor(serverId, sessionDirectoryEntry, sessionRole);
     return () => {
-      unregisterSessionAccessor(serverId);
+      unregisterSessionAccessor(serverId, sessionRole);
     };
-  }, [serverId, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
+  }, [serverId, sessionRole, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
 
   return (
     <SessionContext.Provider value={value}>

@@ -476,10 +476,10 @@ export default function SettingsScreen() {
       };
       if (daemonForm.id) {
         await updateDaemon(daemonForm.id, payload);
-        setActiveDaemonId(daemonForm.id);
+        setActiveDaemonId(daemonForm.id, { source: "settings_save_daemon" });
       } else {
         const created = await addDaemon(payload);
-        setActiveDaemonId(created.id);
+        setActiveDaemonId(created.id, { source: "settings_save_daemon" });
       }
       handleCloseDaemonForm();
     } catch (error) {
@@ -524,7 +524,7 @@ export default function SettingsScreen() {
 
   const handleSetActiveDaemon = useCallback(
     (profile: DaemonProfile) => {
-      setActiveDaemonId(profile.id);
+      setActiveDaemonId(profile.id, { source: "settings_switch" });
     },
     [setActiveDaemonId]
   );
@@ -545,15 +545,15 @@ export default function SettingsScreen() {
         return;
       }
       updateDaemonTestState(profile.id, { status: "testing" });
-      updateConnectionStatus(profile.id, "connecting");
+      updateConnectionStatus(profile.id, { status: "connecting" });
       try {
         await testServerConnection(url, 4000);
         updateDaemonTestState(profile.id, { status: "success", message: "Reachable" });
-        updateConnectionStatus(profile.id, "online", { lastOnlineAt: new Date().toISOString() });
+        updateConnectionStatus(profile.id, { status: "online", lastOnlineAt: new Date().toISOString() });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Connection failed";
         updateDaemonTestState(profile.id, { status: "error", message });
-        updateConnectionStatus(profile.id, "offline", { lastError: message });
+        updateConnectionStatus(profile.id, { status: "offline", lastError: message });
       }
     },
     [testServerConnection, updateConnectionStatus, updateDaemonTestState]

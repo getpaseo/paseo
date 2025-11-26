@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDaemonRegistry, type DaemonProfile } from "./daemon-registry-context";
+import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "./session-context";
 
 export interface SessionDirectoryEntry {
@@ -10,29 +11,44 @@ export interface SessionDirectoryEntry {
   subscribe: (listener: () => void) => () => void;
 }
 
-export type ConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
+export type SessionAccessorRole = "primary" | "background";
+type SessionAccessorRegistry = Map<string, Map<SessionAccessorRole, SessionDirectoryEntry>>;
 
-export interface DaemonConnectionRecord {
+export type ConnectionState =
+  | { status: "idle"; lastError: null; lastOnlineAt: string | null }
+  | { status: "connecting"; lastError: null; lastOnlineAt: string | null }
+  | { status: "online"; lastError: null; lastOnlineAt: string }
+  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null }
+  | { status: "error"; lastError: string; lastOnlineAt: string | null };
+
+export type ConnectionStatus = ConnectionState["status"];
+
+type ConnectionStateUpdate =
+  | { status: "idle" }
+  | { status: "connecting"; lastOnlineAt?: string | null }
+  | { status: "online"; lastOnlineAt: string }
+  | { status: "offline"; lastError?: string | null; lastOnlineAt?: string | null }
+  | { status: "error"; lastError: string; lastOnlineAt?: string | null };
+
+export type DaemonConnectionRecord = {
   daemon: DaemonProfile;
-  status: ConnectionStatus;
-  lastOnlineAt?: string;
-  lastError?: string | null;
-}
+} & ConnectionState;
 
 interface DaemonConnectionsContextValue {
   activeDaemonId: string | null;
   activeDaemon: DaemonProfile | null;
   connectionStates: Map<string, DaemonConnectionRecord>;
   isLoading: boolean;
-  setActiveDaemonId: (daemonId: string) => void;
-  updateConnectionStatus: (
-    daemonId: string,
-    status: ConnectionStatus,
-    extras?: { lastError?: string | null; lastOnlineAt?: string }
-  ) => void;
+  setActiveDaemonId: (daemonId: string, options?: SetActiveDaemonOptions) => void;
+  updateConnectionStatus: (daemonId: string, update: ConnectionStateUpdate) => void;
   sessionAccessors: Map<string, SessionDirectoryEntry>;
-  registerSessionAccessor: (daemonId: string, entry: SessionDirectoryEntry) => void;
-  unregisterSessionAccessor: (daemonId: string) => void;
+  sessionAccessorRoles: Map<string, Set<SessionAccessorRole>>;
+  registerSessionAccessor: (
+    daemonId: string,
+    entry: SessionDirectoryEntry,
+    role?: SessionAccessorRole
+  ) => void;
+  unregisterSessionAccessor: (daemonId: string, role?: SessionAccessorRole) => void;
   subscribeToSessionDirectory: (listener: () => void) => () => void;
   notifySessionDirectoryChange: () => void;
 }
@@ -41,6 +57,70 @@ const DaemonConnectionsContext = createContext<DaemonConnectionsContextValue | n
 
 const ACTIVE_DAEMON_STORAGE_KEY = "@paseo:active-daemon-id";
 const ACTIVE_DAEMON_QUERY_KEY = ["active-daemon-id"];
+
+export type SetActiveDaemonOptions = {
+  source?: string;
+};
+
+function createDefaultConnectionState(): ConnectionState {
+  return {
+    status: "idle",
+    lastError: null,
+    lastOnlineAt: null,
+  };
+}
+
+function resolveNextConnectionState(
+  existing: ConnectionState,
+  update: ConnectionStateUpdate
+): ConnectionState {
+  switch (update.status) {
+    case "idle":
+      return { status: "idle", lastError: null, lastOnlineAt: existing.lastOnlineAt };
+    case "connecting":
+      return {
+        status: "connecting",
+        lastError: null,
+        lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+      };
+    case "online":
+      return { status: "online", lastError: null, lastOnlineAt: update.lastOnlineAt };
+    case "offline":
+      return {
+        status: "offline",
+        lastError: update.lastError ?? null,
+        lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+      };
+    case "error":
+      return {
+        status: "error",
+        lastError: update.lastError,
+        lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+      };
+  }
+}
+
+function logConnectionLifecycle(daemon: DaemonProfile, previous: ConnectionState, next: ConnectionState) {
+  const logPayload = {
+    event: "daemon_connection_state",
+    daemonId: daemon.id,
+    label: daemon.label,
+    from: previous.status,
+    to: next.status,
+    lastError: next.lastError ?? null,
+    lastOnlineAt: next.lastOnlineAt ?? null,
+    timestamp: new Date().toISOString(),
+  };
+
+  const logger =
+    next.status === "error"
+      ? console.error
+      : next.status === "offline"
+        ? console.warn
+        : console.info;
+
+  logger("[DaemonConnection]", logPayload);
+}
 
 export function useDaemonConnections(): DaemonConnectionsContextValue {
   const ctx = useContext(DaemonConnectionsContext);
@@ -54,7 +134,7 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
   const { daemons, isLoading: registryLoading } = useDaemonRegistry();
   const [activeDaemonId, setActiveDaemonIdState] = useState<string | null>(null);
   const [connectionStates, setConnectionStates] = useState<Map<string, DaemonConnectionRecord>>(new Map());
-  const [sessionAccessors, setSessionAccessors] = useState<Map<string, SessionDirectoryEntry>>(new Map());
+  const [sessionAccessorRegistry, setSessionAccessorRegistry] = useState<SessionAccessorRegistry>(new Map());
   const queryClient = useQueryClient();
   const activeDaemonPreference = useQuery({
     queryKey: ACTIVE_DAEMON_QUERY_KEY,
@@ -79,9 +159,7 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
         const existing = prev.get(daemon.id);
         next.set(daemon.id, {
           daemon,
-          status: existing?.status ?? "idle",
-          lastOnlineAt: existing?.lastOnlineAt,
-          lastError: existing?.lastError,
+          ...(existing ?? createDefaultConnectionState()),
         });
       }
       return next;
@@ -89,14 +167,20 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
   }, [daemons]);
 
   useEffect(() => {
-    setSessionAccessors((prev) => {
-      const next = new Map(prev);
-      for (const key of Array.from(next.keys())) {
-        if (!daemons.some((daemon) => daemon.id === key)) {
-          next.delete(key);
+    setSessionAccessorRegistry((prev) => {
+      const validDaemonIds = new Set(daemons.map((daemon) => daemon.id));
+      let changed = false;
+      const next: SessionAccessorRegistry = new Map();
+
+      for (const [daemonId, roleMap] of prev.entries()) {
+        if (!validDaemonIds.has(daemonId)) {
+          changed = true;
+          continue;
         }
+        next.set(daemonId, roleMap);
       }
-      return next;
+
+      return changed ? next : prev;
     });
   }, [daemons]);
 
@@ -115,8 +199,18 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
   }, [queryClient]);
 
   const setActiveDaemonId = useCallback(
-    (daemonId: string) => {
-      setActiveDaemonIdState(daemonId);
+    (daemonId: string, options?: SetActiveDaemonOptions) => {
+      setActiveDaemonIdState((previous) => {
+        if (previous !== daemonId) {
+          trackAnalyticsEvent({
+            type: "daemon_active_changed",
+            daemonId,
+            previousDaemonId: previous,
+            source: options?.source,
+          });
+        }
+        return daemonId;
+      });
       void persistActiveDaemonId(daemonId);
     },
     [persistActiveDaemonId]
@@ -138,7 +232,7 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
     }
 
     const fallback = daemons.find((daemon) => daemon.isDefault) ?? daemons[0];
-    setActiveDaemonId(fallback.id);
+    setActiveDaemonId(fallback.id, { source: "auto_fallback" });
   }, [daemons, activeDaemonId, activeDaemonPreference.isPending, persistActiveDaemonId, setActiveDaemonId]);
 
   const activeDaemon = useMemo(() => {
@@ -149,45 +243,65 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
   }, [activeDaemonId, daemons]);
 
   const updateConnectionStatus = useCallback(
-    (
-      daemonId: string,
-      status: ConnectionStatus,
-      extras?: { lastError?: string | null; lastOnlineAt?: string }
-    ) => {
+    (daemonId: string, update: ConnectionStateUpdate) => {
       setConnectionStates((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(daemonId);
+        const existing = prev.get(daemonId);
         if (!existing) {
           return prev;
         }
-        const hasExplicitLastError = Boolean(extras && Object.prototype.hasOwnProperty.call(extras, "lastError"));
-        next.set(daemonId, {
-          ...existing,
-          status,
-          lastError: hasExplicitLastError ? (extras!.lastError ?? null) : existing.lastError ?? null,
-          lastOnlineAt: extras?.lastOnlineAt ?? existing.lastOnlineAt,
-        });
+        const nextState = resolveNextConnectionState(existing, update);
+        const hasChanged =
+          existing.status !== nextState.status ||
+          existing.lastError !== nextState.lastError ||
+          existing.lastOnlineAt !== nextState.lastOnlineAt;
+
+        if (hasChanged) {
+          logConnectionLifecycle(existing.daemon, existing, nextState);
+        }
+
+        const next = new Map(prev);
+        next.set(daemonId, { daemon: existing.daemon, ...nextState });
         return next;
       });
     },
     []
   );
 
-  const registerSessionAccessor = useCallback((daemonId: string, entry: SessionDirectoryEntry) => {
-    setSessionAccessors((prev) => {
-      const next = new Map(prev);
-      next.set(daemonId, entry);
-      return next;
-    });
-  }, []);
+  const registerSessionAccessor = useCallback(
+    (daemonId: string, entry: SessionDirectoryEntry, role: SessionAccessorRole = "primary") => {
+      setSessionAccessorRegistry((prev) => {
+        const next = new Map(prev);
+        const existing = new Map(next.get(daemonId) ?? []);
+        existing.set(role, entry);
+        next.set(daemonId, existing);
+        return next;
+      });
+    },
+    []
+  );
 
-  const unregisterSessionAccessor = useCallback((daemonId: string) => {
-    setSessionAccessors((prev) => {
-      const next = new Map(prev);
-      next.delete(daemonId);
-      return next;
-    });
-  }, []);
+  const unregisterSessionAccessor = useCallback(
+    (daemonId: string, role: SessionAccessorRole = "primary") => {
+      setSessionAccessorRegistry((prev) => {
+        const existing = prev.get(daemonId);
+        if (!existing) {
+          return prev;
+        }
+
+        const nextRoleMap = new Map(existing);
+        nextRoleMap.delete(role);
+
+        const next = new Map(prev);
+        if (nextRoleMap.size === 0) {
+          next.delete(daemonId);
+        } else {
+          next.set(daemonId, nextRoleMap);
+        }
+        return next;
+      });
+    },
+    []
+  );
 
   const subscribeToSessionDirectory = useCallback((listener: () => void) => {
     sessionDirectoryListenersRef.current.add(listener);
@@ -207,6 +321,34 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
     }
   }, []);
 
+  const { sessionAccessors, sessionAccessorRoles } = useMemo(() => {
+    const flattened = new Map<string, SessionDirectoryEntry>();
+    const roleSets = new Map<string, Set<SessionAccessorRole>>();
+
+    sessionAccessorRegistry.forEach((roleMap, daemonId) => {
+      if (roleMap.size === 0) {
+        return;
+      }
+
+      const roles = new Set<SessionAccessorRole>();
+      roleMap.forEach((_entry, role) => roles.add(role));
+      roleSets.set(daemonId, roles);
+
+      const primaryEntry = roleMap.get("primary");
+      if (primaryEntry) {
+        flattened.set(daemonId, primaryEntry);
+        return;
+      }
+
+      const backgroundEntry = roleMap.get("background");
+      if (backgroundEntry) {
+        flattened.set(daemonId, backgroundEntry);
+      }
+    });
+
+    return { sessionAccessors: flattened, sessionAccessorRoles: roleSets };
+  }, [sessionAccessorRegistry]);
+
   const value: DaemonConnectionsContextValue = {
     activeDaemonId,
     activeDaemon,
@@ -215,6 +357,7 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
     setActiveDaemonId,
     updateConnectionStatus,
     sessionAccessors,
+    sessionAccessorRoles,
     registerSessionAccessor,
     unregisterSessionAccessor,
     subscribeToSessionDirectory,

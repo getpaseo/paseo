@@ -40,9 +40,8 @@ export function AgentSidebar({
   const insets = useSafeAreaInsets();
   const savedTranslateX = useSharedValue(0);
   const [isVisible, setIsVisible] = useState(isOpen);
-
-  // Use edgeSwipeTranslateX directly since it's always provided
-  const translateX = edgeSwipeTranslateX || useSharedValue(-300);
+  const fallbackTranslateX = useSharedValue(-300);
+  const translateX = edgeSwipeTranslateX ?? fallbackTranslateX;
 
   useEffect(() => {
     if (isOpen) {
