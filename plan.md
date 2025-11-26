@@ -49,10 +49,12 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
   - Added an AppState-aware reconnect path in `useWebSocket` so every background session automatically reconnects when the app becomes active again, keeping newly added hosts online without manual intervention; verified with `npm run typecheck --workspace=@paseo/app`.
 - [x] Users should never need to manually "connect" to a host—the app handles it.
   - Reworded realtime, settings restart, and agent creation/import flows so they explain hosts reconnect automatically instead of asking users to connect manually; verified with `npm run typecheck --workspace=@paseo/app`.
-- [ ] Remove any UI that asks users to "connect" before performing actions.
+- [x] Remove any UI that asks users to "connect" before performing actions.
+  - Updated the host-unavailable alert, agent-not-found message, and settings restart failure copy to reassure that hosts reconnect automatically instead of asking users to connect manually; verified with `npm run typecheck --workspace=@paseo/app`.
 
 ### 5. Remove Host Status from Home Screen
 - [ ] Remove connection status banners/indicators from the home screen—settings is the place to check host health.
+  - Context (review): `packages/app/src/app/index.tsx:47-144` still renders `connectionBanner` cards that surface per-host offline/error states directly on Home, so host health is still exposed outside Settings.
 
 ### 6. Fix Error Philosophy
 - [ ] A stopped/disconnected host is NOT an error—don't show error states on home screen just because a host is offline.
@@ -71,10 +73,15 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - [ ] Fix the contradictory error message "Daemon is online, connect to it before creating"—this should never appear.
 
 ### 7. Home Screen Agent List
-- [ ] Show a loading indicator while hosts are connecting instead of the empty state.
+- [ ] Show a loading indicator while agents are being fetched (not while waiting for hosts to connect).
+  - Don't block the home screen for offline hosts.
+  - Handle edge cases: no hosts configured, no hosts connected, partial host connectivity.
 - [ ] Remove grouping of agents by host—show a single flat list.
+  - Context (review): `packages/app/src/components/agent-list.tsx:67-131` still maps `agentGroups` into host-specific sections with headers, so grouping hasn't been removed.
   - [ ] Each agent row displays its host name as metadata (badge, subtitle, etc.).
+    - Context (review): Agent rows only render cwd/provider/status/time (`packages/app/src/components/agent-list.tsx:87-125`), so there's no host metadata visible per row yet.
   - [ ] Sort agents by recent activity or alphabetically (not by host).
+    - Context (review): `packages/app/src/hooks/use-aggregated-agents.ts:25-66` sorts sections by host registration order and only orders agents within a host, so we still bias the list ordering by host rather than recency across all agents.
 
 ### Review: Git Diff Metadata Cleanup
 - [x] Remove the now-unused `routeServerId` prop from `GitDiffContent` (`packages/app/src/app/git-diff.tsx:84-104`) so we aren't plumbing dead state through the component after switching to `serverLabel`.

@@ -864,7 +864,7 @@ function DaemonCard({
       setIsRestarting(false);
       Alert.alert(
         "Error",
-        "Failed to send restart request. Please ensure you are connected to the server."
+        "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online."
       );
       return;
     }

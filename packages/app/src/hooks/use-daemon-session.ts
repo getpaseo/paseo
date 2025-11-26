@@ -57,7 +57,7 @@ export function useDaemonSession(serverId?: string | null, options?: UseDaemonSe
       const label = connection?.daemon.label ?? serverId;
       const status = connection?.status ?? "unknown";
       const lastError = connection?.lastError ? `\n${connection.lastError}` : "";
-      const message = `${label} isn't connected yet (${status}). Switch to it and wait for Paseo to reconnect automatically.${lastError}`;
+      const message = `${label} isn't connected yet (${status}). Paseo reconnects automatically and will enable actions once it's back.${lastError}`;
 
       if (!suppressUnavailableAlert && !alertedDaemonsRef.current.has(serverId)) {
         alertedDaemonsRef.current.add(serverId);
