@@ -1,27 +1,23 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useDaemonRegistry, type DaemonProfile } from "./daemon-registry-context";
 import type { SessionContextValue } from "./session-context";
 
-export interface SessionDirectoryEntry {
-  getSnapshot: () => SessionContextValue | null;
-  subscribe: (listener: () => void) => () => void;
-}
-type SessionAccessorRegistry = Map<string, SessionDirectoryEntry>;
+export type SessionSnapshot = SessionContextValue;
 
 export type ConnectionState =
-  | { status: "idle"; lastError: null; lastOnlineAt: string | null }
-  | { status: "connecting"; lastError: null; lastOnlineAt: string | null }
-  | { status: "online"; lastError: null; lastOnlineAt: string }
-  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null }
-  | { status: "error"; lastError: string; lastOnlineAt: string | null };
+  | { status: "idle"; lastError: null; lastOnlineAt: string | null; sessionReady: false }
+  | { status: "connecting"; lastError: null; lastOnlineAt: string | null; sessionReady: false }
+  | { status: "online"; lastError: null; lastOnlineAt: string; sessionReady: boolean }
+  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null; sessionReady: false }
+  | { status: "error"; lastError: string; lastOnlineAt: string | null; sessionReady: false };
 
 export type ConnectionStatus = ConnectionState["status"];
 
 type ConnectionStateUpdate =
   | { status: "idle" }
   | { status: "connecting"; lastOnlineAt?: string | null }
-  | { status: "online"; lastOnlineAt: string }
+  | { status: "online"; lastOnlineAt: string; sessionReady?: boolean }
   | { status: "offline"; lastError?: string | null; lastOnlineAt?: string | null }
   | { status: "error"; lastError: string; lastOnlineAt?: string | null };
 
@@ -33,11 +29,9 @@ interface DaemonConnectionsContextValue {
   connectionStates: Map<string, DaemonConnectionRecord>;
   isLoading: boolean;
   updateConnectionStatus: (daemonId: string, update: ConnectionStateUpdate) => void;
-  sessionAccessors: Map<string, SessionDirectoryEntry>;
-  registerSessionAccessor: (daemonId: string, entry: SessionDirectoryEntry) => void;
-  unregisterSessionAccessor: (daemonId: string) => void;
-  subscribeToSessionDirectory: (listener: () => void) => () => void;
-  notifySessionDirectoryChange: () => void;
+  sessionSnapshots: Map<string, SessionSnapshot>;
+  updateSessionSnapshot: (daemonId: string, snapshot: SessionSnapshot | null) => void;
+  clearSessionSnapshot: (daemonId: string) => void;
 }
 
 const DaemonConnectionsContext = createContext<DaemonConnectionsContextValue | null>(null);
@@ -47,6 +41,7 @@ function createDefaultConnectionState(): ConnectionState {
     status: "idle",
     lastError: null,
     lastOnlineAt: null,
+    sessionReady: false,
   };
 }
 
@@ -56,26 +51,34 @@ function resolveNextConnectionState(
 ): ConnectionState {
   switch (update.status) {
     case "idle":
-      return { status: "idle", lastError: null, lastOnlineAt: existing.lastOnlineAt };
+      return { status: "idle", lastError: null, lastOnlineAt: existing.lastOnlineAt, sessionReady: false };
     case "connecting":
       return {
         status: "connecting",
         lastError: null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+        sessionReady: false,
       };
     case "online":
-      return { status: "online", lastError: null, lastOnlineAt: update.lastOnlineAt };
+      return {
+        status: "online",
+        lastError: null,
+        lastOnlineAt: update.lastOnlineAt,
+        sessionReady: update.sessionReady ?? (existing.status === "online" ? existing.sessionReady : false),
+      };
     case "offline":
       return {
         status: "offline",
         lastError: update.lastError ?? null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+        sessionReady: false,
       };
     case "error":
       return {
         status: "error",
         lastError: update.lastError,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
+        sessionReady: false,
       };
   }
 }
@@ -113,8 +116,7 @@ export function useDaemonConnections(): DaemonConnectionsContextValue {
 export function DaemonConnectionsProvider({ children }: { children: ReactNode }) {
   const { daemons, isLoading: registryLoading } = useDaemonRegistry();
   const [connectionStates, setConnectionStates] = useState<Map<string, DaemonConnectionRecord>>(new Map());
-  const [sessionAccessorRegistry, setSessionAccessorRegistry] = useState<SessionAccessorRegistry>(new Map());
-  const sessionDirectoryListenersRef = useRef<Set<() => void>>(new Set());
+  const [sessionSnapshotRegistry, setSessionSnapshotRegistry] = useState<Map<string, SessionSnapshot>>(new Map());
 
   // Ensure connection states stay in sync with registry entries
   useEffect(() => {
@@ -132,17 +134,17 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
   }, [daemons]);
 
   useEffect(() => {
-    setSessionAccessorRegistry((prev) => {
+    setSessionSnapshotRegistry((prev) => {
       const validDaemonIds = new Set(daemons.map((daemon) => daemon.id));
       let changed = false;
-      const next: SessionAccessorRegistry = new Map();
+      const next = new Map<string, SessionSnapshot>();
 
-      for (const [daemonId, entry] of prev.entries()) {
+      for (const [daemonId, snapshot] of prev.entries()) {
         if (!validDaemonIds.has(daemonId)) {
           changed = true;
           continue;
         }
-        next.set(daemonId, entry);
+        next.set(daemonId, snapshot);
       }
 
       return changed ? next : prev;
@@ -175,58 +177,38 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
     []
   );
 
-  const registerSessionAccessor = useCallback((daemonId: string, entry: SessionDirectoryEntry) => {
-    setSessionAccessorRegistry((prev) => {
+  const updateSessionSnapshot = useCallback((serverId: string, snapshot: SessionSnapshot | null) => {
+    setSessionSnapshotRegistry((prev) => {
       const next = new Map(prev);
-      const hasExisting = next.has(daemonId);
-      next.set(daemonId, entry);
-      if (hasExisting) {
-        console.warn(`[DaemonConnections] Duplicate session accessor detected for "${daemonId}". Overwriting.`);
+      if (snapshot === null) {
+        next.delete(serverId);
+      } else {
+        next.set(serverId, snapshot);
       }
       return next;
     });
   }, []);
 
-  const unregisterSessionAccessor = useCallback((daemonId: string) => {
-    setSessionAccessorRegistry((prev) => {
-      if (!prev.has(daemonId)) {
+  const clearSessionSnapshot = useCallback((serverId: string) => {
+    setSessionSnapshotRegistry((prev) => {
+      if (!prev.has(serverId)) {
         return prev;
       }
       const next = new Map(prev);
-      next.delete(daemonId);
+      next.delete(serverId);
       return next;
     });
   }, []);
 
-  const subscribeToSessionDirectory = useCallback((listener: () => void) => {
-    sessionDirectoryListenersRef.current.add(listener);
-    return () => {
-      sessionDirectoryListenersRef.current.delete(listener);
-    };
-  }, []);
-
-  const notifySessionDirectoryChange = useCallback(() => {
-    const listeners = Array.from(sessionDirectoryListenersRef.current);
-    for (const listener of listeners) {
-      try {
-        listener();
-      } catch (error) {
-        console.error("[DaemonConnections] Session directory listener failed", error);
-      }
-    }
-  }, []);
-
-  const sessionAccessors = useMemo(() => new Map(sessionAccessorRegistry), [sessionAccessorRegistry]);
+  const sessionSnapshots = useMemo(() => new Map(sessionSnapshotRegistry), [sessionSnapshotRegistry]);
 
   const value: DaemonConnectionsContextValue = {
     connectionStates,
     isLoading: registryLoading,
     updateConnectionStatus,
-    sessionAccessors,
-    registerSessionAccessor,
-    unregisterSessionAccessor,
-    subscribeToSessionDirectory,
-    notifySessionDirectoryChange,
+    sessionSnapshots,
+    updateSessionSnapshot,
+    clearSessionSnapshot,
   };
 
   return (

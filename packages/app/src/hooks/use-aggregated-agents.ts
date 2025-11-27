@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import type { Agent } from "@/contexts/session-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { useSessionDirectory } from "@/hooks/use-session-directory";
 
 export interface AggregatedAgent extends Agent {
   serverId: string;
@@ -14,25 +13,24 @@ export interface AggregatedAgentsResult {
 }
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
-  const { connectionStates, isLoading: registryLoading } = useDaemonConnections();
-  const sessionDirectory = useSessionDirectory();
+  const { connectionStates, sessionSnapshots } = useDaemonConnections();
 
   return useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
-    sessionDirectory.forEach((session, serverId) => {
-      if (!session) {
-        return;
+    for (const [serverId, snapshot] of sessionSnapshots) {
+      if (snapshot.agents.size === 0) {
+        continue;
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
-      for (const agent of session.agents.values()) {
+      for (const agent of snapshot.agents.values()) {
         allAgents.push({
           ...agent,
           serverId,
           serverLabel,
         });
       }
-    });
+    }
 
     // Sort by: running agents first, then by most recent activity
     allAgents.sort((left, right) => {
@@ -49,19 +47,18 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       return rightTime - leftTime;
     });
 
-    // Loading if registry is still loading, or if any host is connecting and hasn't
-    // reported agents yet (idle hosts that haven't connected don't block loading)
-    let isLoading = registryLoading;
-    if (!isLoading && connectionStates.size > 0) {
-      for (const [serverId, record] of connectionStates) {
-        const hasSession = sessionDirectory.has(serverId);
-        if (record.status === "connecting" && !hasSession) {
-          isLoading = true;
-          break;
-        }
-      }
-    }
+    const isLoading = Array.from(connectionStates.values()).some(c => {
+      // Only these states count as "loading":
+      // 1. Actively connecting
+      // 2. Online but session not yet received
+      if (c.status === 'connecting') return true;
+      if (c.status === 'online' && !c.sessionReady) return true;
 
+      // Offline/error = not loading, just unavailable (normal state)
+      return false;
+    });
+
+    console.log("[useAggregatedAgents] aggregated agent count:", allAgents.length, "isLoading:", isLoading);
     return { agents: allAgents, isLoading };
-  }, [sessionDirectory, connectionStates, registryLoading]);
+  }, [sessionSnapshots, connectionStates]);
 }

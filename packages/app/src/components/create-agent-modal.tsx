@@ -251,6 +251,18 @@ function AgentFlowModal({
     }
   }, [isVisible, initialServerId, selectedServerId]);
 
+  useEffect(() => {
+    if (!isVisible || initialServerId || selectedServerId) {
+      return;
+    }
+    const firstReady = daemonEntries.find(
+      ({ status, sessionReady }) => status === "online" && sessionReady
+    );
+    if (firstReady) {
+      setSelectedServerId(firstReady.daemon.id);
+    }
+  }, [daemonEntries, initialServerId, isVisible, selectedServerId]);
+
   const ws = session?.ws ?? null;
   const inertWebSocket = useMemo<UseWebSocketReturn>(
     () => ({
@@ -339,7 +351,12 @@ function AgentFlowModal({
             selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
           }`
         : null;
-  const isTargetDaemonReady = Boolean(hasSelectedDaemon && session && !selectedDaemonIsOffline);
+  const selectedDaemonSessionReady =
+    selectedDaemonConnection?.status === "online" &&
+    selectedDaemonConnection.sessionReady;
+  const isTargetDaemonReady = Boolean(
+    hasSelectedDaemon && selectedDaemonSessionReady && !selectedDaemonIsOffline
+  );
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [workingDir, setWorkingDir] = useState("");

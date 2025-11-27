@@ -16,7 +16,7 @@ export class DaemonSessionUnavailableError extends Error {
 
 export function getSessionForServer(
   serverId: string,
-  directory: Map<string, SessionContextValue | null>
+  directory: Map<string, SessionContextValue>
 ): SessionContextValue {
   const session = directory.get(serverId) ?? null;
   if (!session) {

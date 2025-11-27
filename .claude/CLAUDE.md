@@ -27,6 +27,12 @@ Don't run them anywhere else. Check logs there.
 
 Take screenshots like this: `adb exec-out screencap -p > screenshot.png`
 
+## Testing with Playwright MCP
+
+Use the Playwright MCP to test the app in Metro web. Navigate to `http://localhost:8081` to interact with the app UI.
+
+**Important:** Do NOT use browser history (back/forward). Always navigate by clicking UI elements or using `browser_navigate` with the full URL. The app uses client-side routing and browser history navigation breaks the state.
+
 ## Expo troubleshooting
 
 Run `npx expo-doctor` to diagnose version mismatches and native module issues.

@@ -1,0 +1,85 @@
+// Release builds set this env var via gradle
+const IS_DEV = process.env.APP_VARIANT !== "production";
+
+export default {
+  expo: {
+    name: IS_DEV ? "Paseo (Dev)" : "Paseo",
+    slug: "voice-mobile",
+    version: "1.0.0",
+    orientation: "portrait",
+    icon: "./assets/images/icon.png",
+    scheme: "paseo",
+    userInterfaceStyle: "automatic",
+    newArchEnabled: true,
+    runtimeVersion: {
+      policy: "appVersion",
+    },
+    updates: {
+      url: "https://u.expo.dev/0e7f65ce-0367-46c8-a238-2b65963d235a",
+    },
+    ios: {
+      supportsTablet: true,
+      infoPlist: {
+        NSMicrophoneUsageDescription:
+          "This app needs access to the microphone for voice commands.",
+        ITSAppUsesNonExemptEncryption: false,
+      },
+      bundleIdentifier: IS_DEV ? "com.moboudra.paseo.dev" : "com.moboudra.paseo",
+    },
+    android: {
+      adaptiveIcon: {
+        backgroundColor: "#000000",
+        foregroundImage: "./assets/images/android-icon-foreground.png",
+      },
+      edgeToEdgeEnabled: true,
+      predictiveBackGestureEnabled: false,
+      softwareKeyboardLayoutMode: "resize",
+      permissions: [
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+      ],
+      package: IS_DEV ? "com.moboudra.paseo.dev" : "com.moboudra.paseo",
+    },
+    web: {
+      output: "static",
+      favicon: "./assets/images/favicon.png",
+    },
+    plugins: [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/splash-icon.png",
+          imageWidth: 200,
+          resizeMode: "contain",
+          backgroundColor: "#ffffff",
+          dark: {
+            backgroundColor: "#000000",
+          },
+        },
+      ],
+      "expo-audio",
+      [
+        "expo-build-properties",
+        {
+          android: {
+            minSdkVersion: 29,
+            kotlinVersion: "2.1.20",
+          },
+        },
+      ],
+    ],
+    experiments: {
+      typedRoutes: true,
+      reactCompiler: true,
+    },
+    extra: {
+      router: {},
+      eas: {
+        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+      },
+    },
+    owner: "moboudra",
+  },
+};

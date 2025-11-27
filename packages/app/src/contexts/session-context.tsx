@@ -296,6 +296,7 @@ export interface SessionContextValue {
   serverId: string;
   // WebSocket
   ws: UseWebSocketReturn;
+  hasHydratedAgents: boolean;
 
   // Audio
   audioPlayer: ReturnType<typeof useAudioPlayer>;
@@ -395,9 +396,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const wsIsConnected = ws.isConnected;
   const {
     updateConnectionStatus,
-    registerSessionAccessor,
-    unregisterSessionAccessor,
-    notifySessionDirectoryChange,
+    updateSessionSnapshot,
+    clearSessionSnapshot,
   } = useDaemonConnections();
 
   useEffect(() => {
@@ -444,6 +444,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
   const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
   const [initializingAgents, setInitializingAgents] = useState<Map<string, boolean>>(new Map());
+  const [hasHydratedAgents, setHasHydratedAgents] = useState(false);
 
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
@@ -468,6 +469,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
   const pendingAgentLifecycleRequestsRef = useRef<PendingAgentLifecycleRequest[]>([]);
   const hasHydratedSnapshotRef = useRef(false);
+  const hasRequestedInitialSnapshotRef = useRef(false);
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -482,6 +484,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const setFocusedAgentId = useCallback((agentId: string | null) => {
     setFocusedAgentOverride(agentId);
   }, []);
+
+  useEffect(() => {
+    hasHydratedSnapshotRef.current = false;
+    setHasHydratedAgents(false);
+  }, [serverId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -514,14 +521,15 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return;
       }
 
-      setPendingPermissions(hydratedPermissions);
-      const commandEntries = snapshot.commands ?? [];
-      setCommands((prev) => {
-        if (prev.size > 0) {
-          return prev;
-        }
-        return new Map(commandEntries.map((command) => [command.id, command]));
-      });
+    setPendingPermissions(hydratedPermissions);
+    const commandEntries = snapshot.commands ?? [];
+    setCommands((prev) => {
+      if (prev.size > 0) {
+        return prev;
+      }
+      return new Map(commandEntries.map((command) => [command.id, command]));
+    });
+    setHasHydratedAgents(true);
     };
 
     void hydrateFromSnapshot();
@@ -691,6 +699,24 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     }
   }, [wsIsConnected, sendAgentLifecycleRequest]);
 
+  useEffect(() => {
+    if (!wsIsConnected) {
+      hasRequestedInitialSnapshotRef.current = false;
+      return;
+    }
+    if (hasRequestedInitialSnapshotRef.current) {
+      return;
+    }
+    hasRequestedInitialSnapshotRef.current = true;
+    ws.send({
+      type: "session",
+      message: {
+        type: "load_conversation_request",
+        conversationId: ws.conversationId ?? "",
+      },
+    });
+  }, [wsIsConnected, ws]);
+
   // WebSocket message handlers
   useEffect(() => {
     // Session state - initial agents/commands
@@ -746,6 +772,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return changed ? next : prev;
       });
       void persistSessionSnapshot(serverId, { agents: agentsList, commands: normalizedCommands });
+      setHasHydratedAgents(true);
+      updateConnectionStatus(serverId, { status: "online", lastOnlineAt: new Date().toISOString(), sessionReady: true });
     });
 
     const unsubAgentState = ws.on("agent_state", (message) => {
@@ -1717,88 +1745,119 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     return targetPath;
   }, [updateExplorerState, ws]);
 
-  const value: SessionContextValue = {
-    serverId,
-    ws,
-    audioPlayer,
-    isPlayingAudio,
-    setIsPlayingAudio,
-    setVoiceDetectionFlags,
-    focusedAgentId,
-    setFocusedAgentId,
-    messages,
-    setMessages,
-    currentAssistantMessage,
-    setCurrentAssistantMessage,
-    agentStreamState,
-    setAgentStreamState,
-    initializingAgents,
-    agents,
-    setAgents,
-    commands,
-    setCommands,
-    pendingPermissions,
-    setPendingPermissions,
-    gitDiffs,
-    requestGitDiff,
-    fileExplorer,
-    providerModels,
-    requestProviderModels,
-    getDraftInput,
-    saveDraftInput,
-    queuedMessages,
-    setQueuedMessages,
-    requestDirectoryListing,
-    requestFilePreview,
-    navigateExplorerBack,
-    restartServer,
-    initializeAgent,
-    refreshAgent,
-    cancelAgentRun,
-    deleteAgent,
-    sendAgentMessage,
-    sendAgentAudio,
-    createAgent,
-    resumeAgent,
-    setAgentMode,
-    respondToPermission,
-  };
-
-  const sessionValueRef = useRef<SessionContextValue>(value);
-  const sessionListenersRef = useRef(new Set<() => void>());
-  useEffect(() => {
-    sessionValueRef.current = value;
-    sessionListenersRef.current.forEach((listener) => {
-      try {
-        listener();
-      } catch (error) {
-        console.error("[SessionProvider] Session listener failed", error);
-      }
-    });
-    notifySessionDirectoryChange();
-  }, [value, notifySessionDirectoryChange]);
-
-  const sessionAccessor = useCallback(() => sessionValueRef.current, []);
-  const subscribeToSession = useCallback((listener: () => void) => {
-    sessionListenersRef.current.add(listener);
-    return () => {
-      sessionListenersRef.current.delete(listener);
-    };
-  }, []);
-  const sessionDirectoryEntry = useMemo(
+  const value = useMemo<SessionContextValue>(
     () => ({
-      getSnapshot: sessionAccessor,
-      subscribe: subscribeToSession,
+      serverId,
+      ws,
+      hasHydratedAgents,
+      audioPlayer,
+      isPlayingAudio,
+      setIsPlayingAudio,
+      setVoiceDetectionFlags,
+      focusedAgentId,
+      setFocusedAgentId,
+      messages,
+      setMessages,
+      currentAssistantMessage,
+      setCurrentAssistantMessage,
+      agentStreamState,
+      setAgentStreamState,
+      initializingAgents,
+      agents,
+      setAgents,
+      commands,
+      setCommands,
+      pendingPermissions,
+      setPendingPermissions,
+      gitDiffs,
+      requestGitDiff,
+      fileExplorer,
+      providerModels,
+      requestProviderModels,
+      getDraftInput,
+      saveDraftInput,
+      queuedMessages,
+      setQueuedMessages,
+      requestDirectoryListing,
+      requestFilePreview,
+      navigateExplorerBack,
+      restartServer,
+      initializeAgent,
+      refreshAgent,
+      cancelAgentRun,
+      deleteAgent,
+      sendAgentMessage,
+      sendAgentAudio,
+      createAgent,
+      resumeAgent,
+      setAgentMode,
+      respondToPermission,
     }),
-    [sessionAccessor, subscribeToSession]
+    [
+      agentStreamState,
+      agents,
+      audioPlayer,
+      cancelAgentRun,
+      commands,
+      createAgent,
+      currentAssistantMessage,
+      deleteAgent,
+      fileExplorer,
+      focusedAgentId,
+      getDraftInput,
+      gitDiffs,
+      hasHydratedAgents,
+      isPlayingAudio,
+      initializeAgent,
+      initializingAgents,
+      messages,
+      navigateExplorerBack,
+      pendingPermissions,
+      providerModels,
+      queuedMessages,
+      refreshAgent,
+      requestDirectoryListing,
+      requestFilePreview,
+      requestGitDiff,
+      requestProviderModels,
+      respondToPermission,
+      resumeAgent,
+      restartServer,
+      saveDraftInput,
+      sendAgentAudio,
+      sendAgentMessage,
+      serverId,
+      setAgentMode,
+      setAgentStreamState,
+      setAgents,
+      setCommands,
+      setCurrentAssistantMessage,
+      setFocusedAgentId,
+      setIsPlayingAudio,
+      setMessages,
+      setPendingPermissions,
+      setQueuedMessages,
+      setVoiceDetectionFlags,
+      ws,
+    ]
   );
 
   useEffect(() => {
-    registerSessionAccessor(serverId, sessionDirectoryEntry);
+    updateSessionSnapshot(serverId, value);
+  }, [serverId, updateSessionSnapshot, value]);
+
+  useEffect(() => {
+    if (wsIsConnected) {
+      return;
+    }
+    clearSessionSnapshot(serverId);
+  }, [clearSessionSnapshot, serverId, wsIsConnected]);
+
+  useEffect(() => {
     return () => {
-      unregisterSessionAccessor(serverId);
+      clearSessionSnapshot(serverId);
     };
-  }, [serverId, registerSessionAccessor, unregisterSessionAccessor, sessionDirectoryEntry]);
+  }, [serverId, clearSessionSnapshot]);
 
   return (
     <SessionContext.Provider value={value}>

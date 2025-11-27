@@ -207,7 +207,10 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
   }, []);
 
   const on = useCallback(
-    (type: SessionOutboundMessage["type"], handler: (message: SessionOutboundMessage) => void) => {
+    (
+      type: SessionOutboundMessage["type"],
+      handler: (message: SessionOutboundMessage) => void
+    ) => {
       if (!handlersRef.current.has(type)) {
         handlersRef.current.set(type, new Set());
       }
