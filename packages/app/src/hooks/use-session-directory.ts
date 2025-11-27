@@ -1,20 +1,14 @@
 import { useMemo } from "react";
-import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import type { SessionContextValue } from "@/contexts/session-context";
+import { useSessionStore, type SessionData } from "@/stores/session-store";
 
-export function useSessionDirectory(): Map<string, SessionContextValue> {
-  const { sessionSnapshots } = useDaemonConnections();
+export function useSessionDirectory(): Map<string, SessionData> {
+  const sessions = useSessionStore((state) => state.sessions);
 
   return useMemo(() => {
-    const entries = new Map<string, SessionContextValue>();
-    sessionSnapshots.forEach((snapshot, serverId) => {
-      entries.set(serverId, snapshot);
-    });
-    return entries;
-  }, [sessionSnapshots]);
+    return new Map<string, SessionData>(Object.entries(sessions));
+  }, [sessions]);
 }
 
-export function useSessionForServer(serverId: string | null): SessionContextValue | null {
-  const { sessionSnapshots } = useDaemonConnections();
-  return serverId ? sessionSnapshots.get(serverId) ?? null : null;
+export function useSessionForServer(serverId: string | null): SessionData | null {
+  return useSessionStore((state) => (serverId ? state.sessions[serverId] ?? null : null));
 }

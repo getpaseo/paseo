@@ -1,9 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useDaemonRegistry, type DaemonProfile } from "./daemon-registry-context";
-import type { SessionContextValue } from "./session-context";
-
-export type SessionSnapshot = SessionContextValue;
 
 export type ConnectionState =
   | { status: "idle"; lastError: null; lastOnlineAt: string | null; sessionReady: false }
@@ -29,9 +26,6 @@ interface DaemonConnectionsContextValue {
   connectionStates: Map<string, DaemonConnectionRecord>;
   isLoading: boolean;
   updateConnectionStatus: (daemonId: string, update: ConnectionStateUpdate) => void;
-  sessionSnapshots: Map<string, SessionSnapshot>;
-  updateSessionSnapshot: (daemonId: string, snapshot: SessionSnapshot | null) => void;
-  clearSessionSnapshot: (daemonId: string) => void;
 }
 
 const DaemonConnectionsContext = createContext<DaemonConnectionsContextValue | null>(null);
@@ -116,7 +110,6 @@ export function useDaemonConnections(): DaemonConnectionsContextValue {
 export function DaemonConnectionsProvider({ children }: { children: ReactNode }) {
   const { daemons, isLoading: registryLoading } = useDaemonRegistry();
   const [connectionStates, setConnectionStates] = useState<Map<string, DaemonConnectionRecord>>(new Map());
-  const [sessionSnapshotRegistry, setSessionSnapshotRegistry] = useState<Map<string, SessionSnapshot>>(new Map());
 
   // Ensure connection states stay in sync with registry entries
   useEffect(() => {
@@ -130,24 +123,6 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
         });
       }
       return next;
-    });
-  }, [daemons]);
-
-  useEffect(() => {
-    setSessionSnapshotRegistry((prev) => {
-      const validDaemonIds = new Set(daemons.map((daemon) => daemon.id));
-      let changed = false;
-      const next = new Map<string, SessionSnapshot>();
-
-      for (const [daemonId, snapshot] of prev.entries()) {
-        if (!validDaemonIds.has(daemonId)) {
-          changed = true;
-          continue;
-        }
-        next.set(daemonId, snapshot);
-      }
-
-      return changed ? next : prev;
     });
   }, [daemons]);
 
@@ -177,38 +152,10 @@ export function DaemonConnectionsProvider({ children }: { children: ReactNode })
     []
   );
 
-  const updateSessionSnapshot = useCallback((serverId: string, snapshot: SessionSnapshot | null) => {
-    setSessionSnapshotRegistry((prev) => {
-      const next = new Map(prev);
-      if (snapshot === null) {
-        next.delete(serverId);
-      } else {
-        next.set(serverId, snapshot);
-      }
-      return next;
-    });
-  }, []);
-
-  const clearSessionSnapshot = useCallback((serverId: string) => {
-    setSessionSnapshotRegistry((prev) => {
-      if (!prev.has(serverId)) {
-        return prev;
-      }
-      const next = new Map(prev);
-      next.delete(serverId);
-      return next;
-    });
-  }, []);
-
-  const sessionSnapshots = useMemo(() => new Map(sessionSnapshotRegistry), [sessionSnapshotRegistry]);
-
   const value: DaemonConnectionsContextValue = {
     connectionStates,
     isLoading: registryLoading,
     updateConnectionStatus,
-    sessionSnapshots,
-    updateSessionSnapshot,
-    clearSessionSnapshot,
   };
 
   return (

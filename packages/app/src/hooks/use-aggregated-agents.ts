@@ -1,6 +1,7 @@
-import { useMemo } from "react";
 import type { Agent } from "@/contexts/session-context";
+import { useMemo } from "react";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useSessionStore } from "@/stores/session-store";
 
 export interface AggregatedAgent extends Agent {
   serverId: string;
@@ -13,17 +14,27 @@ export interface AggregatedAgentsResult {
 }
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
-  const { connectionStates, sessionSnapshots } = useDaemonConnections();
+  const { connectionStates } = useDaemonConnections();
+  const sessions = useSessionStore((state) => state.sessions);
+  const sessionAgents = useMemo(() => {
+    const agentsByServer: Record<string, Map<string, Agent>> = {};
+    for (const [serverId, session] of Object.entries(sessions)) {
+      if (session?.agents) {
+        agentsByServer[serverId] = session.agents;
+      }
+    }
+    return agentsByServer;
+  }, [sessions]);
 
   return useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
-    for (const [serverId, snapshot] of sessionSnapshots) {
-      if (snapshot.agents.size === 0) {
+    for (const [serverId, agents] of Object.entries(sessionAgents)) {
+      if (!agents || agents.size === 0) {
         continue;
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
-      for (const agent of snapshot.agents.values()) {
+      for (const agent of agents.values()) {
         allAgents.push({
           ...agent,
           serverId,
@@ -58,7 +69,6 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       return false;
     });
 
-    console.log("[useAggregatedAgents] aggregated agent count:", allAgents.length, "isLoading:", isLoading);
     return { agents: allAgents, isLoading };
-  }, [sessionSnapshots, connectionStates]);
+  }, [sessionAgents, connectionStates]);
 }
