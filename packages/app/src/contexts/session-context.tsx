@@ -30,6 +30,7 @@ import type {
 import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
 import { useDaemonConnections } from "./daemon-connections-context";
+import { useSessionStore } from "@/stores/session-store";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -396,9 +397,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const wsIsConnected = ws.isConnected;
   const {
     updateConnectionStatus,
-    updateSessionSnapshot,
-    clearSessionSnapshot,
   } = useDaemonConnections();
+  const setSession = useSessionStore((state) => state.setSession);
+  const updateSession = useSessionStore((state) => state.updateSession);
+  const clearSession = useSessionStore((state) => state.clearSession);
 
   useEffect(() => {
     if (ws.isConnected) {
@@ -1843,21 +1845,19 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   );
 
   useEffect(() => {
-    updateSessionSnapshot(serverId, value);
-  }, [serverId, updateSessionSnapshot, value]);
+    setSession(serverId, { ...value });
+  }, [serverId, setSession]);
 
   useEffect(() => {
-    if (wsIsConnected) {
-      return;
-    }
-    clearSessionSnapshot(serverId);
-  }, [clearSessionSnapshot, serverId, wsIsConnected]);
+    const payload = { ...value };
+    updateSession(serverId, payload);
+  }, [serverId, updateSession, value]);
 
   useEffect(() => {
     return () => {
-      clearSessionSnapshot(serverId);
+      clearSession(serverId);
     };
-  }, [serverId, clearSessionSnapshot]);
+  }, [clearSession, serverId]);
 
   return (
     <SessionContext.Provider value={value}>
