@@ -7,7 +7,7 @@ const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 const FALLBACK_DAEMON_URL = "ws://localhost:6767/ws";
 const DEFAULT_DAEMONS: Array<{ label: string; wsUrl: string; restUrl?: string | null }> = [
-  { label: "dev", wsUrl: "ws://dev:6767/ws" },
+  { label: "localhost", wsUrl: "ws://localhost:6767/ws" },
   { label: "macbook", wsUrl: "ws://mohameds-macbook-pro:6767/ws" },
 ];
 const DAEMON_REGISTRY_QUERY_KEY = ["daemon-registry"];

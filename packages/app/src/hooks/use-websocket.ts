@@ -123,12 +123,17 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
 
       ws.onmessage = (event) => {
         try {
-          const wsMessage: WSOutboundMessage = JSON.parse(event.data);
+          const rawData = event.data;
+          const size = typeof rawData === "string" ? rawData.length : 0;
+          const wsMessage: WSOutboundMessage = JSON.parse(rawData);
 
           // Only session messages trigger handlers
           if (wsMessage.type === "session") {
             const sessionMessage = wsMessage.message;
-            console.log(`[WS] Received session message type: ${sessionMessage.type}`);
+            const id = (sessionMessage as { requestId?: string }).requestId ??
+                       (sessionMessage as { agentId?: string }).agentId ??
+                       (sessionMessage as { payload?: { agentId?: string } }).payload?.agentId;
+            console.log(`[WS] ← ${sessionMessage.type}`, { size, id: id ?? "-" });
 
             // Track conversation ID when loaded
             if (sessionMessage.type === "conversation_loaded") {
@@ -147,8 +152,8 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
               });
             }
           } else {
-            // pong - just log
-            console.log(`[WS] Received ${wsMessage.type}`);
+            // pong
+            console.log(`[WS] ← ${wsMessage.type}`, { size });
           }
         } catch (err) {
           console.error("[WS] Failed to parse message:", err);
@@ -200,7 +205,14 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
 
   const send = useCallback((message: WSInboundMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(message));
+      const payload = JSON.stringify(message);
+      const type = message.type === "session" ? message.message.type : message.type;
+      const id = message.type === "session"
+        ? (message.message as { requestId?: string; agentId?: string }).requestId ??
+          (message.message as { agentId?: string }).agentId
+        : undefined;
+      console.log(`[WS] → ${type}`, { size: payload.length, id: id ?? "-" });
+      wsRef.current.send(payload);
     } else {
       console.warn("[WS] Cannot send message - not connected");
     }

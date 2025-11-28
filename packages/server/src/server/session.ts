@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { readFile, mkdir, writeFile } from "fs/promises";
-import { exec, spawn } from "child_process";
+import { exec } from "child_process";
 import { promisify, inspect } from "util";
 import { join } from "path";
 import invariant from "tiny-invariant";

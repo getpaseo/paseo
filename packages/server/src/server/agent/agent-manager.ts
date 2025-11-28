@@ -707,7 +707,11 @@ export class AgentManager {
         break;
     }
 
-    this.dispatchStream(agent.id, event);
+    // Skip dispatching individual stream events during history replay.
+    // The caller will send a batched agent_stream_snapshot after priming.
+    if (!options?.fromHistory) {
+      this.dispatchStream(agent.id, event);
+    }
   }
 
   private recordTimeline(agent: ManagedAgent, item: AgentTimelineItem): void {
