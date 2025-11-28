@@ -196,6 +196,14 @@ export async function createAgentMcpServer(
 
       if (initialPrompt) {
         try {
+          agentManager.recordUserMessage(snapshot.id, initialPrompt);
+        } catch (error) {
+          console.error(
+            `[Agent MCP] Failed to record initial prompt for ${snapshot.id}:`,
+            error
+          );
+        }
+        try {
           startAgentRun(agentManager, snapshot.id, initialPrompt);
         } catch (error) {
           console.error(
@@ -324,6 +332,15 @@ export async function createAgentMcpServer(
     async ({ agentId, prompt, sessionMode }) => {
       if (sessionMode) {
         await agentManager.setAgentMode(agentId, sessionMode);
+      }
+
+      try {
+        agentManager.recordUserMessage(agentId, prompt);
+      } catch (error) {
+        console.error(
+          `[Agent MCP] Failed to record user message for ${agentId}:`,
+          error
+        );
       }
 
       startAgentRun(agentManager, agentId, prompt);
