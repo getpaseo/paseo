@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import basicAuth from "express-basic-auth";
 import { createServer as createHTTPServer } from "http";
+import { randomUUID } from "node:crypto";
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { initializeSTT, type STTConfig } from "./agent/stt-openai.js";
 import { initializeTTS } from "./agent/tts-openai.js";
@@ -15,6 +16,16 @@ import {
   attachAgentRegistryPersistence,
   restorePersistedAgents,
 } from "./persistence-hooks.js";
+import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+
+type AgentMcpTransportMap = Map<
+  string,
+  StreamableHTTPServerTransport
+>;
+
+const BASIC_AUTH_USERS = { mo: "bo" } as const;
 
 function createServer() {
   const app = express();
@@ -25,7 +36,7 @@ function createServer() {
   // Basic authentication (skip for /public routes)
   app.use(
     basicAuth({
-      users: { mo: "bo" },
+      users: BASIC_AUTH_USERS,
       challenge: true,
       realm: "Voice Assistant",
     })
@@ -66,6 +77,16 @@ function createServer() {
 
 async function main() {
   const port = parseInt(process.env.PORT || "6767", 10);
+  const agentMcpRoute = "/mcp/agents";
+  const agentMcpUrl = `http://127.0.0.1:${port}${agentMcpRoute}`;
+  const [agentMcpUser, agentMcpPassword] =
+    Object.entries(BASIC_AUTH_USERS)[0] ?? [];
+  const agentMcpAuthHeader =
+    agentMcpUser && agentMcpPassword
+      ? `Basic ${Buffer.from(
+          `${agentMcpUser}:${agentMcpPassword}`
+        ).toString("base64")}`
+      : undefined;
 
   const app = createServer();
   const httpServer = createHTTPServer(app);
@@ -74,7 +95,14 @@ async function main() {
   const agentRegistry = new AgentRegistry();
   const agentManager = new AgentManager({
     clients: {
-      claude: new ClaudeAgentClient(),
+      claude: new ClaudeAgentClient({
+        agentControlMcp: {
+          url: agentMcpUrl,
+          ...(agentMcpAuthHeader
+            ? { headers: { Authorization: agentMcpAuthHeader } }
+            : {}),
+        },
+      }),
       codex: new CodexAgentClient(),
     },
   });
@@ -84,11 +112,112 @@ async function main() {
   await restorePersistedAgents(agentManager, agentRegistry);
   console.log("✓ Global agent manager initialized with persisted agents");
 
+  const agentMcpServer = await createAgentMcpServer({
+    agentManager,
+    agentRegistry,
+  });
+  const agentMcpTransports: AgentMcpTransportMap = new Map();
+
+  const createAgentMcpTransport = async () => {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        agentMcpTransports.set(sessionId, transport);
+        console.log(`[Agent MCP] Session initialized: ${sessionId}`);
+      },
+      onsessionclosed: (sessionId) => {
+        agentMcpTransports.delete(sessionId);
+        console.log(`[Agent MCP] Session closed: ${sessionId}`);
+      },
+      enableDnsRebindingProtection: true,
+      allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+    });
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        agentMcpTransports.delete(transport.sessionId);
+      }
+    };
+    transport.onerror = (error) => {
+      console.error("[Agent MCP] Transport error:", error);
+    };
+    await agentMcpServer.connect(transport);
+    return transport;
+  };
+
+  const handleAgentMcpRequest: express.RequestHandler = async (
+    req,
+    res
+  ) => {
+    try {
+      const sessionId = req.header("mcp-session-id");
+      let transport = sessionId
+        ? agentMcpTransports.get(sessionId)
+        : undefined;
+
+      if (!transport) {
+        if (req.method !== "POST") {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Missing or invalid MCP session",
+            },
+            id: null,
+          });
+          return;
+        }
+        if (!isInitializeRequest(req.body)) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Initialization request expected",
+            },
+            id: null,
+          });
+          return;
+        }
+        transport = await createAgentMcpTransport();
+      }
+
+      await transport.handleRequest(
+        req as any,
+        res as any,
+        req.body
+      );
+    } catch (error) {
+      console.error("[Agent MCP] Failed to handle request:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: "Internal MCP server error",
+          },
+          id: null,
+        });
+      }
+    }
+  };
+
+  app.post(agentMcpRoute, handleAgentMcpRequest);
+  app.get(agentMcpRoute, handleAgentMcpRequest);
+  app.delete(agentMcpRoute, handleAgentMcpRequest);
+  console.log(`✓ Agent MCP server mounted at ${agentMcpRoute}`);
+
   // Initialize WebSocket server
   const wsServer = new VoiceAssistantWebSocketServer(
     httpServer,
     agentManager,
-    agentRegistry
+    agentRegistry,
+    {
+      agentMcpUrl,
+      agentMcpHeaders: agentMcpAuthHeader
+        ? {
+            Authorization: agentMcpAuthHeader,
+          }
+        : undefined,
+    }
   );
 
   // Initialize OpenAI client

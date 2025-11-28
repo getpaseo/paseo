@@ -13,6 +13,11 @@ import { loadConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 
+type AgentMcpClientConfig = {
+  agentMcpUrl: string;
+  agentMcpHeaders?: Record<string, string>;
+};
+
 /**
  * WebSocket server that routes messages between clients and their sessions.
  * This is a thin transport layer with no business logic.
@@ -24,14 +29,17 @@ export class VoiceAssistantWebSocketServer {
   private clientIdCounter: number = 0;
   private agentManager: AgentManager;
   private agentRegistry: AgentRegistry;
+  private readonly agentMcpConfig: AgentMcpClientConfig;
 
   constructor(
     server: HTTPServer,
     agentManager: AgentManager,
-    agentRegistry: AgentRegistry
+    agentRegistry: AgentRegistry,
+    agentMcpConfig: AgentMcpClientConfig
   ) {
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
+    this.agentMcpConfig = agentMcpConfig;
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", (ws, request) => {
@@ -79,6 +87,7 @@ export class VoiceAssistantWebSocketServer {
       },
       this.agentManager,
       this.agentRegistry,
+      this.agentMcpConfig,
       {
         conversationId,
         initialMessages: initialMessages || undefined,

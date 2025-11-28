@@ -68,6 +68,15 @@ export type AgentManagerOptions = {
   idFactory?: () => string;
 };
 
+export type WaitForAgentOptions = {
+  signal?: AbortSignal;
+};
+
+export type WaitForAgentResult = {
+  status: AgentLifecycleStatus;
+  permission: AgentPermissionRequest | null;
+};
+
 type ManagedAgent = {
   id: string;
   provider: AgentProvider;
@@ -97,6 +106,28 @@ type SubscriptionRecord = {
 };
 
 const DEFAULT_MAX_TIMELINE_ITEMS = 2000;
+const BUSY_STATUSES: AgentLifecycleStatus[] = [
+  "initializing",
+  "running",
+];
+
+function isAgentBusy(status: AgentLifecycleStatus): boolean {
+  return BUSY_STATUSES.includes(status);
+}
+
+function createAbortError(
+  signal: AbortSignal | undefined,
+  fallbackMessage: string
+): Error {
+  const reason = signal?.reason;
+  const message =
+    typeof reason === "string"
+      ? reason
+      : reason instanceof Error
+        ? reason.message
+        : fallbackMessage;
+  return Object.assign(new Error(message), { name: "AbortError" });
+}
 
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
@@ -458,6 +489,105 @@ export class AgentManager {
   async primeAgentHistory(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     await this.primeHistory(agent);
+  }
+
+  async waitForAgentEvent(
+    agentId: string,
+    options?: WaitForAgentOptions
+  ): Promise<WaitForAgentResult> {
+    const snapshot = this.getAgent(agentId);
+    if (!snapshot) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    const immediatePermission = snapshot.pendingPermissions[0] ?? null;
+    if (immediatePermission) {
+      return { status: snapshot.status, permission: immediatePermission };
+    }
+
+    if (!isAgentBusy(snapshot.status)) {
+      return { status: snapshot.status, permission: null };
+    }
+
+    if (options?.signal?.aborted) {
+      throw createAbortError(options.signal, "wait_for_agent aborted");
+    }
+
+    return await new Promise<WaitForAgentResult>((resolve, reject) => {
+      let currentStatus: AgentLifecycleStatus = snapshot.status;
+      const cleanupFns: Array<() => void> = [];
+
+      const cleanup = () => {
+        while (cleanupFns.length) {
+          const fn = cleanupFns.pop();
+          try {
+            fn?.();
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+      };
+
+      const finish = (permission: AgentPermissionRequest | null) => {
+        cleanup();
+        resolve({ status: currentStatus, permission });
+      };
+
+      const unsubscribe = this.subscribe(
+        (event) => {
+          if (event.type === "agent_state") {
+            currentStatus = event.agent.status;
+            const pending = event.agent.pendingPermissions[0] ?? null;
+            if (pending) {
+              finish(pending);
+              return;
+            }
+            if (!isAgentBusy(event.agent.status)) {
+              finish(null);
+            }
+            return;
+          }
+
+          if (event.type !== "agent_stream") {
+            return;
+          }
+
+          switch (event.event.type) {
+            case "permission_requested": {
+              currentStatus = "running";
+              finish(event.event.request);
+              break;
+            }
+            case "turn_completed": {
+              currentStatus = "idle";
+              finish(null);
+              break;
+            }
+            case "turn_failed": {
+              currentStatus = "error";
+              finish(null);
+              break;
+            }
+            default:
+              break;
+          }
+        },
+        { agentId, replayState: true }
+      );
+      cleanupFns.push(unsubscribe);
+
+      if (options?.signal) {
+        const abortHandler = () => {
+          cleanup();
+          reject(createAbortError(options.signal, "wait_for_agent aborted"));
+        };
+
+        options.signal.addEventListener("abort", abortHandler, { once: true });
+        cleanupFns.push(() =>
+          options.signal?.removeEventListener("abort", abortHandler)
+        );
+      }
+    });
   }
 
   private async registerSession(
