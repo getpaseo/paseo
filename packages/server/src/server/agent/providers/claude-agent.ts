@@ -1043,11 +1043,23 @@ class ClaudeAgentSession implements AgentSession {
       return undefined;
     }
 
+    const server = entry?.server ?? block.server ?? "tool";
+    const tool = entry?.name ?? block.tool_name ?? "tool";
+    const content = typeof block.content === "string" ? block.content : "";
+    const input = entry?.input;
+
+    // Build structured result based on tool type
+    const structured = this.buildStructuredToolResult(server, tool, content, input);
+
+    if (structured) {
+      return structured;
+    }
+
+    // Fallback to legacy format
     const result: Record<string, unknown> = {};
 
-    // SDK tool_result blocks have content as a string
-    if (typeof block.content === "string" && block.content.length > 0) {
-      result.result = { output: block.content };
+    if (content.length > 0) {
+      result.result = { output: content };
     }
 
     // Preserve file changes tracked during tool execution
@@ -1056,6 +1068,86 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return Object.keys(result).length > 0 ? result : undefined;
+  }
+
+  private buildStructuredToolResult(
+    server: string,
+    tool: string,
+    output: string,
+    input?: Record<string, unknown> | null
+  ): Record<string, unknown> | undefined {
+    const normalizedServer = server.toLowerCase();
+    const normalizedTool = tool.toLowerCase();
+
+    // Command execution tools
+    if (
+      normalizedServer.includes("bash") ||
+      normalizedServer.includes("shell") ||
+      normalizedServer.includes("command") ||
+      normalizedTool.includes("bash") ||
+      normalizedTool.includes("shell") ||
+      normalizedTool.includes("command") ||
+      (input && (typeof input.command === "string" || Array.isArray(input.command)))
+    ) {
+      const command = this.extractCommandText(input ?? {}) ?? "command";
+      return {
+        type: "command",
+        command,
+        output,
+        cwd: typeof input?.cwd === "string" ? input.cwd : undefined,
+      };
+    }
+
+    // File write tools (new files or complete replacements)
+    if (
+      normalizedTool.includes("write") ||
+      normalizedTool === "write_file" ||
+      normalizedTool === "create_file"
+    ) {
+      if (input && typeof input.file_path === "string") {
+        return {
+          type: "file_write",
+          filePath: input.file_path,
+          oldContent: "",
+          newContent: typeof input.content === "string" ? input.content : output,
+        };
+      }
+    }
+
+    // File edit/patch tools
+    if (
+      normalizedTool.includes("edit") ||
+      normalizedTool.includes("patch") ||
+      normalizedTool === "apply_patch" ||
+      normalizedTool === "apply_diff"
+    ) {
+      if (input && typeof input.file_path === "string") {
+        return {
+          type: "file_edit",
+          filePath: input.file_path,
+          diff: typeof input.patch === "string" ? input.patch : typeof input.diff === "string" ? input.diff : undefined,
+          oldContent: typeof input.old_str === "string" ? input.old_str : undefined,
+          newContent: typeof input.new_str === "string" ? input.new_str : undefined,
+        };
+      }
+    }
+
+    // File read tools
+    if (
+      normalizedTool.includes("read") ||
+      normalizedTool === "read_file" ||
+      normalizedTool === "view_file"
+    ) {
+      if (input && typeof input.file_path === "string") {
+        return {
+          type: "file_read",
+          filePath: input.file_path,
+          content: output,
+        };
+      }
+    }
+
+    return undefined;
   }
 
   private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {

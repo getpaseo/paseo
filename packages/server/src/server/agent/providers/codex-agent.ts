@@ -817,7 +817,12 @@ class CodexAgentSession implements AgentSession {
         return { type: "assistant_message", text: item.text };
       case "reasoning":
         return { type: "reasoning", text: item.text };
-      case "command_execution":
+      case "command_execution": {
+        const output = (item as any)?.output;
+        const cwd = (item as any)?.cwd;
+        const commandValue = item.command;
+        const command = typeof commandValue === "string" ? commandValue :
+                       Array.isArray(commandValue) ? (commandValue as string[]).join(" ") : "command";
         return createToolCallTimelineItem({
           server: "command",
           tool: "shell",
@@ -825,10 +830,16 @@ class CodexAgentSession implements AgentSession {
           callId: (item as any)?.call_id,
           displayName: buildCommandDisplayName(item.command),
           kind: "execute",
-          input: { command: item.command, cwd: (item as any)?.cwd },
-          output: (item as any)?.output,
+          input: { command: item.command, cwd },
+          output: typeof output === "string" ? {
+            type: "command",
+            command,
+            output,
+            cwd,
+          } : undefined,
           error: (item as any)?.error,
         });
+      }
       case "file_change": {
         const files = item.changes.map((change) => ({ path: change.path, kind: change.kind }));
         return createToolCallTimelineItem({
@@ -1100,6 +1111,16 @@ function finalizeRolloutFunctionCall(
   const result = safeJsonParse<CommandExecutionResult>(payload.output);
   const exitCode = result?.metadata?.exit_code;
   const status = exitCode === undefined || exitCode === 0 ? "completed" : "failed";
+
+  // Build structured command output
+  const output = result?.stdout ? {
+    type: "command" as const,
+    command: command.command,
+    output: result.stdout,
+    exitCode,
+    cwd: command.cwd,
+  } : result;
+
   events.push({
     type: "timeline",
     provider: "codex",
@@ -1111,7 +1132,7 @@ function finalizeRolloutFunctionCall(
       displayName: buildCommandDisplayName(command.command),
       kind: "execute",
       input: { command: command.command, cwd: command.cwd },
-      output: result,
+      output,
     }),
   });
   commandCalls.delete(payload.call_id);

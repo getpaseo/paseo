@@ -27,7 +27,7 @@ import { baseColors, theme } from "@/styles/theme";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
-import type { CommandDetails, EditEntry, ReadEntry } from "@/utils/tool-call-parsers";
+import type { CommandDetails, EditEntry, ReadEntry, DiffLine } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
 import { resolveToolCallPreview } from "./tool-call-preview";
 
@@ -1205,6 +1205,80 @@ function formatFullValue(value: unknown): string {
   }
 }
 
+// Helper function to build diff lines (mirrors logic from tool-call-parsers)
+function buildLineDiffFromStrings(originalText: string, updatedText: string): DiffLine[] {
+  const splitIntoLines = (text: string): string[] => {
+    if (!text) return [];
+    return text.replace(/\r\n/g, "\n").split("\n");
+  };
+
+  const originalLines = splitIntoLines(originalText);
+  const updatedLines = splitIntoLines(updatedText);
+
+  const hasAnyContent = originalLines.length > 0 || updatedLines.length > 0;
+  if (!hasAnyContent) return [];
+
+  const m = originalLines.length;
+  const n = updatedLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = m - 1; i >= 0; i -= 1) {
+    for (let j = n - 1; j >= 0; j -= 1) {
+      if (originalLines[i] === updatedLines[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const diff: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < m && j < n) {
+    if (originalLines[i] === updatedLines[j]) {
+      diff.push({ type: "context", content: ` ${originalLines[i]}` });
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      diff.push({ type: "remove", content: `-${originalLines[i]}` });
+      i += 1;
+    } else {
+      diff.push({ type: "add", content: `+${updatedLines[j]}` });
+      j += 1;
+    }
+  }
+
+  while (i < m) {
+    diff.push({ type: "remove", content: `-${originalLines[i]}` });
+    i += 1;
+  }
+
+  while (j < n) {
+    diff.push({ type: "add", content: `+${updatedLines[j]}` });
+    j += 1;
+  }
+
+  return diff;
+}
+
+// Type guard for structured tool results
+type StructuredToolResult = {
+  type: "command" | "file_write" | "file_edit" | "file_read" | "generic";
+  [key: string]: unknown;
+};
+
+function isStructuredToolResult(result: unknown): result is StructuredToolResult {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "type" in result &&
+    typeof result.type === "string" &&
+    ["command", "file_write", "file_edit", "file_read", "generic"].includes(result.type)
+  );
+}
+
 export const ToolCall = memo(function ToolCall({
   toolName,
   kind,
@@ -1230,6 +1304,12 @@ export const ToolCall = memo(function ToolCall({
 
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // Check if result has a type field for structured rendering
+  const structuredResult = useMemo(
+    () => (isStructuredToolResult(result) ? result : null),
+    [result]
+  );
+
   const IconComponent = kind
     ? toolKindIcons[kind.toLowerCase()] || Wrench
     : Wrench;
@@ -1250,6 +1330,79 @@ export const ToolCall = memo(function ToolCall({
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
   }, []);
+
+  // Helper functions to extract data from structured results
+  const extractCommandFromStructured = useCallback(
+    (structured: StructuredToolResult): CommandDetails | null => {
+      if (structured.type !== "command") return null;
+
+      const cmd: CommandDetails = {};
+      if (typeof structured.command === "string") cmd.command = structured.command;
+      if (typeof structured.cwd === "string") cmd.cwd = structured.cwd;
+      if (typeof structured.output === "string") cmd.output = structured.output;
+      if (typeof structured.exitCode === "number") cmd.exitCode = structured.exitCode;
+
+      return cmd.command || cmd.output ? cmd : null;
+    },
+    []
+  );
+
+  const extractDiffFromStructured = useCallback(
+    (structured: StructuredToolResult): EditEntry[] => {
+      if (structured.type !== "file_write" && structured.type !== "file_edit") {
+        return [];
+      }
+
+      const filePath = typeof structured.filePath === "string" ? structured.filePath : undefined;
+
+      // For file_write, create a diff from oldContent -> newContent
+      if (structured.type === "file_write") {
+        const oldContent = typeof structured.oldContent === "string" ? structured.oldContent : "";
+        const newContent = typeof structured.newContent === "string" ? structured.newContent : "";
+
+        // Use the same diff building logic from tool-call-parsers
+        const diffLines = buildLineDiffFromStrings(oldContent, newContent);
+        if (diffLines.length > 0) {
+          return [{ filePath, diffLines }];
+        }
+      }
+
+      // For file_edit, it might already have diffLines or we need to construct them
+      if (structured.type === "file_edit") {
+        // Check if diffLines are provided directly
+        if (Array.isArray(structured.diffLines)) {
+          return [{ filePath, diffLines: structured.diffLines as DiffLine[] }];
+        }
+
+        // Otherwise try to build from old/new content
+        const oldContent = typeof structured.oldContent === "string" ? structured.oldContent : "";
+        const newContent = typeof structured.newContent === "string" ? structured.newContent : "";
+        const diffLines = buildLineDiffFromStrings(oldContent, newContent);
+        if (diffLines.length > 0) {
+          return [{ filePath, diffLines }];
+        }
+      }
+
+      return [];
+    },
+    []
+  );
+
+  const extractReadFromStructured = useCallback(
+    (structured: StructuredToolResult): ReadEntry[] => {
+      if (structured.type !== "file_read") return [];
+
+      const filePath = typeof structured.filePath === "string" ? structured.filePath : undefined;
+      const content = typeof structured.content === "string" ? structured.content : "";
+
+      if (content) {
+        return [{ filePath, content }];
+      }
+
+      return [];
+    },
+    []
+  );
 
   const hasCommandDetails = Boolean(
     commandDetails &&
@@ -1412,7 +1565,185 @@ export const ToolCall = memo(function ToolCall({
   }, [args, serializedArgs, result, serializedResult, error, serializedError, hasStructuredContent]);
 
   const renderDetails = useCallback(() => {
-    // Don't show readSections if commandDetails has output (they show the same data)
+    // If we have a structured result, use type-based rendering
+    if (structuredResult) {
+      const sections: ReactNode[] = [];
+
+      // Render based on type
+      switch (structuredResult.type) {
+        case "command": {
+          const cmd = extractCommandFromStructured(structuredResult);
+          if (cmd) {
+            // Reuse the command section rendering logic
+            sections.push(
+              <View key="command" style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>Command</Text>
+                {cmd.command ? (
+                  <ScrollView
+                    horizontal
+                    nestedScrollEnabled
+                    style={toolCallStylesheet.jsonScroll}
+                    contentContainerStyle={toolCallStylesheet.jsonContent}
+                    showsHorizontalScrollIndicator={true}
+                  >
+                    <Text style={toolCallStylesheet.scrollText}>{cmd.command}</Text>
+                  </ScrollView>
+                ) : null}
+                {cmd.cwd ? (
+                  <View style={toolCallStylesheet.metaRow}>
+                    <Text style={toolCallStylesheet.metaLabel}>Directory</Text>
+                    <Text style={toolCallStylesheet.metaValue}>{cmd.cwd}</Text>
+                  </View>
+                ) : null}
+                {cmd.exitCode !== undefined ? (
+                  <View style={toolCallStylesheet.metaRow}>
+                    <Text style={toolCallStylesheet.metaLabel}>Exit Code</Text>
+                    <Text style={toolCallStylesheet.metaValue}>
+                      {cmd.exitCode === null ? "Unknown" : cmd.exitCode}
+                    </Text>
+                  </View>
+                ) : null}
+                {cmd.output ? (
+                  <ScrollView
+                    style={toolCallStylesheet.scrollArea}
+                    contentContainerStyle={toolCallStylesheet.scrollContent}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={true}
+                  >
+                    <Text style={toolCallStylesheet.scrollText}>{cmd.output}</Text>
+                  </ScrollView>
+                ) : null}
+              </View>
+            );
+          }
+          break;
+        }
+
+        case "file_write":
+        case "file_edit": {
+          const diffs = extractDiffFromStructured(structuredResult);
+          diffs.forEach((entry, index) => {
+            sections.push(
+              <View
+                key={`diff-${index}`}
+                style={toolCallStylesheet.section}
+              >
+                <Text style={toolCallStylesheet.sectionTitle}>Diff</Text>
+                {entry.filePath ? (
+                  <View style={toolCallStylesheet.fileBadge}>
+                    <Text style={toolCallStylesheet.fileBadgeText}>{entry.filePath}</Text>
+                  </View>
+                ) : null}
+                <View style={toolCallStylesheet.diffContainer}>
+                  <DiffViewer diffLines={entry.diffLines} maxHeight={240} />
+                </View>
+              </View>
+            );
+          });
+          break;
+        }
+
+        case "file_read": {
+          const reads = extractReadFromStructured(structuredResult);
+          reads.forEach((entry, index) => {
+            sections.push(
+              <View
+                key={`read-${index}`}
+                style={toolCallStylesheet.section}
+              >
+                <Text style={toolCallStylesheet.sectionTitle}>Read Result</Text>
+                {entry.filePath ? (
+                  <View style={toolCallStylesheet.fileBadge}>
+                    <Text style={toolCallStylesheet.fileBadgeText}>{entry.filePath}</Text>
+                  </View>
+                ) : null}
+                <ScrollView
+                  style={toolCallStylesheet.scrollArea}
+                  contentContainerStyle={toolCallStylesheet.scrollContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={true}
+                >
+                  <Text style={toolCallStylesheet.scrollText}>{entry.content}</Text>
+                </ScrollView>
+              </View>
+            );
+          });
+          break;
+        }
+
+        case "generic":
+        default: {
+          // Show raw JSON for generic type
+          if (result !== undefined) {
+            sections.push(
+              <View key="result" style={toolCallStylesheet.section}>
+                <Text style={toolCallStylesheet.sectionTitle}>Result</Text>
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  style={toolCallStylesheet.jsonScroll}
+                  contentContainerStyle={toolCallStylesheet.jsonContent}
+                  showsHorizontalScrollIndicator={true}
+                >
+                  <Text style={toolCallStylesheet.scrollText}>{serializedResult}</Text>
+                </ScrollView>
+              </View>
+            );
+          }
+          break;
+        }
+      }
+
+      // Always show args if available
+      if (args !== undefined) {
+        sections.unshift(
+          <View key="args" style={toolCallStylesheet.section}>
+            <Text style={toolCallStylesheet.sectionTitle}>Arguments</Text>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              style={toolCallStylesheet.jsonScroll}
+              contentContainerStyle={toolCallStylesheet.jsonContent}
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text style={toolCallStylesheet.scrollText}>{serializedArgs}</Text>
+            </ScrollView>
+          </View>
+        );
+      }
+
+      // Always show errors if available
+      if (error !== undefined) {
+        sections.push(
+          <View key="error" style={toolCallStylesheet.section}>
+            <Text style={toolCallStylesheet.sectionTitle}>Error</Text>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              style={[toolCallStylesheet.jsonScroll, toolCallStylesheet.jsonScrollError]}
+              contentContainerStyle={toolCallStylesheet.jsonContent}
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text style={[toolCallStylesheet.scrollText, toolCallStylesheet.errorText]}>
+                {serializedError}
+              </Text>
+            </ScrollView>
+          </View>
+        );
+      }
+
+      if (sections.length === 0) {
+        return (
+          <Text style={toolCallStylesheet.emptyStateText}>
+            No additional details available
+          </Text>
+        );
+      }
+
+      return <View style={toolCallStylesheet.detailContent}>{sections}</View>;
+    }
+
+    // Fall back to heuristic parsing for backwards compatibility
     const showReadSections = !commandDetails?.output && readSections.length > 0;
 
     if (
@@ -1436,7 +1767,23 @@ export const ToolCall = memo(function ToolCall({
         {jsonSections}
       </View>
     );
-  }, [commandSection, commandDetails?.output, editSections, readSections, jsonSections]);
+  }, [
+    structuredResult,
+    extractCommandFromStructured,
+    extractDiffFromStructured,
+    extractReadFromStructured,
+    serializedArgs,
+    serializedResult,
+    serializedError,
+    args,
+    result,
+    error,
+    commandSection,
+    commandDetails?.output,
+    editSections,
+    readSections,
+    jsonSections,
+  ]);
 
   return (
     <ExpandableBadge

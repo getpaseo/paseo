@@ -115,6 +115,15 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
     metadata: z.record(z.unknown()).optional(),
   });
 
+// Structured tool result types for better client rendering
+// These types define the structure of the `output` field in tool_call timeline items
+export type StructuredToolResult =
+  | { type: "command"; command: string; output: string; exitCode?: number; cwd?: string }
+  | { type: "file_write"; filePath: string; oldContent: string; newContent: string }
+  | { type: "file_edit"; filePath: string; diff?: string; oldContent?: string; newContent?: string }
+  | { type: "file_read"; filePath: string; content: string }
+  | { type: "generic"; data: unknown };
+
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
   z.discriminatedUnion("type", [
     z.object({
