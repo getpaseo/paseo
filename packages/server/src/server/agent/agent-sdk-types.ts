@@ -1,8 +1,4 @@
-import type { ThreadEvent as CodexThreadEvent } from "@openai/codex-sdk";
-import type {
-  Options as ClaudeAgentOptions,
-  SDKMessage as ClaudeStreamMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 
 export type AgentProvider = "codex" | "claude";
 
@@ -54,9 +50,9 @@ export type AgentUsage = {
 };
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; raw?: unknown }
-  | { type: "assistant_message"; text: string; raw?: unknown }
-  | { type: "reasoning"; text: string; raw?: unknown }
+  | { type: "user_message"; text: string; messageId?: string }
+  | { type: "assistant_message"; text: string }
+  | { type: "reasoning"; text: string }
   | {
       type: "tool_call";
       server: string;
@@ -68,10 +64,9 @@ export type AgentTimelineItem =
       input?: unknown;
       output?: unknown;
       error?: unknown;
-      raw?: unknown;
     }
-  | { type: "todo"; items: { text: string; completed: boolean }[]; raw?: unknown }
-  | { type: "error"; message: string; raw?: unknown };
+  | { type: "todo"; items: { text: string; completed: boolean }[] }
+  | { type: "error"; message: string };
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
@@ -79,7 +74,6 @@ export type AgentStreamEvent =
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage }
   | { type: "turn_failed"; provider: AgentProvider; error: string }
   | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider }
-  | { type: "provider_event"; provider: AgentProvider; raw: CodexThreadEvent | ClaudeStreamMessage }
   | { type: "permission_requested"; provider: AgentProvider; request: AgentPermissionRequest }
   | {
       type: "permission_resolved";
@@ -102,7 +96,6 @@ export type AgentPermissionRequest = {
   input?: Record<string, unknown>;
   suggestions?: AgentPermissionUpdate[];
   metadata?: Record<string, unknown>;
-  raw?: unknown;
 };
 
 export type AgentPermissionResponse =

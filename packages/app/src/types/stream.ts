@@ -109,7 +109,6 @@ export interface AgentToolCallData {
   server: string;
   tool: string;
   status?: ToolCallStatus;
-  raw?: unknown;
   callId?: string;
   displayName?: string;
   kind?: string;
@@ -158,7 +157,6 @@ export interface TodoListItem {
   timestamp: Date;
   provider: AgentProvider;
   items: TodoEntry[];
-  raw?: unknown;
 }
 
 function normalizeChunk(text: string): { chunk: string; hasContent: boolean } {
@@ -178,171 +176,6 @@ function coerceString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
-}
-
-function buildCodexCommandLabel(command?: unknown): string {
-  const normalized = coerceString(command);
-  return normalized ?? "Command";
-}
-
-function buildCodexFileChangeSummary(changes: unknown): string {
-  if (!Array.isArray(changes) || changes.length === 0) {
-    return "File change";
-  }
-
-  if (changes.length === 1) {
-    const change = changes[0] as { path?: unknown; kind?: unknown };
-    const kind = coerceString(change?.kind) ?? "edit";
-    const path = coerceString(change?.path) ?? "file";
-    return `${kind}: ${path}`;
-  }
-
-  return `${changes.length} file changes`;
-}
-
-function normalizeCodexStatus(
-  status: unknown,
-  fallback?: "executing" | "completed"
-): "executing" | "completed" | "failed" {
-  if (typeof status === "string") {
-    const normalized = status.trim().toLowerCase();
-    if (normalized === "failed") {
-      return "failed";
-    }
-    if (normalized === "completed") {
-      return "completed";
-    }
-    if (normalized === "in_progress") {
-      return "executing";
-    }
-  }
-  return fallback ?? "executing";
-}
-
-function coerceCodexCallId(item: Record<string, unknown>): string | undefined {
-  const idCandidates = [item.call_id, item.callId, item.tool_use_id, item.id];
-  for (const candidate of idCandidates) {
-    const value = coerceString(candidate);
-    if (value) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function convertCodexProviderEvent(
-  provider: AgentProvider,
-  raw: unknown
-): AgentToolCallData | null {
-  if (provider !== "codex" || !raw || typeof raw !== "object") {
-    return null;
-  }
-
-  const rawRecord = raw as { type?: unknown; item?: unknown };
-  const eventType = coerceString(rawRecord.type);
-  if (!eventType || !eventType.startsWith("item.")) {
-    return null;
-  }
-
-  const item = rawRecord.item;
-  if (!item || typeof item !== "object") {
-    return null;
-  }
-
-  const typedItem = item as Record<string, unknown> & { type?: unknown };
-  const itemType = coerceString(typedItem.type);
-  if (!itemType) {
-    return null;
-  }
-
-  const baseStatus = normalizeCodexStatus(
-    typedItem.status,
-    eventType === "item.completed" ? "completed" : undefined
-  );
-  const callId = coerceCodexCallId(typedItem);
-
-  if (itemType === "command_execution") {
-    const command = typedItem.command;
-    const aggregatedOutput = coerceString(
-      (typedItem as { aggregated_output?: unknown }).aggregated_output
-    );
-    const exitCode = typeof typedItem.exit_code === "number" ? typedItem.exit_code : undefined;
-    const resultPayload =
-      aggregatedOutput !== null || exitCode !== undefined
-        ? {
-            output: aggregatedOutput ?? undefined,
-            exitCode,
-            command,
-          }
-        : undefined;
-
-    return {
-      provider,
-      server: "command",
-      tool: "shell",
-      status: baseStatus,
-      raw: typedItem,
-      callId,
-      displayName: buildCodexCommandLabel(command),
-      kind: "execute",
-      result: resultPayload,
-    };
-  }
-
-  if (itemType === "file_change") {
-    const changes = Array.isArray(typedItem.changes) ? typedItem.changes : [];
-    return {
-      provider,
-      server: "file_change",
-      tool: "apply_patch",
-      status: baseStatus,
-      raw: typedItem,
-      callId,
-      displayName: buildCodexFileChangeSummary(changes),
-      kind: "edit",
-      result: { files: changes },
-    };
-  }
-
-  if (itemType === "mcp_tool_call") {
-    const serverName = coerceString(typedItem.server) ?? "mcp";
-    const toolName = coerceString(typedItem.tool) ?? "tool";
-    const argumentsPayload = (typedItem as { arguments?: unknown }).arguments;
-    const resultPayload = (typedItem as { result?: unknown }).result;
-    const errorPayload = (typedItem as { error?: unknown }).error;
-    return {
-      provider,
-      server: serverName,
-      tool: toolName,
-      status: baseStatus,
-      raw: {
-        ...typedItem,
-        arguments: argumentsPayload,
-      },
-      callId,
-      displayName: serverName && toolName ? `${serverName}.${toolName}` : toolName,
-      kind: "tool",
-      result: resultPayload,
-      error: errorPayload,
-    };
-  }
-
-  if (itemType === "web_search") {
-    const query = coerceString(typedItem.query);
-    return {
-      provider,
-      server: "web_search",
-      tool: "web_search",
-      status: baseStatus,
-      raw: typedItem,
-      callId,
-      displayName: query ? `Web search: ${query}` : "Web search",
-      kind: "search",
-      result: { query },
-    };
-  }
-
-  return null;
 }
 
 function appendUserMessage(
@@ -468,16 +301,15 @@ function mergeToolCallRaw(existingRaw: unknown, nextRaw: unknown): unknown {
 }
 
 function computeParsedToolPayload(
-  raw: unknown,
   result: unknown
 ): {
   parsedEdits?: EditEntry[];
   parsedReads?: ReadEntry[];
   parsedCommand?: CommandDetails | null;
 } {
-  const edits = extractEditEntries(raw, result);
-  const reads = extractReadEntries(result, raw);
-  const command = extractCommandDetails(raw, result);
+  const edits = extractEditEntries(result);
+  const reads = extractReadEntries(result);
+  const command = extractCommandDetails(result);
 
   return {
     parsedEdits: edits.length > 0 ? edits : undefined,
@@ -594,10 +426,9 @@ function appendAgentToolCall(
   const normalizedStatus = normalizeToolCallStatus(
     data.status,
     data.result,
-    data.error,
-    data.raw
+    data.error
   );
-  const callId = data.callId ?? extractToolCallId(data.raw);
+  const callId = data.callId;
 
   const payloadData: AgentToolCallData = {
     ...data,
@@ -605,12 +436,11 @@ function appendAgentToolCall(
     callId: callId ?? data.callId,
   };
 
-  const existingIndex = findExistingAgentToolCallIndex(state, callId, payloadData);
+  const existingIndex = findExistingAgentToolCallIndex(state, callId ?? null, payloadData);
 
   if (existingIndex >= 0) {
     const next = [...state];
     const existing = next[existingIndex] as AgentToolCallItem;
-    const mergedRaw = mergeToolCallRaw(existing.payload.data.raw, payloadData.raw);
     const mergedResult =
       payloadData.result !== undefined
         ? payloadData.result
@@ -623,7 +453,7 @@ function appendAgentToolCall(
       existing.payload.data.status,
       payloadData.status ?? existing.payload.data.status ?? "executing"
     );
-    const parsed = computeParsedToolPayload(mergedRaw, mergedResult);
+    const parsed = computeParsedToolPayload(mergedResult);
     next[existingIndex] = {
       ...existing,
       timestamp,
@@ -633,7 +463,6 @@ function appendAgentToolCall(
           ...existing.payload.data,
           ...payloadData,
           status: mergedStatus,
-          raw: mergedRaw,
           result: mergedResult,
           error: mergedError,
           displayName: payloadData.displayName ?? existing.payload.data.displayName,
@@ -665,7 +494,7 @@ function appendAgentToolCall(
       source: "agent",
       data: {
         ...payloadData,
-        ...computeParsedToolPayload(payloadData.raw, payloadData.result),
+        ...computeParsedToolPayload(payloadData.result),
       },
     },
   };
@@ -789,8 +618,7 @@ function inferStatusFromRaw(raw: unknown): "completed" | "failed" | null {
 function normalizeToolCallStatus(
   status?: string,
   result?: unknown,
-  error?: unknown,
-  raw?: unknown
+  error?: unknown
 ): ToolCallStatus {
   const normalizedFromStatus = normalizeStatusString(status);
   if (normalizedFromStatus === "failed") {
@@ -805,11 +633,6 @@ function normalizeToolCallStatus(
   }
   if (hasValue(result)) {
     return "completed";
-  }
-
-  const inferredFromRaw = inferStatusFromRaw(raw);
-  if (inferredFromRaw) {
-    return inferredFromRaw;
   }
 
   return normalizedFromStatus ?? "executing";
@@ -889,8 +712,7 @@ function appendTodoList(
   state: StreamItem[],
   provider: AgentProvider,
   items: TodoEntry[],
-  timestamp: Date,
-  raw?: unknown
+  timestamp: Date
 ): StreamItem[] {
   const normalizedItems = items.map((item) => ({
     text: item.text,
@@ -904,7 +726,6 @@ function appendTodoList(
       ...lastItem,
       items: normalizedItems,
       timestamp,
-      raw: raw ?? lastItem.raw,
     };
     next[next.length - 1] = updated;
     return next;
@@ -919,7 +740,6 @@ function appendTodoList(
     timestamp,
     provider,
     items: normalizedItems,
-    raw,
   };
 
   return [...state, entry];
@@ -954,8 +774,6 @@ export function reduceStreamUpdate(
           if (isPermissionToolCall(item)) {
             return state;
           }
-          const rawPayload =
-            item.raw ?? { input: item.input, output: item.output, error: item.error };
           nextState = appendAgentToolCall(
             state,
             {
@@ -963,7 +781,6 @@ export function reduceStreamUpdate(
               server: item.server,
               tool: item.tool,
               status: normalizeStatusString(item.status) ?? "executing",
-              raw: rawPayload,
               callId: item.callId,
               displayName: item.displayName,
               kind: item.kind,
@@ -976,7 +793,7 @@ export function reduceStreamUpdate(
         }
         case "todo": {
           const items = (item.items ?? []) as TodoEntry[];
-          nextState = appendTodoList(state, event.provider, items, timestamp, item.raw);
+          nextState = appendTodoList(state, event.provider, items, timestamp);
           break;
         }
         case "error": {
@@ -986,7 +803,6 @@ export function reduceStreamUpdate(
             timestamp,
             activityType: "error",
             message: formatErrorMessage(item.message ?? "Unknown error"),
-            metadata: item.raw ? { raw: item.raw } : undefined,
           };
           nextState = appendActivityLog(state, activity);
           break;
@@ -996,13 +812,6 @@ export function reduceStreamUpdate(
       }
 
       return finalizeActiveThoughts(nextState);
-    }
-    case "provider_event": {
-      const converted = convertCodexProviderEvent(event.provider, event.raw);
-      if (!converted) {
-        return state;
-      }
-      return finalizeActiveThoughts(appendAgentToolCall(state, converted, timestamp));
     }
     case "thread_started":
     case "turn_started":

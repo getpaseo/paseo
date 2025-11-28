@@ -38,7 +38,7 @@ const derivePendingPermissionKey = (agentId: string, request: AgentPermissionReq
     (typeof request.metadata?.id === "string" ? request.metadata.id : undefined) ||
     request.name ||
     request.title ||
-    `${request.kind}:${JSON.stringify(request.input ?? request.metadata ?? request.raw ?? {})}`;
+    `${request.kind}:${JSON.stringify(request.input ?? request.metadata ?? {})}`;
 
   return `${agentId}:${fallbackId}`;
 };

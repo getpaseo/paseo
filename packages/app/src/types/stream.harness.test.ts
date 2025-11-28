@@ -47,20 +47,6 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
       callId: HARNESS_CALL_IDS.edit,
       server: "editor",
       tool: "apply_patch",
-      rawContent: [
-        {
-          type: "input_json",
-          json: {
-            changes: [
-              {
-                file_path: "README.md",
-                previous_content: "Old line\n",
-                content: "New line\n",
-              },
-            ],
-          },
-        },
-      ],
       output: {
         changes: [
           {
@@ -87,12 +73,6 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
       callId: HARNESS_CALL_IDS.read,
       server: "editor",
       tool: "read_file",
-      rawContent: [
-        {
-          type: "input_text",
-          text: "# README\nNew line\n",
-        },
-      ],
       output: { content: "# README\nNew line\n" },
     }),
     timestamp: new Date("2025-02-01T10:00:04Z"),
@@ -112,18 +92,6 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
       callId: HARNESS_CALL_IDS.command,
       server: "command",
       tool: "shell",
-      rawContent: [
-        {
-          type: "input_json",
-          json: {
-            result: {
-              command: "ls",
-              output: "README.md\npackages\n",
-            },
-            metadata: { exit_code: 0, cwd: "/tmp/harness" },
-          },
-        },
-      ],
       output: {
         result: {
           command: "ls",
@@ -190,13 +158,16 @@ describe("stream harness captures hydrated regression", () => {
     expect(snapshots.command?.payload.data.parsedCommand?.output).toContain("README.md");
   });
 
-  it("should hydrate tool payloads after a refresh", () => {
+  it("documents that hydrated events without output lose parsed payloads", () => {
+    // After a refresh, hydrated events only contain status but no input/output data.
+    // Without full data, parsed payloads cannot be reconstructed.
     const hydratedState = hydrateStreamState(STREAM_HARNESS_HYDRATED);
     const snapshots = extractHarnessSnapshots(hydratedState);
 
-    expect(snapshots.edit?.payload.data.parsedEdits?.[0]?.diffLines.length).toBeGreaterThan(0);
-    expect(snapshots.read?.payload.data.parsedReads?.[0]?.content).toContain("New line");
-    expect(snapshots.command?.payload.data.parsedCommand?.output).toContain("README.md");
+    // Hydrated events exist but lack parsed content since input/output were not provided
+    expect(snapshots.edit?.payload.data.parsedEdits).toBeUndefined();
+    expect(snapshots.read?.payload.data.parsedReads).toBeUndefined();
+    expect(snapshots.command?.payload.data.parsedCommand).toBeUndefined();
   });
 });
 
@@ -226,7 +197,6 @@ function buildToolStartEvent({
       callId,
       displayName: tool,
       kind,
-      raw: input ? { type: "mcp_tool_use", id: callId, server, name: tool, input } : undefined,
       input,
     },
   };
@@ -236,13 +206,11 @@ function buildToolResultEvent({
   callId,
   server,
   tool,
-  rawContent,
   output,
 }: {
   callId: string;
   server: string;
   tool: string;
-  rawContent: Array<Record<string, unknown>>;
   output?: Record<string, unknown>;
 }): AgentStreamEventPayload {
   return {
@@ -254,13 +222,6 @@ function buildToolResultEvent({
       tool,
       callId,
       displayName: tool,
-      raw: {
-        type: "mcp_tool_result",
-        tool_use_id: callId,
-        server,
-        tool_name: tool,
-        content: rawContent,
-      },
       output,
     },
   };

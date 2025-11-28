@@ -2029,10 +2029,7 @@ export class Session {
 
     this.emit({
       type: "agent_stream_snapshot",
-      payload: {
-        agentId: agent.id,
-        events,
-      },
+      payload: { agentId: agent.id, events },
     });
 
     return timeline.length;

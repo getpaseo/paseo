@@ -405,7 +405,6 @@ class ClaudeAgentSession implements AgentSession {
           callId: pending.request.id,
           displayName: "Plan approved",
           kind: "plan",
-          raw: pending.request,
         });
       }
       const result: PermissionResult = {
@@ -422,7 +421,6 @@ class ClaudeAgentSession implements AgentSession {
         displayName: pending.request.title ?? pending.request.name,
         kind: "permission",
         input: pending.request.input,
-        raw: { request: pending.request, response },
       });
     } else {
       const result: PermissionResult = {
@@ -439,7 +437,6 @@ class ClaudeAgentSession implements AgentSession {
         displayName: pending.request.title ?? pending.request.name,
         kind: "permission",
         input: pending.request.input,
-        raw: { request: pending.request, response },
       });
     }
 
@@ -618,7 +615,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private translateMessageToEvents(message: SDKMessage): AgentStreamEvent[] {
-    const events: AgentStreamEvent[] = [{ type: "provider_event", provider: "claude", raw: message }];
+    const events: AgentStreamEvent[] = [];
 
     switch (message.type) {
       case "system":
@@ -722,7 +719,6 @@ class ClaudeAgentSession implements AgentSession {
       input,
       suggestions: options?.suggestions as AgentPermissionUpdate[] | undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
-      raw: { toolName, input, options },
     };
 
     this.pushToolCall({
@@ -733,7 +729,6 @@ class ClaudeAgentSession implements AgentSession {
       displayName: request.title ?? toolName,
       kind: "permission",
       input,
-      raw: { toolName, input },
     });
 
     this.pushEvent({ type: "permission_requested", provider: "claude", request });
@@ -762,7 +757,6 @@ class ClaudeAgentSession implements AgentSession {
           displayName: request.title ?? toolName,
           kind: "permission",
           input,
-          raw: { reason: "timeout", toolName, input },
         });
         this.pushEvent({
           type: "permission_resolved",
@@ -808,7 +802,6 @@ class ClaudeAgentSession implements AgentSession {
     this.enqueueTimeline({
       type: "todo",
       items: todoItems.length > 0 ? todoItems : [{ text: planText, completed: false }],
-      raw: input,
     });
   }
 
@@ -939,7 +932,7 @@ class ClaudeAgentSession implements AgentSession {
       if (suppressAssistant) {
         return [];
       }
-      return [{ type: "assistant_message", text: content, raw: content }];
+      return [{ type: "assistant_message", text: content }];
     }
 
     const items: AgentTimelineItem[] = [];
@@ -952,7 +945,7 @@ class ClaudeAgentSession implements AgentSession {
               this.streamedAssistantTextThisTurn = true;
             }
             if (!suppressAssistant) {
-              items.push({ type: "assistant_message", text: block.text, raw: block });
+              items.push({ type: "assistant_message", text: block.text });
             }
           }
           break;
@@ -963,7 +956,7 @@ class ClaudeAgentSession implements AgentSession {
               this.streamedReasoningThisTurn = true;
             }
             if (!suppressReasoning) {
-              items.push({ type: "reasoning", text: block.thinking, raw: block });
+              items.push({ type: "reasoning", text: block.thinking });
             }
           }
           break;
@@ -1009,7 +1002,6 @@ class ClaudeAgentSession implements AgentSession {
         displayName: this.buildToolDisplayName(entry),
         kind: this.getToolKind(entry.classification),
         input: entry.input ?? this.normalizeToolInput(block.input),
-        raw: block,
       },
       items
     );
@@ -1020,10 +1012,6 @@ class ClaudeAgentSession implements AgentSession {
     const server = entry?.server ?? block.server ?? "tool";
     const tool = entry?.name ?? block.tool_name ?? "tool";
     const status = block.is_error ? "failed" : "completed";
-    const rawPayload =
-      !block.is_error && entry?.classification === "file_change" && entry.files?.length
-        ? { block, files: entry.files }
-        : block;
     this.pushToolCall(
       {
         server,
@@ -1035,7 +1023,6 @@ class ClaudeAgentSession implements AgentSession {
         input: entry?.input,
         output: !block.is_error && entry?.files?.length ? { files: entry.files } : undefined,
         error: block.is_error ? block : undefined,
-        raw: rawPayload,
       },
       items
     );
@@ -1143,7 +1130,6 @@ class ClaudeAgentSession implements AgentSession {
       displayName: this.buildToolDisplayName(entry),
       kind: this.getToolKind(entry.classification),
       input: normalized,
-      raw: { type: "tool_use", id: toolId, input: parsed },
     });
   }
 
@@ -1312,7 +1298,6 @@ export function convertClaudeHistoryEntry(
       timeline.push({
         type: "user_message",
         text,
-        raw: message,
       });
     }
   }

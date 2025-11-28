@@ -352,14 +352,13 @@ export class AgentManager {
   recordUserMessage(
     agentId: string,
     text: string,
-    options?: { messageId?: string; raw?: unknown }
+    options?: { messageId?: string }
   ): void {
     const agent = this.requireAgent(agentId);
     const item: AgentTimelineItem = {
       type: "user_message",
       text,
       messageId: options?.messageId,
-      raw: options?.raw,
     };
     agent.updatedAt = new Date();
     agent.lastUserMessageAt = agent.updatedAt;

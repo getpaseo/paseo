@@ -13,11 +13,6 @@ import type {
   AgentUsage,
 } from "./agent/agent-sdk-types.js";
 
-type ProviderEventPayload = Extract<
-  AgentStreamEvent,
-  { type: "provider_event" }
->;
-
 export type AgentSnapshotPayload = Omit<
   AgentSnapshot,
   "createdAt" | "updatedAt" | "lastUserMessageAt"
@@ -118,7 +113,6 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
     input: z.record(z.unknown()).optional(),
     suggestions: z.array(AgentPermissionUpdateSchema).optional(),
     metadata: z.record(z.unknown()).optional(),
-    raw: z.unknown().optional(),
   });
 
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
@@ -127,17 +121,14 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
       type: z.literal("user_message"),
       text: z.string(),
       messageId: z.string().optional(),
-      raw: z.unknown().optional(),
     }),
     z.object({
       type: z.literal("assistant_message"),
       text: z.string(),
-      raw: z.unknown().optional(),
     }),
     z.object({
       type: z.literal("reasoning"),
       text: z.string(),
-      raw: z.unknown().optional(),
     }),
     z.object({
       type: z.literal("tool_call"),
@@ -150,7 +141,6 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
       input: z.unknown().optional(),
       output: z.unknown().optional(),
       error: z.unknown().optional(),
-      raw: z.unknown().optional(),
     }),
     z.object({
       type: z.literal("todo"),
@@ -160,20 +150,12 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem> =
           completed: z.boolean(),
         })
       ),
-      raw: z.unknown().optional(),
     }),
     z.object({
       type: z.literal("error"),
       message: z.string(),
-      raw: z.unknown().optional(),
     }),
   ]);
-
-const ProviderEventPayloadSchema = z.object({
-  type: z.literal("provider_event"),
-  provider: AgentProviderSchema,
-  raw: z.custom<ProviderEventPayload["raw"]>(),
-});
 
 export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     z.object({
@@ -200,7 +182,6 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       provider: AgentProviderSchema,
       item: AgentTimelineItemPayloadSchema,
     }),
-    ProviderEventPayloadSchema,
     z.object({
       type: z.literal("permission_requested"),
       provider: AgentProviderSchema,

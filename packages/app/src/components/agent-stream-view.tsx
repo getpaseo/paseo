@@ -266,7 +266,7 @@ export function AgentStreamView({
             <ToolCall
               toolName={toolLabel}
               kind={data.kind}
-              args={data.raw}
+              args={undefined}
               result={data.result}
               error={data.error}
               status={data.status as "executing" | "completed" | "failed"}
@@ -565,17 +565,17 @@ function PermissionRequestCard({
   }, [request]);
 
   const editEntries = useMemo(
-    () => extractEditEntries(request.input, request.metadata, request.raw),
+    () => extractEditEntries(request.input, request.metadata),
     [request]
   );
 
   const readEntries = useMemo(
-    () => extractReadEntries(request.input, request.metadata, request.raw),
+    () => extractReadEntries(request.input, request.metadata),
     [request]
   );
 
   const commandDetails = useMemo(
-    () => extractCommandDetails(request.input, request.metadata, request.raw),
+    () => extractCommandDetails(request.input, request.metadata),
     [request]
   );
 

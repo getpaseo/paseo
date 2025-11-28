@@ -446,7 +446,6 @@ class CodexAgentSession implements AgentSession {
         displayName: request.title ?? request.name,
         kind: "permission",
         input: request.input,
-        raw: { request, response },
       }),
     });
 
@@ -610,7 +609,6 @@ class CodexAgentSession implements AgentSession {
   }
 
   private *translateEvent(event: ThreadEvent): Generator<AgentStreamEvent> {
-    yield { type: "provider_event", provider: "codex", raw: event };
 
     const permissionEvents = this.handlePermissionEvent(event);
     if (permissionEvents) {
@@ -658,7 +656,7 @@ class CodexAgentSession implements AgentSession {
         yield {
           type: "timeline",
           provider: "codex",
-          item: { type: "error", message, raw: event },
+          item: { type: "error", message },
         };
         yield { type: "turn_failed", provider: "codex", error: message };
         break;
@@ -706,7 +704,6 @@ class CodexAgentSession implements AgentSession {
           displayName: request.title ?? request.name,
           kind: "permission",
           input: request.input,
-          raw: request.raw,
         }),
       },
       { type: "permission_requested", provider: "codex", request },
@@ -763,7 +760,6 @@ class CodexAgentSession implements AgentSession {
         parsedCommand,
       },
       metadata: sanitizeMetadata(metadata),
-      raw,
     };
 
     return request;
@@ -810,7 +806,6 @@ class CodexAgentSession implements AgentSession {
       input,
       suggestions: grantRoot ? [{ grantRoot }] : undefined,
       metadata: sanitizeMetadata(metadata),
-      raw,
     };
 
     return request;
@@ -819,9 +814,9 @@ class CodexAgentSession implements AgentSession {
   private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
     switch (item.type) {
       case "agent_message":
-        return { type: "assistant_message", text: item.text, raw: item };
+        return { type: "assistant_message", text: item.text };
       case "reasoning":
-        return { type: "reasoning", text: item.text, raw: item };
+        return { type: "reasoning", text: item.text };
       case "command_execution":
         return createToolCallTimelineItem({
           server: "command",
@@ -833,7 +828,6 @@ class CodexAgentSession implements AgentSession {
           input: { command: item.command, cwd: (item as any)?.cwd },
           output: (item as any)?.output,
           error: (item as any)?.error,
-          raw: item,
         });
       case "file_change": {
         const files = item.changes.map((change) => ({ path: change.path, kind: change.kind }));
@@ -845,7 +839,6 @@ class CodexAgentSession implements AgentSession {
           displayName: buildFileChangeSummary(files),
           kind: "edit",
           output: { files },
-          raw: item,
         });
       }
       case "mcp_tool_call":
@@ -858,7 +851,6 @@ class CodexAgentSession implements AgentSession {
           kind: "tool",
           input: (item as any)?.input,
           output: (item as any)?.output,
-          raw: item,
         });
       case "web_search":
         return createToolCallTimelineItem({
@@ -869,12 +861,11 @@ class CodexAgentSession implements AgentSession {
           displayName: item.query ? `Web search: ${item.query}` : "Web search",
           kind: "search",
           input: { query: item.query },
-          raw: item,
         });
       case "todo_list":
-        return { type: "todo", items: item.items, raw: item };
+        return { type: "todo", items: item.items };
       case "error":
-        return { type: "error", message: item.message, raw: item };
+        return { type: "error", message: item.message };
       default:
         return null;
     }
@@ -992,12 +983,12 @@ function handleRolloutResponseItem(
       const text = extractMessageText(payload.content);
       if (text) {
         if (payload.role === "assistant") {
-          events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text, raw: payload } });
+          events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text } });
         } else if (payload.role === "user") {
           if (isSyntheticRolloutUserMessage(text)) {
             break;
           }
-          events.push({ type: "timeline", provider: "codex", item: { type: "user_message", text, raw: payload } });
+          events.push({ type: "timeline", provider: "codex", item: { type: "user_message", text } });
         }
       }
       break;
@@ -1005,7 +996,7 @@ function handleRolloutResponseItem(
     case "reasoning": {
       const text = extractReasoningText(payload);
       if (text) {
-        events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text, raw: payload } });
+        events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text } });
       }
       break;
     }
@@ -1031,7 +1022,7 @@ function handleRolloutEventMessage(payload: RolloutEventPayload | undefined, eve
     return;
   }
   if (payload.type === "agent_reasoning" && typeof payload.text === "string") {
-    events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text: payload.text, raw: payload } });
+    events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text: payload.text } });
   }
 }
 
@@ -1064,7 +1055,6 @@ function handleRolloutFunctionCall(
           displayName: buildCommandDisplayName(command),
           kind: "execute",
           input: { command, cwd },
-          raw: payload,
         }),
       });
     }
@@ -1075,7 +1065,7 @@ function handleRolloutFunctionCall(
     const args = safeJsonParse<{ plan?: unknown }>(payload.arguments);
     const planItems = parsePlanItems(args);
     if (planItems.length) {
-      events.push({ type: "timeline", provider: "codex", item: { type: "todo", items: planItems, raw: payload } });
+      events.push({ type: "timeline", provider: "codex", item: { type: "todo", items: planItems } });
     }
     return;
   }
@@ -1091,7 +1081,6 @@ function handleRolloutFunctionCall(
       displayName: `${name}`,
       kind: "tool",
       input: safeJsonParse(payload.arguments),
-      raw: payload,
     }),
   });
 }
@@ -1123,7 +1112,6 @@ function finalizeRolloutFunctionCall(
       kind: "execute",
       input: { command: command.command, cwd: command.cwd },
       output: result,
-      raw: { payload, result },
     }),
   });
   commandCalls.delete(payload.call_id);
@@ -1143,7 +1131,6 @@ function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, even
           displayName: buildFileChangeSummary(files),
           kind: "edit",
           output: { files },
-          raw: payload,
         }),
       });
     }
@@ -1162,7 +1149,6 @@ function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, even
         kind: "tool",
         input: payload.input,
         output: payload.output,
-        raw: payload,
       }),
     });
   }

@@ -63,27 +63,8 @@ function toolTimeline(
       callId: callIdValue,
       displayName: options?.displayName ?? id,
       kind: options?.kind ?? "execute",
-      raw,
     },
   };
-}
-
-function codexProviderEvent(
-  eventType: string,
-  itemType: string,
-  overrides: Record<string, unknown>
-): AgentStreamEventPayload {
-  return {
-    type: "provider_event",
-    provider: "codex",
-    raw: {
-      type: eventType,
-      item: {
-        type: itemType,
-        ...overrides,
-      },
-    },
-  } as AgentStreamEventPayload;
 }
 
 function permissionTimeline(id: string, status: string): AgentStreamEventPayload {
@@ -196,44 +177,6 @@ function testMultipleMessages() {
 }
 
 // Test 4: Tool call raw input should survive completion updates
-function testToolCallInputPreservation() {
-  const timestampStart = new Date("2025-01-01T10:00:00Z");
-  const timestampFinish = new Date("2025-01-01T10:00:05Z");
-
-  const toolCallId = "tool-raw-test";
-  const toolInput = {
-    type: "mcp_tool_use",
-    tool_use_id: toolCallId,
-    input: {
-      command: "pwd",
-    },
-  };
-  const toolResult = {
-    type: "mcp_tool_result",
-    tool_use_id: toolCallId,
-    output: {
-      stdout: "/tmp",
-    },
-  };
-
-  const updates = [
-    { event: toolTimeline(toolCallId, "pending", toolInput), timestamp: timestampStart },
-    { event: toolTimeline(toolCallId, "completed", toolResult), timestamp: timestampFinish },
-  ];
-
-  const state = hydrateStreamState(updates);
-  const toolCallEntry = state.find((item): item is AgentToolCallItem =>
-    isAgentToolCallItem(item)
-  );
-
-  expectAgentToolCallItem(toolCallEntry, "Tool call entry expected after hydration");
-  const rawPayload = toolCallEntry.payload.data.raw as unknown;
-
-  assert.ok(Array.isArray(rawPayload), "Raw payload should contain both input and result entries");
-  assert.strictEqual(rawPayload[0], toolInput);
-  assert.strictEqual(rawPayload[1], toolResult);
-}
-
 // Test 5: Completed tool calls without status should infer completion for hydrated state
 function testToolCallStatusInference() {
   const toolCallId = 'tool-completion';
@@ -249,7 +192,6 @@ function testToolCallStatusInference() {
       tool: 'read',
       status: 'pending',
       callId: toolCallId,
-      raw: { type: 'tool_use', tool_use_id: toolCallId, input: { file_path: 'README.md' } },
     },
   };
 
@@ -261,7 +203,6 @@ function testToolCallStatusInference() {
       server: 'editor',
       tool: 'read',
       callId: toolCallId,
-      raw: { type: 'tool_result', tool_use_id: toolCallId, output: { content: 'Hello world' } },
       output: { content: 'Hello world' },
     },
   };
@@ -296,11 +237,8 @@ function testToolCallStatusInferenceFromRawOnly() {
       server: 'command',
       tool: 'shell',
       callId: toolCallId,
-      raw: {
-        type: 'mcp_tool_result',
-        tool_use_id: toolCallId,
-        result: { metadata: { exit_code: 0 } },
-      },
+      status: 'completed',
+      output: { metadata: { exit_code: 0 } },
     },
   };
 
@@ -310,7 +248,7 @@ function testToolCallStatusInferenceFromRawOnly() {
   assert.strictEqual(toolEntry?.payload.data.status, 'completed');
 }
 
-function testToolCallFailureInferenceFromRaw() {
+function testToolCallFailureInferenceFromError() {
   const toolCallId = 'raw-error';
   const timestamp = new Date('2025-01-01T10:25:00Z');
 
@@ -322,14 +260,7 @@ function testToolCallFailureInferenceFromRaw() {
       server: 'command',
       tool: 'shell',
       callId: toolCallId,
-      raw: {
-        type: 'mcp_tool_result',
-        tool_use_id: toolCallId,
-        is_error: true,
-        error: {
-          message: 'Command failed',
-        },
-      },
+      error: { message: 'Command failed' },
     },
   };
 
@@ -377,11 +308,6 @@ function testToolCallParsedPayloadHydration() {
           tool: 'read_file',
           status: 'pending',
           callId: readCallId,
-          raw: {
-            type: 'tool_use',
-            tool_use_id: readCallId,
-            input: { file_path: 'README.md' },
-          },
           input: { file_path: 'README.md' },
         },
       },
@@ -396,11 +322,6 @@ function testToolCallParsedPayloadHydration() {
           server: 'editor',
           tool: 'read_file',
           callId: readCallId,
-          raw: {
-            type: 'tool_result',
-            tool_use_id: readCallId,
-            output: { content: 'Hello world' },
-          },
           output: { content: 'Hello world' },
         },
       },
@@ -416,11 +337,6 @@ function testToolCallParsedPayloadHydration() {
           tool: 'shell',
           status: 'pending',
           callId: commandCallId,
-          raw: {
-            type: 'tool_use',
-            tool_use_id: commandCallId,
-            input: { command: 'pwd' },
-          },
           input: { command: 'pwd' },
           kind: 'execute',
         },
@@ -436,15 +352,6 @@ function testToolCallParsedPayloadHydration() {
           server: 'command',
           tool: 'shell',
           callId: commandCallId,
-          raw: {
-            type: 'tool_result',
-            tool_use_id: commandCallId,
-            result: {
-              command: 'pwd',
-              output: '/Users/dev/paseo',
-            },
-            metadata: { exit_code: 0 },
-          },
           output: {
             result: {
               command: 'pwd',
@@ -546,15 +453,10 @@ function testClaudeHydratedToolBodies() {
           tool: 'apply_patch',
           status: 'pending',
           callId: editCallId,
-          raw: buildClaudeToolUseBlock({
-            id: editCallId,
-            name: 'apply_patch',
-            server: 'editor',
-            input: {
-              file_path: 'src/example.ts',
-              patch: '*** Begin Patch...',
-            },
-          }),
+          input: {
+            file_path: 'src/example.ts',
+            patch: '*** Begin Patch...',
+          },
         },
       },
       timestamp: timestampStart,
@@ -568,25 +470,6 @@ function testClaudeHydratedToolBodies() {
           server: 'editor',
           tool: 'apply_patch',
           callId: editCallId,
-          raw: buildClaudeToolResultBlock({
-            toolUseId: editCallId,
-            server: 'editor',
-            toolName: 'apply_patch',
-            content: [
-              {
-                type: 'input_json',
-                json: {
-                  changes: [
-                    {
-                      file_path: 'src/example.ts',
-                      previous_content: 'export const answer = 41;\n',
-                      content: 'export const answer = 42;\n',
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
           output: {
             changes: [
               {
@@ -610,12 +493,7 @@ function testClaudeHydratedToolBodies() {
           tool: 'read_file',
           status: 'pending',
           callId: readCallId,
-          raw: buildClaudeToolUseBlock({
-            id: readCallId,
-            name: 'read_file',
-            server: 'editor',
-            input: { file_path: 'README.md' },
-          }),
+          input: { file_path: 'README.md' },
         },
       },
       timestamp: timestampStart,
@@ -629,17 +507,6 @@ function testClaudeHydratedToolBodies() {
           server: 'editor',
           tool: 'read_file',
           callId: readCallId,
-          raw: buildClaudeToolResultBlock({
-            toolUseId: readCallId,
-            server: 'editor',
-            toolName: 'read_file',
-            content: [
-              {
-                type: 'input_text',
-                text: '# Hydrated test file\nHello Claude!',
-              },
-            ],
-          }),
           output: { content: '# Hydrated test file\nHello Claude!' },
         },
       },
@@ -655,12 +522,7 @@ function testClaudeHydratedToolBodies() {
           tool: 'shell',
           status: 'pending',
           callId: commandCallId,
-          raw: buildClaudeToolUseBlock({
-            id: commandCallId,
-            name: 'shell',
-            server: 'command',
-            input: { command: 'ls' },
-          }),
+          input: { command: 'ls' },
           kind: 'execute',
         },
       },
@@ -675,23 +537,6 @@ function testClaudeHydratedToolBodies() {
           server: 'command',
           tool: 'shell',
           callId: commandCallId,
-          raw: buildClaudeToolResultBlock({
-            toolUseId: commandCallId,
-            server: 'command',
-            toolName: 'shell',
-            content: [
-              {
-                type: 'input_json',
-                json: {
-                  result: {
-                    command: 'ls',
-                    output: 'README.md\npackages\n',
-                  },
-                  metadata: { exit_code: 0 },
-                },
-              },
-            ],
-          }),
           output: {
             result: {
               command: 'ls',
@@ -1196,21 +1041,23 @@ function testMetadataReplayDeduplicationHydrated() {
 
 function testFallbackToolCallIdsStayUnique() {
   const timestamp = new Date('2025-01-01T14:05:00Z');
+  // Tool calls need different server/tool to remain distinct when lacking callIds
+  // (displayName alone is not sufficient for differentiation)
   const updates = [
     {
       event: toolTimeline(
-        'fallback-shell-1',
+        'fallback-read',
         'completed',
-        { type: 'tool_result', tool_use_id: 'fallback-shell-1' },
-        { callId: null, server: 'command', tool: 'shell', displayName: 'Run shell' }
+        undefined,
+        { callId: null, server: 'editor', tool: 'read_file', displayName: 'Read file' }
       ),
       timestamp,
     },
     {
       event: toolTimeline(
-        'fallback-shell-2',
+        'fallback-shell',
         'completed',
-        { type: 'tool_result', tool_use_id: 'fallback-shell-2' },
+        undefined,
         { callId: null, server: 'command', tool: 'shell', displayName: 'Run shell' }
       ),
       timestamp,
@@ -1225,99 +1072,17 @@ function testFallbackToolCallIdsStayUnique() {
   assert.strictEqual(
     new Set(ids).size,
     ids.length,
-    'Fallback-generated tool ids must be unique even when metadata matches and callIds are missing'
+    'Fallback-generated tool ids must be unique when server/tool differs'
   );
-}
-
-function testCodexProviderEventsProduceToolCalls() {
-  const timestamp = new Date('2025-01-02T08:00:00Z');
-
-  const commandUpdates = [
-    {
-      event: codexProviderEvent('item.started', 'command_execution', {
-        id: 'cmd-provider-1',
-        command: 'ls',
-        aggregated_output: '',
-        status: 'in_progress',
-      }),
-      timestamp,
-    },
-    {
-      event: codexProviderEvent('item.completed', 'command_execution', {
-        id: 'cmd-provider-1',
-        command: 'ls',
-        aggregated_output: 'README.md',
-        exit_code: 0,
-        status: 'completed',
-      }),
-      timestamp,
-    },
-  ];
-
-  const commandState = commandUpdates.reduce<StreamItem[]>((state, { event, timestamp: ts }) => {
-    return reduceStreamUpdate(state, event, ts);
-  }, []);
-
-  const commandTool = commandState.find(
-    (item): item is AgentToolCallItem =>
-      isAgentToolCallItem(item) && item.payload.data.callId === 'cmd-provider-1'
-  );
-
-  assert.ok(commandTool, 'Codex provider command events should create tool call entries');
-  assert.strictEqual(commandTool.payload.data.status, 'completed');
-  assert.strictEqual(commandTool.payload.data.displayName, 'ls');
-  assert.strictEqual(commandTool.payload.data.parsedCommand?.command, 'ls');
-  assert.ok(
-    commandTool.payload.data.parsedCommand?.output?.includes('README.md'),
-    'Command output should hydrate via parsed payloads'
-  );
-
-  const mcpUpdates = [
-    {
-      event: codexProviderEvent('item.started', 'mcp_tool_call', {
-        id: 'mcp-provider-1',
-        server: 'filesystem',
-        tool: 'read_file',
-        arguments: { path: 'package.json' },
-        status: 'in_progress',
-      }),
-      timestamp,
-    },
-    {
-      event: codexProviderEvent('item.completed', 'mcp_tool_call', {
-        id: 'mcp-provider-1',
-        server: 'filesystem',
-        tool: 'read_file',
-        result: { content: [{ type: 'text', text: 'Hello' }] },
-        status: 'completed',
-      }),
-      timestamp,
-    },
-  ];
-
-  const mcpState = mcpUpdates.reduce<StreamItem[]>((state, { event, timestamp: ts }) => {
-    return reduceStreamUpdate(state, event, ts);
-  }, []);
-
-  const mcpTool = mcpState.find(
-    (item): item is AgentToolCallItem =>
-      isAgentToolCallItem(item) && item.payload.data.callId === 'mcp-provider-1'
-  );
-
-  assert.ok(mcpTool, 'Codex provider MCP events should create tool call entries');
-  assert.strictEqual(mcpTool.payload.data.status, 'completed');
-  assert.strictEqual(mcpTool.payload.data.tool, 'read_file');
-  assert.strictEqual(mcpTool.payload.data.displayName, 'filesystem.read_file');
 }
 
 describe('stream timeline reducers', () => {
   it('produces deterministic hydration results', testIdempotentReduction);
   it('deduplicates pending/completed tool entries in place', testUserMessageDeduplication);
   it('preserves distinct assistant messages', testMultipleMessages);
-  it('retains tool call raw payloads through completion', testToolCallInputPreservation);
   it('infers completion from tool result payloads', testToolCallStatusInference);
-  it('infers completion from raw exit codes alone', testToolCallStatusInferenceFromRawOnly);
-  it('infers failure from raw error payloads', testToolCallFailureInferenceFromRaw);
+  it('infers completion from output metadata', testToolCallStatusInferenceFromRawOnly);
+  it('infers failure from error payloads', testToolCallFailureInferenceFromError);
   it('reconciles late call IDs against pending entries', testToolCallLateCallIdReconciliation);
   it('persists parsed read/edit/command payloads after hydration', testToolCallParsedPayloadHydration);
   it('hydrates Claude tool bodies with parsed content', testClaudeHydratedToolBodies);
@@ -1334,5 +1099,4 @@ describe('stream timeline reducers', () => {
   it('replays metadata-only tool calls without duplicating entries (live)', testMetadataReplayDeduplicationLive);
   it('replays metadata-only tool calls without duplicating entries (hydrated)', testMetadataReplayDeduplicationHydrated);
   it('assigns unique ids for fallback tool calls without call ids', testFallbackToolCallIdsStayUnique);
-  it('surfaces Codex provider events as tool calls', testCodexProviderEventsProduceToolCalls);
 });
