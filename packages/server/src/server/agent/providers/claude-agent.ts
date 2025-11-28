@@ -1122,12 +1122,15 @@ class ClaudeAgentSession implements AgentSession {
       normalizedTool === "apply_diff"
     ) {
       if (input && typeof input.file_path === "string") {
+        // Support both old_str/new_str and old_string/new_string parameter names
+        const oldContent = typeof input.old_str === "string" ? input.old_str : typeof input.old_string === "string" ? input.old_string : undefined;
+        const newContent = typeof input.new_str === "string" ? input.new_str : typeof input.new_string === "string" ? input.new_string : undefined;
         return {
           type: "file_edit",
           filePath: input.file_path,
           diff: typeof input.patch === "string" ? input.patch : typeof input.diff === "string" ? input.diff : undefined,
-          oldContent: typeof input.old_str === "string" ? input.old_str : undefined,
-          newContent: typeof input.new_str === "string" ? input.new_str : undefined,
+          oldContent,
+          newContent,
         };
       }
     }

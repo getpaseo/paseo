@@ -1286,22 +1286,7 @@ export const ToolCall = memo(function ToolCall({
   result,
   error,
   status,
-  parsedEditEntries,
-  parsedReadEntries,
-  parsedCommandDetails,
 }: ToolCallProps) {
-  const { editEntries, readEntries, commandDetails } = useMemo(
-    () =>
-      resolveToolCallPreview({
-        args,
-        result,
-        parsedEditEntries,
-        parsedReadEntries,
-        parsedCommandDetails,
-      }),
-    [args, result, parsedEditEntries, parsedReadEntries, parsedCommandDetails]
-  );
-
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Check if result has a type field for structured rendering
@@ -1403,166 +1388,6 @@ export const ToolCall = memo(function ToolCall({
     },
     []
   );
-
-  const hasCommandDetails = Boolean(
-    commandDetails &&
-      (commandDetails.command ||
-        commandDetails.cwd ||
-        commandDetails.exitCode !== undefined ||
-        commandDetails.output)
-  );
-
-  function renderJsonSection(
-    label: string,
-    text: string,
-    isError = false
-  ): ReactNode {
-    const displayText = text.length ? text : "(empty)";
-
-    return (
-      <View key={label} style={toolCallStylesheet.section}>
-        <Text style={toolCallStylesheet.sectionTitle}>{label}</Text>
-        <ScrollView
-          horizontal
-          nestedScrollEnabled
-          style={[
-            toolCallStylesheet.jsonScroll,
-            isError ? toolCallStylesheet.jsonScrollError : null,
-          ]}
-          contentContainerStyle={toolCallStylesheet.jsonContent}
-          showsHorizontalScrollIndicator={true}
-        >
-          <Text
-            style={[
-              toolCallStylesheet.scrollText,
-              isError ? toolCallStylesheet.errorText : null,
-            ]}
-          >
-            {displayText}
-          </Text>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  const commandSection = useMemo(() => {
-    if (!hasCommandDetails || !commandDetails) {
-      return null;
-    }
-    return (
-      <View style={toolCallStylesheet.section}>
-        <Text style={toolCallStylesheet.sectionTitle}>Command</Text>
-        {commandDetails.command ? (
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            style={toolCallStylesheet.jsonScroll}
-            contentContainerStyle={toolCallStylesheet.jsonContent}
-            showsHorizontalScrollIndicator={true}
-          >
-            <Text style={toolCallStylesheet.scrollText}>
-              {commandDetails.command}
-            </Text>
-          </ScrollView>
-        ) : null}
-        {commandDetails.cwd ? (
-          <View style={toolCallStylesheet.metaRow}>
-            <Text style={toolCallStylesheet.metaLabel}>Directory</Text>
-            <Text style={toolCallStylesheet.metaValue}>{commandDetails.cwd}</Text>
-          </View>
-        ) : null}
-        {commandDetails.exitCode !== undefined ? (
-          <View style={toolCallStylesheet.metaRow}>
-            <Text style={toolCallStylesheet.metaLabel}>Exit Code</Text>
-            <Text style={toolCallStylesheet.metaValue}>
-              {commandDetails.exitCode === null
-                ? "Unknown"
-                : commandDetails.exitCode}
-            </Text>
-          </View>
-        ) : null}
-        {commandDetails.output ? (
-          <ScrollView
-            style={toolCallStylesheet.scrollArea}
-            contentContainerStyle={toolCallStylesheet.scrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
-          >
-            <Text style={toolCallStylesheet.scrollText}>
-              {commandDetails.output}
-            </Text>
-          </ScrollView>
-        ) : null}
-      </View>
-    );
-  }, [commandDetails, hasCommandDetails]);
-
-  const editSections = useMemo(
-    () =>
-      editEntries.map((entry, index) => (
-        <View
-          key={`${entry.filePath ?? "diff"}-${index}`}
-          style={toolCallStylesheet.section}
-        >
-          <Text style={toolCallStylesheet.sectionTitle}>Diff</Text>
-          {entry.filePath ? (
-            <View style={toolCallStylesheet.fileBadge}>
-              <Text style={toolCallStylesheet.fileBadgeText}>{entry.filePath}</Text>
-            </View>
-          ) : null}
-          <View style={toolCallStylesheet.diffContainer}>
-            <DiffViewer diffLines={entry.diffLines} maxHeight={240} />
-          </View>
-        </View>
-      )),
-    [editEntries]
-  );
-
-  const readSections = useMemo(
-    () =>
-      readEntries.map((entry, index) => (
-        <View
-          key={`${entry.filePath ?? "read"}-${index}`}
-          style={toolCallStylesheet.section}
-        >
-          <Text style={toolCallStylesheet.sectionTitle}>Read Result</Text>
-          {entry.filePath ? (
-            <View style={toolCallStylesheet.fileBadge}>
-              <Text style={toolCallStylesheet.fileBadgeText}>{entry.filePath}</Text>
-            </View>
-          ) : null}
-          <ScrollView
-            style={toolCallStylesheet.scrollArea}
-            contentContainerStyle={toolCallStylesheet.scrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
-          >
-            <Text style={toolCallStylesheet.scrollText}>{entry.content}</Text>
-          </ScrollView>
-        </View>
-      )),
-    [readEntries]
-  );
-
-  // Check if we have structured content that makes raw JSON redundant
-  const hasStructuredContent = Boolean(
-    commandDetails?.output || editEntries.length > 0 || readEntries.length > 0
-  );
-
-  const jsonSections = useMemo(() => {
-    const sections: ReactNode[] = [];
-    if (args !== undefined) {
-      sections.push(renderJsonSection("Arguments", serializedArgs));
-    }
-    // Only show raw Result JSON if we don't have structured content showing the same data
-    if (result !== undefined && !hasStructuredContent) {
-      sections.push(renderJsonSection("Result", serializedResult));
-    }
-    if (error !== undefined) {
-      sections.push(renderJsonSection("Error", serializedError, true));
-    }
-    return sections;
-  }, [args, serializedArgs, result, serializedResult, error, serializedError, hasStructuredContent]);
 
   const renderDetails = useCallback(() => {
     // If we have a structured result, use type-based rendering
@@ -1743,15 +1568,63 @@ export const ToolCall = memo(function ToolCall({
       return <View style={toolCallStylesheet.detailContent}>{sections}</View>;
     }
 
-    // Fall back to heuristic parsing for backwards compatibility
-    const showReadSections = !commandDetails?.output && readSections.length > 0;
+    // No structured result - show raw JSON
+    const sections: ReactNode[] = [];
 
-    if (
-      !commandSection &&
-      editSections.length === 0 &&
-      !showReadSections &&
-      jsonSections.length === 0
-    ) {
+    if (args !== undefined) {
+      sections.push(
+        <View key="args" style={toolCallStylesheet.section}>
+          <Text style={toolCallStylesheet.sectionTitle}>Arguments</Text>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            style={toolCallStylesheet.jsonScroll}
+            contentContainerStyle={toolCallStylesheet.jsonContent}
+            showsHorizontalScrollIndicator={true}
+          >
+            <Text style={toolCallStylesheet.scrollText}>{serializedArgs}</Text>
+          </ScrollView>
+        </View>
+      );
+    }
+
+    if (result !== undefined) {
+      sections.push(
+        <View key="result" style={toolCallStylesheet.section}>
+          <Text style={toolCallStylesheet.sectionTitle}>Result</Text>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            style={toolCallStylesheet.jsonScroll}
+            contentContainerStyle={toolCallStylesheet.jsonContent}
+            showsHorizontalScrollIndicator={true}
+          >
+            <Text style={toolCallStylesheet.scrollText}>{serializedResult}</Text>
+          </ScrollView>
+        </View>
+      );
+    }
+
+    if (error !== undefined) {
+      sections.push(
+        <View key="error" style={toolCallStylesheet.section}>
+          <Text style={toolCallStylesheet.sectionTitle}>Error</Text>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            style={[toolCallStylesheet.jsonScroll, toolCallStylesheet.jsonScrollError]}
+            contentContainerStyle={toolCallStylesheet.jsonContent}
+            showsHorizontalScrollIndicator={true}
+          >
+            <Text style={[toolCallStylesheet.scrollText, toolCallStylesheet.errorText]}>
+              {serializedError}
+            </Text>
+          </ScrollView>
+        </View>
+      );
+    }
+
+    if (sections.length === 0) {
       return (
         <Text style={toolCallStylesheet.emptyStateText}>
           No additional details available
@@ -1759,14 +1632,7 @@ export const ToolCall = memo(function ToolCall({
       );
     }
 
-    return (
-      <View style={toolCallStylesheet.detailContent}>
-        {commandSection}
-        {editSections}
-        {showReadSections ? readSections : null}
-        {jsonSections}
-      </View>
-    );
+    return <View style={toolCallStylesheet.detailContent}>{sections}</View>;
   }, [
     structuredResult,
     extractCommandFromStructured,
@@ -1778,11 +1644,6 @@ export const ToolCall = memo(function ToolCall({
     args,
     result,
     error,
-    commandSection,
-    commandDetails?.output,
-    editSections,
-    readSections,
-    jsonSections,
   ]);
 
   return (
