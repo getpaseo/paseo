@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 import type {
   AgentCapabilityFlags,
@@ -773,6 +774,12 @@ export class AgentManager {
     config: AgentSessionConfig
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
+
+    // Always resolve cwd to absolute path for consistent history file lookup
+    if (normalized.cwd) {
+      normalized.cwd = resolve(normalized.cwd);
+    }
+
     const resolvedModel = await resolveAgentModel({
       provider: normalized.provider,
       requestedModel: normalized.model,
