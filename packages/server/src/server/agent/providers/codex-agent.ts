@@ -609,7 +609,6 @@ class CodexAgentSession implements AgentSession {
   }
 
   private *translateEvent(event: ThreadEvent): Generator<AgentStreamEvent> {
-
     const permissionEvents = this.handlePermissionEvent(event);
     if (permissionEvents) {
       for (const permissionEvent of permissionEvents) {
@@ -1147,8 +1146,17 @@ function finalizeRolloutFunctionCall(
 
 function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, events: AgentStreamEvent[]): void {
   if (payload?.name === "apply_patch" && typeof payload.input === "string") {
-    const files = parsePatchFiles(payload.input);
+    const patchText = payload.input;
+    const files = parsePatchFiles(patchText);
     if (files.length) {
+      // Build structured output with the patch/diff for each file
+      const parsedEdits = files.map((file) => ({
+        filePath: file.path,
+        kind: file.kind,
+        // Include the full patch as diff - frontend will render it
+        diff: patchText,
+      }));
+
       events.push({
         type: "timeline",
         provider: "codex",
@@ -1158,7 +1166,12 @@ function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, even
           status: "completed",
           displayName: buildFileChangeSummary(files),
           kind: "edit",
-          output: { files },
+          output: {
+            type: "file_edit" as const,
+            filePath: files[0]?.path ?? "unknown",
+            diff: patchText,
+            parsedEdits,
+          },
         }),
       });
     }
