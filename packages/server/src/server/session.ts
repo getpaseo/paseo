@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { readFile, mkdir, writeFile } from "fs/promises";
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import { promisify, inspect } from "util";
 import { join } from "path";
 import invariant from "tiny-invariant";
@@ -75,6 +75,7 @@ const execAsync = promisify(exec);
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
 let restartRequested = false;
 const KNOWN_AGENT_PROVIDERS: AgentProvider[] = ["claude", "codex"];
+const RESTART_EXIT_DELAY_MS = 250;
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
 
@@ -886,9 +887,17 @@ export class Session {
       payload,
     });
 
+    if (typeof process.send === "function") {
+      process.send({
+        type: "paseo:restart",
+        ...(reason ? { reason } : {}),
+      });
+      return;
+    }
+
     setTimeout(() => {
       process.exit(0);
-    }, 250);
+    }, RESTART_EXIT_DELAY_MS);
   }
 
   private async handleDeleteAgentRequest(agentId: string): Promise<void> {
