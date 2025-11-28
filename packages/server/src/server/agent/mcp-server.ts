@@ -6,12 +6,11 @@ import { ensureValidJson } from "../json-utils.js";
 import type {
   AgentPromptInput,
   AgentProvider,
-  AgentPermissionRequest,
 } from "./agent-sdk-types.js";
 import type {
-  AgentLifecycleStatus,
   AgentManager,
   AgentSnapshot,
+  WaitForAgentResult,
 } from "./agent-manager.js";
 import {
   AgentPermissionRequestPayloadSchema,
@@ -73,10 +72,6 @@ function startAgentRun(
   })();
 }
 
-function isAgentBusy(status: AgentLifecycleStatus): boolean {
-  return status === "running" || status === "initializing";
-}
-
 async function resolveAgentTitle(
   agentRegistry: AgentRegistry,
   agentId: string
@@ -99,106 +94,6 @@ async function serializeSnapshotWithMetadata(
 ) {
   const title = await resolveAgentTitle(agentRegistry, snapshot.id);
   return serializeAgentSnapshot(snapshot, { title });
-}
-
-async function waitForAgentEvent(
-  agentManager: AgentManager,
-  agentId: string,
-  tracker: WaitForAgentTracker,
-  signal?: AbortSignal
-): Promise<{
-  status: AgentLifecycleStatus;
-  permission: AgentPermissionRequest | null;
-}> {
-  const snapshot = agentManager.getAgent(agentId);
-  if (!snapshot) {
-    throw new Error(`Agent ${agentId} not found`);
-  }
-
-  const existingPermission = snapshot.pendingPermissions[0] ?? null;
-  if (existingPermission) {
-    return { status: snapshot.status, permission: existingPermission };
-  }
-
-  if (!isAgentBusy(snapshot.status)) {
-    return { status: snapshot.status, permission: null };
-  }
-
-  return await new Promise((resolve, reject) => {
-    let currentStatus: AgentLifecycleStatus = snapshot.status;
-    const cleanupFns: Array<() => void> = [];
-
-    const cleanup = () => {
-      while (cleanupFns.length) {
-        const fn = cleanupFns.pop();
-        try {
-          fn?.();
-        } catch {
-          // ignore cleanup errors
-        }
-      }
-    };
-
-    const finish = (permission: AgentPermissionRequest | null) => {
-      cleanup();
-      resolve({ status: currentStatus, permission });
-    };
-
-    const unregister = tracker.register(agentId, (reason) => {
-      cleanup();
-      reject(
-        Object.assign(
-          new Error(reason ?? "wait_for_agent cancelled"),
-          {
-            name: "AbortError",
-          }
-        )
-      );
-    });
-    cleanupFns.push(unregister);
-
-    const unsubscribe = agentManager.subscribe(
-      (event) => {
-        if (event.type === "agent_state") {
-          currentStatus = event.agent.status;
-          if (!isAgentBusy(event.agent.status)) {
-            const pending = event.agent.pendingPermissions[0] ?? null;
-            finish(pending);
-          }
-          return;
-        }
-
-        if (
-          event.type === "agent_stream" &&
-          event.event.type === "permission_requested"
-        ) {
-          currentStatus = "running";
-          finish(event.event.request);
-        }
-      },
-      { agentId, replayState: false }
-    );
-    cleanupFns.push(unsubscribe);
-
-    if (signal) {
-      const abort = () => {
-        cleanup();
-        reject(
-          Object.assign(new Error("wait_for_agent aborted"), {
-            name: "AbortError",
-          })
-        );
-      };
-
-      if (signal.aborted) {
-        abort();
-        return;
-      }
-
-      signal.addEventListener("abort", abort, { once: true });
-      cleanupFns.push(() => signal.removeEventListener("abort", abort));
-    }
-  });
 }
 
 function buildActivityPayload(
@@ -346,23 +241,64 @@ export async function createAgentMcpServer(
       },
     },
     async ({ agentId }, { signal }) => {
-      const result = await waitForAgentEvent(
-        agentManager,
-        agentId,
-        waitTracker,
-        signal
-      );
-      const activity = buildActivityPayload(agentManager, agentId);
+      const abortController = new AbortController();
+      const cleanupFns: Array<() => void> = [];
 
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          agentId,
-          status: result.status,
-          permission: result.permission,
-          activity,
-        }),
+      const cleanup = () => {
+        while (cleanupFns.length) {
+          const fn = cleanupFns.pop();
+          try {
+            fn?.();
+          } catch {
+            // ignore cleanup errors
+          }
+        }
       };
+
+      const forwardExternalAbort = () => {
+        if (!abortController.signal.aborted) {
+          const reason = signal?.reason ?? new Error("wait_for_agent aborted");
+          abortController.abort(reason);
+        }
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          forwardExternalAbort();
+        } else {
+          signal.addEventListener("abort", forwardExternalAbort, { once: true });
+          cleanupFns.push(() =>
+            signal.removeEventListener("abort", forwardExternalAbort)
+          );
+        }
+      }
+
+      const unregister = waitTracker.register(agentId, (reason) => {
+        if (!abortController.signal.aborted) {
+          abortController.abort(new Error(reason ?? "wait_for_agent cancelled"));
+        }
+      });
+      cleanupFns.push(unregister);
+
+      try {
+        const result: WaitForAgentResult =
+          await agentManager.waitForAgentEvent(agentId, {
+            signal: abortController.signal,
+          });
+        const activity = buildActivityPayload(agentManager, agentId);
+
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            agentId,
+            status: result.status,
+            permission: result.permission,
+            activity,
+          }),
+        };
+      } finally {
+        cleanup();
+      }
     }
   );
 

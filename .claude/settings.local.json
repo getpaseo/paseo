@@ -13,7 +13,9 @@
       "Read(//private/tmp/claude-code-acp/node_modules/@anthropic-ai/claude-agent-sdk/**)",
       "Bash(identify:*)",
       "Bash(npm view:*)",
-      "Read(//Users/moboudra/dotfiles/claude/projects/**)"
+      "Read(//Users/moboudra/dotfiles/claude/projects/**)",
+      "mcp__agent-control__send_agent_prompt",
+      "mcp__agent-control__wait_for_agent"
     ],
     "deny": [],
     "ask": [],

@@ -75,6 +75,29 @@ type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
 
+type AgentControlMcpConfig = {
+  url: string;
+  headers?: Record<string, string>;
+};
+
+type ClaudeAgentClientOptions = {
+  defaults?: { agents?: Record<string, AgentDefinition> };
+  agentControlMcp?: AgentControlMcpConfig;
+};
+
+type ClaudeAgentSessionOptions = {
+  defaults?: { agents?: Record<string, AgentDefinition> };
+  handle?: AgentPersistenceHandle;
+  agentControlMcp?: AgentControlMcpConfig;
+};
+
+const DEFAULT_AGENT_CONTROL_MCP: AgentControlMcpConfig = {
+  url: "http://127.0.0.1:6767/mcp/agents",
+  headers: {
+    Authorization: "Basic bW86Ym8=",
+  },
+};
+
 export function extractUserMessageText(
   content: string | ClaudeContentChunk[]
 ): string | null {
@@ -142,11 +165,20 @@ export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
 
-  constructor(private readonly defaults?: { agents?: Record<string, AgentDefinition> }) {}
+  private readonly defaults?: { agents?: Record<string, AgentDefinition> };
+  private readonly agentControlMcp?: AgentControlMcpConfig;
+
+  constructor(options?: ClaudeAgentClientOptions) {
+    this.defaults = options?.defaults;
+    this.agentControlMcp = options?.agentControlMcp;
+  }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
-    return new ClaudeAgentSession(claudeConfig, this.defaults);
+    return new ClaudeAgentSession(claudeConfig, {
+      defaults: this.defaults,
+      agentControlMcp: this.agentControlMcp,
+    });
   }
 
   async resumeSession(
@@ -160,7 +192,11 @@ export class ClaudeAgentClient implements AgentClient {
     }
     const mergedConfig = { ...merged, provider: "claude" } as AgentSessionConfig;
     const claudeConfig = this.assertConfig(mergedConfig);
-    return new ClaudeAgentSession(claudeConfig, this.defaults, handle);
+    return new ClaudeAgentSession(claudeConfig, {
+      defaults: this.defaults,
+      agentControlMcp: this.agentControlMcp,
+      handle,
+    });
   }
 
   async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
@@ -199,6 +235,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private readonly config: ClaudeAgentConfig;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
+  private readonly agentControlMcp?: AgentControlMcpConfig;
   private query: Query | null = null;
   private input: Pushable<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
@@ -220,11 +257,12 @@ class ClaudeAgentSession implements AgentSession {
 
   constructor(
     config: ClaudeAgentConfig,
-    defaults?: { agents?: Record<string, AgentDefinition> },
-    handle?: AgentPersistenceHandle
+    options?: ClaudeAgentSessionOptions
   ) {
     this.config = config;
-    this.defaults = defaults;
+    this.defaults = options?.defaults;
+    this.agentControlMcp = options?.agentControlMcp;
+    const handle = options?.handle;
     this.claudeSessionId = handle?.sessionId ?? handle?.nativeHandle ?? null;
     this.pendingLocalId = this.claudeSessionId ?? `claude-${randomUUID()}`;
     this.persistence = handle ?? null;
@@ -459,9 +497,24 @@ class ClaudeAgentSession implements AgentSession {
       ...this.config.extra?.claude,
     };
 
+    // Always include the agent-control MCP server so agents can launch other agents
+    const agentControlConfig = this.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
+    const agentControlMcp: Record<string, ClaudeMcpServerConfig> = {
+      "agent-control": {
+        type: "http",
+        url: agentControlConfig.url,
+        ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
+      },
+    };
+
     if (this.config.mcpServers) {
-      base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
+      const normalizedUserServers = this.normalizeMcpServers(this.config.mcpServers);
+      // Merge user-provided MCP servers with agent-control, user servers take precedence
+      base.mcpServers = { ...agentControlMcp, ...normalizedUserServers };
+    } else {
+      base.mcpServers = agentControlMcp;
     }
+
     if (this.config.model) {
       base.model = this.config.model;
     }

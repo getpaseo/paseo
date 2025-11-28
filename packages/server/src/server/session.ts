@@ -34,9 +34,9 @@ import {
   buildSessionConfig,
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
-import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { fetchProviderModelCatalog } from "./agent/model-catalog.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { AgentSnapshot } from "./agent/agent-manager.js";
@@ -65,6 +65,11 @@ import {
   slugify,
   validateBranchSlug,
 } from "../utils/worktree.js";
+
+type AgentMcpClientConfig = {
+  agentMcpUrl: string;
+  agentMcpHeaders?: Record<string, string>;
+};
 
 const execAsync = promisify(exec);
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
@@ -223,6 +228,7 @@ export class Session {
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
   private readonly agentRegistry: AgentRegistry;
+  private readonly agentMcpConfig: AgentMcpClientConfig;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
 
@@ -231,6 +237,7 @@ export class Session {
     onMessage: (msg: SessionOutboundMessage) => void,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
+    agentMcpConfig: AgentMcpClientConfig,
     options?: {
       conversationId?: string;
       initialMessages?: ModelMessage[];
@@ -241,6 +248,7 @@ export class Session {
     this.onMessage = onMessage;
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
+    this.agentMcpConfig = agentMcpConfig;
     this.abortController = new AbortController();
 
     // Initialize conversation history
@@ -434,18 +442,19 @@ export class Session {
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
-      const server = await createAgentMcpServer({
-        agentManager: this.agentManager,
-        agentRegistry: this.agentRegistry,
-      });
-
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-
-      await server.connect(serverTransport);
+      const transport = new StreamableHTTPClientTransport(
+        new URL(this.agentMcpConfig.agentMcpUrl),
+        this.agentMcpConfig.agentMcpHeaders
+          ? {
+              requestInit: {
+                headers: this.agentMcpConfig.agentMcpHeaders,
+              },
+            }
+          : undefined
+      );
 
       this.agentMcpClient = await experimental_createMCPClient({
-        transport: clientTransport,
+        transport,
       });
 
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;

@@ -983,16 +983,20 @@ function AgentFlowModal({
       );
       return;
     }
+
+    // Set processing state BEFORE stopping to ensure UI updates properly
+    setIsDictationProcessing(true);
+
     try {
       const audioData = await dictationRecorder.stop();
       setIsDictating(false);
       setDictationVolume(0);
       if (!audioData) {
+        setIsDictationProcessing(false);
         return;
       }
       const requestId = generateMessageId();
       dictationRequestIdRef.current = requestId;
-      setIsDictationProcessing(true);
       await sendAgentAudio(
         DICTATION_AGENT_ID,
         audioData,
