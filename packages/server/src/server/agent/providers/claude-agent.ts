@@ -1012,6 +1012,10 @@ class ClaudeAgentSession implements AgentSession {
     const server = entry?.server ?? block.server ?? "tool";
     const tool = entry?.name ?? block.tool_name ?? "tool";
     const status = block.is_error ? "failed" : "completed";
+
+    // Extract output from block.content (SDK always returns content as string)
+    const output = this.buildToolOutput(block, entry);
+
     this.pushToolCall(
       {
         server,
@@ -1021,7 +1025,7 @@ class ClaudeAgentSession implements AgentSession {
         displayName: this.buildToolDisplayName(entry),
         kind: this.getToolKind(entry?.classification),
         input: entry?.input,
-        output: !block.is_error && entry?.files?.length ? { files: entry.files } : undefined,
+        output,
         error: block.is_error ? block : undefined,
       },
       items
@@ -1029,6 +1033,29 @@ class ClaudeAgentSession implements AgentSession {
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
     }
+  }
+
+  private buildToolOutput(
+    block: ClaudeContentChunk,
+    entry: ToolUseCacheEntry | undefined
+  ): Record<string, unknown> | undefined {
+    if (block.is_error) {
+      return undefined;
+    }
+
+    const result: Record<string, unknown> = {};
+
+    // SDK tool_result blocks have content as a string
+    if (typeof block.content === "string" && block.content.length > 0) {
+      result.result = { output: block.content };
+    }
+
+    // Preserve file changes tracked during tool execution
+    if (entry?.files?.length) {
+      result.files = entry.files;
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined;
   }
 
   private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {
