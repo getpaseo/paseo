@@ -146,6 +146,57 @@ function createProfile(label: string, wsUrl: string): DaemonProfile {
   };
 }
 
+type EnvDaemonConfig = {
+  label?: string;
+  wsUrl: string;
+  restUrl?: string | null;
+};
+
+function parseEnvDaemonDefaults(): DaemonProfile[] {
+  const envDaemons = (() => {
+    // Primary: allow a JSON array string like
+    // EXPO_PUBLIC_DAEMONS='[{"label":"Host","wsUrl":"ws://10.0.0.1:6767/ws"}]'
+    const jsonList = process.env.EXPO_PUBLIC_DAEMONS;
+    if (jsonList) {
+      try {
+        const parsed = JSON.parse(jsonList) as EnvDaemonConfig[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (error) {
+        console.warn("[DaemonRegistry] Failed to parse EXPO_PUBLIC_DAEMONS:", error);
+      }
+    }
+
+    // Fallback: single host via EXPO_PUBLIC_DAEMON_WS_URL (+ optional label/rest URL)
+    const singleWsUrl = process.env.EXPO_PUBLIC_DAEMON_WS_URL;
+    if (singleWsUrl) {
+      return [
+        {
+          label: process.env.EXPO_PUBLIC_DAEMON_LABEL,
+          wsUrl: singleWsUrl,
+          restUrl: process.env.EXPO_PUBLIC_DAEMON_REST_URL,
+        },
+      ];
+    }
+
+    return [];
+  })();
+
+  const timestamp = new Date().toISOString();
+  return envDaemons
+    .filter((entry) => typeof entry?.wsUrl === "string" && entry.wsUrl.trim().length > 0)
+    .map((entry) => ({
+      id: generateDaemonId(),
+      label: entry.label?.trim() || deriveLabelFromUrl(entry.wsUrl),
+      wsUrl: entry.wsUrl.trim(),
+      restUrl: entry.restUrl ?? null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: null,
+    }));
+}
+
 async function loadDaemonRegistryFromStorage(): Promise<DaemonProfile[]> {
   try {
     const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
@@ -162,6 +213,12 @@ async function loadDaemonRegistryFromStorage(): Promise<DaemonProfile[]> {
         await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
+    }
+
+    const envDefaults = parseEnvDaemonDefaults();
+    if (envDefaults.length > 0) {
+      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(envDefaults));
+      return envDefaults;
     }
 
     const fallback = [createProfile("Local Host", FALLBACK_DAEMON_URL)];

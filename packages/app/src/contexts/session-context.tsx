@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
+import { createContext, useState, useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
@@ -378,20 +378,13 @@ export interface SessionContextValue {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
-export function useSession() {
-  const context = useContext(SessionContext);
-  if (!context) {
-    throw new Error("useSession must be used within SessionProvider");
-  }
-  return context;
-}
-
 interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
 }
 
+// SessionProvider feeds session state into Zustand; external consumers should use useDaemonSession or useSessionStore instead of accessing SessionContext directly.
 export function SessionProvider({ children, serverUrl, serverId }: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
   const wsIsConnected = ws.isConnected;

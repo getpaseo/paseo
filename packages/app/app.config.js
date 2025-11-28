@@ -1,9 +1,11 @@
-// Release builds set this env var via gradle
-const IS_DEV = process.env.APP_VARIANT !== "production";
+// App name and package ID are controlled by Gradle product flavors (dev/production)
+// See plugins/with-android-product-flavors.js for flavor configuration
+
+const withAndroidProductFlavors = require("./plugins/with-android-product-flavors");
 
 export default {
   expo: {
-    name: IS_DEV ? "Paseo (Dev)" : "Paseo",
+    name: "Paseo",
     slug: "voice-mobile",
     version: "1.0.0",
     orientation: "portrait",
@@ -24,7 +26,7 @@ export default {
           "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },
-      bundleIdentifier: IS_DEV ? "com.moboudra.paseo.dev" : "com.moboudra.paseo",
+      bundleIdentifier: "com.moboudra.paseo",
     },
     android: {
       adaptiveIcon: {
@@ -34,12 +36,15 @@ export default {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       softwareKeyboardLayoutMode: "resize",
+      // Allow HTTP connections for local network hosts (required for release builds)
+      usesCleartextTraffic: true,
       permissions: [
         "RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
       ],
-      package: IS_DEV ? "com.moboudra.paseo.dev" : "com.moboudra.paseo",
+      // Base package - Gradle product flavors override this per variant
+      package: "com.moboudra.paseo",
     },
     web: {
       output: "static",
@@ -66,9 +71,12 @@ export default {
           android: {
             minSdkVersion: 29,
             kotlinVersion: "2.1.20",
+            // Allow HTTP connections for local network hosts in release builds
+            usesCleartextTraffic: true,
           },
         },
       ],
+      withAndroidProductFlavors,
     ],
     experiments: {
       typedRoutes: true,

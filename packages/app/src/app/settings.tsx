@@ -362,8 +362,21 @@ export default function SettingsScreen() {
       }, timeoutMs);
 
       wsConnection.onopen = () => succeed();
-      wsConnection.onerror = () => fail("Connection failed - check URL and network");
-      wsConnection.onclose = () => fail("Connection failed - check URL and network");
+      wsConnection.onerror = (event) => {
+        const errorMessage =
+          (event && typeof event === "object" && "message" in event && typeof (event as any).message === "string"
+            ? (event as any).message
+            : null) || "Connection failed - check URL and network";
+        console.error("[Settings] WebSocket test error", { url, errorMessage, event });
+        fail(errorMessage);
+      };
+      wsConnection.onclose = (event) => {
+        const reason =
+          (event && typeof event.reason === "string" && event.reason.trim().length > 0 ? event.reason.trim() : null) ||
+          `Connection failed (code ${event?.code ?? "unknown"})`;
+        console.error("[Settings] WebSocket test closed", { url, code: event?.code, reason });
+        fail(reason);
+      };
     });
   }, []);
 
