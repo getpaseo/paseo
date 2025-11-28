@@ -818,11 +818,23 @@ class CodexAgentSession implements AgentSession {
       case "reasoning":
         return { type: "reasoning", text: item.text };
       case "command_execution": {
-        const output = (item as any)?.output;
+        // Codex SDK uses aggregated_output and exit_code
+        const aggregatedOutput = (item as any)?.aggregated_output;
+        const exitCode = (item as any)?.exit_code;
         const cwd = (item as any)?.cwd;
         const commandValue = item.command;
         const command = typeof commandValue === "string" ? commandValue :
                        Array.isArray(commandValue) ? (commandValue as string[]).join(" ") : "command";
+
+        // Build structured command result matching StructuredToolResult type
+        const structuredOutput = typeof aggregatedOutput === "string" ? {
+          type: "command" as const,
+          command,
+          output: aggregatedOutput,
+          exitCode: typeof exitCode === "number" ? exitCode : undefined,
+          cwd,
+        } : undefined;
+
         return createToolCallTimelineItem({
           server: "command",
           tool: "shell",
@@ -831,12 +843,7 @@ class CodexAgentSession implements AgentSession {
           displayName: buildCommandDisplayName(item.command),
           kind: "execute",
           input: { command: item.command, cwd },
-          output: typeof output === "string" ? {
-            type: "command",
-            command,
-            output,
-            cwd,
-          } : undefined,
+          output: structuredOutput,
           error: (item as any)?.error,
         });
       }
