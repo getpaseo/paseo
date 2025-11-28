@@ -1391,25 +1391,34 @@ export const ToolCall = memo(function ToolCall({
     [readEntries]
   );
 
+  // Check if we have structured content that makes raw JSON redundant
+  const hasStructuredContent = Boolean(
+    commandDetails?.output || editEntries.length > 0 || readEntries.length > 0
+  );
+
   const jsonSections = useMemo(() => {
     const sections: ReactNode[] = [];
     if (args !== undefined) {
       sections.push(renderJsonSection("Arguments", serializedArgs));
     }
-    if (result !== undefined) {
+    // Only show raw Result JSON if we don't have structured content showing the same data
+    if (result !== undefined && !hasStructuredContent) {
       sections.push(renderJsonSection("Result", serializedResult));
     }
     if (error !== undefined) {
       sections.push(renderJsonSection("Error", serializedError, true));
     }
     return sections;
-  }, [args, serializedArgs, result, serializedResult, error, serializedError]);
+  }, [args, serializedArgs, result, serializedResult, error, serializedError, hasStructuredContent]);
 
   const renderDetails = useCallback(() => {
+    // Don't show readSections if commandDetails has output (they show the same data)
+    const showReadSections = !commandDetails?.output && readSections.length > 0;
+
     if (
       !commandSection &&
       editSections.length === 0 &&
-      readSections.length === 0 &&
+      !showReadSections &&
       jsonSections.length === 0
     ) {
       return (
@@ -1423,11 +1432,11 @@ export const ToolCall = memo(function ToolCall({
       <View style={toolCallStylesheet.detailContent}>
         {commandSection}
         {editSections}
-        {readSections}
+        {showReadSections ? readSections : null}
         {jsonSections}
       </View>
     );
-  }, [commandSection, editSections, readSections, jsonSections]);
+  }, [commandSection, commandDetails?.output, editSections, readSections, jsonSections]);
 
   return (
     <ExpandableBadge
