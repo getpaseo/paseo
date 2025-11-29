@@ -22,12 +22,16 @@ import type {
 } from "./agent-sdk-types.js";
 import { resolveAgentModel } from "./model-resolver.js";
 
+export const AGENT_LIFECYCLE_STATUSES = [
+  "initializing",
+  "idle",
+  "running",
+  "error",
+  "closed",
+] as const;
+
 export type AgentLifecycleStatus =
-  | "initializing"
-  | "idle"
-  | "running"
-  | "error"
-  | "closed";
+  (typeof AGENT_LIFECYCLE_STATUSES)[number];
 
 export type AgentSnapshot = {
   id: string;

@@ -232,6 +232,10 @@ export class Session {
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private pendingAgentInitializations: Map<
+    string,
+    Promise<AgentSnapshot>
+  > = new Map();
 
   constructor(
     clientId: string,
@@ -559,7 +563,7 @@ export class Session {
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
-      status: (record.lastStatus as any) ?? "closed",
+      status: record.lastStatus,
       sessionId: null,
       capabilities: defaultCapabilities,
       currentModeId: record.lastModeId ?? null,
@@ -570,6 +574,49 @@ export class Session {
       lastError: undefined,
       title: record.title ?? null,
     };
+  }
+
+  private async ensureAgentLoaded(agentId: string): Promise<AgentSnapshot> {
+    const existing = this.agentManager.getAgent(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const inflight = this.pendingAgentInitializations.get(agentId);
+    if (inflight) {
+      return inflight;
+    }
+
+    const initPromise = (async () => {
+      const record = await this.agentRegistry.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+
+      const handle = toAgentPersistenceHandle(record.persistence);
+      let snapshot: AgentSnapshot;
+      if (handle) {
+        snapshot = await this.agentManager.resumeAgent(
+          handle,
+          buildConfigOverrides(record),
+          agentId
+        );
+      } else {
+        const config = buildSessionConfig(record);
+        snapshot = await this.agentManager.createAgent(config, agentId);
+      }
+
+      await this.agentManager.primeAgentHistory(agentId);
+      return this.agentManager.getAgent(agentId) ?? snapshot;
+    })();
+
+    this.pendingAgentInitializations.set(agentId, initPromise);
+
+    try {
+      return await initPromise;
+    } finally {
+      this.pendingAgentInitializations.delete(agentId);
+    }
   }
 
   private async forwardAgentState(agent: AgentSnapshot): Promise<void> {
@@ -960,6 +1007,17 @@ export class Session {
     );
 
     try {
+      await this.ensureAgentLoaded(agentId);
+    } catch (error) {
+      this.handleAgentRunError(
+        agentId,
+        error,
+        "Failed to initialize agent before sending prompt"
+      );
+      return;
+    }
+
+    try {
       await this.interruptAgentIfRunning(agentId);
     } catch (error) {
       this.handleAgentRunError(
@@ -1054,6 +1112,17 @@ export class Session {
       }
 
       try {
+        await this.ensureAgentLoaded(agentId);
+      } catch (error) {
+        this.handleAgentRunError(
+          agentId,
+          error,
+          "Failed to initialize agent before sending audio prompt"
+        );
+        return;
+      }
+
+      try {
         await this.interruptAgentIfRunning(agentId);
       } catch (error) {
         this.handleAgentRunError(
@@ -1108,27 +1177,7 @@ export class Session {
     );
 
     try {
-      let snapshot = this.agentManager.getAgent(agentId);
-      if (!snapshot) {
-        const record = await this.agentRegistry.get(agentId);
-        if (!record) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-
-        const handle = toAgentPersistenceHandle(record.persistence);
-        if (handle) {
-          snapshot = await this.agentManager.resumeAgent(
-            handle,
-            buildConfigOverrides(record),
-            agentId
-          );
-        } else {
-          const config = buildSessionConfig(record);
-          snapshot = await this.agentManager.createAgent(config, agentId);
-        }
-      }
-
-      await this.agentManager.primeAgentHistory(agentId);
+      const snapshot = await this.ensureAgentLoaded(agentId);
       await this.forwardAgentState(snapshot);
 
       // Send timeline snapshot after hydration (if any)
@@ -1140,6 +1189,7 @@ export class Session {
           payload: {
             status: "agent_initialized",
             agentId,
+            agentStatus: snapshot.status,
             requestId,
             timelineSize,
           },
@@ -1147,7 +1197,7 @@ export class Session {
       }
 
       console.log(
-        `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s)`
+        `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.status}`
       );
     } catch (error: any) {
       console.error(
