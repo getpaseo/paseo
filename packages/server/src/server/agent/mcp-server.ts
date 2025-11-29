@@ -429,6 +429,9 @@ export async function createAgentMcpServer(
     },
     async ({ agentId }) => {
       const success = await agentManager.cancelAgentRun(agentId);
+      if (success) {
+        waitTracker.cancel(agentId, "Agent run cancelled");
+      }
       return {
         content: [],
         structuredContent: ensureValidJson({ success }),
@@ -450,6 +453,7 @@ export async function createAgentMcpServer(
     },
     async ({ agentId }) => {
       await agentManager.closeAgent(agentId);
+      waitTracker.cancel(agentId, "Agent terminated");
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),

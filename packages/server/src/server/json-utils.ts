@@ -7,54 +7,55 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 /**
- * Ensure the provided value only contains JSON-safe primitives.
- * Throws when undefined, functions, symbols, BigInts, etc. are found.
+ * Coerce arbitrary values into JSON-safe structures.
+ * Unlike the previous implementation, this never throws on undefined—
+ * it replaces unsupported values (undefined, functions, symbols) with null
+ * so responses always make it back to the client.
  */
-export function ensureValidJson<T>(value: T, rootLabel: string = "root"): T {
-  const seen = new Set<object>();
+export function ensureValidJson<T>(value: T): T {
+  const seen = new WeakSet<object>();
 
-  const validate = (current: unknown, path: string): void => {
-    if (current === undefined) {
-      throw new Error(`Invalid JSON value at ${path}: undefined`);
+  const sanitize = (current: unknown): JsonValue => {
+    if (current === null || current === undefined) {
+      return null;
     }
 
-    if (current === null) {
-      return;
+    if (typeof current === "string" || typeof current === "number") {
+      return current;
     }
 
-    const type = typeof current;
+    if (typeof current === "boolean") {
+      return current;
+    }
 
-    if (type === "string" || type === "number" || type === "boolean") {
-      return;
+    if (typeof current === "bigint") {
+      return current.toString();
+    }
+
+    if (current instanceof Date) {
+      return current.toISOString();
     }
 
     if (Array.isArray(current)) {
-      current.forEach((item, index) =>
-        validate(item, `${path}[${index}]`)
-      );
-      return;
+      return current.map((item) => sanitize(item));
     }
 
-    if (type === "object") {
-      const asObject = current as Record<string, unknown>;
-      if (!seen.has(asObject)) {
-        seen.add(asObject);
-        for (const [key, val] of Object.entries(asObject)) {
-          const nextPath = path === rootLabel ? key : `${path}.${key}`;
-          validate(val, nextPath);
-        }
-        seen.delete(asObject);
+    if (typeof current === "object") {
+      if (seen.has(current as object)) {
+        throw new Error("Cannot serialize circular structure to JSON");
       }
-      return;
+      seen.add(current as object);
+      const obj: Record<string, JsonValue> = {};
+      for (const [key, val] of Object.entries(current as Record<string, unknown>)) {
+        obj[key] = sanitize(val);
+      }
+      seen.delete(current as object);
+      return obj;
     }
 
-    throw new Error(
-      `Invalid JSON value at ${path}: ${
-        type === "symbol" ? "symbol" : String(current)
-      }`
-    );
+    // functions, symbols, undefined, etc.
+    return null;
   };
 
-  validate(value, rootLabel);
-  return value;
+  return sanitize(value) as T;
 }
