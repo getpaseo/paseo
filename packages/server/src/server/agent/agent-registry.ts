@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+import { AgentStatusSchema } from "../messages.js";
 import type { AgentSnapshot } from "./agent-manager.js";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 
@@ -36,7 +37,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
-  lastStatus: z.string().nullable().optional(),
+  lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
   persistence: PERSISTENCE_HANDLE_SCHEMA,
@@ -126,7 +127,7 @@ export class AgentRegistry {
       lastActivityAt: existing?.lastActivityAt ?? existing?.updatedAt ?? now,
       lastUserMessageAt: existing?.lastUserMessageAt ?? null,
       title: existing?.title ?? null,
-      lastStatus: existing?.lastStatus ?? null,
+      lastStatus: existing?.lastStatus ?? "closed",
       lastModeId: nextModeId,
       config: sanitizedConfig,
       persistence: existing?.persistence ?? null,

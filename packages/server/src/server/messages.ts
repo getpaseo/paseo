@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { AgentSnapshot } from "./agent/agent-manager.js";
+import {
+  AGENT_LIFECYCLE_STATUSES,
+  type AgentSnapshot,
+} from "./agent/agent-manager.js";
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -26,14 +29,7 @@ export type AgentSnapshotPayload = Omit<
 const AGENT_PROVIDERS: [AgentProvider, AgentProvider] = ["claude", "codex"];
 const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
 
-const AGENT_LIFECYCLE_STATUSES = [
-  "initializing",
-  "idle",
-  "running",
-  "error",
-  "closed",
-] as const;
-const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
+export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
 
 const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   id: z.string(),
