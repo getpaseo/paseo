@@ -1,6 +1,6 @@
 import { useAudioRecorder as useExpoAudioRecorder, useAudioRecorderState, RecordingOptions, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { Paths, File, Directory, FileInfo } from 'expo-file-system';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
 export interface AudioCaptureConfig {
   sampleRate?: number;
@@ -126,11 +126,18 @@ async function uriToBlob(uri: string): Promise<Blob> {
  * - Echo cancellation, noise suppression, auto gain control (voice_communication on Android)
  */
 export function useAudioRecorder(config?: AudioCaptureConfig) {
-  const [isRecording, setIsRecording] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState<Date | null>(null);
+  const recordingIntentRef = useRef(false);
+  const stopRequestedRef = useRef(false);
 
-  // Create recording options matching web app constraints
-  const recordingOptions: RecordingOptions = {
+  // Store config callbacks in refs so they can update without recreating the recorder
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  // Create stable recording options - only recreate if actual config values change
+  const recordingOptions: RecordingOptions = useMemo(() => ({
     ...RecordingPresets.HIGH_QUALITY,
     sampleRate: config?.sampleRate || 16000,
     numberOfChannels: config?.numberOfChannels || 1,
@@ -156,14 +163,22 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       mimeType: 'audio/webm;codecs=opus',
       bitsPerSecond: config?.bitRate || 128000,
     },
-  };
+  }), [config?.sampleRate, config?.numberOfChannels, config?.bitRate, config?.onAudioLevel]);
 
   const audioRecorder = useExpoAudioRecorder(recordingOptions);
   const recorderState = useAudioRecorderState(audioRecorder, 100);
 
-  // Monitor audio levels if metering is enabled
+  // Store recorder in ref for stable access across re-renders
+  const recorderRef = useRef(audioRecorder);
   useEffect(() => {
-    if (!config?.onAudioLevel || !isRecording) return;
+    recorderRef.current = audioRecorder;
+  }, [audioRecorder]);
+
+  // Monitor audio levels if metering is enabled
+  // Use configRef to access the latest callback without recreating the effect
+  useEffect(() => {
+    const currentConfig = configRef.current;
+    if (!currentConfig?.onAudioLevel || !recorderRef.current.isRecording) return;
 
     const interval = setInterval(() => {
       const metering = recorderState.metering;
@@ -172,22 +187,35 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
         // Convert to 0-1 range where 0 is silence and 1 is loud
         // We'll use -40 dB as the threshold for "loud"
         const normalized = Math.max(0, Math.min(1, (metering + 40) / 40));
-        config.onAudioLevel?.(normalized);
+        configRef.current?.onAudioLevel?.(normalized);
       }
     }, 100); // Check every 100ms
 
     return () => clearInterval(interval);
-  }, [isRecording, config, recorderState.metering]);
+  }, [recorderState.metering, recorderState.isRecording]);
 
-  async function start(): Promise<void> {
-    if (isRecording) {
+  const start = useCallback(async (): Promise<void> => {
+    const recorder = recorderRef.current;
+
+    // Use expo's isRecording as single source of truth
+    if (recorder.isRecording) {
       throw new Error('Already recording');
     }
 
     try {
+      recordingIntentRef.current = true;
+      const ensureNotCancelled = () => {
+        if (stopRequestedRef.current) {
+          throw new Error('Recording cancelled');
+        }
+      };
+
+      ensureNotCancelled();
+
       // Request microphone permissions
       console.log('[AudioRecorder] Requesting recording permissions...');
       const permissionResponse = await requestRecordingPermissionsAsync();
+      ensureNotCancelled();
 
       if (!permissionResponse.granted) {
         throw new Error('Microphone permission denied. Please enable microphone access in your device settings.');
@@ -199,6 +227,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
         playsInSilentMode: true,
         allowsRecording: true,
       });
+      ensureNotCancelled();
 
       console.log('[AudioRecorder] Starting recording with options:', {
         sampleRate: recordingOptions.sampleRate,
@@ -208,35 +237,56 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
       const startTime = new Date();
       setRecordingStartTime(startTime);
+      ensureNotCancelled();
 
       // Prepare the recorder before recording (required step)
       console.log('[AudioRecorder] Preparing recorder...');
-      await audioRecorder.prepareToRecordAsync();
+      await recorder.prepareToRecordAsync();
+      ensureNotCancelled();
 
       console.log('[AudioRecorder] Starting recording...');
-      await audioRecorder.record();
-      setIsRecording(true);
+      await recorder.record();
+      ensureNotCancelled();
 
       console.log('[AudioRecorder] Recording started at:', startTime.toISOString());
-      console.log('[AudioRecorder] Recorder isRecording:', audioRecorder.isRecording);
+      console.log('[AudioRecorder] Recorder isRecording:', recorder.isRecording);
     } catch (error: any) {
-      console.error('[AudioRecorder] Failed to start recording:', error);
+      recordingIntentRef.current = false;
+      setRecordingStartTime(null);
+      if (error?.message === 'Recording cancelled') {
+        console.log('[AudioRecorder] Recording start cancelled.');
+      } else {
+        console.error('[AudioRecorder] Failed to start recording:', error);
+      }
       throw new Error(`Failed to start audio recording: ${error.message}`);
     }
-  }
+  }, [recordingOptions.sampleRate, recordingOptions.numberOfChannels, recordingOptions.bitRate]);
 
-  async function stop(): Promise<Blob> {
-    if (!isRecording) {
+  const stop = useCallback(async (): Promise<Blob> => {
+    const recorder = recorderRef.current;
+
+    // Guard against duplicate stop calls
+    if (!recorder.isRecording && !recordingIntentRef.current) {
+      console.error('[AudioRecorder] Attempted to stop when not recording. Recorder state:', {
+        isRecording: recorder.isRecording,
+        hasRecordingIntent: recordingIntentRef.current,
+        hasRecordingStartTime: !!recordingStartTime,
+      });
       throw new Error('Not recording');
     }
 
+    stopRequestedRef.current = true;
+
     try {
       // Stop recording
-      await audioRecorder.stop();
-      setIsRecording(false);
+      if (recorder.isRecording) {
+        await recorder.stop();
+      } else {
+        console.warn('[AudioRecorder] Recorder already stopped before stop() call, continuing cleanup.');
+      }
 
       // Get URI from recorder
-      let uri = audioRecorder.uri;
+      let uri = recorder.uri;
       console.log('[AudioRecorder] Initial URI from recorder:', uri);
 
       // Workaround for Expo SDK 54 Android bug - find actual recording file
@@ -273,28 +323,37 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       // Clean up the temporary file
       file.delete();
 
-      // Reset start time
+      // Reset start time and clear recording intent
       setRecordingStartTime(null);
+      recordingIntentRef.current = false;
 
       return audioBlob;
     } catch (error: any) {
-      setIsRecording(false);
+      recordingIntentRef.current = false;
       setRecordingStartTime(null);
       console.error('[AudioRecorder] Failed to stop recording:', error);
       throw new Error(`Failed to stop audio recording: ${error.message}`);
+    } finally {
+      stopRequestedRef.current = false;
     }
-  }
+  }, [recordingStartTime]);
 
-  function getSupportedMimeType(): string | null {
+  const getSupportedMimeType = useCallback((): string | null => {
     // On native platforms, expo-audio uses m4a/AAC
     // On web, it can use webm/opus
     return 'audio/m4a';
-  }
+  }, []);
 
-  return {
+  const isRecording = useCallback(() => {
+    // Treat local intent as backup so callers can detect pending sessions
+    return recorderRef.current.isRecording || recordingIntentRef.current;
+  }, []);
+
+  // Return stable object using useMemo
+  return useMemo(() => ({
     start,
     stop,
-    isRecording: () => isRecording,
+    isRecording,
     getSupportedMimeType,
-  };
+  }), [start, stop, isRecording, getSupportedMimeType]);
 }

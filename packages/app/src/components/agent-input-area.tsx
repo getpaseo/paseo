@@ -131,10 +131,13 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     ((updater: (current: QueuedMessage[]) => QueuedMessage[]) => void) | null
   >(null);
 
+  // Stabilize audio level callback to prevent recorder recreation on every render
+  const handleRecordingAudioLevel = useCallback((level: number) => {
+    setRecordingVolume(level);
+  }, []);
+
   const audioRecorder = useAudioRecorder({
-    onAudioLevel: (level) => {
-      setRecordingVolume(level);
-    },
+    onAudioLevel: handleRecordingAudioLevel,
   });
 
   const debugInputHeight = (label: string, payload: Record<string, unknown>) => {
@@ -217,7 +220,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
     } catch (error) {
-      console.error("[AgentInput] Failed to start recording:", error);
+      const isCancelled = error instanceof Error && error.message.includes("Recording cancelled");
+      if (!isCancelled) {
+        console.error("[AgentInput] Failed to start recording:", error);
+      }
     }
   }
 

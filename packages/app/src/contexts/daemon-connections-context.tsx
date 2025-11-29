@@ -78,6 +78,9 @@ function resolveNextConnectionState(
 }
 
 function logConnectionLifecycle(daemon: DaemonProfile, previous: ConnectionState, next: ConnectionState) {
+  const severity: "info" | "warn" = next.status === "error" ? "warn" : "info";
+  const logger = severity === "warn" ? console.warn : console.info;
+
   const logPayload = {
     event: "daemon_connection_state",
     daemonId: daemon.id,
@@ -87,14 +90,8 @@ function logConnectionLifecycle(daemon: DaemonProfile, previous: ConnectionState
     lastError: next.lastError ?? null,
     lastOnlineAt: next.lastOnlineAt ?? null,
     timestamp: new Date().toISOString(),
+    severity,
   };
-
-  const logger =
-    next.status === "error"
-      ? console.error
-      : next.status === "offline"
-        ? console.warn
-        : console.info;
 
   logger("[DaemonConnection]", logPayload);
 }
