@@ -406,10 +406,14 @@ function AgentFlowModal({
   });
   const prevVisibilityRef = useRef(isVisible);
   const dictationRequestIdRef = useRef<string | null>(null);
+
+  // Stabilize audio level callback to prevent recorder recreation on every render
+  const handleDictationAudioLevel = useCallback((level: number) => {
+    setDictationVolume(level);
+  }, []);
+
   const dictationRecorder = useAudioRecorder({
-    onAudioLevel: (level) => {
-      setDictationVolume(level);
-    },
+    onAudioLevel: handleDictationAudioLevel,
   });
   const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
   const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
@@ -916,11 +920,11 @@ function AgentFlowModal({
     setIsDictationProcessing(false);
     setDictationVolume(0);
     setDictationDebugInfo(null);
-    if (dictationRecorder.isRecording?.()) {
+    if (isDictating) {
       void dictationRecorder.stop().catch(() => {});
     }
     cancelRepoInfo();
-  }, [cancelRepoInfo, resetRepoInfo, setPromptHeight]);
+  }, [cancelRepoInfo, dictationRecorder, isDictating, resetRepoInfo, setPromptHeight]);
 
   const handleDictationStart = useCallback(async () => {
     if (!isCreateFlow || isLoading || isDictating || isDictationProcessing) {
@@ -937,12 +941,17 @@ function AgentFlowModal({
       if (shouldShowAudioDebug) {
         setDictationDebugInfo(null);
       }
-      await dictationRecorder.start();
       setIsDictating(true);
       setDictationVolume(0);
       setErrorMessage("");
+      await dictationRecorder.start();
     } catch (error) {
-      console.error("[CreateAgentModal] Failed to start dictation:", error);
+      const isCancelled = error instanceof Error && error.message.includes("Recording cancelled");
+      if (!isCancelled) {
+        console.error("[CreateAgentModal] Failed to start dictation:", error);
+      }
+      setIsDictating(false);
+      setDictationVolume(0);
     }
   }, [
     daemonAvailabilityError,
@@ -989,9 +998,9 @@ function AgentFlowModal({
 
     try {
       const audioData = await dictationRecorder.stop();
-      setIsDictating(false);
       setDictationVolume(0);
       if (!audioData) {
+        setIsDictating(false);
         setIsDictationProcessing(false);
         return;
       }
@@ -1003,10 +1012,15 @@ function AgentFlowModal({
         requestId,
         { mode: "transcribe_only" }
       );
+      // Only clear isDictating after successful transcription send
+      setIsDictating(false);
     } catch (error) {
       console.error("[CreateAgentModal] Failed to complete dictation:", error);
       dictationRequestIdRef.current = null;
       setIsDictationProcessing(false);
+      // CRITICAL FIX: Always reset dictation state on error
+      setIsDictating(false);
+      setDictationVolume(0);
     }
   }, [
     daemonAvailabilityError,
@@ -1152,21 +1166,38 @@ function AgentFlowModal({
   ]);
 
   useEffect(() => {
-    if (isVisible || !dictationRecorder.isRecording?.()) {
+    if (isVisible || !isDictating) {
       return;
     }
-    void dictationRecorder.stop().catch(() => {});
-    setIsDictating(false);
-    setDictationVolume(0);
-  }, [dictationRecorder, isVisible]);
+    let cancelled = false;
+
+    const stopRecording = async () => {
+      try {
+        await dictationRecorder.stop();
+      } catch (error) {
+        console.error("[CreateAgentModal] Failed to stop dictation while hidden:", error);
+      } finally {
+        if (!cancelled) {
+          setIsDictating(false);
+          setDictationVolume(0);
+        }
+      }
+    };
+
+    void stopRecording();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dictationRecorder, isDictating, isVisible]);
 
   useEffect(() => {
     return () => {
-      if (dictationRecorder.isRecording?.()) {
+      if (isDictating) {
         void dictationRecorder.stop().catch(() => {});
       }
     };
-  }, [dictationRecorder]);
+  }, [dictationRecorder, isDictating]);
 
   useEffect(() => {
     return () => {

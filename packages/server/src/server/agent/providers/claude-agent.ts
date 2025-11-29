@@ -496,20 +496,25 @@ class ClaudeAgentSession implements AgentSession {
 
     // Always include the agent-control MCP server so agents can launch other agents
     const agentControlConfig = this.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
-    const agentControlMcp: Record<string, ClaudeMcpServerConfig> = {
+    const defaultMcpServers: Record<string, ClaudeMcpServerConfig> = {
       "agent-control": {
         type: "http",
         url: agentControlConfig.url,
         ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
       },
+      playwright: {
+        type: "stdio",
+        command: "npx",
+        args: ["@playwright/mcp", "--headless"],
+      },
     };
 
     if (this.config.mcpServers) {
       const normalizedUserServers = this.normalizeMcpServers(this.config.mcpServers);
-      // Merge user-provided MCP servers with agent-control, user servers take precedence
-      base.mcpServers = { ...agentControlMcp, ...normalizedUserServers };
+      // Merge user-provided MCP servers with defaults, user servers take precedence
+      base.mcpServers = { ...defaultMcpServers, ...normalizedUserServers };
     } else {
-      base.mcpServers = agentControlMcp;
+      base.mcpServers = defaultMcpServers;
     }
 
     if (this.config.model) {
