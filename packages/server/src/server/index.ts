@@ -112,13 +112,15 @@ async function main() {
   await restorePersistedAgents(agentManager, agentRegistry);
   console.log("✓ Global agent manager initialized with persisted agents");
 
-  const agentMcpServer = await createAgentMcpServer({
-    agentManager,
-    agentRegistry,
-  });
   const agentMcpTransports: AgentMcpTransportMap = new Map();
 
   const createAgentMcpTransport = async () => {
+    // Create a NEW McpServer instance per session (not shared across sessions)
+    const agentMcpServer = await createAgentMcpServer({
+      agentManager,
+      agentRegistry,
+    });
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sessionId) => {
@@ -140,7 +142,9 @@ async function main() {
     transport.onerror = (error) => {
       console.error("[Agent MCP] Transport error:", error);
     };
+
     await agentMcpServer.connect(transport);
+
     return transport;
   };
 

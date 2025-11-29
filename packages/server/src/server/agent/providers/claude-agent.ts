@@ -491,6 +491,9 @@ class ClaudeAgentSession implements AgentSession {
       permissionMode: this.currentMode,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
+      stderr: (data: string) => {
+        console.error("[ClaudeAgentSDK]", data.trim());
+      },
       ...this.config.extra?.claude,
     };
 

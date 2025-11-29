@@ -96,27 +96,6 @@ async function serializeSnapshotWithMetadata(
   return serializeAgentSnapshot(snapshot, { title });
 }
 
-function buildActivityPayload(
-  agentManager: AgentManager,
-  agentId: string
-): {
-  format: "curated";
-  updateCount: number;
-  currentModeId: string | null;
-  content: string;
-} {
-  const timeline = agentManager.getTimeline(agentId);
-  const snapshot = agentManager.getAgent(agentId);
-  const curatedText = curateAgentActivity(timeline);
-
-  return {
-    format: "curated",
-    updateCount: timeline.length,
-    currentModeId: snapshot?.currentModeId ?? null,
-    content: curatedText,
-  };
-}
-
 export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
@@ -159,6 +138,13 @@ export async function createAgentMcpServer(
           .describe(
             "Optional git worktree branch name (lowercase alphanumerics + hyphen)."
           ),
+        background: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
+          ),
       },
       outputSchema: {
         agentId: z.string(),
@@ -173,9 +159,11 @@ export async function createAgentMcpServer(
             description: z.string().nullable().optional(),
           })
         ),
+        lastMessage: z.string().nullable().optional(),
+        permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
       },
     },
-    async ({ cwd, agentType, initialPrompt, initialMode, worktreeName }) => {
+    async ({ cwd, agentType, initialPrompt, initialMode, worktreeName, background = false }) => {
       let resolvedCwd = expandPath(cwd);
 
       if (worktreeName) {
@@ -203,17 +191,43 @@ export async function createAgentMcpServer(
             error
           );
         }
+
         try {
           startAgentRun(agentManager, snapshot.id, initialPrompt);
+
+          // If not running in background, wait for completion
+          if (!background) {
+            const result = await agentManager.waitForAgentEvent(snapshot.id);
+
+            const responseData = {
+              agentId: snapshot.id,
+              type: provider,
+              status: result.status,
+              cwd: snapshot.cwd,
+              currentModeId: snapshot.currentModeId,
+              availableModes: snapshot.availableModes,
+              lastMessage: result.lastMessage,
+              permission: result.permission,
+            };
+            const validJson = ensureValidJson(responseData);
+
+            const response = {
+              content: [],
+              structuredContent: validJson,
+            };
+            return response;
+          }
         } catch (error) {
           console.error(
             `[Agent MCP] Failed to run initial prompt for ${snapshot.id}:`,
             error
           );
         }
+      } else {
       }
 
-      return {
+      // Return immediately if background=true or no initialPrompt
+      const response = {
         content: [],
         structuredContent: ensureValidJson({
           agentId: snapshot.id,
@@ -222,8 +236,11 @@ export async function createAgentMcpServer(
           cwd: snapshot.cwd,
           currentModeId: snapshot.currentModeId,
           availableModes: snapshot.availableModes,
+          lastMessage: null,
+          permission: null,
         }),
       };
+      return response;
     }
   );
 
@@ -240,12 +257,7 @@ export async function createAgentMcpServer(
         agentId: z.string(),
         status: AgentStatusEnum,
         permission: AgentPermissionRequestPayloadSchema.nullable(),
-        activity: z.object({
-          format: z.literal("curated"),
-          updateCount: z.number(),
-          currentModeId: z.string().nullable(),
-          content: z.string(),
-        }),
+        lastMessage: z.string().nullable(),
       },
     },
     async ({ agentId }, { signal }) => {
@@ -293,17 +305,19 @@ export async function createAgentMcpServer(
           await agentManager.waitForAgentEvent(agentId, {
             signal: abortController.signal,
           });
-        const activity = buildActivityPayload(agentManager, agentId);
 
-        return {
+        const validJson = ensureValidJson({
+          agentId,
+          status: result.status,
+          permission: result.permission,
+          lastMessage: result.lastMessage,
+        });
+
+        const response = {
           content: [],
-          structuredContent: ensureValidJson({
-            agentId,
-            status: result.status,
-            permission: result.permission,
-            activity,
-          }),
+          structuredContent: validJson,
         };
+        return response;
       } finally {
         cleanup();
       }
@@ -323,13 +337,23 @@ export async function createAgentMcpServer(
           .string()
           .optional()
           .describe("Optional mode to set before running the prompt."),
+        background: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
+          ),
       },
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
+        lastMessage: z.string().nullable().optional(),
+        permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
       },
     },
-    async ({ agentId, prompt, sessionMode }) => {
+    async ({ agentId, prompt, sessionMode, background = false }) => {
+
       if (sessionMode) {
         await agentManager.setAgentMode(agentId, sessionMode);
       }
@@ -344,15 +368,43 @@ export async function createAgentMcpServer(
       }
 
       startAgentRun(agentManager, agentId, prompt);
+
+      // If not running in background, wait for completion
+      if (!background) {
+        const result = await agentManager.waitForAgentEvent(agentId);
+
+        const responseData = {
+          success: true,
+          status: result.status,
+          lastMessage: result.lastMessage,
+          permission: result.permission,
+        };
+        const validJson = ensureValidJson(responseData);
+
+        const response = {
+          content: [],
+          structuredContent: validJson,
+        };
+        return response;
+      }
+
+
+      // Return immediately if background=true
       const snapshot = agentManager.getAgent(agentId);
 
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          success: true,
-          status: snapshot?.status ?? "idle",
-        }),
+      const responseData = {
+        success: true,
+        status: snapshot?.status ?? "idle",
+        lastMessage: null,
+        permission: null,
       };
+      const validJson = ensureValidJson(responseData);
+
+      const response = {
+        content: [],
+        structuredContent: validJson,
+      };
+      return response;
     }
   );
 

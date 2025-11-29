@@ -76,6 +76,7 @@ export type WaitForAgentOptions = {
 export type WaitForAgentResult = {
   status: AgentLifecycleStatus;
   permission: AgentPermissionRequest | null;
+  lastMessage: string | null;
 };
 
 type ManagedAgent = {
@@ -491,6 +492,32 @@ export class AgentManager {
     await this.primeHistory(agent);
   }
 
+  private getLastAssistantMessage(agentId: string): string | null {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return null;
+    }
+
+    // Collect the last contiguous assistant messages (Claude streams chunks)
+    const chunks: string[] = [];
+    for (let i = agent.timeline.length - 1; i >= 0; i--) {
+      const item = agent.timeline[i];
+      if (item.type !== "assistant_message") {
+        if (chunks.length) {
+          break;
+        }
+        continue;
+      }
+      chunks.push(item.text);
+    }
+
+    if (!chunks.length) {
+      return null;
+    }
+
+    return chunks.reverse().join("");
+  }
+
   async waitForAgentEvent(
     agentId: string,
     options?: WaitForAgentOptions
@@ -500,41 +527,89 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
+
     const immediatePermission = snapshot.pendingPermissions[0] ?? null;
     if (immediatePermission) {
-      return { status: snapshot.status, permission: immediatePermission };
+      return {
+        status: snapshot.status,
+        permission: immediatePermission,
+        lastMessage: this.getLastAssistantMessage(agentId)
+      };
     }
 
     if (!isAgentBusy(snapshot.status)) {
-      return { status: snapshot.status, permission: null };
+      return {
+        status: snapshot.status,
+        permission: null,
+        lastMessage: this.getLastAssistantMessage(agentId)
+      };
     }
 
     if (options?.signal?.aborted) {
       throw createAbortError(options.signal, "wait_for_agent aborted");
     }
 
+
     return await new Promise<WaitForAgentResult>((resolve, reject) => {
+      // Bug #1 Fix: Check abort signal AGAIN inside Promise constructor
+      // to avoid race condition between pre-Promise check and abort listener registration
+      if (options?.signal?.aborted) {
+        reject(createAbortError(options.signal, "wait_for_agent aborted"));
+        return;
+      }
+
       let currentStatus: AgentLifecycleStatus = snapshot.status;
-      const cleanupFns: Array<() => void> = [];
+
+      // Bug #3 Fix: Declare unsubscribe and abortHandler upfront so cleanup can reference them
+      let unsubscribe: (() => void) | null = null;
+      let abortHandler: (() => void) | null = null;
 
       const cleanup = () => {
-        while (cleanupFns.length) {
-          const fn = cleanupFns.pop();
+        // Clean up subscription
+        if (unsubscribe) {
           try {
-            fn?.();
+            unsubscribe();
           } catch {
             // ignore cleanup errors
           }
+          unsubscribe = null;
+        }
+
+        // Clean up abort listener
+        if (abortHandler && options?.signal) {
+          try {
+            options.signal.removeEventListener("abort", abortHandler);
+          } catch {
+            // ignore cleanup errors
+          }
+          abortHandler = null;
         }
       };
 
       const finish = (permission: AgentPermissionRequest | null) => {
         cleanup();
-        resolve({ status: currentStatus, permission });
+        resolve({
+          status: currentStatus,
+          permission,
+          lastMessage: this.getLastAssistantMessage(agentId)
+        });
       };
 
-      const unsubscribe = this.subscribe(
+      // Bug #3 Fix: Set up abort handler BEFORE subscription
+      // to ensure cleanup handlers exist before callback can fire
+      if (options?.signal) {
+        abortHandler = () => {
+          cleanup();
+          reject(createAbortError(options.signal, "wait_for_agent aborted"));
+        };
+        options.signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      // Bug #3 Fix: Now subscribe with cleanup handlers already in place
+      // This prevents race condition if callback fires synchronously with replayState: true
+      unsubscribe = this.subscribe(
         (event) => {
+          // Bug #2 Fix: Only handle agent_state events, remove redundant agent_stream handling
           if (event.type === "agent_state") {
             currentStatus = event.agent.status;
             const pending = event.agent.pendingPermissions[0] ?? null;
@@ -545,48 +620,10 @@ export class AgentManager {
             if (!isAgentBusy(event.agent.status)) {
               finish(null);
             }
-            return;
-          }
-
-          if (event.type !== "agent_stream") {
-            return;
-          }
-
-          switch (event.event.type) {
-            case "permission_requested": {
-              currentStatus = "running";
-              finish(event.event.request);
-              break;
-            }
-            case "turn_completed": {
-              currentStatus = "idle";
-              finish(null);
-              break;
-            }
-            case "turn_failed": {
-              currentStatus = "error";
-              finish(null);
-              break;
-            }
-            default:
-              break;
           }
         },
         { agentId, replayState: true }
       );
-      cleanupFns.push(unsubscribe);
-
-      if (options?.signal) {
-        const abortHandler = () => {
-          cleanup();
-          reject(createAbortError(options.signal, "wait_for_agent aborted"));
-        };
-
-        options.signal.addEventListener("abort", abortHandler, { once: true });
-        cleanupFns.push(() =>
-          options.signal?.removeEventListener("abort", abortHandler)
-        );
-      }
     });
   }
 
