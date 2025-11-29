@@ -12,10 +12,7 @@ import { AgentRegistry } from "./agent/agent-registry.js";
 import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
 import { CodexAgentClient } from "./agent/providers/codex-agent.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
-import {
-  attachAgentRegistryPersistence,
-  restorePersistedAgents,
-} from "./persistence-hooks.js";
+import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -108,9 +105,12 @@ async function main() {
   });
 
   attachAgentRegistryPersistence(agentManager, agentRegistry);
-
-  await restorePersistedAgents(agentManager, agentRegistry);
-  console.log("✓ Global agent manager initialized with persisted agents");
+  const persistedRecords = await agentRegistry.list();
+  console.log(
+    `✓ Agent registry loaded (${persistedRecords.length} record${
+      persistedRecords.length === 1 ? "" : "s"
+    }); agents will initialize on demand`
+  );
 
   const agentMcpTransports: AgentMcpTransportMap = new Map();
 
