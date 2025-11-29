@@ -110,27 +110,26 @@ export class AgentRegistry {
     config?: SerializableAgentConfig
   ): Promise<void> {
     await this.load();
-    const now = new Date().toISOString();
     const existing = this.cache.get(agentId);
-    const sanitizedConfig = config ? sanitizeConfig(config) : existing?.config;
+    if (!existing) {
+      console.warn(
+        `[AgentRegistry] Cannot record config for ${agentId} because no snapshot has been persisted yet`
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const sanitizedConfig = config ? sanitizeConfig(config) : existing.config;
     const nextModeId =
-      config?.modeId ??
-      existing?.lastModeId ??
-      sanitizedConfig?.modeId ??
-      null;
+      config?.modeId ?? existing.lastModeId ?? sanitizedConfig?.modeId ?? null;
+
     const updated: StoredAgentRecord = {
-      id: agentId,
+      ...existing,
       provider,
       cwd,
-      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      lastActivityAt: existing?.lastActivityAt ?? existing?.updatedAt ?? now,
-      lastUserMessageAt: existing?.lastUserMessageAt ?? null,
-      title: existing?.title ?? null,
-      lastStatus: existing?.lastStatus ?? "closed",
       lastModeId: nextModeId,
       config: sanitizedConfig,
-      persistence: existing?.persistence ?? null,
     };
     this.cache.set(agentId, updated);
     await this.flush();
