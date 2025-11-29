@@ -1286,6 +1286,9 @@ export const ToolCall = memo(function ToolCall({
   result,
   error,
   status,
+  parsedEditEntries,
+  parsedReadEntries,
+  parsedCommandDetails,
 }: ToolCallProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -1397,7 +1400,8 @@ export const ToolCall = memo(function ToolCall({
       // Render based on type
       switch (structuredResult.type) {
         case "command": {
-          const cmd = extractCommandFromStructured(structuredResult);
+          // Use pre-parsed command details if available, otherwise extract from structured result
+          const cmd = parsedCommandDetails ?? extractCommandFromStructured(structuredResult);
           if (cmd) {
             // Reuse the command section rendering logic
             sections.push(
@@ -1446,7 +1450,10 @@ export const ToolCall = memo(function ToolCall({
 
         case "file_write":
         case "file_edit": {
-          const diffs = extractDiffFromStructured(structuredResult);
+          // Use pre-parsed entries if available, otherwise extract from structured result
+          const diffs = parsedEditEntries?.length
+            ? parsedEditEntries
+            : extractDiffFromStructured(structuredResult);
           diffs.forEach((entry, index) => {
             sections.push(
               <View
@@ -1469,7 +1476,10 @@ export const ToolCall = memo(function ToolCall({
         }
 
         case "file_read": {
-          const reads = extractReadFromStructured(structuredResult);
+          // Use pre-parsed entries if available, otherwise extract from structured result
+          const reads = parsedReadEntries?.length
+            ? parsedReadEntries
+            : extractReadFromStructured(structuredResult);
           reads.forEach((entry, index) => {
             sections.push(
               <View
