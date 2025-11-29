@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
@@ -50,6 +50,15 @@ describe("AgentRegistry", () => {
   });
 
   test("persists configs and snapshot metadata", async () => {
+    await registry.applySnapshot(
+      createSnapshot({
+        id: "agent-1",
+        cwd: "/tmp/project",
+        currentModeId: "coding",
+        status: "idle",
+      })
+    );
+
     await registry.recordConfig(
       "agent-1",
       "claude",
@@ -59,14 +68,6 @@ describe("AgentRegistry", () => {
         model: "gpt-5.1",
         extra: { claude: { maxThinkingTokens: 1024 } },
       }
-    );
-
-    await registry.applySnapshot(
-      createSnapshot({
-        id: "agent-1",
-        currentModeId: "coding",
-        status: "idle",
-      })
     );
 
     const records = await registry.list();
@@ -102,7 +103,8 @@ describe("AgentRegistry", () => {
     expect(persisted?.title).toBe("Fix Login Bug");
   });
 
-  test("recordConfig seeds lastModeId before snapshots", async () => {
+  test("recordConfig warns if no snapshot exists", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     await registry.recordConfig(
       "agent-3",
       "claude",
@@ -113,7 +115,9 @@ describe("AgentRegistry", () => {
     );
 
     const record = await registry.get("agent-3");
-    expect(record?.lastModeId).toBe("plan");
+    expect(record).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   test("recovers from trailing garbage in agents.json", async () => {
