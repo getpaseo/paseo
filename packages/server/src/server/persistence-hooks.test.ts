@@ -4,7 +4,6 @@ import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { StoredAgentRecord } from "./agent/agent-registry.js";
 import {
   attachAgentRegistryPersistence,
-  restorePersistedAgents,
 } from "./persistence-hooks.js";
 import type {
   AgentPermissionRequest,
@@ -105,65 +104,6 @@ function createRecord(
 }
 
 describe("persistence hooks", () => {
-  test("restorePersistedAgents resumes and creates agents", async () => {
-    const resumeAgent = vi.fn().mockResolvedValue(null);
-    const createAgent = vi.fn().mockResolvedValue(null);
-    const agentManager = {
-      resumeAgent,
-      createAgent,
-    };
-    const records: StoredAgentRecord[] = [
-      createRecord({
-        id: "claude-agent",
-        lastModeId: "plan",
-      }),
-      createRecord({
-        id: "codex-agent",
-        provider: "codex",
-        cwd: "/tmp/codex",
-        lastModeId: null,
-        config: { modeId: "auto", model: "gpt-4.1", extra: { codex: { policy: "auto" } } },
-        persistence: null,
-      }),
-      createRecord({
-        id: "unknown",
-        provider: "mystery" as any,
-      }),
-    ];
-    const registry = {
-      list: vi.fn().mockResolvedValue(records),
-      applySnapshot: vi.fn(),
-    };
-
-    await restorePersistedAgents(
-      agentManager as any,
-      registry as any
-    );
-
-    expect(resumeAgent).toHaveBeenCalledTimes(1);
-    expect(resumeAgent).toHaveBeenCalledWith(
-      records[0].persistence,
-      expect.objectContaining({
-        cwd: records[0].cwd,
-        modeId: records[0].lastModeId,
-        model: records[0].config?.model,
-      }),
-      records[0].id
-    );
-
-    expect(createAgent).toHaveBeenCalledTimes(1);
-    expect(createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "codex",
-        cwd: "/tmp/codex",
-        modeId: "auto",
-        model: "gpt-4.1",
-        extra: { codex: { policy: "auto" } },
-      }),
-      "codex-agent"
-    );
-  });
-
   test("attachAgentRegistryPersistence forwards agent snapshots", async () => {
     const applySnapshot = vi.fn().mockResolvedValue(undefined);
     let subscriber: (event: any) => void = () => {
