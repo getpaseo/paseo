@@ -4,6 +4,12 @@ import { findSessionByName, killSession } from "./tmux.js";
 
 const TEST_SESSION = "test-terminal-manager";
 
+const ANSI_ESCAPE_REGEX = /\u001B[\[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_ESCAPE_REGEX, "");
+}
+
 describe("TerminalManager - Command Execution", () => {
   let manager: TerminalManager;
 
@@ -53,10 +59,12 @@ describe("TerminalManager - Command Execution", () => {
         5000
       );
 
+      const normalizedOutput = stripAnsi(result.output).toLowerCase();
+
       expect(result.isDead).toBe(true);
       expect(result.exitCode).not.toBe(0);
-      expect(result.output).toContain("cannot access");
-      expect(result.output).toContain("nonexistent-directory-test");
+      expect(normalizedOutput).toContain("nonexistent-directory-test");
+      expect(normalizedOutput).toMatch(/cannot access|no such file|not found/);
     });
 
     it("should handle directory changes in command", async () => {

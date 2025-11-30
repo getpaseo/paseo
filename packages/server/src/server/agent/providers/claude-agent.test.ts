@@ -13,6 +13,16 @@ import {
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
+const claudeIntegrationEnabled =
+  process.env.RUN_CLAUDE_AGENT_TESTS === "1" || Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
+const describeClaudeIntegration = claudeIntegrationEnabled ? describe : describe.skip;
+
+if (!claudeIntegrationEnabled) {
+  console.warn(
+    "Skipping ClaudeAgentClient integration tests. Set RUN_CLAUDE_AGENT_TESTS=1 and provide ANTHROPIC_API_KEY to enable them."
+  );
+}
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
@@ -62,7 +72,7 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   return inputCommand.includes("sleep 60");
 }
 
-describe("ClaudeAgentClient (SDK integration)", () => {
+describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
   test(
     "responds with text",
     async () => {
@@ -583,10 +593,9 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           editTool!,
           hydratedMap,
           (data) =>
-            Array.isArray((data.result as any)?.files) &&
-            ((data.result as any).files as Array<{ path?: string }>).some((entry) =>
-              (entry.path ?? "").includes("hydrate-proof.txt")
-            ),
+            (data.result as any)?.type === "file_write" &&
+            typeof (data.result as any)?.filePath === "string" &&
+            ((data.result as any).filePath as string).includes("hydrate-proof.txt"),
           ({ live, hydrated }) => {
             const liveDiff = JSON.stringify(live.result ?? {});
             const hydratedDiff = JSON.stringify(hydrated.result ?? {});
