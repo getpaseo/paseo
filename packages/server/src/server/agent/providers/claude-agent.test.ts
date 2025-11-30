@@ -72,7 +72,7 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   return inputCommand.includes("sleep 60");
 }
 
-describe("ClaudeAgentClient (SDK integration)", () => {
+describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
   test(
     "responds with text",
     async () => {
