@@ -73,6 +73,7 @@ type AgentMcpClientConfig = {
 
 const execAsync = promisify(exec);
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
+const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
 const KNOWN_AGENT_PROVIDERS: AgentProvider[] = ["claude", "codex"];
 const RESTART_EXIT_DELAY_MS = 250;
@@ -232,10 +233,6 @@ export class Session {
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
-  private pendingAgentInitializations: Map<
-    string,
-    Promise<ManagedAgent>
-  > = new Map();
 
   constructor(
     clientId: string,
@@ -582,7 +579,7 @@ export class Session {
       return existing;
     }
 
-    const inflight = this.pendingAgentInitializations.get(agentId);
+    const inflight = pendingAgentInitializations.get(agentId);
     if (inflight) {
       return inflight;
     }
@@ -610,12 +607,15 @@ export class Session {
       return this.agentManager.getAgent(agentId) ?? snapshot;
     })();
 
-    this.pendingAgentInitializations.set(agentId, initPromise);
+    pendingAgentInitializations.set(agentId, initPromise);
 
     try {
       return await initPromise;
     } finally {
-      this.pendingAgentInitializations.delete(agentId);
+      const current = pendingAgentInitializations.get(agentId);
+      if (current === initPromise) {
+        pendingAgentInitializations.delete(agentId);
+      }
     }
   }
 
