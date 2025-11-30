@@ -10,6 +10,12 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_REGEX, "");
 }
 
+function expectMissingPathMessage(output: string, missingPath: string): void {
+  const normalized = stripAnsi(output).toLowerCase();
+  expect(normalized).toContain(missingPath.toLowerCase());
+  expect(normalized).toMatch(/cannot access|no such file|not found/);
+}
+
 describe("TerminalManager - Command Execution", () => {
   let manager: TerminalManager;
 
@@ -59,12 +65,9 @@ describe("TerminalManager - Command Execution", () => {
         5000
       );
 
-      const normalizedOutput = stripAnsi(result.output).toLowerCase();
-
       expect(result.isDead).toBe(true);
       expect(result.exitCode).not.toBe(0);
-      expect(normalizedOutput).toContain("nonexistent-directory-test");
-      expect(normalizedOutput).toMatch(/cannot access|no such file|not found/);
+      expectMissingPathMessage(result.output, "nonexistent-directory-test");
     });
 
     it("should handle directory changes in command", async () => {
