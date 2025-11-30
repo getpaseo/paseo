@@ -247,14 +247,24 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           !item.displayName.startsWith("permission:")
       );
       const fileChangeEvent = toolCalls.find((item) => {
-        if (!item.output || typeof item.output !== "object") {
-          return false;
+        // Check for file changes in structured output.files array
+        if (item.output && typeof item.output === "object") {
+          const files = (item.output as Record<string, unknown>).files;
+          if (Array.isArray(files) && files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"))) {
+            return true;
+          }
         }
-        const files = (item.output as Record<string, unknown>).files;
-        if (!Array.isArray(files)) {
-          return false;
+        // Also check for file path in output structure (write/edit tools)
+        if (item.output && typeof item.output === "object") {
+          const output = item.output as Record<string, unknown>;
+          if (output.type === "file_write" || output.type === "file_edit") {
+            const filePath = output.filePath;
+            if (typeof filePath === "string" && filePath.includes("tool-test.txt")) {
+              return true;
+            }
+          }
         }
-        return files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"));
+        return false;
       });
 
       const sawPwdCommand = commandEvents.some(
