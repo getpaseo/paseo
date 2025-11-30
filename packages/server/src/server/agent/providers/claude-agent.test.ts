@@ -721,7 +721,6 @@ describe("convertClaudeHistoryEntry", () => {
       {
         type: "user_message",
         text: "Run npm test",
-        raw: entry.message,
       },
     ]);
   });
