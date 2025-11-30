@@ -17,12 +17,14 @@ export type { ManagedAgent };
 
 type ProjectionOptions = {
   title?: string | null;
+  createdAt?: string;
 };
 
 export function toStoredAgentRecord(
   agent: ManagedAgent,
   options?: ProjectionOptions
 ): StoredAgentRecord {
+  const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
   const config = buildSerializableConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
 
@@ -30,7 +32,7 @@ export function toStoredAgentRecord(
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
-    createdAt: agent.createdAt.toISOString(),
+    createdAt,
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt

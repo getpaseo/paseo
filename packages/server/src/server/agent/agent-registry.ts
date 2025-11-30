@@ -109,6 +109,7 @@ export class AgentRegistry {
     const existing = this.cache.get(agent.id);
     const record = toStoredAgentRecord(agent, {
       title: existing?.title ?? null,
+      createdAt: existing?.createdAt,
     });
     this.cache.set(agent.id, record);
     await this.flush();

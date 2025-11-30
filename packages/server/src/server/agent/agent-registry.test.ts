@@ -126,6 +126,30 @@ describe("AgentRegistry", () => {
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
   });
 
+  test("applySnapshot preserves original createdAt timestamp", async () => {
+    const agentId = "agent-created-at";
+    const firstTimestamp = new Date("2025-01-01T00:00:00.000Z");
+    await registry.applySnapshot(
+      createManagedAgent({ id: agentId, createdAt: firstTimestamp })
+    );
+
+    const initialRecord = await registry.get(agentId);
+    expect(initialRecord?.createdAt).toBe(firstTimestamp.toISOString());
+
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        createdAt: new Date("2025-02-01T00:00:00.000Z"),
+        updatedAt: new Date("2025-02-01T00:00:00.000Z"),
+        lifecycle: "running",
+      })
+    );
+
+    const updatedRecord = await registry.get(agentId);
+    expect(updatedRecord?.createdAt).toBe(firstTimestamp.toISOString());
+    expect(updatedRecord?.lastStatus).toBe("running");
+  });
+
   test("stores titles independently of snapshots", async () => {
     await registry.applySnapshot(
       createManagedAgent({
