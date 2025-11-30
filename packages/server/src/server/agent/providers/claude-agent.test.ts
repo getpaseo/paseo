@@ -13,6 +13,13 @@ import {
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
+const claudeIntegrationEnabled = Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
+const describeClaudeIntegration = claudeIntegrationEnabled ? describe : describe.skip;
+
+if (!claudeIntegrationEnabled) {
+  console.warn("Skipping ClaudeAgentClient integration tests because ANTHROPIC_API_KEY is not set.");
+}
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
@@ -62,7 +69,7 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   return inputCommand.includes("sleep 60");
 }
 
-describe("ClaudeAgentClient (SDK integration)", () => {
+describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
   test(
     "responds with text",
     async () => {
@@ -531,10 +538,10 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           (snapshot.data.displayName ?? "").toLowerCase().includes("pwd")
         );
         const editTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.raw, "hydrate-proof.txt")
+          rawContainsText(snapshot.data.result, "hydrate-proof.txt")
         );
         const readTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.raw, "HYDRATION_PROOF_LINE_TWO")
+          rawContainsText(snapshot.data.result, "HYDRATION_PROOF_LINE_TWO")
         );
 
         expect(commandTool).toBeTruthy();
@@ -571,11 +578,10 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           commandTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.raw, cwd) ||
             rawContainsText(data.result, cwd),
           ({ live, hydrated }) => {
-            expect(rawContainsText(live.raw, cwd)).toBe(true);
-            expect(rawContainsText(hydrated.raw, cwd)).toBe(true);
+            expect(rawContainsText(live.result, cwd)).toBe(true);
+            expect(rawContainsText(hydrated.result, cwd)).toBe(true);
             expect((live.displayName ?? "").toLowerCase()).toContain("pwd");
             expect((hydrated.displayName ?? "").toLowerCase()).toContain("pwd");
           }
@@ -589,8 +595,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
               (entry.path ?? "").includes("hydrate-proof.txt")
             ),
           ({ live, hydrated }) => {
-            const liveDiff = JSON.stringify(live.result ?? live.raw ?? {});
-            const hydratedDiff = JSON.stringify(hydrated.result ?? hydrated.raw ?? {});
+            const liveDiff = JSON.stringify(live.result ?? {});
+            const hydratedDiff = JSON.stringify(hydrated.result ?? {});
             expect(liveDiff).toContain("hydrate-proof.txt");
             expect(hydratedDiff).toContain("hydrate-proof.txt");
           }
@@ -599,11 +605,11 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           readTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_ONE") &&
-            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_TWO"),
+            rawContainsText(data.result, "HYDRATION_PROOF_LINE_ONE") &&
+            rawContainsText(data.result, "HYDRATION_PROOF_LINE_TWO"),
           ({ live, hydrated }) => {
-            const liveReads = JSON.stringify(live.raw ?? {});
-            const hydratedReads = JSON.stringify(hydrated.raw ?? {});
+            const liveReads = JSON.stringify(live.result ?? {});
+            const hydratedReads = JSON.stringify(hydrated.result ?? {});
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_TWO");
