@@ -9,7 +9,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type {
   AgentManager,
-  AgentSnapshot,
+  ManagedAgent,
   WaitForAgentResult,
 } from "./agent-manager.js";
 import {
@@ -19,6 +19,7 @@ import {
   AgentSnapshotPayloadSchema,
   serializeAgentSnapshot,
 } from "../messages.js";
+import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-manifest.js";
 import { AgentRegistry } from "./agent-registry.js";
@@ -90,7 +91,7 @@ async function resolveAgentTitle(
 
 async function serializeSnapshotWithMetadata(
   agentRegistry: AgentRegistry,
-  snapshot: AgentSnapshot
+  snapshot: ManagedAgent
 ) {
   const title = await resolveAgentTitle(agentRegistry, snapshot.id);
   return serializeAgentSnapshot(snapshot, { title });
@@ -232,7 +233,7 @@ export async function createAgentMcpServer(
         structuredContent: ensureValidJson({
           agentId: snapshot.id,
           type: provider,
-          status: snapshot.status,
+          status: snapshot.lifecycle,
           cwd: snapshot.cwd,
           currentModeId: snapshot.currentModeId,
           availableModes: snapshot.availableModes,
@@ -394,7 +395,7 @@ export async function createAgentMcpServer(
 
       const responseData = {
         success: true,
-        status: snapshot?.status ?? "idle",
+        status: snapshot?.lifecycle ?? "idle",
         lastMessage: null,
         permission: null,
       };
@@ -435,7 +436,7 @@ export async function createAgentMcpServer(
       return {
         content: [],
         structuredContent: ensureValidJson({
-          status: snapshot.status,
+          status: snapshot.lifecycle,
           snapshot: structuredSnapshot,
         }),
       };
@@ -616,13 +617,14 @@ export async function createAgentMcpServer(
       },
     },
     async () => {
-      const permissions = agentManager.listAgents().flatMap((agent) =>
-        agent.pendingPermissions.map((request) => ({
+      const permissions = agentManager.listAgents().flatMap((agent) => {
+        const payload = toAgentPayload(agent);
+        return payload.pendingPermissions.map((request) => ({
           agentId: agent.id,
-          status: agent.status,
+          status: payload.status,
           request,
-        }))
-      );
+        }));
+      });
 
       return {
         content: [],

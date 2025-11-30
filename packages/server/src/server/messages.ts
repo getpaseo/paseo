@@ -1,8 +1,9 @@
 import { z } from "zod";
 import {
   AGENT_LIFECYCLE_STATUSES,
-  type AgentSnapshot,
+  type ManagedAgent,
 } from "./agent/agent-manager.js";
+import { toAgentPayload } from "./agent/agent-projections.js";
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -15,16 +16,6 @@ import type {
   AgentTimelineItem,
   AgentUsage,
 } from "./agent/agent-sdk-types.js";
-
-export type AgentSnapshotPayload = Omit<
-  AgentSnapshot,
-  "createdAt" | "updatedAt" | "lastUserMessageAt"
-> & {
-  createdAt: string;
-  updatedAt: string;
-  lastUserMessageAt: string | null;
-  title: string | null;
-};
 
 const AGENT_PROVIDERS: [AgentProvider, AgentProvider] = ["claude", "codex"];
 const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
@@ -230,96 +221,17 @@ export const AgentSnapshotPayloadSchema = z.object({
   title: z.string().nullable(),
 });
 
-function sanitizeOptionalJson(value: unknown): unknown {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === null) {
-    return null;
-  }
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => sanitizeOptionalJson(item))
-      .filter((item) => item !== undefined);
-  }
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      const sanitized = sanitizeOptionalJson(val);
-      if (sanitized !== undefined) {
-        result[key] = sanitized;
-      }
-    }
-    return Object.keys(result).length ? result : undefined;
-  }
-  return value;
-}
-
-function sanitizeOptionalJsonValue<T>(value: T | undefined): T | undefined {
-  const sanitized = sanitizeOptionalJson(value);
-  return sanitized === undefined ? undefined : (sanitized as T);
-}
-
-function sanitizePersistenceHandle(
-  handle: AgentPersistenceHandle | null
-): AgentPersistenceHandle | null {
-  if (!handle) {
-    return null;
-  }
-  const sanitized: AgentPersistenceHandle = {
-    provider: handle.provider,
-    sessionId: handle.sessionId,
-  };
-  if (handle.nativeHandle !== undefined) {
-    sanitized.nativeHandle = handle.nativeHandle;
-  }
-  const metadata = sanitizeOptionalJsonValue(handle.metadata);
-  if (metadata !== undefined) {
-    sanitized.metadata = metadata;
-  }
-  return sanitized;
-}
+export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<
   typeof AgentStreamEventPayloadSchema
 >;
 
 export function serializeAgentSnapshot(
-  snapshot: AgentSnapshot,
+  agent: ManagedAgent,
   options?: { title?: string | null }
 ): AgentSnapshotPayload {
-  const payload: AgentSnapshotPayload = {
-    id: snapshot.id,
-    provider: snapshot.provider,
-    cwd: snapshot.cwd,
-    model: snapshot.model,
-    createdAt: snapshot.createdAt.toISOString(),
-    updatedAt: snapshot.updatedAt.toISOString(),
-    lastUserMessageAt: snapshot.lastUserMessageAt
-      ? snapshot.lastUserMessageAt.toISOString()
-      : null,
-    status: snapshot.status,
-    sessionId: snapshot.sessionId,
-    capabilities: snapshot.capabilities,
-    currentModeId: snapshot.currentModeId,
-    availableModes: snapshot.availableModes,
-    pendingPermissions: snapshot.pendingPermissions,
-    persistence: sanitizePersistenceHandle(snapshot.persistence),
-    title: options?.title ?? null,
-  };
-
-  const lastUsage = sanitizeOptionalJsonValue<AgentUsage>(snapshot.lastUsage);
-  if (lastUsage !== undefined) {
-    payload.lastUsage = lastUsage;
-  }
-  if (snapshot.lastError !== undefined) {
-    payload.lastError = snapshot.lastError;
-  }
-
-  return payload;
+  return toAgentPayload(agent, options);
 }
 
 export function serializeAgentStreamEvent(

@@ -12,7 +12,6 @@ import {
   OpenRouterProviderOptions,
 } from "@openrouter/ai-sdk-provider";
 import {
-  serializeAgentSnapshot,
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
   type SessionInboundMessage,
@@ -39,7 +38,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { fetchProviderModelCatalog } from "./agent/model-catalog.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import type { AgentSnapshot } from "./agent/agent-manager.js";
+import type { ManagedAgent } from "./agent/agent-manager.js";
+import { toAgentPayload } from "./agent/agent-projections.js";
 import type {
   AgentPermissionResponse,
   AgentPromptInput,
@@ -234,7 +234,7 @@ export class Session {
   private unsubscribeAgentEvents: (() => void) | null = null;
   private pendingAgentInitializations: Map<
     string,
-    Promise<AgentSnapshot>
+    Promise<ManagedAgent>
   > = new Map();
 
   constructor(
@@ -325,7 +325,7 @@ export class Session {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    if (snapshot.status !== "running") {
+    if (snapshot.lifecycle !== "running") {
       return;
     }
 
@@ -532,10 +532,10 @@ export class Session {
   }
 
   private async buildAgentPayload(
-    agent: AgentSnapshot
+    agent: ManagedAgent
   ): Promise<AgentSnapshotPayload> {
     const title = await this.getStoredAgentTitle(agent.id);
-    return serializeAgentSnapshot(agent, { title });
+    return toAgentPayload(agent, { title });
   }
 
   private buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload {
@@ -576,7 +576,7 @@ export class Session {
     };
   }
 
-  private async ensureAgentLoaded(agentId: string): Promise<AgentSnapshot> {
+  private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
     const existing = this.agentManager.getAgent(agentId);
     if (existing) {
       return existing;
@@ -594,7 +594,7 @@ export class Session {
       }
 
       const handle = toAgentPersistenceHandle(record.persistence);
-      let snapshot: AgentSnapshot;
+      let snapshot: ManagedAgent;
       if (handle) {
         snapshot = await this.agentManager.resumeAgent(
           handle,
@@ -619,7 +619,7 @@ export class Session {
     }
   }
 
-  private async forwardAgentState(agent: AgentSnapshot): Promise<void> {
+  private async forwardAgentState(agent: ManagedAgent): Promise<void> {
     try {
       const payload = await this.buildAgentPayload(agent);
       this.emit({
@@ -1189,7 +1189,7 @@ export class Session {
           payload: {
             status: "agent_initialized",
             agentId,
-            agentStatus: snapshot.status,
+            agentStatus: snapshot.lifecycle,
             requestId,
             timelineSize,
           },
@@ -1197,7 +1197,7 @@ export class Session {
       }
 
       console.log(
-        `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.status}`
+        `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.lifecycle}`
       );
     } catch (error: any) {
       console.error(
@@ -1370,7 +1370,7 @@ export class Session {
     );
 
     try {
-      let snapshot: AgentSnapshot;
+      let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
@@ -2048,7 +2048,7 @@ export class Session {
     }
   }
 
-  private emitAgentTimelineSnapshot(agent: AgentSnapshot): number {
+  private emitAgentTimelineSnapshot(agent: ManagedAgent): number {
     const timeline = this.agentManager.getTimeline(agent.id);
     const events = timeline.map((item) => ({
       event: serializeAgentStreamEvent({
