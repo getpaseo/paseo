@@ -55,7 +55,8 @@ describe("TerminalManager - Command Execution", () => {
 
       expect(result.isDead).toBe(true);
       expect(result.exitCode).not.toBe(0);
-      expect(result.output).toContain("No such file");
+      expect(result.output).toContain("cannot access");
+      expect(result.output).toContain("nonexistent-directory-test");
     });
 
     it("should handle directory changes in command", async () => {
