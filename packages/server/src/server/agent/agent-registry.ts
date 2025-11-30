@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { AgentStatusSchema } from "../messages.js";
-import type { AgentSnapshot } from "./agent-manager.js";
-import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
+import type { ManagedAgent } from "./agent-manager.js";
+import type { AgentSessionConfig } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -103,77 +104,13 @@ export class AgentRegistry {
     await this.flush();
   }
 
-  async recordConfig(
-    agentId: string,
-    provider: AgentProvider,
-    cwd: string,
-    config?: SerializableAgentConfig
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent): Promise<void> {
     await this.load();
-    const existing = this.cache.get(agentId);
-    if (!existing) {
-      console.warn(
-        `[AgentRegistry] Cannot record config for ${agentId} because no snapshot has been persisted yet`
-      );
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const sanitizedConfig = config ? sanitizeConfig(config) : existing.config;
-    const nextModeId =
-      config?.modeId ?? existing.lastModeId ?? sanitizedConfig?.modeId ?? null;
-
-    const updated: StoredAgentRecord = {
-      ...existing,
-      provider,
-      cwd,
-      updatedAt: now,
-      lastModeId: nextModeId,
-      config: sanitizedConfig,
-    };
-    this.cache.set(agentId, updated);
-    await this.flush();
-  }
-
-  async applySnapshot(snapshot: AgentSnapshot): Promise<void> {
-    await this.load();
-    const now = new Date().toISOString();
-    const existing = this.cache.get(snapshot.id);
-    if (!existing) {
-      const record: StoredAgentRecord = {
-        id: snapshot.id,
-      provider: snapshot.provider,
-      cwd: snapshot.cwd,
-      createdAt: now,
-      updatedAt: now,
-      lastActivityAt: snapshot.updatedAt.toISOString(),
-      lastUserMessageAt: snapshot.lastUserMessageAt
-        ? snapshot.lastUserMessageAt.toISOString()
-        : null,
-      title: null,
-      lastStatus: snapshot.status,
-      lastModeId: snapshot.currentModeId ?? null,
-      config: null,
-      persistence: snapshot.persistence ?? null,
-      };
-      this.cache.set(snapshot.id, record);
-      await this.flush();
-      return;
-    }
-    const updated: StoredAgentRecord = {
-      ...existing,
-      provider: snapshot.provider,
-      cwd: snapshot.cwd,
-      updatedAt: now,
-      lastActivityAt: snapshot.updatedAt.toISOString(),
-      lastUserMessageAt: snapshot.lastUserMessageAt
-        ? snapshot.lastUserMessageAt.toISOString()
-        : existing.lastUserMessageAt ?? null,
-      lastStatus: snapshot.status,
-      lastModeId: snapshot.currentModeId ?? null,
-      persistence: snapshot.persistence ?? existing.persistence ?? null,
-    };
-    this.cache.set(snapshot.id, updated);
+    const existing = this.cache.get(agent.id);
+    const record = toStoredAgentRecord(agent, {
+      title: existing?.title ?? null,
+    });
+    this.cache.set(agent.id, record);
     await this.flush();
   }
 
@@ -248,19 +185,6 @@ export class AgentRegistry {
       return null;
     }
   }
-}
-
-function sanitizeConfig(
-  config: SerializableAgentConfig | undefined
-): SerializableAgentConfig | undefined {
-  if (!config) {
-    return undefined;
-  }
-  const cleaned: SerializableAgentConfig = {};
-  if (config.modeId) cleaned.modeId = config.modeId;
-  if (config.model) cleaned.model = config.model;
-  if (config.extra) cleaned.extra = JSON.parse(JSON.stringify(config.extra));
-  return cleaned;
 }
 
 function resolveServerPackageRoot(): string {

@@ -1237,24 +1237,6 @@ export class Session {
       );
       const snapshot = await this.agentManager.createAgent(sessionConfig);
       this.setCachedTitle(snapshot.id, null);
-      try {
-        await this.agentRegistry.recordConfig(
-          snapshot.id,
-          snapshot.provider,
-          snapshot.cwd,
-          {
-            modeId: sessionConfig.modeId,
-            model: sessionConfig.model,
-            extra: sessionConfig.extra,
-          }
-        );
-      } catch (registryError) {
-        console.error(
-          `[Session ${this.clientId}] Failed to record agent config for ${snapshot.id}:`,
-          registryError
-        );
-      }
-
       await this.forwardAgentState(snapshot);
 
       const trimmedPrompt = initialPrompt?.trim();
