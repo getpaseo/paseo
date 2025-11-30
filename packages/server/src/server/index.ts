@@ -11,11 +11,9 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
 import { CodexAgentClient } from "./agent/providers/codex-agent.js";
+import { resolvePaseoPort } from "./config.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
-import {
-  attachAgentRegistryPersistence,
-  restorePersistedAgents,
-} from "./persistence-hooks.js";
+import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -76,7 +74,7 @@ function createServer() {
 }
 
 async function main() {
-  const port = parseInt(process.env.PORT || "6767", 10);
+  const port = resolvePaseoPort();
   const agentMcpRoute = "/mcp/agents";
   const agentMcpUrl = `http://127.0.0.1:${port}${agentMcpRoute}`;
   const [agentMcpUser, agentMcpPassword] =
@@ -108,17 +106,22 @@ async function main() {
   });
 
   attachAgentRegistryPersistence(agentManager, agentRegistry);
+  const persistedRecords = await agentRegistry.list();
+  console.log(
+    `✓ Agent registry loaded (${persistedRecords.length} record${
+      persistedRecords.length === 1 ? "" : "s"
+    }); agents will initialize on demand`
+  );
 
-  await restorePersistedAgents(agentManager, agentRegistry);
-  console.log("✓ Global agent manager initialized with persisted agents");
-
-  const agentMcpServer = await createAgentMcpServer({
-    agentManager,
-    agentRegistry,
-  });
   const agentMcpTransports: AgentMcpTransportMap = new Map();
 
   const createAgentMcpTransport = async () => {
+    // Create a NEW McpServer instance per session (not shared across sessions)
+    const agentMcpServer = await createAgentMcpServer({
+      agentManager,
+      agentRegistry,
+    });
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sessionId) => {
@@ -140,7 +143,9 @@ async function main() {
     transport.onerror = (error) => {
       console.error("[Agent MCP] Transport error:", error);
     };
+
     await agentMcpServer.connect(transport);
+
     return transport;
   };
 

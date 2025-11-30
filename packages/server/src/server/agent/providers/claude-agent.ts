@@ -38,6 +38,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import { resolvePaseoPort } from "../../config.js";
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -92,7 +93,7 @@ type ClaudeAgentSessionOptions = {
 };
 
 const DEFAULT_AGENT_CONTROL_MCP: AgentControlMcpConfig = {
-  url: "http://127.0.0.1:6767/mcp/agents",
+  url: `http://127.0.0.1:${resolvePaseoPort()}/mcp/agents`,
   headers: {
     Authorization: "Basic bW86Ym8=",
   },
@@ -491,6 +492,9 @@ class ClaudeAgentSession implements AgentSession {
       permissionMode: this.currentMode,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
+      stderr: (data: string) => {
+        console.error("[ClaudeAgentSDK]", data.trim());
+      },
       ...this.config.extra?.claude,
     };
 

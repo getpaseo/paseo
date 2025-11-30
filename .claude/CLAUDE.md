@@ -14,6 +14,17 @@ This is an npm workspace monorepo:
 - **packages/server**: Backend server (Express + WebSocket API)
 - **packages/app**: Cross-platform app (Expo - iOS, Android, Web)
 
+## Environment overrides
+
+- `PASEO_HOME` – path for runtime state such as `agents.json`. Defaults to `~/.paseo`; set this to a unique directory (e.g., `~/.paseo-blue`) when running a secondary server instance.
+- `PASEO_PORT` – preferred voice server + MCP port. Overrides `PORT` and defaults to `6767`. Use distinct ports (e.g., `7777`) for blue/green testing.
+
+Example blue/green launch:
+
+```
+PASEO_HOME=~/.paseo-blue PASEO_PORT=7777 npm run dev
+```
+
 ## Running and checking logs
 
 We run the mobile app and server in the tmux session `voice-dev`:

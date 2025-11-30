@@ -13,6 +13,16 @@ import {
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
+const claudeIntegrationEnabled =
+  process.env.RUN_CLAUDE_AGENT_TESTS === "1" || Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
+const describeClaudeIntegration = claudeIntegrationEnabled ? describe : describe.skip;
+
+if (!claudeIntegrationEnabled) {
+  console.warn(
+    "Skipping ClaudeAgentClient integration tests. Set RUN_CLAUDE_AGENT_TESTS=1 and provide ANTHROPIC_API_KEY to enable them."
+  );
+}
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
@@ -62,7 +72,7 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   return inputCommand.includes("sleep 60");
 }
 
-describe("ClaudeAgentClient (SDK integration)", () => {
+describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
   test(
     "responds with text",
     async () => {
@@ -247,14 +257,24 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           !item.displayName.startsWith("permission:")
       );
       const fileChangeEvent = toolCalls.find((item) => {
-        if (!item.output || typeof item.output !== "object") {
-          return false;
+        // Check for file changes in structured output.files array
+        if (item.output && typeof item.output === "object") {
+          const files = (item.output as Record<string, unknown>).files;
+          if (Array.isArray(files) && files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"))) {
+            return true;
+          }
         }
-        const files = (item.output as Record<string, unknown>).files;
-        if (!Array.isArray(files)) {
-          return false;
+        // Also check for file path in output structure (write/edit tools)
+        if (item.output && typeof item.output === "object") {
+          const output = item.output as Record<string, unknown>;
+          if (output.type === "file_write" || output.type === "file_edit") {
+            const filePath = output.filePath;
+            if (typeof filePath === "string" && filePath.includes("tool-test.txt")) {
+              return true;
+            }
+          }
         }
-        return files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"));
+        return false;
       });
 
       const sawPwdCommand = commandEvents.some(
@@ -521,10 +541,10 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           (snapshot.data.displayName ?? "").toLowerCase().includes("pwd")
         );
         const editTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.raw, "hydrate-proof.txt")
+          rawContainsText(snapshot.data.result, "hydrate-proof.txt")
         );
         const readTool = liveSnapshots.find((snapshot) =>
-          rawContainsText(snapshot.data.raw, "HYDRATION_PROOF_LINE_TWO")
+          rawContainsText(snapshot.data.result, "HYDRATION_PROOF_LINE_TWO")
         );
 
         expect(commandTool).toBeTruthy();
@@ -561,11 +581,10 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           commandTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.raw, cwd) ||
             rawContainsText(data.result, cwd),
           ({ live, hydrated }) => {
-            expect(rawContainsText(live.raw, cwd)).toBe(true);
-            expect(rawContainsText(hydrated.raw, cwd)).toBe(true);
+            expect(rawContainsText(live.result, cwd)).toBe(true);
+            expect(rawContainsText(hydrated.result, cwd)).toBe(true);
             expect((live.displayName ?? "").toLowerCase()).toContain("pwd");
             expect((hydrated.displayName ?? "").toLowerCase()).toContain("pwd");
           }
@@ -574,13 +593,12 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           editTool!,
           hydratedMap,
           (data) =>
-            Array.isArray((data.result as any)?.files) &&
-            ((data.result as any).files as Array<{ path?: string }>).some((entry) =>
-              (entry.path ?? "").includes("hydrate-proof.txt")
-            ),
+            (data.result as any)?.type === "file_write" &&
+            typeof (data.result as any)?.filePath === "string" &&
+            ((data.result as any).filePath as string).includes("hydrate-proof.txt"),
           ({ live, hydrated }) => {
-            const liveDiff = JSON.stringify(live.result ?? live.raw ?? {});
-            const hydratedDiff = JSON.stringify(hydrated.result ?? hydrated.raw ?? {});
+            const liveDiff = JSON.stringify(live.result ?? {});
+            const hydratedDiff = JSON.stringify(hydrated.result ?? {});
             expect(liveDiff).toContain("hydrate-proof.txt");
             expect(hydratedDiff).toContain("hydrate-proof.txt");
           }
@@ -589,11 +607,11 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           readTool!,
           hydratedMap,
           (data) =>
-            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_ONE") &&
-            rawContainsText(data.raw, "HYDRATION_PROOF_LINE_TWO"),
+            rawContainsText(data.result, "HYDRATION_PROOF_LINE_ONE") &&
+            rawContainsText(data.result, "HYDRATION_PROOF_LINE_TWO"),
           ({ live, hydrated }) => {
-            const liveReads = JSON.stringify(live.raw ?? {});
-            const hydratedReads = JSON.stringify(hydrated.raw ?? {});
+            const liveReads = JSON.stringify(live.result ?? {});
+            const hydratedReads = JSON.stringify(hydrated.result ?? {});
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(hydratedReads).toContain("HYDRATION_PROOF_LINE_ONE");
             expect(liveReads).toContain("HYDRATION_PROOF_LINE_TWO");
@@ -721,7 +739,6 @@ describe("convertClaudeHistoryEntry", () => {
       {
         type: "user_message",
         text: "Run npm test",
-        raw: entry.message,
       },
     ]);
   });

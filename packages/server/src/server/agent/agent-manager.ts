@@ -22,34 +22,19 @@ import type {
 } from "./agent-sdk-types.js";
 import { resolveAgentModel } from "./model-resolver.js";
 
-export type AgentLifecycleStatus =
-  | "initializing"
-  | "idle"
-  | "running"
-  | "error"
-  | "closed";
+export const AGENT_LIFECYCLE_STATUSES = [
+  "initializing",
+  "idle",
+  "running",
+  "error",
+  "closed",
+] as const;
 
-export type AgentSnapshot = {
-  id: string;
-  provider: AgentProvider;
-  cwd: string;
-  model: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  lastUserMessageAt: Date | null;
-  status: AgentLifecycleStatus;
-  sessionId: string | null;
-  capabilities: AgentCapabilityFlags;
-  currentModeId: string | null;
-  availableModes: AgentMode[];
-  pendingPermissions: AgentPermissionRequest[];
-  persistence: AgentPersistenceHandle | null;
-  lastUsage?: AgentUsage;
-  lastError?: string;
-};
+export type AgentLifecycleStatus =
+  (typeof AGENT_LIFECYCLE_STATUSES)[number];
 
 export type AgentManagerEvent =
-  | { type: "agent_state"; agent: AgentSnapshot }
+  | { type: "agent_state"; agent: ManagedAgent }
   | { type: "agent_stream"; agentId: string; event: AgentStreamEvent };
 
 export type AgentSubscriber = (event: AgentManagerEvent) => void;
@@ -76,30 +61,72 @@ export type WaitForAgentOptions = {
 export type WaitForAgentResult = {
   status: AgentLifecycleStatus;
   permission: AgentPermissionRequest | null;
+  lastMessage: string | null;
 };
 
-type ManagedAgent = {
+type ManagedAgentBase = {
   id: string;
   provider: AgentProvider;
   cwd: string;
-  session: AgentSession;
-  sessionId: string | null;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
-  status: AgentLifecycleStatus;
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
-  pendingRun: AsyncGenerator<AgentStreamEvent> | null;
   timeline: AgentTimelineItem[];
   persistence: AgentPersistenceHandle | null;
-  lastUsage?: AgentUsage;
-  lastError?: string;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
+  sessionId: string | null;
+  lastUsage?: AgentUsage;
+  lastError?: string;
 };
+
+type ManagedAgentWithSession = ManagedAgentBase & {
+  session: AgentSession;
+};
+
+type ManagedAgentInitializing = ManagedAgentWithSession & {
+  lifecycle: "initializing";
+  pendingRun: null;
+};
+
+type ManagedAgentIdle = ManagedAgentWithSession & {
+  lifecycle: "idle";
+  pendingRun: null;
+};
+
+type ManagedAgentRunning = ManagedAgentWithSession & {
+  lifecycle: "running";
+  pendingRun: AsyncGenerator<AgentStreamEvent>;
+};
+
+type ManagedAgentError = ManagedAgentWithSession & {
+  lifecycle: "error";
+  pendingRun: null;
+  lastError: string;
+};
+
+type ManagedAgentClosed = ManagedAgentBase & {
+  lifecycle: "closed";
+  session: null;
+  pendingRun: null;
+};
+
+export type ManagedAgent =
+  | ManagedAgentInitializing
+  | ManagedAgentIdle
+  | ManagedAgentRunning
+  | ManagedAgentError
+  | ManagedAgentClosed;
+
+type ActiveManagedAgent =
+  | ManagedAgentInitializing
+  | ManagedAgentIdle
+  | ManagedAgentRunning
+  | ManagedAgentError;
 
 type SubscriptionRecord = {
   callback: AgentSubscriber;
@@ -111,6 +138,23 @@ const BUSY_STATUSES: AgentLifecycleStatus[] = [
   "initializing",
   "running",
 ];
+
+const READ_ONLY_AGENT_ERROR_MESSAGE =
+  "ManagedAgent views returned by AgentManager are read-only";
+
+class ReadonlyPendingPermissionsMap<K, V> extends Map<K, V> {
+  override set(): this {
+    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
+  }
+
+  override delete(): boolean {
+    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
+  }
+
+  override clear(): void {
+    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
+  }
+}
 
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.includes(status);
@@ -132,7 +176,7 @@ function createAbortError(
 
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
-  private readonly agents = new Map<string, ManagedAgent>();
+  private readonly agents = new Map<string, ActiveManagedAgent>();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly maxTimelineItems: number;
   private readonly idFactory: () => string;
@@ -165,11 +209,17 @@ export class AgentManager {
       if (record.agentId) {
         const agent = this.agents.get(record.agentId);
         if (agent) {
-          callback({ type: "agent_state", agent: this.toSnapshot(agent) });
+          callback({
+            type: "agent_state",
+            agent: this.createAgentView(agent),
+          });
         }
       } else {
         for (const agent of this.agents.values()) {
-          callback({ type: "agent_state", agent: this.toSnapshot(agent) });
+          callback({
+            type: "agent_state",
+            agent: this.createAgentView(agent),
+          });
         }
       }
     }
@@ -179,9 +229,9 @@ export class AgentManager {
     };
   }
 
-  listAgents(): AgentSnapshot[] {
+  listAgents(): ManagedAgent[] {
     return Array.from(this.agents.values()).map((agent) =>
-      this.toSnapshot(agent)
+      this.createAgentView(agent)
     );
   }
 
@@ -223,9 +273,9 @@ export class AgentManager {
       .slice(0, limit);
   }
 
-  getAgent(id: string): AgentSnapshot | null {
+  getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
-    return agent ? this.toSnapshot(agent) : null;
+    return agent ? this.createAgentView(agent) : null;
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
@@ -236,7 +286,7 @@ export class AgentManager {
   async createAgent(
     config: AgentSessionConfig,
     agentId?: string
-  ): Promise<AgentSnapshot> {
+  ): Promise<ManagedAgent> {
     const normalizedConfig = await this.normalizeConfig(config);
     const client = this.requireClient(normalizedConfig.provider);
     const session = await client.createSession(normalizedConfig);
@@ -251,7 +301,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string
-  ): Promise<AgentSnapshot> {
+  ): Promise<ManagedAgent> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const mergedConfig = {
       ...metadata,
@@ -272,7 +322,7 @@ export class AgentManager {
     );
   }
 
-  async refreshAgentFromPersistence(agentId: string): Promise<AgentSnapshot> {
+  async refreshAgentFromPersistence(agentId: string): Promise<ManagedAgent> {
     const existing = this.requireAgent(agentId);
     const handle = existing.persistence;
     if (!handle) {
@@ -306,9 +356,16 @@ export class AgentManager {
   async closeAgent(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.agents.delete(agentId);
-    agent.status = "closed";
-    await agent.session.close();
-    this.emitState(agent);
+    const session = agent.session;
+    const closedAgent: ManagedAgent = {
+      ...agent,
+      lifecycle: "closed",
+      session: null,
+      pendingRun: null,
+      sessionId: agent.sessionId,
+    };
+    await session.close();
+    this.emitState(closedAgent);
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
@@ -377,16 +434,14 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
-    const agent = this.requireAgent(agentId);
-    if (agent.status === "closed") {
-      throw new Error(`Agent ${agentId} is closed`);
-    }
-    if (agent.pendingRun) {
+    const existingAgent = this.requireAgent(agentId);
+    if (existingAgent.pendingRun) {
       throw new Error(`Agent ${agentId} already has an active run`);
     }
 
+    const agent = existingAgent as ActiveManagedAgent;
     const iterator = agent.session.stream(prompt, options);
-    agent.status = "running";
+    agent.lifecycle = "running";
     agent.pendingRun = iterator;
     agent.lastError = undefined;
     this.emitState(agent);
@@ -405,11 +460,12 @@ export class AgentManager {
         return;
       }
 
-      agent.pendingRun = null;
-      agent.status = error ? "error" : "idle";
-      agent.lastError = error;
-      agent.persistence = agent.session.describePersistence();
-      this.emitState(agent);
+      const mutableAgent = agent as ActiveManagedAgent;
+      mutableAgent.pendingRun = null;
+      mutableAgent.lifecycle = error ? "error" : "idle";
+      mutableAgent.lastError = error;
+      mutableAgent.persistence = mutableAgent.session.describePersistence();
+      this.emitState(mutableAgent);
     };
 
     const self = this;
@@ -486,9 +542,40 @@ export class AgentManager {
     return Array.from(agent.pendingPermissions.values());
   }
 
+  private peekPendingPermission(agent: ManagedAgent): AgentPermissionRequest | null {
+    const iterator = agent.pendingPermissions.values().next();
+    return iterator.done ? null : iterator.value;
+  }
+
   async primeAgentHistory(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     await this.primeHistory(agent);
+  }
+
+  private getLastAssistantMessage(agentId: string): string | null {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      return null;
+    }
+
+    // Collect the last contiguous assistant messages (Claude streams chunks)
+    const chunks: string[] = [];
+    for (let i = agent.timeline.length - 1; i >= 0; i--) {
+      const item = agent.timeline[i];
+      if (item.type !== "assistant_message") {
+        if (chunks.length) {
+          break;
+        }
+        continue;
+      }
+      chunks.push(item.text);
+    }
+
+    if (!chunks.length) {
+      return null;
+    }
+
+    return chunks.reverse().join("");
   }
 
   async waitForAgentEvent(
@@ -500,93 +587,103 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    const immediatePermission = snapshot.pendingPermissions[0] ?? null;
+
+    const immediatePermission = this.peekPendingPermission(snapshot);
     if (immediatePermission) {
-      return { status: snapshot.status, permission: immediatePermission };
+      return {
+        status: snapshot.lifecycle,
+        permission: immediatePermission,
+        lastMessage: this.getLastAssistantMessage(agentId)
+      };
     }
 
-    if (!isAgentBusy(snapshot.status)) {
-      return { status: snapshot.status, permission: null };
+    if (!isAgentBusy(snapshot.lifecycle)) {
+      return {
+        status: snapshot.lifecycle,
+        permission: null,
+        lastMessage: this.getLastAssistantMessage(agentId)
+      };
     }
 
     if (options?.signal?.aborted) {
       throw createAbortError(options.signal, "wait_for_agent aborted");
     }
 
+
     return await new Promise<WaitForAgentResult>((resolve, reject) => {
-      let currentStatus: AgentLifecycleStatus = snapshot.status;
-      const cleanupFns: Array<() => void> = [];
+      // Bug #1 Fix: Check abort signal AGAIN inside Promise constructor
+      // to avoid race condition between pre-Promise check and abort listener registration
+      if (options?.signal?.aborted) {
+        reject(createAbortError(options.signal, "wait_for_agent aborted"));
+        return;
+      }
+
+      let currentStatus: AgentLifecycleStatus = snapshot.lifecycle;
+
+      // Bug #3 Fix: Declare unsubscribe and abortHandler upfront so cleanup can reference them
+      let unsubscribe: (() => void) | null = null;
+      let abortHandler: (() => void) | null = null;
 
       const cleanup = () => {
-        while (cleanupFns.length) {
-          const fn = cleanupFns.pop();
+        // Clean up subscription
+        if (unsubscribe) {
           try {
-            fn?.();
+            unsubscribe();
           } catch {
             // ignore cleanup errors
           }
+          unsubscribe = null;
+        }
+
+        // Clean up abort listener
+        if (abortHandler && options?.signal) {
+          try {
+            options.signal.removeEventListener("abort", abortHandler);
+          } catch {
+            // ignore cleanup errors
+          }
+          abortHandler = null;
         }
       };
 
       const finish = (permission: AgentPermissionRequest | null) => {
         cleanup();
-        resolve({ status: currentStatus, permission });
+        resolve({
+          status: currentStatus,
+          permission,
+          lastMessage: this.getLastAssistantMessage(agentId)
+        });
       };
 
-      const unsubscribe = this.subscribe(
+      // Bug #3 Fix: Set up abort handler BEFORE subscription
+      // to ensure cleanup handlers exist before callback can fire
+      if (options?.signal) {
+        abortHandler = () => {
+          cleanup();
+          reject(createAbortError(options.signal, "wait_for_agent aborted"));
+        };
+        options.signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      // Bug #3 Fix: Now subscribe with cleanup handlers already in place
+      // This prevents race condition if callback fires synchronously with replayState: true
+      unsubscribe = this.subscribe(
         (event) => {
+          // Bug #2 Fix: Only handle agent_state events, remove redundant agent_stream handling
           if (event.type === "agent_state") {
-            currentStatus = event.agent.status;
-            const pending = event.agent.pendingPermissions[0] ?? null;
+            currentStatus = event.agent.lifecycle;
+            const pending = this.peekPendingPermission(event.agent);
             if (pending) {
               finish(pending);
               return;
             }
-            if (!isAgentBusy(event.agent.status)) {
+            if (!isAgentBusy(event.agent.lifecycle)) {
               finish(null);
             }
-            return;
-          }
-
-          if (event.type !== "agent_stream") {
-            return;
-          }
-
-          switch (event.event.type) {
-            case "permission_requested": {
-              currentStatus = "running";
-              finish(event.event.request);
-              break;
-            }
-            case "turn_completed": {
-              currentStatus = "idle";
-              finish(null);
-              break;
-            }
-            case "turn_failed": {
-              currentStatus = "error";
-              finish(null);
-              break;
-            }
-            default:
-              break;
           }
         },
         { agentId, replayState: true }
       );
-      cleanupFns.push(unsubscribe);
-
-      if (options?.signal) {
-        const abortHandler = () => {
-          cleanup();
-          reject(createAbortError(options.signal, "wait_for_agent aborted"));
-        };
-
-        options.signal.addEventListener("abort", abortHandler, { once: true });
-        cleanupFns.push(() =>
-          options.signal?.removeEventListener("abort", abortHandler)
-        );
-      }
     });
   }
 
@@ -594,12 +691,12 @@ export class AgentManager {
     session: AgentSession,
     config: AgentSessionConfig,
     agentId: string
-  ): Promise<AgentSnapshot> {
+  ): Promise<ManagedAgent> {
     if (this.agents.has(agentId)) {
       throw new Error(`Agent with id ${agentId} already exists`);
     }
 
-    const managed: ManagedAgent = {
+    const managed = {
       id: agentId,
       provider: config.provider,
       cwd: config.cwd,
@@ -607,7 +704,7 @@ export class AgentManager {
       sessionId: session.id,
       capabilities: session.capabilities,
       config,
-      status: "initializing",
+      lifecycle: "initializing",
       createdAt: new Date(),
       updatedAt: new Date(),
       availableModes: [],
@@ -618,18 +715,18 @@ export class AgentManager {
       persistence: session.describePersistence(),
       historyPrimed: false,
       lastUserMessageAt: null,
-    };
+    } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
     this.emitState(managed);
 
     await this.refreshSessionState(managed);
-    managed.status = "idle";
+    managed.lifecycle = "idle";
     this.emitState(managed);
-    return this.toSnapshot(managed);
+    return this.createAgentView(managed);
   }
 
-  private async refreshSessionState(agent: ManagedAgent): Promise<void> {
+  private async refreshSessionState(agent: ActiveManagedAgent): Promise<void> {
     try {
       const modes = await agent.session.getAvailableModes();
       agent.availableModes = modes;
@@ -653,7 +750,7 @@ export class AgentManager {
     }
   }
 
-  private async primeHistory(agent: ManagedAgent): Promise<void> {
+  private async primeHistory(agent: ActiveManagedAgent): Promise<void> {
     if (agent.historyPrimed) {
       return;
     }
@@ -668,7 +765,7 @@ export class AgentManager {
   }
 
   private handleStreamEvent(
-    agent: ManagedAgent,
+    agent: ActiveManagedAgent,
     event: AgentStreamEvent,
     options?: { fromHistory?: boolean }
   ): void {
@@ -722,7 +819,10 @@ export class AgentManager {
   }
 
   private emitState(agent: ManagedAgent): void {
-    this.dispatch({ type: "agent_state", agent: this.toSnapshot(agent) });
+    this.dispatch({
+      type: "agent_state",
+      agent: this.createAgentView(agent),
+    });
   }
 
   private dispatchStream(agentId: string, event: AgentStreamEvent): void {
@@ -749,25 +849,156 @@ export class AgentManager {
     }
   }
 
-  private toSnapshot(agent: ManagedAgent): AgentSnapshot {
+  private createAgentView(agent: ManagedAgent): ManagedAgent {
+    const clone = this.cloneAgent(agent);
+    clone.pendingPermissions = this.createReadonlyPendingPermissionsMap(
+      clone.pendingPermissions
+    );
+
+    this.deepFreezeValue(clone.availableModes);
+    this.deepFreezeValue(clone.timeline);
+    this.deepFreezeValue(clone.capabilities);
+    this.deepFreezeValue(clone.config);
+    if (clone.persistence) {
+      this.deepFreezeValue(clone.persistence);
+    }
+    if (clone.lastUsage) {
+      this.deepFreezeValue(clone.lastUsage);
+    }
+    if (clone.lastUserMessageAt) {
+      Object.freeze(clone.lastUserMessageAt);
+    }
+    Object.freeze(clone.createdAt);
+    Object.freeze(clone.updatedAt);
+
+    return Object.freeze(clone) as ManagedAgent;
+  }
+
+  private cloneAgent(agent: ManagedAgent): ManagedAgent {
     return {
-      id: agent.id,
-      provider: agent.provider,
-      cwd: agent.cwd,
-      model: agent.config.model ?? null,
-      createdAt: agent.createdAt,
-      updatedAt: agent.updatedAt,
-      lastUserMessageAt: agent.lastUserMessageAt,
-      status: agent.status,
-      sessionId: agent.sessionId,
-      capabilities: agent.capabilities,
-      currentModeId: agent.currentModeId,
-      availableModes: agent.availableModes,
-      pendingPermissions: Array.from(agent.pendingPermissions.values()),
-      persistence: agent.persistence,
-      lastUsage: agent.lastUsage,
-      lastError: agent.lastError,
-    };
+      ...agent,
+      createdAt: new Date(agent.createdAt.getTime()),
+      updatedAt: new Date(agent.updatedAt.getTime()),
+      lastUserMessageAt: agent.lastUserMessageAt
+        ? new Date(agent.lastUserMessageAt.getTime())
+        : null,
+      pendingPermissions: new Map(
+        Array.from(agent.pendingPermissions.entries()).map(
+          ([key, value]) => [key, this.cloneValue(value)]
+        )
+      ),
+      availableModes: this.cloneValue(agent.availableModes),
+      timeline: this.cloneValue(agent.timeline),
+      capabilities: this.cloneValue(agent.capabilities),
+      config: this.cloneValue(agent.config),
+      persistence: agent.persistence
+        ? this.cloneValue(agent.persistence)
+        : agent.persistence,
+      lastUsage: agent.lastUsage ? this.cloneValue(agent.lastUsage) : undefined,
+    } as ManagedAgent;
+  }
+
+  private createReadonlyPendingPermissionsMap(
+    source: Map<string, AgentPermissionRequest>
+  ): Map<string, AgentPermissionRequest> {
+    const readonlyMap = new ReadonlyPendingPermissionsMap(source);
+    for (const request of readonlyMap.values()) {
+      this.deepFreezeValue(request);
+    }
+    return Object.freeze(readonlyMap) as Map<string, AgentPermissionRequest>;
+  }
+
+  private cloneValue<T>(value: T): T {
+    if (value === null || typeof value !== "object") {
+      return value;
+    }
+    if (value instanceof Date) {
+      return new Date(value.getTime()) as T;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => this.cloneValue(item)) as T;
+    }
+    if (value instanceof Map) {
+      const clone = new Map();
+      for (const [key, entryValue] of value.entries()) {
+        clone.set(this.cloneValue(key), this.cloneValue(entryValue));
+      }
+      return clone as T;
+    }
+    if (value instanceof Set) {
+      const clone = new Set();
+      for (const entryValue of value.values()) {
+        clone.add(this.cloneValue(entryValue));
+      }
+      return clone as T;
+    }
+    if (!this.isPlainObject(value)) {
+      return value;
+    }
+    const clonedObject: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value)) {
+      clonedObject[key] = this.cloneValue(entryValue);
+    }
+    return clonedObject as T;
+  }
+
+  private deepFreezeValue<T>(value: T, seen = new WeakSet<object>()): T {
+    if (value === null || typeof value !== "object") {
+      return value;
+    }
+    if (value instanceof Date) {
+      Object.freeze(value);
+      return value;
+    }
+
+    const objectValue = value as object;
+    if (seen.has(objectValue)) {
+      return value;
+    }
+    seen.add(objectValue);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        this.deepFreezeValue(item, seen);
+      }
+      Object.freeze(value);
+      return value;
+    }
+
+    if (value instanceof Map) {
+      for (const mapValue of value.values()) {
+        this.deepFreezeValue(mapValue, seen);
+      }
+      Object.freeze(value);
+      return value;
+    }
+
+    if (value instanceof Set) {
+      for (const setValue of value.values()) {
+        this.deepFreezeValue(setValue, seen);
+      }
+      Object.freeze(value);
+      return value;
+    }
+
+    if (!this.isPlainObject(value)) {
+      return value;
+    }
+
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      this.deepFreezeValue(record[key], seen);
+    }
+    Object.freeze(record);
+    return value;
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (value === null || typeof value !== "object") {
+      return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
   }
 
   private async normalizeConfig(
@@ -804,7 +1035,7 @@ export class AgentManager {
     return client;
   }
 
-  private requireAgent(id: string): ManagedAgent {
+  private requireAgent(id: string): ActiveManagedAgent {
     const agent = this.agents.get(id);
     if (!agent) {
       throw new Error(`Unknown agent '${id}'`);

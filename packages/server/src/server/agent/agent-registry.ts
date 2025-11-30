@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-import type { AgentSnapshot } from "./agent-manager.js";
-import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
+import { AgentStatusSchema } from "../messages.js";
+import { resolvePaseoHome } from "../config.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
+import type { ManagedAgent } from "./agent-manager.js";
+import type { AgentSessionConfig } from "./agent-sdk-types.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -36,7 +37,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
-  lastStatus: z.string().nullable().optional(),
+  lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
   persistence: PERSISTENCE_HANDLE_SCHEMA,
@@ -55,8 +56,7 @@ export class AgentRegistry {
   private filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath =
-      filePath ?? path.join(resolveServerPackageRoot(), "agents.json");
+    this.filePath = filePath ?? path.join(resolvePaseoHome(), "agents.json");
   }
 
   async load(): Promise<StoredAgentRecord[]> {
@@ -102,78 +102,14 @@ export class AgentRegistry {
     await this.flush();
   }
 
-  async recordConfig(
-    agentId: string,
-    provider: AgentProvider,
-    cwd: string,
-    config?: SerializableAgentConfig
-  ): Promise<void> {
+  async applySnapshot(agent: ManagedAgent): Promise<void> {
     await this.load();
-    const now = new Date().toISOString();
-    const existing = this.cache.get(agentId);
-    const sanitizedConfig = config ? sanitizeConfig(config) : existing?.config;
-    const nextModeId =
-      config?.modeId ??
-      existing?.lastModeId ??
-      sanitizedConfig?.modeId ??
-      null;
-    const updated: StoredAgentRecord = {
-      id: agentId,
-      provider,
-      cwd,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      lastActivityAt: existing?.lastActivityAt ?? existing?.updatedAt ?? now,
-      lastUserMessageAt: existing?.lastUserMessageAt ?? null,
+    const existing = this.cache.get(agent.id);
+    const record = toStoredAgentRecord(agent, {
       title: existing?.title ?? null,
-      lastStatus: existing?.lastStatus ?? null,
-      lastModeId: nextModeId,
-      config: sanitizedConfig,
-      persistence: existing?.persistence ?? null,
-    };
-    this.cache.set(agentId, updated);
-    await this.flush();
-  }
-
-  async applySnapshot(snapshot: AgentSnapshot): Promise<void> {
-    await this.load();
-    const now = new Date().toISOString();
-    const existing = this.cache.get(snapshot.id);
-    if (!existing) {
-      const record: StoredAgentRecord = {
-        id: snapshot.id,
-      provider: snapshot.provider,
-      cwd: snapshot.cwd,
-      createdAt: now,
-      updatedAt: now,
-      lastActivityAt: snapshot.updatedAt.toISOString(),
-      lastUserMessageAt: snapshot.lastUserMessageAt
-        ? snapshot.lastUserMessageAt.toISOString()
-        : null,
-      title: null,
-      lastStatus: snapshot.status,
-      lastModeId: snapshot.currentModeId ?? null,
-      config: null,
-      persistence: snapshot.persistence ?? null,
-      };
-      this.cache.set(snapshot.id, record);
-      await this.flush();
-      return;
-    }
-    const updated: StoredAgentRecord = {
-      ...existing,
-      provider: snapshot.provider,
-      cwd: snapshot.cwd,
-      updatedAt: now,
-      lastActivityAt: snapshot.updatedAt.toISOString(),
-      lastUserMessageAt: snapshot.lastUserMessageAt
-        ? snapshot.lastUserMessageAt.toISOString()
-        : existing.lastUserMessageAt ?? null,
-      lastStatus: snapshot.status,
-      lastModeId: snapshot.currentModeId ?? null,
-      persistence: snapshot.persistence ?? existing.persistence ?? null,
-    };
-    this.cache.set(snapshot.id, updated);
+      createdAt: existing?.createdAt,
+    });
+    this.cache.set(agent.id, record);
     await this.flush();
   }
 
@@ -247,35 +183,6 @@ export class AgentRegistry {
       this.cache.clear();
       return null;
     }
-  }
-}
-
-function sanitizeConfig(
-  config: SerializableAgentConfig | undefined
-): SerializableAgentConfig | undefined {
-  if (!config) {
-    return undefined;
-  }
-  const cleaned: SerializableAgentConfig = {};
-  if (config.modeId) cleaned.modeId = config.modeId;
-  if (config.model) cleaned.model = config.model;
-  if (config.extra) cleaned.extra = JSON.parse(JSON.stringify(config.extra));
-  return cleaned;
-}
-
-function resolveServerPackageRoot(): string {
-  let currentDir = path.dirname(fileURLToPath(import.meta.url));
-  while (true) {
-    if (existsSync(path.join(currentDir, "package.json"))) {
-      return currentDir;
-    }
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      throw new Error(
-        "[AgentRegistry] Failed to locate server package root for agents.json"
-      );
-    }
-    currentDir = parentDir;
   }
 }
 
