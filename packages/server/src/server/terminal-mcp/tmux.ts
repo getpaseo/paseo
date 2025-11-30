@@ -46,6 +46,16 @@ export type ShellType = "bash" | "zsh" | "fish";
 
 let shellConfig: { type: ShellType } = { type: "bash" };
 
+const ANSI_ESCAPE_REGEX =
+  /\u001B[\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+
+function stripAnsiSequences(value: string): string {
+  if (!value) {
+    return "";
+  }
+  return value.replace(ANSI_ESCAPE_REGEX, "");
+}
+
 export function setShellConfig(config: { type: string }): void {
   // Validate shell type
   const validShells: ShellType[] = ["bash", "zsh", "fish"];
@@ -216,8 +226,9 @@ export async function capturePaneContent(
   const trimmed = output.trimEnd();
   const allLines = trimmed.split("\n");
   const lastLines = allLines.slice(-lines);
+  const joined = lastLines.join("\n");
 
-  return lastLines.join("\n");
+  return includeColors ? joined : stripAnsiSequences(joined);
 }
 
 /**
