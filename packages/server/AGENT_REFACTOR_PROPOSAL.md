@@ -1,6 +1,15 @@
 # Agent Architecture Refactor Proposal
 
-## Current State Analysis
+## Status (November 30, 2025)
+
+- `ManagedAgent` is the single source of truth; the legacy `AgentSnapshot` type has been fully removed and no runtime APIs expose it.
+- The UI, MCP server, and persistence flows now project from `ManagedAgent` via `toAgentPayload`/`serializeAgentSnapshot` and `toStoredAgentRecord`.
+- `AgentSnapshotPayload` remains as the wire schema for clients, but it is now exclusively derived from `ManagedAgent` projections and never mutated manually.
+- Tasks 1–6 of the refactor are complete; the notes below are kept for historical context and future audits.
+
+> The remaining sections describe the legacy state and the design rationale that guided the refactor. They are preserved so future contributors understand why the cleanup happened.
+
+## Legacy State Analysis (Pre-Refactor)
 
 ### AgentSnapshot Usage
 
@@ -26,7 +35,7 @@
 
 It attempted to provide a JSON-friendly view stripped of internal handles (e.g., `AgentSession`, `pendingRun`). In practice it duplicates the data model, omits config (requiring `recordConfig`), and forces redundant copies. All downstream consumers just serialize the snapshot immediately, so it adds complexity without real protection.
 
-## Proposed Design
+## Implemented Design
 
 ### Single Source of Truth
 
@@ -100,7 +109,9 @@ Fields include the live `AgentSession`, normalized config (`AgentSessionConfig`)
 - Breaking change is acceptable (server + client change together). `agents.json` schema stays identical; only the producer path changes.
 - Local migrations not required; new code overwrites entries with full config automatically.
 
-## Implementation Plan
+## Implementation Debrief
+
+The checklist below mirrors the steps that were executed during the refactor and remains here for traceability.
 
 1. **Introduce transformation helpers & tests**
    - Implement `toStoredAgentRecord` and `toAgentPayload`.
