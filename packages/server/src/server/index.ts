@@ -11,6 +11,7 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
 import { CodexAgentClient } from "./agent/providers/codex-agent.js";
+import { resolvePaseoPort } from "./config.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -73,7 +74,7 @@ function createServer() {
 }
 
 async function main() {
-  const port = parseInt(process.env.PORT || "6767", 10);
+  const port = resolvePaseoPort();
   const agentMcpRoute = "/mcp/agents";
   const agentMcpUrl = `http://127.0.0.1:${port}${agentMcpRoute}`;
   const [agentMcpUser, agentMcpPassword] =

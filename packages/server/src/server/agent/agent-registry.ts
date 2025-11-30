@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { AgentStatusSchema } from "../messages.js";
+import { resolvePaseoHome } from "../config.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -57,8 +56,7 @@ export class AgentRegistry {
   private filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath =
-      filePath ?? path.join(resolveServerPackageRoot(), "agents.json");
+    this.filePath = filePath ?? path.join(resolvePaseoHome(), "agents.json");
   }
 
   async load(): Promise<StoredAgentRecord[]> {
@@ -185,22 +183,6 @@ export class AgentRegistry {
       this.cache.clear();
       return null;
     }
-  }
-}
-
-function resolveServerPackageRoot(): string {
-  let currentDir = path.dirname(fileURLToPath(import.meta.url));
-  while (true) {
-    if (existsSync(path.join(currentDir, "package.json"))) {
-      return currentDir;
-    }
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      throw new Error(
-        "[AgentRegistry] Failed to locate server package root for agents.json"
-      );
-    }
-    currentDir = parentDir;
   }
 }
 
