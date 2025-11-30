@@ -13,6 +13,16 @@ import {
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
+const claudeIntegrationEnabled =
+  process.env.RUN_CLAUDE_AGENT_TESTS === "1" || Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
+const describeClaudeIntegration = claudeIntegrationEnabled ? describe : describe.skip;
+
+if (!claudeIntegrationEnabled) {
+  console.warn(
+    "Skipping ClaudeAgentClient integration tests. Set RUN_CLAUDE_AGENT_TESTS=1 and provide ANTHROPIC_API_KEY to enable them."
+  );
+}
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
