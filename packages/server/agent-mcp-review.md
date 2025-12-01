@@ -220,7 +220,7 @@ The `buildActivityPayload` function (lines 99-118) returns:
 ### Proposal Summary
 
 1. Make `waitForAgentEvent` return last assistant message text (not full activity)
-2. Add `background` flag (default `false`) to `create_coding_agent` and `send_agent_prompt`
+2. Add `background` flag (default `false`) to `create_agent` and `send_agent_prompt`
 3. When `background=false`, wait for completion and return last message
 4. All three tools share same wait code path
 
@@ -276,8 +276,8 @@ async waitForAgentEvent(
 
 Keep existing tools as non-blocking (current behavior), add new tools for blocking:
 
-- `create_coding_agent` → remains non-blocking
-- `create_coding_agent_and_wait` → new blocking variant
+- `create_agent` → remains non-blocking
+- `create_agent_and_wait` → new blocking variant
 - `send_agent_prompt` → remains non-blocking
 - `send_agent_prompt_and_wait` → new blocking variant
 
@@ -510,7 +510,7 @@ Actually, the `waitTracker` lives in `mcp-server.ts`, not `agent-manager.ts`, so
 3. Update MCP server to include in response
 
 **Phase 3: Add Blocking Variants (Optional)**
-1. Create new MCP tools: `create_coding_agent_and_wait`, `send_agent_prompt_and_wait`
+1. Create new MCP tools: `create_agent_and_wait`, `send_agent_prompt_and_wait`
 2. Implement shared wait helper in AgentManager
 3. Add timeout parameter (default 5 minutes)
 4. Handle permission requests gracefully (throw or return them)
@@ -687,7 +687,7 @@ The proposed changes add complexity. Consider if they're actually needed:
 ### Current Pattern (Works Well)
 ```typescript
 // Claude uses these MCP tools:
-const { agentId } = await create_coding_agent({ cwd, initialPrompt });
+const { agentId } = await create_agent({ cwd, initialPrompt });
 const result = await wait_for_agent({ agentId });
 // result.activity.content has curated summary
 ```
@@ -695,7 +695,7 @@ const result = await wait_for_agent({ agentId });
 ### Proposed Pattern
 ```typescript
 // With background flag:
-const result = await create_coding_agent({
+const result = await create_agent({
   cwd,
   initialPrompt,
   background: false  // wait for completion
@@ -803,7 +803,7 @@ The proposed pattern is simpler:
 3. Add integration tests
 
 **Long Term (New Features):**
-1. Add `create_coding_agent_and_wait` MCP tool
+1. Add `create_agent_and_wait` MCP tool
 2. Add `send_agent_prompt_and_wait` MCP tool
 3. Add timeout parameter support
 4. Monitor usage to see which pattern users prefer

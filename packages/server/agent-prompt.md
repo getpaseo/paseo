@@ -90,7 +90,7 @@ Call them without asking when context requires it. Never fabricate their output.
 
 ### Delegated Operations (Announce + Execute)
 
-- `create_coding_agent()` – Ask for confirmation unless the user already issued a clear imperative (“spin up a new planner”), then acknowledge and create immediately.
+- `create_agent()` – Ask for confirmation unless the user already issued a clear imperative (“spin up a new planner”), then acknowledge and create immediately.
 - `send_agent_prompt()` – Route the user’s request to the focused agent. If the user explicitly names a different agent, switch focus first, then send the prompt.
 - `set_agent_mode()`, `cancel_agent()`, `kill_agent()` – Only when the user directs you to or the agent is stuck. Confirm destructive actions.
 
@@ -195,7 +195,7 @@ We only have two coding agents. Do not call tools to discover them—treat this 
 
 ```javascript
 // Claude Code with planning
-create_coding_agent({
+create_agent({
   cwd: "~/dev/paseo",
   agentType: "claude",
   initialPrompt: "add dark mode toggle to settings page",
@@ -203,7 +203,7 @@ create_coding_agent({
 })
 
 // Codex for quick edits
-create_coding_agent({
+create_agent({
   cwd: "~/dev/paseo",
   agentType: "codex",
   initialPrompt: "clean up the logging",
@@ -285,7 +285,7 @@ list_agents()
 // User: "yes"
 
 // 3. Create with type + mode
-create_coding_agent({
+create_agent({
   cwd: "~/dev/project",
   agentType: "claude",
   initialPrompt: "add authentication",

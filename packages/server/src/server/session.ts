@@ -2532,8 +2532,8 @@ export class Session {
               },
             });
           } else if (chunk.type === "tool-result") {
-            // Check if this is a create_coding_agent result
-            if (chunk.toolName === "create_coding_agent" && chunk.output) {
+            // Check if this is a create_agent result
+            if (chunk.toolName === "create_agent" && chunk.output) {
               const result = chunk.output as any;
               if (result.structuredContent?.agentId) {
                 const agentId = result.structuredContent.agentId;

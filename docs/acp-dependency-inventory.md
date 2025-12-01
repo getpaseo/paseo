@@ -79,13 +79,13 @@ These replace the ACP‑specific `agent_created`, `agent_initialized`, and `agen
 
 ### 3. MCP server + tooling (`packages/server/src/server/acp/mcp-server.ts`, `packages/server/src/server/acp/activity-curator.ts`)
 
-- Entire MCP surface (`create_coding_agent`, `wait_for_agent`, `send_agent_prompt`, `set_agent_session_mode`, etc.) depends on ACP `AgentManager`, `AgentNotification`, and the ACP timeline curator. The server fetches ACP updates via `agentManager.getAgentUpdates(agentId)` whenever it needs curated activity or permission state.
+- Entire MCP surface (`create_agent`, `wait_for_agent`, `send_agent_prompt`, `set_agent_session_mode`, etc.) depends on ACP `AgentManager`, `AgentNotification`, and the ACP timeline curator. The server fetches ACP updates via `agentManager.getAgentUpdates(agentId)` whenever it needs curated activity or permission state.
 - ACP `curateAgentActivity()` expects `AgentUpdate[]`, so `wait_for_agent` and `get_agent_activity` can't interpret SDK timeline events.
 
 **AgentManager replacements**
 
 - Rebuild MCP tools to call the SDK manager:
-  - `create_coding_agent` → `agentManager.createAgent({ provider, cwd, modeId, ... })`.
+  - `create_agent` → `agentManager.createAgent({ provider, cwd, modeId, ... })`.
   - `wait_for_agent` → subscribe to `AgentManager.subscribe` and resolve when we see either a `permission_requested` or `turn_completed` / `turn_failed` event.
   - Activity endpoints should call `agentManager.getTimeline(agentId)` and run a new curator that understands `AgentTimelineItem`.
 - Permission APIs can now use `AgentPermissionRequest` objects directly (they already include provider metadata and structured input).

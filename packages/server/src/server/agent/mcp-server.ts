@@ -109,9 +109,9 @@ export async function createAgentMcpServer(
   });
 
   server.registerTool(
-    "create_coding_agent",
+    "create_agent",
     {
-      title: "Create Coding Agent",
+      title: "Create Agent",
       description:
         "Create a new Claude or Codex agent tied to a working directory. Optionally run an initial prompt immediately or create a git worktree for the agent.",
       inputSchema: {
@@ -119,6 +119,14 @@ export async function createAgentMcpServer(
           .string()
           .describe(
             "Required working directory for the agent (absolute, relative, or ~)."
+          ),
+        title: z
+          .string()
+          .trim()
+          .min(1, "Title is required")
+          .max(40, "Title must be 40 characters or fewer")
+          .describe(
+            "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
           ),
         agentType: AgentProviderEnum.optional().describe(
           "Optional agent implementation to spawn. Defaults to 'claude'."
@@ -164,7 +172,15 @@ export async function createAgentMcpServer(
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
       },
     },
-    async ({ cwd, agentType, initialPrompt, initialMode, worktreeName, background = false }) => {
+    async ({
+      cwd,
+      agentType,
+      initialPrompt,
+      initialMode,
+      worktreeName,
+      background = false,
+      title,
+    }) => {
       let resolvedCwd = expandPath(cwd);
 
       if (worktreeName) {
@@ -182,6 +198,15 @@ export async function createAgentMcpServer(
         cwd: resolvedCwd,
         modeId: initialMode,
       });
+
+      try {
+        await agentRegistry.setTitle(snapshot.id, title);
+      } catch (error) {
+        console.error(
+          `[Agent MCP] Failed to persist title for ${snapshot.id}:`,
+          error
+        );
+      }
 
       if (initialPrompt) {
         try {
@@ -252,7 +277,9 @@ export async function createAgentMcpServer(
       description:
         "Block until the agent requests permission or the current run completes. Returns the pending permission (if any) and recent activity summary.",
       inputSchema: {
-        agentId: z.string().describe("Agent identifier from create_coding_agent"),
+        agentId: z
+          .string()
+          .describe("Agent identifier returned by the create_agent tool"),
       },
       outputSchema: {
         agentId: z.string(),
