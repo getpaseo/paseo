@@ -178,7 +178,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   // Use configRef to access the latest callback without recreating the effect
   useEffect(() => {
     const currentConfig = configRef.current;
-    if (!currentConfig?.onAudioLevel || !recorderRef.current.isRecording) return;
+    if (!currentConfig?.onAudioLevel || !recorderState.isRecording) return;
 
     const interval = setInterval(() => {
       const metering = recorderState.metering;
@@ -346,8 +346,8 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
   const isRecording = useCallback(() => {
     // Treat local intent as backup so callers can detect pending sessions
-    return recorderRef.current.isRecording || recordingIntentRef.current;
-  }, []);
+    return Boolean(recorderState.isRecording) || recordingIntentRef.current;
+  }, [recorderState.isRecording]);
 
   // Return stable object using useMemo
   return useMemo(() => ({
