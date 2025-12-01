@@ -21,7 +21,7 @@ import Animated, {
   FadeOut,
 } from "react-native-reanimated";
 import { useRealtime } from "@/contexts/realtime-context";
-import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { useDictation } from "@/hooks/use-dictation";
 import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
 import { VoiceNoteRecordingOverlay } from "./voice-note-recording-overlay";
 import { generateMessageId } from "@/types/stream";
@@ -107,38 +107,110 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   
   const [userInput, setUserInput] = useState("");
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-  const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedImages, setSelectedImages] = useState<Array<{ uri: string; mimeType: string }>>([]);
-  const [recordingVolume, setRecordingVolume] = useState(0);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [transcribingRequestId, setTranscribingRequestId] = useState<string | null>(null);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [audioDebugInfo, setAudioDebugInfo] = useState<AudioDebugInfo | null>(null);
   
-  const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
   const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
   const baselineInputHeightRef = useRef<number | null>(null);
   const overlayTransition = useSharedValue(0);
   const { pickImages } = useImageAttachmentPicker();
   const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
-  const pendingTranscriptionRef = useRef<{ requestId: string } | null>(null);
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef(sendAgentMessage);
   const agentStatusRef = useRef<string | undefined>(undefined);
   const updateQueueRef = useRef<
     ((updater: (current: QueuedMessage[]) => QueuedMessage[]) => void) | null
   >(null);
+  const handleDictationTranscript = useCallback(
+    (text: string) => {
+      if (!text) {
+        return;
+      }
+      const shouldQueue = agentStatusRef.current === "running";
+      if (shouldQueue) {
+        updateQueueRef.current?.((current) => [
+          ...current,
+          {
+            id: generateMessageId(),
+            text,
+          },
+        ]);
+        return;
+      }
+      void (async () => {
+        try {
+          await sendAgentMessageRef.current?.(agentIdRef.current, text);
+        } catch (error) {
+          console.error("[AgentInput] Failed to send transcribed message:", error);
+          updateQueueRef.current?.((current) => [
+            ...current,
+            {
+              id: generateMessageId(),
+              text,
+            },
+          ]);
+        }
+      })();
+    },
+    []
+  );
 
-  // Stabilize audio level callback to prevent recorder recreation on every render
-  const handleRecordingAudioLevel = useCallback((level: number) => {
-    setRecordingVolume(level);
+  const handleDictationError = useCallback((error: Error) => {
+    console.error("[AgentInput] Dictation error:", error);
   }, []);
 
-  const audioRecorder = useAudioRecorder({
-    onAudioLevel: handleRecordingAudioLevel,
+  const canStartDictation = useCallback(() => {
+    const allowed = !isRealtimeMode && ws.isConnected;
+    console.log("[AgentInput] canStartDictation", {
+      allowed,
+      isRealtimeMode,
+      wsConnected: ws.isConnected,
+    });
+    return allowed;
+  }, [isRealtimeMode, ws.isConnected]);
+
+  const canConfirmDictation = useCallback(() => {
+    const allowed = ws.isConnected;
+    console.log("[AgentInput] canConfirmDictation", {
+      allowed,
+      wsConnected: ws.isConnected,
+    });
+    return allowed;
+  }, [ws.isConnected]);
+
+  const {
+    isRecording: isDictating,
+    isProcessing: isDictationProcessing,
+    volume: dictationVolume,
+    duration: dictationDuration,
+    pendingRequestId: dictationPendingRequestId,
+    startDictation,
+    cancelDictation,
+    confirmDictation,
+  } = useDictation({
+    agentId,
+    sendAgentAudio,
+    ws,
+    mode: "transcribe_only",
+    onTranscript: handleDictationTranscript,
+    onError: handleDictationError,
+    canStart: canStartDictation,
+    canConfirm: canConfirmDictation,
+    enableDuration: true,
   });
+
+  const dictationRequestIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    dictationRequestIdRef.current = dictationPendingRequestId;
+  }, [dictationPendingRequestId]);
+
+  useEffect(() => {
+    const shouldShowOverlay = isDictating || isDictationProcessing;
+    overlayTransition.value = withTiming(shouldShowOverlay ? 1 : 0, { duration: 250 });
+  }, [isDictating, isDictationProcessing, overlayTransition]);
 
   const debugInputHeight = (label: string, payload: Record<string, unknown>) => {
     if (!SHOULD_DEBUG_INPUT_HEIGHT) {
@@ -196,11 +268,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }
 
   async function handleVoicePress() {
-    if (isRecording) {
-      // This shouldn't happen as button is hidden when recording
-      return;
-    }
-    if (isRealtimeMode) {
+    console.log("[AgentInput] handleVoicePress", {
+      isDictating,
+      isRealtimeMode,
+      wsConnected: ws.isConnected,
+    });
+    if (isDictating || isRealtimeMode) {
       return;
     }
 
@@ -208,19 +281,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       setAudioDebugInfo(null);
     }
 
-    // Start recording
     try {
-      await audioRecorder.start();
-      setIsRecording(true);
-      setRecordingDuration(0);
-      overlayTransition.value = withTiming(1, { duration: 250 });
-      
-      // Start duration timer
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
-      }, 1000);
+      await startDictation();
+      console.log("[AgentInput] startDictation invoked");
     } catch (error) {
-      const isCancelled = error instanceof Error && error.message.includes("Recording cancelled");
+      const isCancelled =
+        error instanceof Error && error.message.includes("Recording cancelled");
       if (!isCancelled) {
         console.error("[AgentInput] Failed to start recording:", error);
       }
@@ -228,152 +294,66 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }
 
   async function handleCancelRecording() {
+    console.log("[AgentInput] handleCancelRecording", {
+      isDictating,
+      isDictationProcessing,
+    });
+    if (!isDictating && !isDictationProcessing) {
+      return;
+    }
     try {
-      // Stop recording without sending
-      await audioRecorder.stop();
-      setIsRecording(false);
-      overlayTransition.value = withTiming(0, { duration: 250 });
-      
-      // Clear timer
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-        recordingIntervalRef.current = null;
-      }
-      setRecordingDuration(0);
-      setRecordingVolume(0);
+      await cancelDictation();
     } catch (error) {
       console.error("[AgentInput] Failed to cancel recording:", error);
-      setIsRecording(false);
-      overlayTransition.value = withTiming(0, { duration: 250 });
     }
   }
 
   async function handleSendRecording() {
+    console.log("[AgentInput] handleSendRecording", {
+      isDictating,
+      isDictationProcessing,
+    });
+    if (!isDictating) {
+      return;
+    }
     try {
-      const audioData = await audioRecorder.stop();
-      setIsRecording(false);
-      
-      // Clear timer
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-        recordingIntervalRef.current = null;
-      }
-      setRecordingDuration(0);
-      setRecordingVolume(0);
-
-      if (audioData) {
-        // Generate request ID for tracking transcription
-        const requestId = generateMessageId();
-        setTranscribingRequestId(requestId);
-        pendingTranscriptionRef.current = {
-          requestId,
-        };
-        console.log("[AgentInput] Audio recorded:", audioData.size, "bytes", "requestId:", requestId);
-
-        try {
-          // Send audio to agent for transcription and processing
-          await sendAgentAudio(agentId, audioData, requestId, { mode: "transcribe_only" });
-          console.log("[AgentInput] Audio sent to agent");
-        } catch (error) {
-          console.error("[AgentInput] Failed to send audio:", error);
-          // Clear transcribing state on error
-          setTranscribingRequestId(null);
-          pendingTranscriptionRef.current = null;
-          overlayTransition.value = withTiming(0, { duration: 250 });
-        }
-      } else {
-        // No audio data, dismiss overlay immediately
-        overlayTransition.value = withTiming(0, { duration: 250 });
-      }
+      await confirmDictation();
     } catch (error) {
-      console.error("[AgentInput] Failed to stop recording:", error);
-      setIsRecording(false);
-      setTranscribingRequestId(null);
-      pendingTranscriptionRef.current = null;
-      overlayTransition.value = withTiming(0, { duration: 250 });
+      console.error("[AgentInput] Failed to send recording:", error);
     }
   }
 
   useEffect(() => {
+    if (!shouldShowAudioDebug) {
+      return;
+    }
     const unsubscribe = ws.on("transcription_result", (message: SessionOutboundMessage) => {
       if (message.type !== "transcription_result") {
         return;
       }
 
-      const pending = pendingTranscriptionRef.current;
-      if (!pending || !message.payload.requestId) {
+      const pendingRequestId = dictationRequestIdRef.current;
+      if (!pendingRequestId || message.payload.requestId !== pendingRequestId) {
         return;
       }
 
-      if (message.payload.requestId !== pending.requestId) {
-        return;
-      }
-
-      console.log("[AgentInput] Transcription completed for requestId:", pending.requestId);
-      pendingTranscriptionRef.current = null;
-      setTranscribingRequestId(null);
-      overlayTransition.value = withTiming(0, { duration: 250 });
-
-      if (shouldShowAudioDebug) {
-        setAudioDebugInfo({
-          requestId: pending.requestId,
-          transcript: message.payload.text?.trim(),
-          debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
-          format: message.payload.format,
-          byteLength: message.payload.byteLength,
-          duration: message.payload.duration,
-          avgLogprob: message.payload.avgLogprob,
-          isLowConfidence: message.payload.isLowConfidence,
-        });
-      }
-
-      const transcriptText = message.payload.text?.trim();
-      if (!transcriptText) {
-        return;
-      }
-
-      const shouldQueue = agentStatusRef.current === "running";
-      if (shouldQueue) {
-        updateQueueRef.current?.((current) => [
-          ...current,
-          {
-            id: generateMessageId(),
-            text: transcriptText,
-          },
-        ]);
-        return;
-      }
-
-      void (async () => {
-        try {
-          await sendAgentMessageRef.current?.(agentIdRef.current, transcriptText);
-        } catch (error) {
-          console.error("[AgentInput] Failed to send transcribed message:", error);
-          updateQueueRef.current?.((current) => [
-            ...current,
-            {
-              id: generateMessageId(),
-              text: transcriptText,
-            },
-          ]);
-        }
-      })();
+      dictationRequestIdRef.current = null;
+      setAudioDebugInfo({
+        requestId: pendingRequestId,
+        transcript: message.payload.text?.trim(),
+        debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
+        format: message.payload.format,
+        byteLength: message.payload.byteLength,
+        duration: message.payload.duration,
+        avgLogprob: message.payload.avgLogprob,
+        isLowConfidence: message.payload.isLowConfidence,
+      });
     });
 
     return () => {
       unsubscribe();
     };
-  }, [ws, overlayTransition, shouldShowAudioDebug]);
-
-  // Cleanup timer on unmount
-  useEffect(() => {
-    return () => {
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-      }
-    };
-  }, []);
-
+  }, [shouldShowAudioDebug, ws]);
 
   function isTextAreaLike(value: unknown): value is TextAreaHandle {
     if (!value || typeof value !== "object") {
@@ -600,7 +580,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
         event.preventDefault();
         event.stopPropagation();
 
-        if (isRecording) {
+        if (isDictating) {
           void handleSendRecording();
           return;
         }
@@ -611,7 +591,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
         return;
       }
 
-      if (key === "escape" && isRecording) {
+      if (key === "escape" && isDictating) {
         event.preventDefault();
         event.stopPropagation();
         void handleCancelRecording();
@@ -623,7 +603,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       window.removeEventListener("keydown", listener, true);
     };
   }, [
-    isRecording,
+    isDictating,
     isRealtimeMode,
     shouldShowVoiceControls,
     ws,
@@ -768,10 +748,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       style={[
         styles.voiceButton as any,
         (!ws.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
-        (isRecording ? styles.voiceButtonRecording : undefined) as any,
+        (isDictating ? styles.voiceButtonRecording : undefined) as any,
       ]}
     >
-      {isRecording ? (
+      {isDictating ? (
         <Square size={14} color="white" fill="white" />
       ) : (
         <Mic size={20} color={theme.colors.foreground} />
@@ -858,7 +838,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
             multiline
             scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
             onContentSizeChange={handleContentSizeChange}
-            editable={!isRecording && ws.isConnected}
+            editable={!isDictating && ws.isConnected}
             onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
           />
 
@@ -942,11 +922,11 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
         <Animated.View style={[styles.overlayContainer, overlayAnimatedStyle]}>
           <View style={styles.inputAreaContent}>
             <VoiceNoteRecordingOverlay
-              volume={recordingVolume}
-              duration={recordingDuration}
+              volume={dictationVolume}
+              duration={dictationDuration}
               onCancel={handleCancelRecording}
               onSend={handleSendRecording}
-              isTranscribing={transcribingRequestId !== null}
+              isTranscribing={isDictationProcessing}
             />
           </View>
         </Animated.View>

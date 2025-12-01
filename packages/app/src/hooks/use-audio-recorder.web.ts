@@ -133,12 +133,26 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       throw new Error("Already recording");
     }
 
-    if (
+    const missingNavigator =
       typeof navigator === "undefined" ||
       !navigator.mediaDevices ||
-      typeof navigator.mediaDevices.getUserMedia !== "function"
-    ) {
+      typeof navigator.mediaDevices.getUserMedia !== "function";
+
+    const secureContext =
+      typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
+        ? window.isSecureContext
+        : true;
+    const currentOrigin =
+      typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+
+    if (missingNavigator) {
       throw new Error("Microphone capture is not supported in this environment");
+    }
+
+    if (!secureContext) {
+      throw new Error(
+        `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`
+      );
     }
 
     const options = configRef.current;

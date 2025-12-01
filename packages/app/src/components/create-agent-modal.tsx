@@ -41,7 +41,7 @@ import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
-import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { useDictation } from "@/hooks/use-dictation";
 import { VolumeMeter } from "@/components/volume-meter";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
@@ -280,7 +280,10 @@ function AgentFlowModal({
   const effectiveWs = ws ?? inertWebSocket;
   const createAgent = session?.createAgent;
   const resumeAgent = session?.resumeAgent;
-  const sendAgentAudio = session?.sendAgentAudio;
+  const sessionSendAgentAudio = session?.sendAgentAudio;
+  const noopSendAgentAudio = useCallback<SessionContextValue["sendAgentAudio"]>(async () => {}, []);
+  const sendAgentAudio = sessionSendAgentAudio ?? noopSendAgentAudio;
+  const hasSendAgentAudio = Boolean(sessionSendAgentAudio);
   const agents = session?.agents;
   const providerModels = session?.providerModels;
   const requestProviderModels = session?.requestProviderModels;
@@ -385,9 +388,6 @@ function AgentFlowModal({
   );
   const [isImportLoading, setIsImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [isDictating, setIsDictating] = useState(false);
-  const [isDictationProcessing, setIsDictationProcessing] = useState(false);
-  const [dictationVolume, setDictationVolume] = useState(0);
   const [dictationDebugInfo, setDictationDebugInfo] = useState<AudioDebugInfo | null>(null);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
@@ -395,6 +395,7 @@ function AgentFlowModal({
   const promptInputRef = useRef<
     TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
   >(null);
+  const focusPromptInputRef = useRef<() => void>(() => {});
   const promptInputHeightRef = useRef(PROMPT_MIN_HEIGHT);
   const promptBaselineHeightRef = useRef<number | null>(null);
   const formPreferencesHydratedRef = useRef(false);
@@ -407,17 +408,80 @@ function AgentFlowModal({
   const prevVisibilityRef = useRef(isVisible);
   const dictationRequestIdRef = useRef<string | null>(null);
 
-  // Stabilize audio level callback to prevent recorder recreation on every render
-  const handleDictationAudioLevel = useCallback((level: number) => {
-    setDictationVolume(level);
-  }, []);
+  const handleDictationTranscript = useCallback(
+    (text: string, _meta: { requestId: string }) => {
+      if (!isCreateFlow || !text) {
+        return;
+      }
+      setInitialPrompt((prev) => {
+        if (!prev) {
+          return text;
+        }
+        const needsSpace = /\s$/.test(prev);
+        return `${prev}${needsSpace ? "" : " "}${text}`;
+      });
+      focusPromptInputRef.current?.();
+    },
+    [isCreateFlow, setInitialPrompt]
+  );
 
-  const dictationRecorder = useAudioRecorder({
-    onAudioLevel: handleDictationAudioLevel,
+  const handleDictationError = useCallback(
+    (dictationError: Error) => {
+      setErrorMessage(dictationError.message);
+    },
+    []
+  );
+
+  const canStartDictation = useCallback(() => {
+    const allowed = isCreateFlow && !isLoading && isTargetDaemonReady && isWsConnected;
+    console.log("[CreateAgentModal] canStartDictation", {
+      allowed,
+      isCreateFlow,
+      isLoading,
+      isTargetDaemonReady,
+      isWsConnected,
+    });
+    return allowed;
+  }, [isCreateFlow, isLoading, isTargetDaemonReady, isWsConnected]);
+
+  const canConfirmDictation = useCallback(() => {
+    const allowed = isTargetDaemonReady && hasSendAgentAudio;
+    console.log("[CreateAgentModal] canConfirmDictation", {
+      allowed,
+      isTargetDaemonReady,
+      hasSendAgentAudio,
+    });
+    return allowed;
+  }, [hasSendAgentAudio, isTargetDaemonReady]);
+
+  const {
+    isRecording: isDictating,
+    isProcessing: isDictationProcessing,
+    volume: dictationVolume,
+    pendingRequestId: dictationPendingRequestId,
+    startDictation,
+    cancelDictation,
+    confirmDictation,
+    reset: resetDictation,
+  } = useDictation({
+    agentId: DICTATION_AGENT_ID,
+    sendAgentAudio,
+    ws: effectiveWs,
+    mode: "transcribe_only",
+    onTranscript: handleDictationTranscript,
+    onError: handleDictationError,
+    canStart: canStartDictation,
+    canConfirm: canConfirmDictation,
+    autoStopWhenHidden: { isVisible },
   });
   const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
+
+  useEffect(() => {
+    dictationRequestIdRef.current = dictationPendingRequestId;
+  }, [dictationPendingRequestId]);
+
   const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
-  const hasPendingDictation = dictationRequestIdRef.current !== null;
+  const hasPendingDictation = dictationPendingRequestId !== null;
   const shouldListenForStatus = isVisible || hasPendingCreateOrResume;
   const shouldListenForDictation =
     isCreateFlow && (isVisible || hasPendingDictation);
@@ -800,6 +864,9 @@ function AgentFlowModal({
       }
     }
   }, [shouldAutoFocusPrompt]);
+  useEffect(() => {
+    focusPromptInputRef.current = focusPromptInput;
+  }, [focusPromptInput]);
   const activeSessionIds = useMemo(() => {
     const ids = new Set<string>();
     if (!agents) {
@@ -916,17 +983,21 @@ function AgentFlowModal({
     pendingNavigationServerIdRef.current = null;
     shouldSyncBaseBranchRef.current = true;
     dictationRequestIdRef.current = null;
-    setIsDictating(false);
-    setIsDictationProcessing(false);
-    setDictationVolume(0);
     setDictationDebugInfo(null);
-    if (isDictating) {
-      void dictationRecorder.stop().catch(() => {});
-    }
+    void cancelDictation();
+    resetDictation();
     cancelRepoInfo();
-  }, [cancelRepoInfo, dictationRecorder, isDictating, resetRepoInfo, setPromptHeight]);
+  }, [cancelRepoInfo, cancelDictation, resetDictation, resetRepoInfo, setPromptHeight]);
 
   const handleDictationStart = useCallback(async () => {
+    console.log("[CreateAgentModal] handleDictationStart", {
+      isCreateFlow,
+      isLoading,
+      isDictating,
+      isDictationProcessing,
+      isTargetDaemonReady,
+      isWsConnected,
+    });
     if (!isCreateFlow || isLoading || isDictating || isDictationProcessing) {
       return;
     }
@@ -941,21 +1012,17 @@ function AgentFlowModal({
       if (shouldShowAudioDebug) {
         setDictationDebugInfo(null);
       }
-      setIsDictating(true);
-      setDictationVolume(0);
       setErrorMessage("");
-      await dictationRecorder.start();
+      await startDictation();
+      console.log("[CreateAgentModal] startDictation invoked");
     } catch (error) {
       const isCancelled = error instanceof Error && error.message.includes("Recording cancelled");
       if (!isCancelled) {
         console.error("[CreateAgentModal] Failed to start dictation:", error);
       }
-      setIsDictating(false);
-      setDictationVolume(0);
     }
   }, [
     daemonAvailabilityError,
-    dictationRecorder,
     isCreateFlow,
     isDictating,
     isDictationProcessing,
@@ -964,27 +1031,34 @@ function AgentFlowModal({
     isWsConnected,
     logOfflineDaemonAction,
     shouldShowAudioDebug,
+    startDictation,
   ]);
 
   const handleDictationCancel = useCallback(async () => {
+    console.log("[CreateAgentModal] handleDictationCancel", {
+      isDictating,
+    });
     if (!isDictating) {
       return;
     }
     try {
-      await dictationRecorder.stop();
+      await cancelDictation();
     } catch (error) {
       console.error("[CreateAgentModal] Failed to cancel dictation:", error);
-    } finally {
-      setIsDictating(false);
-      setDictationVolume(0);
     }
-  }, [dictationRecorder, isDictating]);
+  }, [cancelDictation, isDictating]);
 
   const handleDictationConfirm = useCallback(async () => {
+    console.log("[CreateAgentModal] handleDictationConfirm", {
+      isDictating,
+      isDictationProcessing,
+      isTargetDaemonReady,
+      hasSendAgentAudio,
+    });
     if (!isDictating || isDictationProcessing) {
       return;
     }
-    if (!sendAgentAudio || !isTargetDaemonReady) {
+    if (!isTargetDaemonReady || !hasSendAgentAudio) {
       logOfflineDaemonAction("dictation");
       setErrorMessage(
         daemonAvailabilityError ??
@@ -992,44 +1066,19 @@ function AgentFlowModal({
       );
       return;
     }
-
-    // Set processing state BEFORE stopping to ensure UI updates properly
-    setIsDictationProcessing(true);
-
     try {
-      const audioData = await dictationRecorder.stop();
-      setDictationVolume(0);
-      if (!audioData) {
-        setIsDictating(false);
-        setIsDictationProcessing(false);
-        return;
-      }
-      const requestId = generateMessageId();
-      dictationRequestIdRef.current = requestId;
-      await sendAgentAudio(
-        DICTATION_AGENT_ID,
-        audioData,
-        requestId,
-        { mode: "transcribe_only" }
-      );
-      // Only clear isDictating after successful transcription send
-      setIsDictating(false);
+      await confirmDictation();
     } catch (error) {
       console.error("[CreateAgentModal] Failed to complete dictation:", error);
-      dictationRequestIdRef.current = null;
-      setIsDictationProcessing(false);
-      // CRITICAL FIX: Always reset dictation state on error
-      setIsDictating(false);
-      setDictationVolume(0);
     }
   }, [
     daemonAvailabilityError,
-    dictationRecorder,
+    confirmDictation,
+    hasSendAgentAudio,
     isDictating,
     isDictationProcessing,
     isTargetDaemonReady,
     logOfflineDaemonAction,
-    sendAgentAudio,
   ]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
@@ -1165,39 +1214,6 @@ function AgentFlowModal({
     handleCloseAnimationComplete,
   ]);
 
-  useEffect(() => {
-    if (isVisible || !isDictating) {
-      return;
-    }
-    let cancelled = false;
-
-    const stopRecording = async () => {
-      try {
-        await dictationRecorder.stop();
-      } catch (error) {
-        console.error("[CreateAgentModal] Failed to stop dictation while hidden:", error);
-      } finally {
-        if (!cancelled) {
-          setIsDictating(false);
-          setDictationVolume(0);
-        }
-      }
-    };
-
-    void stopRecording();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dictationRecorder, isDictating, isVisible]);
-
-  useEffect(() => {
-    return () => {
-      if (isDictating) {
-        void dictationRecorder.stop().catch(() => {});
-      }
-    };
-  }, [dictationRecorder, isDictating]);
 
   useEffect(() => {
     return () => {
@@ -1656,7 +1672,7 @@ function AgentFlowModal({
   }, [handleClose, shouldListenForStatus, ws]);
 
   useEffect(() => {
-    if (!shouldListenForDictation || !ws) {
+    if (!shouldListenForDictation || !ws || !shouldShowAudioDebug) {
       return;
     }
     const unsubscribe = ws.on("transcription_result", (message) => {
@@ -1668,37 +1684,22 @@ function AgentFlowModal({
         return;
       }
       dictationRequestIdRef.current = null;
-      setIsDictationProcessing(false);
-      if (shouldShowAudioDebug) {
-        setDictationDebugInfo({
-          requestId: pendingId,
-          transcript: message.payload.text?.trim(),
-          debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
-          format: message.payload.format,
-          byteLength: message.payload.byteLength,
-          duration: message.payload.duration,
-          avgLogprob: message.payload.avgLogprob,
-          isLowConfidence: message.payload.isLowConfidence,
-        });
-      }
-      const transcriptText = message.payload.text?.trim();
-      if (!transcriptText) {
-        return;
-      }
-      setInitialPrompt((prev) => {
-        if (!prev) {
-          return transcriptText;
-        }
-        const needsSpace = /\s$/.test(prev);
-        return `${prev}${needsSpace ? "" : " "}${transcriptText}`;
+      setDictationDebugInfo({
+        requestId: pendingId,
+        transcript: message.payload.text?.trim(),
+        debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
+        format: message.payload.format,
+        byteLength: message.payload.byteLength,
+        duration: message.payload.duration,
+        avgLogprob: message.payload.avgLogprob,
+        isLowConfidence: message.payload.isLowConfidence,
       });
-      focusPromptInput();
     });
 
     return () => {
       unsubscribe();
     };
-  }, [focusPromptInput, shouldListenForDictation, ws, shouldShowAudioDebug]);
+  }, [shouldListenForDictation, shouldShowAudioDebug, ws]);
 
   useEffect(() => {
     if (!isVisible || !isImportFlow) {
