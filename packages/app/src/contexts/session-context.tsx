@@ -32,10 +32,7 @@ import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
-import { getNowMs, isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
-
-const SESSION_CONTEXT_LOG_TAG = "[SessionContext]";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -336,7 +333,7 @@ export interface SessionContextValue {
   messages: MessageEntry[];
   setMessages: (messages: MessageEntry[] | ((prev: MessageEntry[]) => MessageEntry[])) => void;
   currentAssistantMessage: string;
-  setCurrentAssistantMessage: (message: string) => void;
+  setCurrentAssistantMessage: (message: string | ((prev: string) => string)) => void;
   agentStreamState: Map<string, StreamItem[]>;
   setAgentStreamState: (state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
   initializingAgents: Map<string, boolean>;
@@ -399,6 +396,47 @@ export interface SessionContextValue {
   respondToPermission: (agentId: string, requestId: string, response: AgentPermissionResponse) => void;
 }
 
+type SyncSessionField = <K extends keyof SessionContextValue>(
+  key: K,
+  value: SessionContextValue[K]
+) => void;
+
+function useSyncedSessionState<K extends keyof SessionContextValue>(
+  key: K,
+  initialValue: SessionContextValue[K] | (() => SessionContextValue[K]),
+  syncField: SyncSessionField
+): [
+  SessionContextValue[K],
+  (valueOrUpdater: SessionContextValue[K] | ((prev: SessionContextValue[K]) => SessionContextValue[K])) => void
+] {
+  const [state, setState] = useState<SessionContextValue[K]>(() => {
+    return typeof initialValue === "function"
+      ? (initialValue as () => SessionContextValue[K])()
+      : initialValue;
+  });
+
+  const setAndSync = useCallback(
+    (valueOrUpdater: SessionContextValue[K] | ((prev: SessionContextValue[K]) => SessionContextValue[K])) => {
+      setState((previous: SessionContextValue[K]) => {
+        const next =
+          typeof valueOrUpdater === "function"
+            ? (valueOrUpdater as (prev: SessionContextValue[K]) => SessionContextValue[K])(previous)
+            : valueOrUpdater;
+
+        if (Object.is(previous, next)) {
+          return previous;
+        }
+
+        syncField(key, next);
+        return next;
+      });
+    },
+    [key, syncField]
+  );
+
+  return [state, setAndSync];
+}
+
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 interface SessionProviderProps {
@@ -419,6 +457,30 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const clearSession = useSessionStore((state) => state.clearSession);
   const setAgentDirectory = useSessionStore((state) => state.setAgentDirectory);
   const clearAgentDirectory = useSessionStore((state) => state.clearAgentDirectory);
+  const hasRegisteredSessionRef = useRef(false);
+  const pendingSessionUpdatesRef = useRef<Partial<SessionContextValue>>({});
+  const initialSessionValueRef = useRef<SessionContextValue | null>(null);
+
+  const syncSessionPartial = useCallback(
+    (partial: Partial<SessionContextValue>) => {
+      if (!hasRegisteredSessionRef.current) {
+        pendingSessionUpdatesRef.current = {
+          ...pendingSessionUpdatesRef.current,
+          ...partial,
+        };
+        return;
+      }
+      updateSession(serverId, partial);
+    },
+    [serverId, updateSession]
+  );
+
+  const syncSessionField = useCallback<SyncSessionField>(
+    (key, value) => {
+      syncSessionPartial({ [key]: value } as Partial<SessionContextValue>);
+    },
+    [syncSessionPartial]
+  );
 
   useEffect(() => {
     if (ws.isConnected) {
@@ -464,16 +526,19 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     isSpeaking: () => isSpeakingRef.current,
   });
 
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isPlayingAudio, updateIsPlayingAudio] = useSyncedSessionState("isPlayingAudio", false, syncSessionField);
+  const setIsPlayingAudio = useCallback((playing: boolean) => {
+    updateIsPlayingAudio(playing);
+  }, [updateIsPlayingAudio]);
   const [focusedAgentOverride, setFocusedAgentOverride] = useState<string | null>(null);
   const [orchestratorFocusedAgentId, setOrchestratorFocusedAgentId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<MessageEntry[]>([]);
-  const [currentAssistantMessage, setCurrentAssistantMessage] = useState("");
-  const [agentStreamState, setAgentStreamState] = useState<Map<string, StreamItem[]>>(new Map());
-  const [initializingAgents, setInitializingAgents] = useState<Map<string, boolean>>(new Map());
-  const [hasHydratedAgents, setHasHydratedAgents] = useState(false);
+  const [messages, setMessages] = useSyncedSessionState("messages", () => [], syncSessionField);
+  const [currentAssistantMessage, setCurrentAssistantMessage] = useSyncedSessionState("currentAssistantMessage", "", syncSessionField);
+  const [agentStreamState, setAgentStreamState] = useSyncedSessionState("agentStreamState", () => new Map<string, StreamItem[]>(), syncSessionField);
+  const [initializingAgents, setInitializingAgents] = useSyncedSessionState("initializingAgents", () => new Map<string, boolean>(), syncSessionField);
+  const [hasHydratedAgents, setHasHydratedAgents] = useSyncedSessionState("hasHydratedAgents", false, syncSessionField);
 
-  const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
+  const [agents, setAgents] = useSyncedSessionState("agents", () => new Map<string, Agent>(), syncSessionField);
   const lightweightAgentDirectory = useMemo(
     () => buildAgentDirectoryEntries(serverId, agents),
     [agents, serverId]
@@ -481,11 +546,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   useEffect(() => {
     setAgentDirectory(serverId, lightweightAgentDirectory);
   }, [lightweightAgentDirectory, serverId, setAgentDirectory]);
-  const [commands, setCommands] = useState<Map<string, Command>>(new Map());
-  const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
-  const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
-  const [fileExplorer, setFileExplorer] = useState<Map<string, AgentFileExplorerState>>(new Map());
-  const [providerModels, setProviderModels] = useState<Map<AgentProvider, ProviderModelState>>(new Map());
+  const [commands, setCommands] = useSyncedSessionState("commands", () => new Map<string, Command>(), syncSessionField);
+  const [pendingPermissions, setPendingPermissions] = useSyncedSessionState("pendingPermissions", () => new Map<string, PendingPermission>(), syncSessionField);
+  const [gitDiffs, setGitDiffs] = useSyncedSessionState("gitDiffs", () => new Map<string, string>(), syncSessionField);
+  const [fileExplorer, setFileExplorer] = useSyncedSessionState("fileExplorer", () => new Map<string, AgentFileExplorerState>(), syncSessionField);
+  const [providerModels, setProviderModels] = useSyncedSessionState("providerModels", () => new Map<AgentProvider, ProviderModelState>(), syncSessionField);
   const draftInputsRef = useRef<Map<string, DraftInput>>(new Map());
   const getDraftInput = useCallback<SessionContextValue["getDraftInput"]>((agentId) => {
     return draftInputsRef.current.get(agentId);
@@ -497,7 +562,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       images: draft.images,
     });
   }, []);
-  const [queuedMessages, setQueuedMessages] = useState<SessionContextValue["queuedMessages"]>(new Map());
+  const [queuedMessages, setQueuedMessages] = useSyncedSessionState("queuedMessages", () => new Map(), syncSessionField);
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
@@ -1893,34 +1958,106 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     ]
   );
 
-  useEffect(() => {
-    setSession(serverId, { ...value });
-  }, [serverId, setSession]);
+  if (initialSessionValueRef.current === null) {
+    initialSessionValueRef.current = value;
+  }
 
   useEffect(() => {
-    const payload = { ...value };
-    const shouldLog = isPerfLoggingEnabled();
-    const start = shouldLog ? getNowMs() : null;
-    updateSession(serverId, payload);
-    if (shouldLog && start !== null) {
-      const durationMs = getNowMs() - start;
-      const metrics = measurePayload(payload);
-      perfLog(SESSION_CONTEXT_LOG_TAG, {
-        event: "updateSession",
-        serverId,
-        durationMs: Number(durationMs.toFixed(2)),
-        payloadApproxBytes: metrics.approxBytes,
-        payloadFieldCount: metrics.fieldCount,
-      });
-    }
-  }, [serverId, updateSession, value]);
+    syncSessionField("focusedAgentId", focusedAgentId);
+  }, [focusedAgentId, syncSessionField]);
 
   useEffect(() => {
+    syncSessionPartial({
+      serverId,
+      ws,
+      audioPlayer,
+    });
+  }, [audioPlayer, serverId, syncSessionPartial, ws]);
+
+  const sessionFunctionBindings = useMemo(
+    () => ({
+      setIsPlayingAudio,
+      setVoiceDetectionFlags,
+      setFocusedAgentId,
+      setMessages,
+      setCurrentAssistantMessage,
+      setAgentStreamState,
+      setAgents,
+      setCommands,
+      setPendingPermissions,
+      requestGitDiff,
+      requestDirectoryListing,
+      requestFilePreview,
+      navigateExplorerBack,
+      requestProviderModels,
+      restartServer,
+      initializeAgent,
+      refreshAgent,
+      cancelAgentRun,
+      deleteAgent,
+      sendAgentMessage,
+      sendAgentAudio,
+      createAgent,
+      resumeAgent,
+      setAgentMode,
+      respondToPermission,
+      getDraftInput,
+      saveDraftInput,
+      setQueuedMessages,
+    }),
+    [
+      cancelAgentRun,
+      createAgent,
+      deleteAgent,
+      getDraftInput,
+      initializeAgent,
+      navigateExplorerBack,
+      refreshAgent,
+      requestDirectoryListing,
+      requestFilePreview,
+      requestGitDiff,
+      requestProviderModels,
+      respondToPermission,
+      resumeAgent,
+      restartServer,
+      saveDraftInput,
+      sendAgentAudio,
+      sendAgentMessage,
+      setAgentMode,
+      setAgentStreamState,
+      setAgents,
+      setCommands,
+      setCurrentAssistantMessage,
+      setFocusedAgentId,
+      setIsPlayingAudio,
+      setMessages,
+      setPendingPermissions,
+      setQueuedMessages,
+      setVoiceDetectionFlags,
+    ]
+  );
+
+  useEffect(() => {
+    syncSessionPartial(sessionFunctionBindings);
+  }, [sessionFunctionBindings, syncSessionPartial]);
+
+  useEffect(() => {
+    const initialSnapshot = initialSessionValueRef.current as SessionContextValue;
+    const initialPayload = {
+      ...initialSnapshot,
+      ...pendingSessionUpdatesRef.current,
+    };
+    pendingSessionUpdatesRef.current = {};
+    setSession(serverId, initialPayload);
+    hasRegisteredSessionRef.current = true;
+
     return () => {
+      hasRegisteredSessionRef.current = false;
+      pendingSessionUpdatesRef.current = {};
       clearSession(serverId);
       clearAgentDirectory(serverId);
     };
-  }, [clearAgentDirectory, clearSession, serverId]);
+  }, [clearAgentDirectory, clearSession, serverId, setSession]);
 
   return (
     <SessionContext.Provider value={value}>

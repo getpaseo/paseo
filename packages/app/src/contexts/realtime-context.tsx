@@ -1,9 +1,9 @@
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useMemo } from "react";
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from "react";
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
-import { useSessionDirectory } from "@/hooks/use-session-directory";
 import type { SessionContextValue } from "./session-context";
 import { generateMessageId } from "@/types/stream";
 import type { WSInboundMessage } from "@server/server/messages";
+import { useSessionStore } from "@/stores/session-store";
 
 interface RealtimeContextValue {
   isRealtimeMode: boolean;
@@ -33,8 +33,19 @@ interface RealtimeProviderProps {
 }
 
 export function RealtimeProvider({ children }: RealtimeProviderProps) {
-  const sessionDirectory = useSessionDirectory();
+  const getSession = useSessionStore((state) => state.getSession);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const activeSession = useSessionStore(
+    useCallback(
+      (state: ReturnType<typeof useSessionStore.getState>) => {
+        if (!activeServerId) {
+          return null;
+        }
+        return state.sessions[activeServerId] ?? null;
+      },
+      [activeServerId]
+    )
+  );
   const realtimeSessionRef = useRef<SessionContextValue | null>(null);
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
   const bargeInPlaybackStopRef = useRef<number | null>(null);
@@ -126,13 +137,6 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     session?.setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
   }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking]);
 
-  const activeSession = useMemo(() => {
-    if (!activeServerId) {
-      return null;
-    }
-    return sessionDirectory.get(activeServerId) ?? null;
-  }, [activeServerId, sessionDirectory]);
-
   useEffect(() => {
     realtimeSessionRef.current = activeSession;
   }, [activeSession]);
@@ -153,7 +157,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
   const startRealtime = useCallback(
     async (serverId: string) => {
-      const session = sessionDirectory.get(serverId) ?? null;
+      const session = getSession(serverId) ?? null;
       if (!session) {
         throw new Error(`Host ${serverId} is not connected`);
       }
@@ -179,7 +183,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         throw error;
       }
     },
-    [realtimeAudio, sessionDirectory]
+    [getSession, realtimeAudio]
   );
 
   const stopRealtime = useCallback(async () => {

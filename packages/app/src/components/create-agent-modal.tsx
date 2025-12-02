@@ -65,8 +65,9 @@ import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/me
 import { formatConnectionStatus } from "@/utils/daemons";
 import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "@/contexts/session-context";
-import { useSessionDirectory, useSessionForServer } from "@/hooks/use-session-directory";
+import { useSessionForServer } from "@/hooks/use-session-directory";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import { useSessionStore } from "@/stores/session-store";
 
 export type CreateAgentInitialValues = {
   workingDir?: string;
@@ -239,7 +240,7 @@ function AgentFlowModal({
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
   const selectedSession = useSessionForServer(selectedServerId);
   const session = selectedSession ?? null;
-  const sessionDirectory = useSessionDirectory();
+  const getSession = useSessionStore((state) => state.getSession);
 
   useEffect(() => {
     if (selectedServerId) {
@@ -1484,7 +1485,7 @@ function AgentFlowModal({
           clearQueuedProviderModelRequest(serverId);
           return;
         }
-        const daemonSession = sessionDirectory.get(serverId) ?? null;
+        const daemonSession = getSession(serverId) ?? null;
         if (!daemonSession?.ws?.isConnected) {
           return;
         }
@@ -1500,7 +1501,7 @@ function AgentFlowModal({
     queueProviderModelFetch,
     selectedProvider,
     selectedServerId,
-    sessionDirectory,
+    getSession,
   ]);
 
   const trimmedWorkingDir = workingDir.trim();
