@@ -36,15 +36,17 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, Check, X, ChevronDown } from "lucide-react-native";
+import { Mic, Check, X, ChevronDown, RefreshCcw } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
 import { useDictation } from "@/hooks/use-dictation";
+import type { DictationStatus } from "@/hooks/use-dictation";
 import { VolumeMeter } from "@/components/volume-meter";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
+import { DictationStatusNotice, type DictationToastVariant } from "./dictation-status-notice";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
@@ -80,6 +82,16 @@ interface AgentFlowModalProps {
   initialValues?: CreateAgentInitialValues;
   serverId?: string | null;
 }
+
+type DictationToastConfig = {
+  variant: DictationToastVariant;
+  title: string;
+  subtitle?: string;
+  meta?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss?: () => void;
+};
 
 interface ModalWrapperProps {
   isVisible: boolean;
@@ -274,6 +286,8 @@ function AgentFlowModal({
       on: () => () => {},
       sendPing: () => {},
       sendUserMessage: () => {},
+      subscribeConnectionStatus: () => () => {},
+      getConnectionState: () => ({ isConnected: false, isConnecting: false }),
     }),
     []
   );
@@ -322,7 +336,9 @@ function AgentFlowModal({
     reset: resetRepoInfo,
     cancel: cancelRepoInfo,
   } = gitRepoInfoRequest;
-  const isWsConnected = ws?.isConnected ?? false;
+  const isWsConnected = effectiveWs.getConnectionState
+    ? effectiveWs.getConnectionState().isConnected
+    : effectiveWs.isConnected;
   const router = useRouter();
   const sessionServerId = session?.serverId ?? null;
   const selectedDaemonId = selectedServerId ?? sessionServerId;
@@ -392,6 +408,12 @@ function AgentFlowModal({
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
   const shouldSyncBaseBranchRef = useRef(true);
+  const [connectionStatus, setConnectionStatus] = useState(() =>
+    effectiveWs.getConnectionState
+      ? effectiveWs.getConnectionState()
+      : { isConnected: effectiveWs.isConnected, isConnecting: effectiveWs.isConnecting }
+  );
+  const [dictationSuccessToastAt, setDictationSuccessToastAt] = useState<number | null>(null);
   const promptInputRef = useRef<
     TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
   >(null);
@@ -459,10 +481,19 @@ function AgentFlowModal({
     isProcessing: isDictationProcessing,
     volume: dictationVolume,
     pendingRequestId: dictationPendingRequestId,
+    error: dictationError,
+    status: dictationStatus,
+    retryAttempt: dictationRetryAttempt,
+    maxRetryAttempts: dictationMaxRetryAttempts,
+    retryInfo: dictationRetryInfo,
+    failedRecording: dictationFailedRecording,
+    lastOutcome: dictationLastOutcome,
     startDictation,
     cancelDictation,
     confirmDictation,
     reset: resetDictation,
+    retryFailedDictation,
+    discardFailedDictation,
   } = useDictation({
     agentId: DICTATION_AGENT_ID,
     sendAgentAudio,
@@ -479,6 +510,35 @@ function AgentFlowModal({
   useEffect(() => {
     dictationRequestIdRef.current = dictationPendingRequestId;
   }, [dictationPendingRequestId]);
+
+  useEffect(() => {
+    if (!effectiveWs.subscribeConnectionStatus) {
+      return;
+    }
+    return effectiveWs.subscribeConnectionStatus((status) => {
+      setConnectionStatus(status);
+    });
+  }, [effectiveWs]);
+
+  useEffect(() => {
+    if (dictationLastOutcome?.type === "success") {
+      setDictationSuccessToastAt(dictationLastOutcome.timestamp);
+    }
+  }, [dictationLastOutcome]);
+
+  useEffect(() => {
+    if (dictationSuccessToastAt === null) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setDictationSuccessToastAt(null);
+    }, 4000);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [dictationSuccessToastAt]);
+
+  const dictationSuccessToastVisible = dictationSuccessToastAt !== null;
 
   const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
   const hasPendingDictation = dictationPendingRequestId !== null;
@@ -1038,6 +1098,10 @@ function AgentFlowModal({
     console.log("[CreateAgentModal] handleDictationCancel", {
       isDictating,
     });
+    if (dictationStatus === "failed") {
+      discardFailedDictation();
+      return;
+    }
     if (!isDictating) {
       return;
     }
@@ -1046,7 +1110,7 @@ function AgentFlowModal({
     } catch (error) {
       console.error("[CreateAgentModal] Failed to cancel dictation:", error);
     }
-  }, [cancelDictation, isDictating]);
+  }, [cancelDictation, dictationStatus, discardFailedDictation, isDictating]);
 
   const handleDictationConfirm = useCallback(async () => {
     console.log("[CreateAgentModal] handleDictationConfirm", {
@@ -1055,6 +1119,10 @@ function AgentFlowModal({
       isTargetDaemonReady,
       hasSendAgentAudio,
     });
+    if (dictationStatus === "failed") {
+      void retryFailedDictation();
+      return;
+    }
     if (!isDictating || isDictationProcessing) {
       return;
     }
@@ -1074,11 +1142,94 @@ function AgentFlowModal({
   }, [
     daemonAvailabilityError,
     confirmDictation,
+    dictationStatus,
     hasSendAgentAudio,
     isDictating,
     isDictationProcessing,
     isTargetDaemonReady,
     logOfflineDaemonAction,
+    retryFailedDictation,
+  ]);
+
+  const handlePromptDictationRetry = useCallback(() => {
+    void retryFailedDictation();
+  }, [retryFailedDictation]);
+
+  const handlePromptDictationDiscard = useCallback(() => {
+    discardFailedDictation();
+  }, [discardFailedDictation]);
+
+  const promptDictationToast = useMemo<DictationToastConfig | null>(() => {
+    if (!connectionStatus.isConnected) {
+      return {
+        variant: "warning",
+        title: "Offline",
+        subtitle: "Waiting for connection…",
+      };
+    }
+
+    if (dictationStatus === "recording") {
+      return {
+        variant: "info",
+        title: "Recording prompt…",
+        subtitle: "Release to insert transcription",
+      };
+    }
+
+    if (dictationStatus === "uploading") {
+      const attemptLabel = `Attempt ${Math.max(1, dictationRetryAttempt || 1)}/${dictationMaxRetryAttempts}`;
+      return {
+        variant: "info",
+        title: "Transcribing prompt…",
+        meta: attemptLabel,
+      };
+    }
+
+    if (dictationStatus === "retrying") {
+      const attempt = dictationRetryInfo?.attempt ?? Math.max(1, dictationRetryAttempt || 1);
+      const maxAttempts = dictationRetryInfo?.maxAttempts ?? dictationMaxRetryAttempts;
+      const retryMeta =
+        dictationRetryInfo?.nextRetryMs && dictationRetryInfo.nextRetryMs > 0
+          ? `Attempt ${attempt}/${maxAttempts} · Next in ${Math.ceil(dictationRetryInfo.nextRetryMs / 1000)}s`
+          : `Attempt ${attempt}/${maxAttempts}`;
+      return {
+        variant: "warning",
+        title: "Retrying dictation…",
+        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Network error",
+        meta: retryMeta,
+      };
+    }
+
+    if (dictationStatus === "failed") {
+      return {
+        variant: "error",
+        title: "Dictation failed",
+        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Unknown error",
+        actionLabel: "Retry",
+        onAction: handlePromptDictationRetry,
+        onDismiss: handlePromptDictationDiscard,
+      };
+    }
+
+    if (dictationSuccessToastVisible) {
+      return {
+        variant: "success",
+        title: "Transcribed",
+        subtitle: "Inserted into prompt",
+      };
+    }
+
+    return null;
+  }, [
+    connectionStatus.isConnected,
+    dictationError,
+    dictationMaxRetryAttempts,
+    dictationRetryAttempt,
+    dictationRetryInfo,
+    dictationStatus,
+    dictationSuccessToastVisible,
+    handlePromptDictationDiscard,
+    handlePromptDictationRetry,
   ]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
@@ -1727,6 +1878,13 @@ function AgentFlowModal({
       onStart={handleDictationStart}
       onCancel={handleDictationCancel}
       onConfirm={handleDictationConfirm}
+      status={dictationStatus}
+      retryAttempt={dictationRetryAttempt}
+      maxRetryAttempts={dictationMaxRetryAttempts}
+      retryCountdownMs={dictationRetryInfo?.nextRetryMs}
+      errorMessage={dictationRetryInfo?.errorMessage ?? dictationError ?? undefined}
+      onRetry={handlePromptDictationRetry}
+      onDiscard={handlePromptDictationDiscard}
     />
   ) : null;
 
@@ -2099,6 +2257,13 @@ function AgentFlowModal({
                     )}
                   </Pressable>
                 </Animated.View>
+                {promptDictationToast ? (
+                  <View style={styles.dictationToastPortal} pointerEvents="box-none">
+                    <View pointerEvents="auto">
+                      <DictationStatusNotice {...promptDictationToast} />
+                    </View>
+                  </View>
+                ) : null}
               </>
             ) : (
               <View
@@ -2763,6 +2928,13 @@ interface PromptDictationControlsProps {
   onStart: () => void;
   onCancel: () => void;
   onConfirm: () => void;
+  status: DictationStatus;
+  retryAttempt: number;
+  maxRetryAttempts: number;
+  retryCountdownMs?: number | null;
+  errorMessage?: string | null;
+  onRetry?: () => void;
+  onDiscard?: () => void;
 }
 
 function PromptDictationControls({
@@ -2773,10 +2945,23 @@ function PromptDictationControls({
   onStart,
   onCancel,
   onConfirm,
+  status,
+  retryAttempt,
+  maxRetryAttempts,
+  retryCountdownMs,
+  errorMessage,
+  onRetry,
+  onDiscard,
 }: PromptDictationControlsProps): ReactElement {
   const { theme } = useUnistyles();
 
-  if (!isRecording && !isProcessing) {
+  const isRetrying = status === "retrying";
+  const isFailed = status === "failed";
+  const showActiveState = isRecording || isProcessing || isRetrying || isFailed;
+  const cancelHandler = isFailed ? onDiscard ?? onCancel : onCancel;
+  const confirmHandler = isFailed ? onRetry ?? onConfirm : onConfirm;
+
+  if (!showActiveState) {
     return (
       <Pressable
         onPress={onStart}
@@ -2803,34 +2988,47 @@ function PromptDictationControls({
       </View>
       <View style={styles.dictationActionGroup}>
         <Pressable
-          onPress={onCancel}
-          disabled={isProcessing}
+          onPress={cancelHandler}
+          disabled={isProcessing && !isFailed}
           accessibilityLabel="Cancel dictation"
           style={[
             styles.dictationActionButton,
             styles.dictationActionButtonCancel,
-            isProcessing ? styles.dictationActionButtonDisabled : undefined,
+            isProcessing && !isFailed ? styles.dictationActionButtonDisabled : undefined,
           ]}
         >
           <X size={14} color={theme.colors.foreground} />
         </Pressable>
         <Pressable
-          onPress={onConfirm}
+          onPress={confirmHandler}
           disabled={isProcessing}
-          accessibilityLabel="Insert transcription"
+          accessibilityLabel={isFailed ? "Retry dictation" : "Insert transcription"}
           style={[
             styles.dictationActionButton,
             styles.dictationActionButtonConfirm,
             isProcessing ? styles.dictationActionButtonDisabled : undefined,
           ]}
         >
-          {isProcessing ? (
+          {isProcessing || isRetrying ? (
             <ActivityIndicator size="small" color={theme.colors.background} />
+          ) : isFailed ? (
+            <RefreshCcw size={14} color={theme.colors.background} />
           ) : (
             <Check size={14} color={theme.colors.background} />
           )}
         </Pressable>
       </View>
+      {(isRetrying || isFailed) && (
+        <Text style={[styles.dictationStatusLabel, { color: theme.colors.mutedForeground }]}>
+          {isRetrying
+            ? `Retrying ${Math.max(1, retryAttempt)} / ${Math.max(1, maxRetryAttempts)}${
+                retryCountdownMs && retryCountdownMs > 0
+                  ? ` in ${Math.ceil(retryCountdownMs / 1000)}s`
+                  : ""
+              }`
+            : errorMessage ?? "Dictation failed"}
+        </Text>
+      )}
     </View>
   );
 }
@@ -3092,6 +3290,7 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   content: {
     flex: 1,
+    position: "relative",
   },
   header: {
     paddingBottom: theme.spacing[4],
@@ -3119,6 +3318,15 @@ const styles = StyleSheet.create(((theme: any) => ({
     paddingTop: theme.spacing[6],
     paddingBottom: theme.spacing[8],
     gap: theme.spacing[6],
+  },
+  dictationToastPortal: {
+    position: "absolute",
+    left: theme.spacing[4],
+    right: theme.spacing[4],
+    bottom: theme.spacing[6],
+  },
+  dictationNoticeWrapper: {
+    marginTop: theme.spacing[3],
   },
   formSection: {
     gap: theme.spacing[3],
@@ -3318,6 +3526,11 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   dictationActionButtonDisabled: {
     opacity: theme.opacity[40],
+  },
+  dictationStatusLabel: {
+    marginTop: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
   },
   selectorRow: {
     flexDirection: "row",

@@ -24,6 +24,7 @@ import { useRealtime } from "@/contexts/realtime-context";
 import { useDictation } from "@/hooks/use-dictation";
 import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
 import { VoiceNoteRecordingOverlay } from "./voice-note-recording-overlay";
+import { DictationStatusNotice, type DictationToastVariant } from "./dictation-status-notice";
 import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
@@ -72,6 +73,16 @@ type TextAreaHandle = {
   } & Record<string, unknown>;
 };
 
+type DictationToastConfig = {
+  variant: DictationToastVariant;
+  title: string;
+  subtitle?: string;
+  meta?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  onDismiss?: () => void;
+};
+
 export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
@@ -85,6 +96,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       on: () => () => {},
       sendPing: () => {},
       sendUserMessage: () => {},
+      subscribeConnectionStatus: () => () => {},
+      getConnectionState: () => ({ isConnected: false, isConnecting: false }),
     }),
     []
   );
@@ -111,6 +124,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const [selectedImages, setSelectedImages] = useState<Array<{ uri: string; mimeType: string }>>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [audioDebugInfo, setAudioDebugInfo] = useState<AudioDebugInfo | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState(() =>
+    ws.getConnectionState ? ws.getConnectionState() : { isConnected: ws.isConnected, isConnecting: ws.isConnecting }
+  );
+  const [lastSuccessToastAt, setLastSuccessToastAt] = useState<number | null>(null);
   
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
   const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
@@ -163,23 +180,25 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, []);
 
   const canStartDictation = useCallback(() => {
-    const allowed = !isRealtimeMode && ws.isConnected;
+    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+    const allowed = !isRealtimeMode && socketConnected;
     console.log("[AgentInput] canStartDictation", {
       allowed,
       isRealtimeMode,
-      wsConnected: ws.isConnected,
+      wsConnected: socketConnected,
     });
     return allowed;
-  }, [isRealtimeMode, ws.isConnected]);
+  }, [isRealtimeMode, ws]);
 
   const canConfirmDictation = useCallback(() => {
-    const allowed = ws.isConnected;
+    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+    const allowed = socketConnected;
     console.log("[AgentInput] canConfirmDictation", {
       allowed,
-      wsConnected: ws.isConnected,
+      wsConnected: socketConnected,
     });
     return allowed;
-  }, [ws.isConnected]);
+  }, [ws]);
 
   const {
     isRecording: isDictating,
@@ -187,9 +206,17 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     volume: dictationVolume,
     duration: dictationDuration,
     pendingRequestId: dictationPendingRequestId,
+    error: dictationError,
+    status: dictationStatus,
+    retryAttempt: dictationRetryAttempt,
+    maxRetryAttempts: dictationMaxRetryAttempts,
+    retryInfo: dictationRetryInfo,
+    lastOutcome: dictationLastOutcome,
     startDictation,
     cancelDictation,
     confirmDictation,
+    retryFailedDictation,
+    discardFailedDictation,
   } = useDictation({
     agentId,
     sendAgentAudio,
@@ -208,9 +235,119 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, [dictationPendingRequestId]);
 
   useEffect(() => {
-    const shouldShowOverlay = isDictating || isDictationProcessing;
+    if (!ws.subscribeConnectionStatus) {
+      return;
+    }
+    return ws.subscribeConnectionStatus((status) => {
+      setConnectionStatus(status);
+    });
+  }, [ws]);
+
+  useEffect(() => {
+    if (dictationLastOutcome?.type === "success") {
+      setLastSuccessToastAt(dictationLastOutcome.timestamp);
+    }
+  }, [dictationLastOutcome]);
+
+  useEffect(() => {
+    if (lastSuccessToastAt === null) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setLastSuccessToastAt(null);
+    }, 4000);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [lastSuccessToastAt]);
+
+  const successToastVisible = lastSuccessToastAt !== null;
+
+  const handleRetryFailedRecording = useCallback(() => {
+    void retryFailedDictation();
+  }, [retryFailedDictation]);
+
+  const handleDiscardFailedRecording = useCallback(() => {
+    discardFailedDictation();
+  }, [discardFailedDictation]);
+
+  const dictationToast = useMemo<DictationToastConfig | null>(() => {
+    if (!connectionStatus.isConnected) {
+      return {
+        variant: "warning",
+        title: "Offline",
+        subtitle: "Waiting for connection…",
+      };
+    }
+
+    if (dictationStatus === "recording") {
+      return {
+        variant: "info",
+        title: "Recording voice note…",
+        subtitle: "Release to transcribe",
+      };
+    }
+
+    if (dictationStatus === "uploading") {
+      const attemptLabel = `Attempt ${Math.max(1, dictationRetryAttempt || 1)}/${dictationMaxRetryAttempts}`;
+      return {
+        variant: "info",
+        title: "Transcribing…",
+        meta: attemptLabel,
+      };
+    }
+
+    if (dictationStatus === "retrying") {
+      const attempt = dictationRetryInfo?.attempt ?? Math.max(1, dictationRetryAttempt || 1);
+      const maxAttempts = dictationRetryInfo?.maxAttempts ?? dictationMaxRetryAttempts;
+      const nextLabel =
+        dictationRetryInfo?.nextRetryMs && dictationRetryInfo.nextRetryMs > 0
+          ? ` · Next in ${Math.ceil(dictationRetryInfo.nextRetryMs / 1000)}s`
+          : "";
+      return {
+        variant: "warning",
+        title: "Retrying dictation…",
+        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Network error",
+        meta: `Attempt ${attempt}/${maxAttempts}${nextLabel}`,
+      };
+    }
+
+    if (dictationStatus === "failed") {
+      return {
+        variant: "error",
+        title: "Dictation failed",
+        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Unknown error",
+        actionLabel: "Retry",
+        onAction: handleRetryFailedRecording,
+        onDismiss: handleDiscardFailedRecording,
+      };
+    }
+
+    if (successToastVisible) {
+      return {
+        variant: "success",
+        title: "Transcribed",
+        subtitle: "Added to chat",
+      };
+    }
+
+    return null;
+  }, [
+    connectionStatus.isConnected,
+    dictationError,
+    dictationMaxRetryAttempts,
+    dictationRetryAttempt,
+    dictationRetryInfo,
+    dictationStatus,
+    handleDiscardFailedRecording,
+    handleRetryFailedRecording,
+    successToastVisible,
+  ]);
+
+  useEffect(() => {
+    const shouldShowOverlay = isDictating || isDictationProcessing || dictationStatus === "failed";
     overlayTransition.value = withTiming(shouldShowOverlay ? 1 : 0, { duration: 250 });
-  }, [isDictating, isDictationProcessing, overlayTransition]);
+  }, [dictationStatus, isDictating, isDictationProcessing, overlayTransition]);
 
   const debugInputHeight = (label: string, payload: Record<string, unknown>) => {
     if (!SHOULD_DEBUG_INPUT_HEIGHT) {
@@ -231,7 +368,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, [sendAgentMessage]);
 
   async function handleSendMessage() {
-    if (!userInput.trim() || !ws.isConnected) return;
+    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+    if (!userInput.trim() || !socketConnected) return;
 
     const message = userInput.trim();
     const imageAttachments = selectedImages.length > 0 ? selectedImages : undefined;
@@ -298,6 +436,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       isDictating,
       isDictationProcessing,
     });
+    if (dictationStatus === "failed") {
+      handleDiscardFailedRecording();
+      return;
+    }
     if (!isDictating && !isDictationProcessing) {
       return;
     }
@@ -313,6 +455,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       isDictating,
       isDictationProcessing,
     });
+    if (dictationStatus === "failed") {
+      handleRetryFailedRecording();
+      return;
+    }
     if (!isDictating) {
       return;
     }
@@ -927,10 +1073,20 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
               onCancel={handleCancelRecording}
               onSend={handleSendRecording}
               isTranscribing={isDictationProcessing}
+              status={dictationStatus}
+              onRetry={dictationStatus === "failed" ? handleRetryFailedRecording : undefined}
+              onDiscardFailed={dictationStatus === "failed" ? handleDiscardFailedRecording : undefined}
             />
           </View>
         </Animated.View>
       </View>
+      {dictationToast ? (
+        <View style={styles.dictationToastPortal} pointerEvents="box-none">
+          <View pointerEvents="auto">
+            <DictationStatusNotice {...dictationToast} />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -938,6 +1094,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
 const styles = StyleSheet.create(((theme: any) => ({
   container: {
     flexDirection: "column",
+    position: "relative",
+    flex: 1,
   },
   borderSeparator: {
     height: theme.borderWidth[1],
@@ -969,8 +1127,14 @@ const styles = StyleSheet.create(((theme: any) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    height: FOOTER_HEIGHT,
     alignItems: "center",
+    paddingBottom: theme.spacing[4],
+  },
+  dictationToastPortal: {
+    position: "absolute",
+    left: theme.spacing[4],
+    right: theme.spacing[4],
+    bottom: theme.spacing[4],
   },
   imagePreviewContainer: {
     flexDirection: "row",

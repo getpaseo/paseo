@@ -1521,6 +1521,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     options?: { mode?: "transcribe_only" | "auto_run" }
   ) => {
     try {
+      const isSocketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+      if (!isSocketConnected) {
+        throw new Error("WebSocket is disconnected");
+      }
       // Convert blob to base64
       const arrayBuffer = await audioBlob.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
