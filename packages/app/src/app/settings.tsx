@@ -20,6 +20,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { theme as defaultTheme } from "@/styles/theme";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSessionForServer } from "@/hooks/use-session-directory";
+import type { SessionContextValue } from "@/contexts/session-context";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -797,11 +798,18 @@ function DaemonCard({
           : theme.colors.mutedForeground;
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
-  const daemonSession = useSessionForServer(daemon.id);
+  const daemonWs = useSessionForServer<SessionContextValue["ws"] | null>(
+    daemon.id,
+    useCallback((session) => session?.ws ?? null, [])
+  );
+  const restartServerFn = useSessionForServer<SessionContextValue["restartServer"] | null>(
+    daemon.id,
+    useCallback((session) => session?.restartServer ?? null, [])
+  );
   const [isRestarting, setIsRestarting] = useState(false);
-  const wsIsConnectedRef = useRef(daemonSession?.ws.isConnected ?? false);
+  const wsIsConnectedRef = useRef(daemonWs?.isConnected ?? false);
   const isTesting = testState?.status === "testing";
-  const sessionIsConnected = daemonSession?.ws.isConnected ?? false;
+  const sessionIsConnected = daemonWs?.isConnected ?? false;
 
   useEffect(() => {
     wsIsConnectedRef.current = sessionIsConnected;
@@ -853,7 +861,7 @@ function DaemonCard({
   }, [daemon.label, daemon.wsUrl, isScreenMountedRef, testServerConnection, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
-    if (!daemonSession) {
+    if (!restartServerFn) {
       Alert.alert(
         "Host unavailable",
         `${daemon.label} is not connected. Wait for it to come online before restarting.`
@@ -871,7 +879,7 @@ function DaemonCard({
 
     setIsRestarting(true);
     try {
-      daemonSession.restartServer(`settings_daemon_restart_${daemon.id}`);
+      restartServerFn(`settings_daemon_restart_${daemon.id}`);
     } catch (error) {
       console.error(`[Settings] Failed to restart daemon ${daemon.label}`, error);
       setIsRestarting(false);
@@ -883,10 +891,10 @@ function DaemonCard({
     }
 
     void waitForDaemonRestart();
-  }, [daemon.id, daemon.label, daemonSession, waitForDaemonRestart]);
+  }, [daemon.id, daemon.label, restartServerFn, waitForDaemonRestart]);
 
   const handleRestartPress = useCallback(() => {
-    if (!daemonSession) {
+    if (!restartServerFn) {
       Alert.alert(
         "Host unavailable",
         `${daemon.label} is not connected. Wait for it to come online before restarting.`
@@ -917,7 +925,7 @@ function DaemonCard({
         onPress: beginServerRestart,
       },
     ]);
-  }, [beginServerRestart, daemon.label, daemonSession, restartConfirmationMessage]);
+  }, [beginServerRestart, daemon.label, restartConfirmationMessage, restartServerFn]);
 
   return (
     <View style={[styles.settingCard, styles.daemonCard]}>

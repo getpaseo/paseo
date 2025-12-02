@@ -68,6 +68,7 @@ import type { SessionContextValue } from "@/contexts/session-context";
 import { useSessionForServer } from "@/hooks/use-session-directory";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useSessionStore } from "@/stores/session-store";
+import { shallow } from "zustand/shallow";
 
 export type CreateAgentInitialValues = {
   workingDir?: string;
@@ -100,6 +101,18 @@ interface ModalWrapperProps {
   initialValues?: CreateAgentInitialValues;
   serverId?: string | null;
 }
+
+type CreateAgentSessionSlice = Pick<
+  SessionContextValue,
+  | "serverId"
+  | "ws"
+  | "createAgent"
+  | "resumeAgent"
+  | "sendAgentAudio"
+  | "agents"
+  | "providerModels"
+  | "requestProviderModels"
+>;
 
 const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
 const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
@@ -238,8 +251,25 @@ function AgentFlowModal({
     return exists ? serverId : null;
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
-  const selectedSession = useSessionForServer(selectedServerId);
-  const session = selectedSession ?? null;
+  const selectSessionSlice = useCallback(
+    (session: SessionContextValue | null): CreateAgentSessionSlice | null => {
+      if (!session) {
+        return null;
+      }
+      return {
+        serverId: session.serverId,
+        ws: session.ws,
+        createAgent: session.createAgent,
+        resumeAgent: session.resumeAgent,
+        sendAgentAudio: session.sendAgentAudio,
+        agents: session.agents,
+        providerModels: session.providerModels,
+        requestProviderModels: session.requestProviderModels,
+      } satisfies CreateAgentSessionSlice;
+    },
+    []
+  );
+  const session = useSessionForServer<CreateAgentSessionSlice | null>(selectedServerId, selectSessionSlice, shallow);
   const getSession = useSessionStore((state) => state.getSession);
 
   useEffect(() => {
@@ -574,7 +604,7 @@ function AgentFlowModal({
   const queueProviderModelFetch = useCallback(
     (
       serverId: string | null,
-      targetSession: SessionContextValue | null,
+      targetSession: Pick<SessionContextValue, "providerModels" | "requestProviderModels"> | null,
       options?: { cwd?: string; delayMs?: number }
     ) => {
       if (!serverId || !targetSession?.requestProviderModels) {

@@ -77,7 +77,10 @@ function areAgentDirectoriesEqual(left: AgentDirectoryEntry[] | undefined, right
       entry.id === other.id &&
       entry.status === other.status &&
       entry.serverId === other.serverId &&
-      entry.lastActivityAt.getTime() === other.lastActivityAt.getTime()
+      entry.lastActivityAt.getTime() === other.lastActivityAt.getTime() &&
+      entry.title === other.title &&
+      entry.cwd === other.cwd &&
+      entry.provider === other.provider
     );
   });
 }
