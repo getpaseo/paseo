@@ -531,7 +531,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     updateIsPlayingAudio(playing);
   }, [updateIsPlayingAudio]);
   const [focusedAgentOverride, setFocusedAgentOverride] = useState<string | null>(null);
-  const [orchestratorFocusedAgentId, setOrchestratorFocusedAgentId] = useState<string | null>(null);
   const [messages, setMessages] = useSyncedSessionState("messages", () => [], syncSessionField);
   const [currentAssistantMessage, setCurrentAssistantMessage] = useSyncedSessionState("currentAssistantMessage", "", syncSessionField);
   const [agentStreamState, setAgentStreamState] = useSyncedSessionState("agentStreamState", () => new Map<string, StreamItem[]>(), syncSessionField);
@@ -578,7 +577,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   }
   const audioChunkBuffersRef = useRef<Map<string, AudioChunk[]>>(new Map());
 
-  const focusedAgentId = focusedAgentOverride ?? orchestratorFocusedAgentId;
+  const focusedAgentId = focusedAgentOverride;
   const setFocusedAgentId = useCallback((agentId: string | null) => {
     setFocusedAgentOverride(agentId);
   }, []);
@@ -637,33 +636,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     };
   }, [serverId]);
 
-  useEffect(() => {
-    if (focusedAgentOverride) {
-      if (orchestratorFocusedAgentId !== null) {
-        setOrchestratorFocusedAgentId(null);
-      }
-      return;
-    }
-
-    let latestRunningAgentId: string | null = null;
-    let latestActivityTimestamp = -Infinity;
-
-    for (const agent of agents.values()) {
-      if (agent.status !== "running") {
-        continue;
-      }
-
-      const activityTimestamp = agent.lastActivityAt?.getTime() ?? agent.updatedAt.getTime();
-      if (activityTimestamp > latestActivityTimestamp) {
-        latestActivityTimestamp = activityTimestamp;
-        latestRunningAgentId = agent.id;
-      }
-    }
-
-    if (latestRunningAgentId !== orchestratorFocusedAgentId) {
-      setOrchestratorFocusedAgentId(latestRunningAgentId);
-    }
-  }, [agents, focusedAgentOverride, orchestratorFocusedAgentId]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: AgentFileExplorerState) => AgentFileExplorerState) => {
@@ -932,20 +904,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         }
         const next = new Map(prev);
         next.set(agentId, false);
-        return next;
-      });
-
-      setAgents((prev) => {
-        const existing = prev.get(agentId);
-        if (!existing) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, {
-          ...existing,
-          lastActivityAt: parsedTimestamp,
-          updatedAt: parsedTimestamp,
-        });
         return next;
       });
     });
@@ -1961,10 +1919,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   if (initialSessionValueRef.current === null) {
     initialSessionValueRef.current = value;
   }
-
-  useEffect(() => {
-    syncSessionField("focusedAgentId", focusedAgentId);
-  }, [focusedAgentId, syncSessionField]);
 
   useEffect(() => {
     syncSessionPartial({
