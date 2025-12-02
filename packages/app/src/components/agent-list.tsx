@@ -1,4 +1,4 @@
-import { View, Text, Pressable, ScrollView, Modal } from "react-native";
+import { View, Text, Pressable, FlatList, Modal, type ListRenderItem } from "react-native";
 import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -56,79 +56,94 @@ export function AgentList({ agents }: AgentListProps) {
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
-  return (
-    <>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {agents.map((agent) => {
-          const statusColor = getAgentStatusColor(agent.status);
-          const statusLabel = getAgentStatusLabel(agent.status);
-          const timeAgo = formatTimeAgo(agent.lastActivityAt);
-          const providerLabel = getAgentProviderDefinition(agent.provider).label;
+  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
+    ({ item: agent }) => {
+        const statusColor = getAgentStatusColor(agent.status);
+        const statusLabel = getAgentStatusLabel(agent.status);
+        const timeAgo = formatTimeAgo(agent.lastActivityAt);
+        const providerLabel = getAgentProviderDefinition(agent.provider).label;
 
-          return (
-            <Pressable
-              key={`${agent.serverId}:${agent.id}`}
-              style={({ pressed }) => [
-                styles.agentItem,
-                pressed && styles.agentItemPressed,
-              ]}
-              onPress={() => handleAgentPress(agent.serverId, agent.id)}
-              onLongPress={() => handleAgentLongPress(agent)}
-            >
-              <View style={styles.agentContent}>
-                <View style={styles.titleRow}>
+        return (
+          <Pressable
+            style={({ pressed }) => [
+              styles.agentItem,
+              pressed && styles.agentItemPressed,
+            ]}
+            onPress={() => handleAgentPress(agent.serverId, agent.id)}
+            onLongPress={() => handleAgentLongPress(agent)}
+          >
+            <View style={styles.agentContent}>
+              <View style={styles.titleRow}>
+                <Text
+                  style={styles.agentTitle}
+                  numberOfLines={1}
+                >
+                  {agent.title || "New Agent"}
+                </Text>
+                <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
                   <Text
-                    style={styles.agentTitle}
+                    style={[styles.hostText, { color: theme.colors.mutedForeground }]}
                     numberOfLines={1}
                   >
-                    {agent.title || "New Agent"}
+                    {agent.serverLabel}
                   </Text>
-                  <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
+                </View>
+              </View>
+
+              <Text style={styles.agentDirectory} numberOfLines={1}>
+                {agent.cwd}
+              </Text>
+
+              <View style={styles.statusRow}>
+                <View style={styles.statusGroup}>
+                  <View
+                    style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                  >
                     <Text
-                      style={[styles.hostText, { color: theme.colors.mutedForeground }]}
+                      style={[styles.providerText, { color: theme.colors.mutedForeground }]}
                       numberOfLines={1}
                     >
-                      {agent.serverLabel}
+                      {providerLabel}
+                    </Text>
+                  </View>
+
+                  <View style={styles.statusBadge}>
+                    <View
+                      style={[styles.statusDot, { backgroundColor: statusColor }]}
+                    />
+                    <Text style={[styles.statusText, { color: statusColor }]}>
+                      {statusLabel}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={styles.agentDirectory} numberOfLines={1}>
-                  {agent.cwd}
+                <Text style={styles.timeAgo}>
+                  {timeAgo}
                 </Text>
-
-                <View style={styles.statusRow}>
-                  <View style={styles.statusGroup}>
-                    <View
-                      style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
-                    >
-                      <Text
-                        style={[styles.providerText, { color: theme.colors.mutedForeground }]}
-                        numberOfLines={1}
-                      >
-                        {providerLabel}
-                      </Text>
-                    </View>
-
-                    <View style={styles.statusBadge}>
-                      <View
-                        style={[styles.statusDot, { backgroundColor: statusColor }]}
-                      />
-                      <Text style={[styles.statusText, { color: statusColor }]}>
-                        {statusLabel}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.timeAgo}>
-                    {timeAgo}
-                  </Text>
-                </View>
               </View>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+            </View>
+          </Pressable>
+        );
+      },
+    [handleAgentLongPress, handleAgentPress, theme.colors.muted, theme.colors.mutedForeground]
+  );
+
+  const keyExtractor = useCallback(
+    (agent: AggregatedAgent) => `${agent.serverId}:${agent.id}`,
+    []
+  );
+
+  return (
+    <>
+      <FlatList
+        data={agents}
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        keyExtractor={keyExtractor}
+        renderItem={renderAgentItem}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      />
 
       <Modal
         visible={isActionSheetVisible}
@@ -176,10 +191,13 @@ export function AgentList({ agents }: AgentListProps) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
+  list: {
     flex: 1,
+  },
+  listContent: {
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
   agentItem: {
     paddingVertical: theme.spacing[4],
