@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { SessionContextValue } from "@/contexts/session-context";
+import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 // SessionData mirrors SessionContextValue so consumers can subscribe to a single source of truth.
 export type SessionData = SessionContextValue;
@@ -19,11 +20,33 @@ type SessionListener = () => void;
 
 let storeState: SessionStoreState = { sessions: {} };
 const listeners = new Set<SessionListener>();
+const SESSION_STORE_LOG_TAG = "[SessionStore]";
+let sessionStoreUpdateCount = 0;
 
 const emit = () => {
   for (const listener of listeners) {
     listener();
   }
+};
+
+const logSessionStoreUpdate = (
+  type: "setSession" | "updateSession" | "clearSession",
+  serverId: string,
+  payload?: unknown
+) => {
+  if (!isPerfLoggingEnabled()) {
+    return;
+  }
+  sessionStoreUpdateCount += 1;
+  const metrics = payload ? measurePayload(payload) : null;
+  perfLog(SESSION_STORE_LOG_TAG, {
+    event: type,
+    serverId,
+    updateCount: sessionStoreUpdateCount,
+    payloadApproxBytes: metrics?.approxBytes ?? 0,
+    payloadFieldCount: metrics?.fieldCount ?? 0,
+    timestamp: Date.now(),
+  });
 };
 
 const updateStoreState = (updater: (prev: SessionStoreState) => SessionStoreState) => {
@@ -40,6 +63,7 @@ const setSession: SessionStore["setSession"] = (serverId, data) => {
     if (prev.sessions[serverId] === data) {
       return prev;
     }
+    logSessionStoreUpdate("setSession", serverId, data);
     return {
       sessions: {
         ...prev.sessions,
@@ -66,6 +90,7 @@ const updateSession: SessionStore["updateSession"] = (serverId, partial) => {
       return prev;
     }
 
+    logSessionStoreUpdate("updateSession", serverId, partial);
     return {
       sessions: {
         ...prev.sessions,
@@ -80,6 +105,7 @@ const clearSession: SessionStore["clearSession"] = (serverId) => {
     if (!(serverId in prev.sessions)) {
       return prev;
     }
+    logSessionStoreUpdate("clearSession", serverId);
     const nextSessions = { ...prev.sessions };
     delete nextSessions[serverId];
     return { sessions: nextSessions };

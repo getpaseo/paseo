@@ -7,6 +7,7 @@ import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { buildAgentNavigationKey, startNavigationTiming } from "@/utils/navigation-timing";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -29,6 +30,12 @@ export function AgentList({ agents }: AgentListProps) {
       if (isActionSheetVisible) {
         return;
       }
+      const navigationKey = buildAgentNavigationKey(serverId, agentId);
+      startNavigationTiming(navigationKey, {
+        from: "home",
+        to: "agent",
+        params: { serverId, agentId },
+      });
       router.push({
         pathname: "/agent/[serverId]/[agentId]",
         params: {

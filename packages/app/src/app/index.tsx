@@ -1,5 +1,6 @@
 import { View, ActivityIndicator } from "react-native";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
@@ -10,6 +11,7 @@ import { AgentList } from "@/components/agent-list";
 import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useLocalSearchParams } from "expo-router";
+import { endNavigationTiming, HOME_NAVIGATION_KEY } from "@/utils/navigation-timing";
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -95,6 +97,12 @@ export default function HomeScreen() {
     deepLinkHandledRef.current = deepLinkKey;
     openImportModal(deepLinkServerId);
   }, [deepLinkKey, deepLinkServerId, openImportModal, wantsImportDeepLink]);
+
+  useFocusEffect(
+    useCallback(() => {
+      endNavigationTiming(HOME_NAVIGATION_KEY, { screen: "home" });
+    }, [])
+  );
 
   return (
     <View style={styles.container}>

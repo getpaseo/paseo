@@ -9,6 +9,7 @@ import {
   LayoutChangeEvent,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
@@ -26,6 +27,12 @@ import { formatConnectionStatus } from "@/utils/daemons";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { SessionOutboundMessage } from "@server/server/messages";
+import {
+  buildAgentNavigationKey,
+  endNavigationTiming,
+  HOME_NAVIGATION_KEY,
+  startNavigationTiming,
+} from "@/utils/navigation-timing";
 
 const DROPDOWN_WIDTH = 220;
 
@@ -89,6 +96,7 @@ export default function AgentScreen() {
     suppressUnavailableAlert: true,
     allowUnavailable: true,
   });
+  const sessionServerId = session?.serverId ?? null;
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
@@ -99,8 +107,43 @@ export default function AgentScreen() {
   const lastConnectionError = connection?.lastError ?? null;
 
   const handleBackToHome = useCallback(() => {
+    const targetServerId = resolvedServerId ?? sessionServerId;
+    const targetAgentId = resolvedAgentId ?? null;
+    if (targetServerId && targetAgentId) {
+      startNavigationTiming(HOME_NAVIGATION_KEY, {
+        from: "agent",
+        to: "home",
+        targetMs: 300,
+        params: {
+          serverId: targetServerId,
+          agentId: targetAgentId,
+        },
+      });
+    } else {
+      startNavigationTiming(HOME_NAVIGATION_KEY, {
+        from: "agent",
+        to: "home",
+        targetMs: 300,
+      });
+    }
     router.replace("/");
-  }, [router]);
+  }, [resolvedAgentId, resolvedServerId, router, sessionServerId]);
+
+  const focusServerId = resolvedServerId ?? sessionServerId;
+  const navigationStatus = session ? "ready" : "session_unavailable";
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!resolvedAgentId || !focusServerId) {
+        return;
+      }
+      const navigationKey = buildAgentNavigationKey(focusServerId, resolvedAgentId);
+      endNavigationTiming(navigationKey, {
+        screen: "agent",
+        status: navigationStatus,
+      });
+    }, [focusServerId, navigationStatus, resolvedAgentId])
+  );
 
   if (!session) {
     return (

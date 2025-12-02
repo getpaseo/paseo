@@ -32,6 +32,9 @@ import { ScrollView } from "react-native";
 import * as FileSystem from 'expo-file-system';
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
+import { getNowMs, isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
+
+const SESSION_CONTEXT_LOG_TAG = "[SessionContext]";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -1870,7 +1873,20 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   useEffect(() => {
     const payload = { ...value };
+    const shouldLog = isPerfLoggingEnabled();
+    const start = shouldLog ? getNowMs() : null;
     updateSession(serverId, payload);
+    if (shouldLog && start !== null) {
+      const durationMs = getNowMs() - start;
+      const metrics = measurePayload(payload);
+      perfLog(SESSION_CONTEXT_LOG_TAG, {
+        event: "updateSession",
+        serverId,
+        durationMs: Number(durationMs.toFixed(2)),
+        payloadApproxBytes: metrics.approxBytes,
+        payloadFieldCount: metrics.fieldCount,
+      });
+    }
   }, [serverId, updateSession, value]);
 
   useEffect(() => {
