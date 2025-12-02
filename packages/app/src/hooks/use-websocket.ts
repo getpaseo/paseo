@@ -6,6 +6,11 @@ import type {
   SessionOutboundMessage,
 } from "@server/server/messages";
 
+export interface ConnectionStatusSnapshot {
+  isConnected: boolean;
+  isConnecting: boolean;
+}
+
 export interface UseWebSocketReturn {
   isConnected: boolean;
   isConnecting: boolean;
@@ -18,6 +23,8 @@ export interface UseWebSocketReturn {
   ) => () => void;
   sendPing: () => void;
   sendUserMessage: (message: string) => void;
+  subscribeConnectionStatus?: (listener: (status: ConnectionStatusSnapshot) => void) => () => void;
+  getConnectionState?: () => ConnectionStatusSnapshot;
 }
 
 const RECONNECT_BASE_DELAY_MS = 1500;
@@ -34,6 +41,25 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
+  const connectionListenersRef = useRef(new Set<(status: ConnectionStatusSnapshot) => void>());
+  const connectionStateRef = useRef<ConnectionStatusSnapshot>({ isConnected: false, isConnecting: true });
+
+  const notifyConnectionListeners = useCallback((state: ConnectionStatusSnapshot) => {
+    connectionStateRef.current = state;
+    for (const listener of connectionListenersRef.current) {
+      try {
+        listener(state);
+      } catch (error) {
+        console.error("[WS] Connection listener error", error);
+      }
+    }
+  }, []);
+
+  const updateConnectionState = useCallback((state: ConnectionStatusSnapshot) => {
+    setIsConnected(state.isConnected);
+    setIsConnecting(state.isConnecting);
+    notifyConnectionListeners(state);
+  }, [notifyConnectionListeners]);
 
   const connect = useCallback(() => {
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
@@ -60,8 +86,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
         setLastError(reason.trim());
       }
 
-      setIsConnected(false);
-      setIsConnecting(false);
+      updateConnectionState({ isConnected: false, isConnecting: false });
 
       const attempt = reconnectAttemptRef.current;
       const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
@@ -76,22 +101,21 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
         if (!shouldReconnectRef.current) {
           return;
         }
-        setIsConnecting(true);
-        connect();
-      }, delay);
-    };
+      updateConnectionState({ isConnected: false, isConnecting: true });
+      connect();
+    }, delay);
+  };
 
     try {
       // Add conversation ID to URL if provided
       const wsUrl = conversationId ? `${url}?conversationId=${conversationId}` : url;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
-      setIsConnecting(true);
+      updateConnectionState({ isConnected: false, isConnecting: true });
 
       ws.onopen = () => {
         console.log("[WS] Connected to server");
-        setIsConnected(true);
-        setIsConnecting(false);
+        updateConnectionState({ isConnected: true, isConnecting: false });
         setLastError(null);
         reconnectAttemptRef.current = 0;
       };
@@ -102,7 +126,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
           typeof event?.reason === "string" && event.reason.trim().length > 0
             ? event.reason.trim()
             : `Socket closed (code ${event?.code ?? "unknown"})`;
-        setIsConnected(false);
+        updateConnectionState({ isConnected: false, isConnecting: false });
         scheduleReconnect(reason);
       };
 
@@ -164,7 +188,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
       const reason = err instanceof Error ? err.message : "Failed to create WebSocket";
       scheduleReconnect(reason);
     }
-  }, [url, conversationId]);
+  }, [updateConnectionState, url, conversationId]);
 
   useEffect(() => {
     shouldReconnectRef.current = true;
@@ -259,6 +283,25 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
     [send]
   );
 
+  const subscribeConnectionStatus = useCallback(
+    (listener: (status: ConnectionStatusSnapshot) => void) => {
+      connectionListenersRef.current.add(listener);
+      listener(connectionStateRef.current);
+      return () => {
+        connectionListenersRef.current.delete(listener);
+      };
+    },
+    []
+  );
+
+  const getConnectionState = useCallback(() => {
+    const readyState = wsRef.current?.readyState ?? WebSocket.CLOSED;
+    return {
+      isConnected: readyState === WebSocket.OPEN,
+      isConnecting: readyState === WebSocket.CONNECTING,
+    } satisfies ConnectionStatusSnapshot;
+  }, []);
+
   return useMemo(
     () => ({
       isConnected,
@@ -269,7 +312,20 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
       on,
       sendPing,
       sendUserMessage,
+      subscribeConnectionStatus,
+      getConnectionState,
     }),
-    [isConnected, isConnecting, currentConversationId, lastError, send, on, sendPing, sendUserMessage]
+    [
+      isConnected,
+      isConnecting,
+      currentConversationId,
+      lastError,
+      send,
+      on,
+      sendPing,
+      sendUserMessage,
+      subscribeConnectionStatus,
+      getConnectionState,
+    ]
   );
 }
