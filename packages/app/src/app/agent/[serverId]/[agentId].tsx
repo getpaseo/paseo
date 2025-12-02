@@ -259,6 +259,12 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
       return;
     }
 
+    console.log("[AgentScreen] initializeAgent effect", {
+      agentId: resolvedAgentId,
+      hasStreamState,
+      initializationState,
+    });
+
     if (initializationState !== undefined) {
       return;
     }

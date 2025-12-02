@@ -379,6 +379,18 @@ export const InitializeAgentRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+export const InitializeAgentResponseMessageSchema = z.object({
+  // Response shares the same type literal as the request for simple requestId matching
+  type: z.literal("initialize_agent_request"),
+  payload: z.object({
+    agentId: z.string(),
+    agentStatus: z.string().optional(),
+    timelineSize: z.number().optional(),
+    requestId: z.string().optional(),
+    error: z.string().optional(),
+  }),
+});
+
 export const SetAgentModeMessageSchema = z.object({
   type: z.literal("set_agent_mode"),
   agentId: z.string(),
@@ -717,6 +729,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AudioOutputMessageSchema,
   TranscriptionResultMessageSchema,
   StatusMessageSchema,
+  InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
   ConversationLoadedMessageSchema,
   AgentStateMessageSchema,
@@ -764,6 +777,7 @@ export type ListPersistedAgentsResponseMessage = z.infer<typeof ListPersistedAge
 export type ListProviderModelsResponseMessage = z.infer<
   typeof ListProviderModelsResponseMessageSchema
 >;
+export type InitializeAgentResponseMessage = z.infer<typeof InitializeAgentResponseMessageSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;

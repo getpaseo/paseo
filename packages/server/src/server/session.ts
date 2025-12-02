@@ -1183,18 +1183,15 @@ export class Session {
       // Send timeline snapshot after hydration (if any)
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
 
-      if (requestId) {
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_initialized",
-            agentId,
-            agentStatus: snapshot.lifecycle,
-            requestId,
-            timelineSize,
-          },
-        });
-      }
+      this.emit({
+        type: "initialize_agent_request",
+        payload: {
+          agentId,
+          agentStatus: snapshot.lifecycle,
+          timelineSize,
+          requestId,
+        },
+      });
 
       console.log(
         `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.lifecycle}`
@@ -1205,12 +1202,11 @@ export class Session {
         error
       );
       this.emit({
-        type: "activity_log",
+        type: "initialize_agent_request",
         payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to initialize agent: ${error.message}`,
+          agentId,
+          requestId,
+          error: error?.message ?? "Failed to initialize agent",
         },
       });
     }

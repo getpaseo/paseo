@@ -2,6 +2,7 @@ import { createContext, useState, useRef, ReactNode, useCallback, useEffect, use
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
+import { useSessionRpc } from "@/hooks/use-session-rpc";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { reduceStreamUpdate, generateMessageId, hydrateStreamState, type StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
@@ -57,6 +58,8 @@ type FileExplorerResponseMessage = Extract<
   SessionOutboundMessage,
   { type: "file_explorer_response" }
 >;
+
+type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 
 export type MessageEntry =
   | {
@@ -417,6 +420,13 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     updateConnectionStatus(serverId, { status: "offline" });
   }, [serverId, updateConnectionStatus, ws.isConnected, ws.isConnecting, ws.lastError]);
 
+  // If the socket drops mid-initialization, clear pending flags so screens don't spin forever
+  useEffect(() => {
+    if (!ws.isConnected) {
+      setInitializingAgents(new Map());
+    }
+  }, [ws.isConnected]);
+
   useEffect(() => {
     return () => {
       updateConnectionStatus(serverId, { status: "offline", lastError: null });
@@ -462,7 +472,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
-  const pendingAgentLifecycleRequestsRef = useRef<PendingAgentLifecycleRequest[]>([]);
   const hasHydratedSnapshotRef = useRef(false);
   const hasRequestedInitialSnapshotRef = useRef(false);
 
@@ -601,6 +610,38 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     keepPreviousData: false,
   });
 
+  const refreshAgentRequest = useDaemonRequest<
+    { agentId: string },
+    { agentId: string; lifecycle: AgentLifecycleStatus | undefined },
+    StatusMessage
+  >({
+    ws,
+    responseType: "status",
+    buildRequest: ({ params, requestId }) => ({
+      type: "session",
+      message: {
+        type: "refresh_agent_request",
+        agentId: params?.agentId ?? "",
+        requestId,
+      },
+    }),
+    matchResponse: (message, context) =>
+      message.payload.status === "agent_initialized" &&
+      (message.payload as { agentId?: string }).agentId === context.params?.agentId &&
+      (message.payload as { requestId?: string }).requestId === context.requestId,
+    getRequestKey: (params) => params?.agentId ?? "default",
+    selectData: (message) => ({
+      agentId: (message.payload as { agentId?: string }).agentId ?? "",
+      lifecycle: (message.payload as { agentStatus?: AgentLifecycleStatus }).agentStatus,
+    }),
+    extractError: (message) =>
+      message.payload.status === "error"
+        ? new Error((message.payload as { message?: string }).message ?? "Refresh failed")
+        : null,
+    timeoutMs: 15000,
+    keepPreviousData: false,
+  });
+
   const directoryListingRequest = useDaemonRequest<
     { agentId: string; path: string },
     FileExplorerResponseMessage["payload"],
@@ -659,40 +700,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     keepPreviousData: false,
   });
 
-  const sendAgentLifecycleRequest = useCallback(
-    (request: PendingAgentLifecycleRequest) => {
-      const { kind, params } = request;
-      const messageType = kind === "initialize" ? "initialize_agent_request" : "refresh_agent_request";
-
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: messageType,
-          agentId: params.agentId,
-          requestId: params.requestId,
-        },
-      };
-      ws.send(msg);
-    },
-    [ws]
-  );
-
-  useEffect(() => {
-    if (!wsIsConnected) {
-      return;
-    }
-
-    if (pendingAgentLifecycleRequestsRef.current.length === 0) {
-      return;
-    }
-
-    const pending = [...pendingAgentLifecycleRequestsRef.current];
-    pendingAgentLifecycleRequestsRef.current = [];
-
-    for (const request of pending) {
-      sendAgentLifecycleRequest(request);
-    }
-  }, [wsIsConnected, sendAgentLifecycleRequest]);
+  const initializeAgentRpc = useSessionRpc({
+    ws,
+    type: "initialize_agent_request",
+  });
 
   useEffect(() => {
     if (!wsIsConnected) {
@@ -720,6 +731,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       const { agents: agentsList, commands: commandsList } = message.payload;
 
       console.log("[Session] Session state:", agentsList.length, "agents,", commandsList.length, "commands");
+      setInitializingAgents(new Map());
 
       const { agents: hydratedAgents, pendingPermissions: hydratedPermissions } = buildSessionStateFromSnapshots(
         serverId,
@@ -804,6 +816,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       const { agentId, event, timestamp } = message.payload;
       const parsedTimestamp = new Date(timestamp);
 
+      console.log("[Session] agent_stream", { agentId, eventType: event.type });
+
       setAgentStreamState((prev) => {
         const currentStream = prev.get(agentId) || [];
         const newStream = reduceStreamUpdate(
@@ -845,6 +859,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       if (message.type !== "agent_stream_snapshot") return;
       const { agentId, events } = message.payload;
 
+      console.log("[Session] agent_stream_snapshot", {
+        agentId,
+        eventCount: events.length,
+      });
+
       const hydrated = hydrateStreamState(
         events.map(({ event, timestamp }) => ({
           event: event as AgentStreamEventPayload,
@@ -871,6 +890,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     const unsubStatus = ws.on("status", (message) => {
       if (message.type !== "status") return;
       const status = message.payload.status;
+      if (status === "agent_initialized" && "agentId" in message.payload) {
+        console.log("[Session] status agent_initialized", {
+          agentId: (message.payload as any).agentId,
+          requestId: (message.payload as any).requestId,
+        });
+      }
       if (status === "agent_initialized" && "agentId" in message.payload) {
         const agentId = (message.payload as any).agentId as string | undefined;
         if (agentId) {
@@ -1290,6 +1315,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   }, [ws, audioPlayer, setIsPlayingAudio, updateExplorerState]);
 
   const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+    console.log("[Session] initializeAgent called", { agentId, requestId });
     setInitializingAgents((prev) => {
       const next = new Map(prev);
       next.set(agentId, true);
@@ -1302,19 +1328,17 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       return next;
     });
 
-    if (!wsIsConnected) {
-      pendingAgentLifecycleRequestsRef.current.push({
-        kind: "initialize",
-        params: { agentId, requestId },
+    initializeAgentRpc
+      .send({ agentId })
+      .catch((error) => {
+        console.warn("[Session] initializeAgent failed", { agentId, error });
+        setInitializingAgents((prev) => {
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
       });
-      return;
-    }
-
-    sendAgentLifecycleRequest({
-      kind: "initialize",
-      params: { agentId, requestId },
-    });
-  }, [wsIsConnected, sendAgentLifecycleRequest]);
+  }, [initializeAgentRpc, setAgentStreamState, setInitializingAgents]);
 
   const refreshAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     setInitializingAgents((prev) => {
@@ -1329,19 +1353,17 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       return next;
     });
 
-    if (!wsIsConnected) {
-      pendingAgentLifecycleRequestsRef.current.push({
-        kind: "refresh",
-        params: { agentId, requestId },
+    refreshAgentRequest
+      .execute({ agentId }, { requestKeyOverride: agentId, dedupe: false })
+      .catch((error) => {
+        console.warn("[Session] refreshAgent failed", { agentId, error });
+        setInitializingAgents((prev) => {
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
       });
-      return;
-    }
-
-    sendAgentLifecycleRequest({
-      kind: "refresh",
-      params: { agentId, requestId },
-    });
-  }, [wsIsConnected, sendAgentLifecycleRequest]);
+  }, [refreshAgentRequest, setAgentStreamState, setInitializingAgents]);
 
   const requestProviderModels = useCallback((provider: AgentProvider, options?: { cwd?: string }) => {
     const requestId = generateMessageId();
