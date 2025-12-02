@@ -101,6 +101,7 @@ const MAX_ROLLOUT_SEARCH_DEPTH = 5;
 const PERSISTED_TIMELINE_LIMIT = 20;
 const SHELL_FUNCTION_NAMES = new Set(["shell", "shell_command"]);
 type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+type ThreadItemWithOptionalCallId = ThreadItem & { call_id?: string };
 
 type ExecPermissionRequestPayload = {
   call_id?: string;
@@ -124,6 +125,19 @@ function createToolCallTimelineItem(
   data: Omit<ToolCallTimelineItem, "type">
 ): AgentTimelineItem {
   return { type: "tool_call", ...data };
+}
+
+function normalizeCallId(value?: string | null): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+}
+
+function extractThreadItemCallId(item: ThreadItem): string | undefined {
+  const withCallId = item as ThreadItemWithOptionalCallId;
+  return normalizeCallId(withCallId.call_id) ?? normalizeCallId((item as { id?: string }).id);
 }
 
 function buildCommandDisplayName(command?: unknown): string {
@@ -811,6 +825,7 @@ class CodexAgentSession implements AgentSession {
   }
 
   private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
+    const callId = extractThreadItemCallId(item);
     switch (item.type) {
       case "agent_message":
         return { type: "assistant_message", text: item.text };
@@ -838,7 +853,7 @@ class CodexAgentSession implements AgentSession {
           server: "command",
           tool: "shell",
           status: item.status,
-          callId: (item as any)?.call_id,
+          callId,
           displayName: buildCommandDisplayName(item.command),
           kind: "execute",
           input: { command: item.command, cwd },
@@ -852,7 +867,7 @@ class CodexAgentSession implements AgentSession {
           server: "file_change",
           tool: "apply_patch",
           status: "completed",
-          callId: (item as any)?.call_id,
+          callId,
           displayName: buildFileChangeSummary(files),
           kind: "edit",
           output: { files },
@@ -863,7 +878,7 @@ class CodexAgentSession implements AgentSession {
           server: item.server,
           tool: item.tool,
           status: item.status,
-          callId: (item as any)?.call_id,
+          callId,
           displayName: `${item.server}.${item.tool}`,
           kind: "tool",
           input: (item as any)?.input,
@@ -874,7 +889,7 @@ class CodexAgentSession implements AgentSession {
           server: "web_search",
           tool: "web_search",
           status: (item as any)?.status ?? "completed",
-          callId: (item as any)?.call_id,
+          callId,
           displayName: item.query ? `Web search: ${item.query}` : "Web search",
           kind: "search",
           input: { query: item.query },
