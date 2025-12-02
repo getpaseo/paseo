@@ -227,6 +227,85 @@ describe("CodexAgentClient (SDK integration)", () => {
   );
 
   test(
+    "emits distinct non-empty call ids for sequential Codex tool calls",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = { provider: "codex", cwd, modeId: "full-access" };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      try {
+        session = await client.createSession(config);
+        log("Streaming Codex run for tool call id uniqueness test");
+
+        const prompt = [
+          "1. Run the command `pwd` using your shell tool and wait for it to finish.",
+          "2. Use apply_patch (not the shell) to create a file codex-call-id.txt containing only the text 'ok'.",
+          "3. After the patch completes, run `cat codex-call-id.txt` with the shell tool to read the file back.",
+          "4. Respond DONE and stop.",
+        ].join("\n");
+
+        const stream = session.stream(prompt);
+        const observedToolCalls: ToolCallItem[] = [];
+
+        for await (const event of stream) {
+          if (
+            event.type === "timeline" &&
+            event.provider === "codex" &&
+            event.item.type === "tool_call" &&
+            event.item.server !== "permission"
+          ) {
+            observedToolCalls.push(event.item);
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect(observedToolCalls.length).toBeGreaterThanOrEqual(2);
+
+        for (const toolCall of observedToolCalls) {
+          expect(typeof toolCall.callId).toBe("string");
+          expect((toolCall.callId ?? "").trim().length).toBeGreaterThan(0);
+        }
+
+        const uniqueIds = new Set(observedToolCalls.map((item) => item.callId));
+        expect(uniqueIds.size).toBeGreaterThanOrEqual(2);
+
+        const callIdCounts = new Map<string, number>();
+        const callIdStatuses = new Map<string, Set<string>>();
+        for (const toolCall of observedToolCalls) {
+          const callId = toolCall.callId!;
+          callIdCounts.set(callId, (callIdCounts.get(callId) ?? 0) + 1);
+          if (!callIdStatuses.has(callId)) {
+            callIdStatuses.set(callId, new Set());
+          }
+          if (typeof toolCall.status === "string") {
+            callIdStatuses.get(callId)!.add(toolCall.status);
+          }
+        }
+
+        const commandCallGroups = Array.from(callIdCounts.entries())
+          .filter(([callId]) => observedToolCalls.some((call) => call.callId === callId && call.server === "command"));
+        const multiEventCommandIds = commandCallGroups.filter(([, count]) => count >= 2).map(([callId]) => callId);
+        expect(multiEventCommandIds.length).toBeGreaterThan(0);
+
+        const hasCompletedCommandLifecycle = multiEventCommandIds.some((callId) => {
+          const statuses = callIdStatuses.get(callId);
+          return statuses?.has("completed") && (statuses?.size ?? 0) >= 2;
+        });
+        expect(hasCompletedCommandLifecycle).toBe(true);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
     "hydrates persisted shell_command tool calls with completed status",
     async () => {
       const restoreSessionDir = useTempCodexSessionDir();
