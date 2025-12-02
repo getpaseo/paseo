@@ -1,28 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSessionStore, type SessionData } from "@/stores/session-store";
-import { useSessionHeavyDirectory } from "@/stores/session-heavy-state";
 
 export function useSessionDirectory(): Map<string, SessionData> {
   const sessions = useSessionStore((state) => state.sessions);
-  const heavyDirectory = useSessionHeavyDirectory();
 
   return useMemo(() => {
-    const merged = new Map<string, SessionData>();
-    for (const [serverId, session] of Object.entries(sessions)) {
-      const heavy = heavyDirectory.get(serverId);
-      if (heavy) {
-        merged.set(serverId, {
-          ...session,
-          messages: heavy.messages,
-          agentStreamState: heavy.agentStreamState,
-        });
-      } else {
-        merged.set(serverId, session);
-      }
-    }
-    return merged;
-  }, [heavyDirectory, sessions]);
+    return new Map<string, SessionData>(Object.entries(sessions));
+  }, [sessions]);
 }
 
 type SessionSelector<T> = (session: SessionData | null) => T;
