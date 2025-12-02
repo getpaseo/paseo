@@ -1,8 +1,8 @@
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 import type { SessionContextValue } from "@/contexts/session-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { useSessionDirectory } from "./use-session-directory";
+import { useSessionStore } from "@/stores/session-store";
 
 export class DaemonSessionUnavailableError extends Error {
   serverId: string;
@@ -12,17 +12,6 @@ export class DaemonSessionUnavailableError extends Error {
     this.name = "DaemonSessionUnavailableError";
     this.serverId = serverId;
   }
-}
-
-export function getSessionForServer(
-  serverId: string,
-  directory: Map<string, SessionContextValue>
-): SessionContextValue {
-  const session = directory.get(serverId) ?? null;
-  if (!session) {
-    throw new DaemonSessionUnavailableError(serverId);
-  }
-  return session;
 }
 
 type UseDaemonSessionOptions = {
@@ -39,7 +28,16 @@ export function useDaemonSession(
   options: UseDaemonSessionOptions & { allowUnavailable: true }
 ): SessionContextValue | null;
 export function useDaemonSession(serverId?: string | null, options?: UseDaemonSessionOptions) {
-  const sessionDirectory = useSessionDirectory();
+  const selectSession = useCallback(
+    (state: ReturnType<typeof useSessionStore.getState>) => {
+      if (!serverId) {
+        return null;
+      }
+      return state.sessions[serverId] ?? null;
+    },
+    [serverId]
+  );
+  const session = useSessionStore(selectSession);
   const { connectionStates } = useDaemonConnections();
   const alertedDaemonsRef = useRef<Set<string>>(new Set());
   const loggedDaemonsRef = useRef<Set<string>>(new Set());
@@ -50,7 +48,10 @@ export function useDaemonSession(serverId?: string | null, options?: UseDaemonSe
   }
 
   try {
-    return getSessionForServer(serverId, sessionDirectory);
+    if (!session) {
+      throw new DaemonSessionUnavailableError(serverId);
+    }
+    return session;
   } catch (error) {
     if (error instanceof DaemonSessionUnavailableError) {
       const connection = connectionStates.get(serverId);
