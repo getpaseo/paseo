@@ -14,15 +14,23 @@ type RpcState<T> =
   | { status: "success"; requestId: string; data: T }
   | { status: "error"; requestId: string | null; error: Error };
 
-type ResponseWithRequestId<TType extends SharedType> = ResponseOf<TType> & {
+type ResponseWithEnvelope<TType extends SharedType> = ResponseOf<TType> extends {
   payload: { requestId?: string; error?: string };
-};
+}
+  ? ResponseOf<TType>
+  : never;
 
-type SelectResponse<TType extends SharedType, TData> = (message: ResponseWithRequestId<TType>) => TData;
+type EnsureEnvelope<TType extends SharedType> = ResponseWithEnvelope<TType> extends never ? never : TType;
 
-export function useSessionRpc<TType extends SharedType, TData = ResponseWithRequestId<TType>["payload"]>(options: {
+type ResponsePayload<TType extends SharedType> = ResponseWithEnvelope<TType> extends { payload: infer P }
+  ? P
+  : never;
+
+type SelectResponse<TType extends SharedType, TData> = (message: ResponseWithEnvelope<TType>) => TData;
+
+export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<TType>>(options: {
   ws: UseWebSocketReturn;
-  type: TType;
+  type: EnsureEnvelope<TType>;
   select?: SelectResponse<TType, TData>;
 }) {
   const { ws, type, select } = options;
@@ -31,9 +39,16 @@ export function useSessionRpc<TType extends SharedType, TData = ResponseWithRequ
   const resolveRef = useRef<((value: TData) => void) | null>(null);
   const rejectRef = useRef<((reason?: any) => void) | null>(null);
 
+  const clearActiveRequest = useCallback(() => {
+    activeRequestIdRef.current = null;
+    resolveRef.current = null;
+    rejectRef.current = null;
+  }, []);
+
   useEffect(() => {
     const unsubscribe = ws.on(type, (message) => {
-      const payload = (message as ResponseWithRequestId<TType>).payload;
+      const typedMessage = message as ResponseWithEnvelope<TType>;
+      const payload = typedMessage.payload;
       if (!payload || payload.requestId !== activeRequestIdRef.current) {
         return;
       }
@@ -42,47 +57,71 @@ export function useSessionRpc<TType extends SharedType, TData = ResponseWithRequ
         const error = new Error(payload.error);
         setState({ status: "error", requestId: payload.requestId ?? null, error });
         rejectRef.current?.(error);
-        activeRequestIdRef.current = null;
+        clearActiveRequest();
         return;
       }
 
-      const data = select ? select(message as ResponseWithRequestId<TType>) : ((payload as unknown) as TData);
+      const baseData = typedMessage.payload as ResponsePayload<TType>;
+      const data = select ? select(typedMessage) : (baseData as unknown as TData);
       setState({ status: "success", requestId: payload.requestId ?? null, data });
       resolveRef.current?.(data);
-      activeRequestIdRef.current = null;
+      clearActiveRequest();
     });
 
     return () => {
       unsubscribe();
     };
-  }, [select, type, ws]);
+  }, [clearActiveRequest, select, type, ws]);
+
+  useEffect(() => {
+    if (ws.isConnected || !activeRequestIdRef.current) {
+      return;
+    }
+    const error = new Error("WebSocket disconnected");
+    setState({ status: "error", requestId: activeRequestIdRef.current, error });
+    rejectRef.current?.(error);
+    clearActiveRequest();
+  }, [clearActiveRequest, ws.isConnected]);
 
   const send = useCallback(
     (params: Omit<RequestOf<TType>, "type" | "requestId">) => {
-      const requestId = generateMessageId();
-      activeRequestIdRef.current = requestId;
-      setState({ status: "loading", requestId });
-
-      const request = {
-        type,
-        ...params,
-        requestId,
-      } as RequestOf<TType>;
-
-      ws.send({ type: "session", message: request });
-
       return new Promise<TData>((resolve, reject) => {
+        if (!ws.isConnected) {
+          const error = new Error("WebSocket is disconnected");
+          setState({ status: "error", requestId: null, error });
+          reject(error);
+          return;
+        }
+
+        const requestId = generateMessageId();
+        activeRequestIdRef.current = requestId;
         resolveRef.current = resolve;
         rejectRef.current = reject;
+        setState({ status: "loading", requestId });
+
+        const request = {
+          type,
+          ...params,
+          requestId,
+        } as RequestOf<TType>;
+
+        try {
+          ws.send({ type: "session", message: request });
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          setState({ status: "error", requestId: requestId, error: err });
+          reject(err);
+          clearActiveRequest();
+        }
       });
     },
-    [type, ws]
+    [clearActiveRequest, type, ws]
   );
 
   const reset = useCallback(() => {
-    activeRequestIdRef.current = null;
+    clearActiveRequest();
     setState({ status: "idle", requestId: null });
-  }, []);
+  }, [clearActiveRequest]);
 
   return useMemo(() => ({ state, send, reset }), [reset, send, state]);
 }
