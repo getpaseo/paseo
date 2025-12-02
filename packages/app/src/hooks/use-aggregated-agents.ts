@@ -15,21 +15,27 @@ export interface AggregatedAgentsResult {
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates } = useDaemonConnections();
-  const agentDirectory = useSessionStore((state) => state.agentDirectory);
+  const sessions = useSessionStore((state) => state.sessions);
 
   return useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
-    for (const [serverId, agents] of Object.entries(agentDirectory)) {
-      if (!agents || agents.length === 0) {
+    // Derive agent directory from all sessions
+    for (const [serverId, session] of Object.entries(sessions)) {
+      if (!session?.agents || session.agents.size === 0) {
         continue;
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
-      for (const agent of agents) {
+      for (const agent of session.agents.values()) {
         allAgents.push({
-          ...agent,
+          id: agent.id,
           serverId,
           serverLabel,
+          title: agent.title ?? null,
+          status: agent.status,
+          lastActivityAt: agent.lastActivityAt,
+          cwd: agent.cwd,
+          provider: agent.provider,
         });
       }
     }
@@ -61,5 +67,5 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     });
 
     return { agents: allAgents, isLoading };
-  }, [agentDirectory, connectionStates]);
+  }, [sessions, connectionStates]);
 }

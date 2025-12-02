@@ -203,7 +203,6 @@ export interface SessionState {
 // Global store state
 interface SessionStoreState {
   sessions: Record<string, SessionState>;
-  agentDirectory: Record<string, AgentDirectoryEntry[]>;
 }
 
 // Action types
@@ -257,9 +256,7 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
 
-  // Agent directory
-  setAgentDirectory: (serverId: string, agents: AgentDirectoryEntry[]) => void;
-  clearAgentDirectory: (serverId: string) => void;
+  // Agent directory (derived from agents)
   getAgentDirectory: (serverId: string) => AgentDirectoryEntry[] | undefined;
 }
 
@@ -288,29 +285,6 @@ function logSessionStoreUpdate(
   });
 }
 
-function areAgentDirectoriesEqual(left: AgentDirectoryEntry[] | undefined, right: AgentDirectoryEntry[]): boolean {
-  if (!left) {
-    return false;
-  }
-  if (left.length !== right.length) {
-    return false;
-  }
-  return left.every((entry, index) => {
-    const other = right[index];
-    if (!other) {
-      return false;
-    }
-    return (
-      entry.id === other.id &&
-      entry.status === other.status &&
-      entry.serverId === other.serverId &&
-      entry.lastActivityAt.getTime() === other.lastActivityAt.getTime() &&
-      entry.title === other.title &&
-      entry.cwd === other.cwd &&
-      entry.provider === other.provider
-    );
-  });
-}
 
 // Helper to create initial session state
 function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
@@ -339,7 +313,6 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => ({
     sessions: {},
-    agentDirectory: {},
 
     // Session management
     initializeSession: (serverId, ws, audioPlayer) => {
@@ -697,38 +670,26 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
-    // Agent directory
-    setAgentDirectory: (serverId, agents) => {
-      set((prev) => {
-        const existing = prev.agentDirectory[serverId];
-        if (existing && areAgentDirectoriesEqual(existing, agents)) {
-          return prev;
-        }
-        logSessionStoreUpdate("setAgentDirectory", serverId, { agentCount: agents.length });
-        return {
-          ...prev,
-          agentDirectory: {
-            ...prev.agentDirectory,
-            [serverId]: agents,
-          },
-        };
-      });
-    },
-
-    clearAgentDirectory: (serverId) => {
-      set((prev) => {
-        if (!(serverId in prev.agentDirectory)) {
-          return prev;
-        }
-        logSessionStoreUpdate("clearAgentDirectory", serverId);
-        const nextDirectory = { ...prev.agentDirectory };
-        delete nextDirectory[serverId];
-        return { ...prev, agentDirectory: nextDirectory };
-      });
-    },
-
+    // Agent directory - derived from agents (computed on-demand)
     getAgentDirectory: (serverId) => {
-      return get().agentDirectory[serverId];
+      const session = get().sessions[serverId];
+      if (!session) {
+        return undefined;
+      }
+
+      const entries: AgentDirectoryEntry[] = [];
+      for (const agent of session.agents.values()) {
+        entries.push({
+          id: agent.id,
+          serverId,
+          title: agent.title ?? null,
+          status: agent.status,
+          lastActivityAt: agent.lastActivityAt,
+          cwd: agent.cwd,
+          provider: agent.provider,
+        });
+      }
+      return entries;
     },
   }))
 );

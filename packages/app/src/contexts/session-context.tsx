@@ -137,22 +137,6 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
   };
 }
 
-function buildAgentDirectoryEntries(serverId: string, agents: Map<string, any>): AgentDirectoryEntry[] {
-  const entries: AgentDirectoryEntry[] = [];
-  for (const agent of agents.values()) {
-    entries.push({
-      id: agent.id,
-      serverId,
-      title: agent.title ?? null,
-      status: agent.status,
-      lastActivityAt: agent.lastActivityAt,
-      cwd: agent.cwd,
-      provider: agent.provider,
-    });
-  }
-  return entries;
-}
-
 const createExplorerState = () => ({
   directories: new Map(),
   files: new Map(),
@@ -231,8 +215,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
   const clearSession = useSessionStore((state) => state.clearSession);
-  const setAgentDirectory = useSessionStore((state) => state.setAgentDirectory);
-  const clearAgentDirectory = useSessionStore((state) => state.clearAgentDirectory);
   const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
   const setMessages = useSessionStore((state) => state.setMessages);
   const setCurrentAssistantMessage = useSessionStore((state) => state.setCurrentAssistantMessage);
@@ -1087,14 +1069,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     };
   }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setInitializingAgents, setAgents, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
 
-  // Sync agent directory
-  useEffect(() => {
-    const session = getSession(serverId);
-    if (!session) return;
-    const lightweightAgentDirectory = buildAgentDirectoryEntries(serverId, session.agents);
-    setAgentDirectory(serverId, lightweightAgentDirectory);
-  }, [serverId, getSession, setAgentDirectory]);
-
   // Auto-flush queued messages when agent transitions from running -> not running
   useEffect(() => {
     const session = getSession(serverId);
@@ -1546,9 +1520,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   useEffect(() => {
     return () => {
       clearSession(serverId);
-      clearAgentDirectory(serverId);
     };
-  }, [serverId, clearSession, clearAgentDirectory]);
+  }, [serverId, clearSession]);
 
   const value = useMemo<SessionContextValue>(
     () => ({
