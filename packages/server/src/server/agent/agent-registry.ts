@@ -102,11 +102,16 @@ export class AgentRegistry {
     await this.flush();
   }
 
-  async applySnapshot(agent: ManagedAgent): Promise<void> {
+  async applySnapshot(
+    agent: ManagedAgent,
+    options?: { title?: string | null }
+  ): Promise<void> {
     await this.load();
     const existing = this.cache.get(agent.id);
+    const hasTitleOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const record = toStoredAgentRecord(agent, {
-      title: existing?.title ?? null,
+      title: hasTitleOverride ? options?.title ?? null : existing?.title ?? null,
       createdAt: existing?.createdAt,
     });
     this.cache.set(agent.id, record);
@@ -117,7 +122,7 @@ export class AgentRegistry {
     await this.load();
     const record = this.cache.get(agentId);
     if (!record) {
-      return;
+      throw new Error(`Agent ${agentId} not found`);
     }
     this.cache.set(agentId, { ...record, title });
     await this.flush();

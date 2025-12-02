@@ -103,6 +103,7 @@ async function main() {
       }),
       codex: new CodexAgentClient(),
     },
+    registry: agentRegistry,
   });
 
   attachAgentRegistryPersistence(agentManager, agentRegistry);

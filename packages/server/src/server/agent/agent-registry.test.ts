@@ -168,6 +168,22 @@ describe("AgentRegistry", () => {
     expect(persisted?.title).toBe("Fix Login Bug");
   });
 
+  test("setTitle throws when the agent record does not exist", async () => {
+    await expect(registry.setTitle("missing-agent", "Impossible"))
+      .rejects.toThrow("Agent missing-agent not found");
+  });
+
+  test("applySnapshot accepts explicit title overrides", async () => {
+    const agentId = "agent-override";
+    await registry.applySnapshot(
+      createManagedAgent({ id: agentId }),
+      { title: "Provided Title" }
+    );
+
+    const record = await registry.get(agentId);
+    expect(record?.title).toBe("Provided Title");
+  });
+
   test("applySnapshot preserves custom titles while updating metadata", async () => {
     const agentId = "agent-3";
     await registry.applySnapshot(

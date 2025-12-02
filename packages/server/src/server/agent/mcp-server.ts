@@ -193,20 +193,13 @@ export async function createAgentMcpServer(
       }
 
       const provider: AgentProvider = agentType ?? "claude";
+      const normalizedTitle = title?.trim() ?? null;
       const snapshot = await agentManager.createAgent({
         provider,
         cwd: resolvedCwd,
         modeId: initialMode,
+        title: normalizedTitle ?? undefined,
       });
-
-      try {
-        await agentRegistry.setTitle(snapshot.id, title);
-      } catch (error) {
-        console.error(
-          `[Agent MCP] Failed to persist title for ${snapshot.id}:`,
-          error
-        );
-      }
 
       if (initialPrompt) {
         try {

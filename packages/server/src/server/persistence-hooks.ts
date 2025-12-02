@@ -42,6 +42,7 @@ export function buildConfigOverrides(
     cwd: record.cwd,
     modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
     model: record.config?.model ?? undefined,
+    title: record.title ?? undefined,
     extra: record.config?.extra ?? undefined,
   };
 }
@@ -58,6 +59,7 @@ export function buildSessionConfig(
     cwd: record.cwd,
     modeId: overrides.modeId,
     model: overrides.model,
+    title: overrides.title,
     extra: overrides.extra,
   };
 }

@@ -21,6 +21,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import { resolveAgentModel } from "./model-resolver.js";
+import type { AgentRegistry } from "./agent-registry.js";
 
 export const AGENT_LIFECYCLE_STATUSES = [
   "initializing",
@@ -52,6 +53,7 @@ export type AgentManagerOptions = {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
   maxTimelineItems?: number;
   idFactory?: () => string;
+  registry?: AgentRegistry;
 };
 
 export type WaitForAgentOptions = {
@@ -180,11 +182,13 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly maxTimelineItems: number;
   private readonly idFactory: () => string;
+  private readonly registry?: AgentRegistry;
 
   constructor(options?: AgentManagerOptions) {
     this.maxTimelineItems =
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
+    this.registry = options?.registry;
     if (options?.clients) {
       for (const [provider, client] of Object.entries(options.clients)) {
         if (client) {
@@ -718,12 +722,26 @@ export class AgentManager {
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
+    await this.persistSnapshot(managed, {
+      title: config.title ?? null,
+    });
     this.emitState(managed);
 
     await this.refreshSessionState(managed);
     managed.lifecycle = "idle";
+    await this.persistSnapshot(managed);
     this.emitState(managed);
     return this.createAgentView(managed);
+  }
+
+  private async persistSnapshot(
+    agent: ManagedAgent,
+    options?: { title?: string | null }
+  ): Promise<void> {
+    if (!this.registry) {
+      return;
+    }
+    await this.registry.applySnapshot(agent, options);
   }
 
   private async refreshSessionState(agent: ActiveManagedAgent): Promise<void> {

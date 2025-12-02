@@ -136,6 +136,7 @@ export type AgentSessionConfig = {
   cwd: string;
   modeId?: string;
   model?: string;
+  title?: string | null;
   approvalPolicy?: string;
   sandboxMode?: string;
   networkAccess?: boolean;

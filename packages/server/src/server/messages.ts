@@ -58,6 +58,13 @@ const AgentSessionConfigSchema = z.object({
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .optional()
+    .nullable(),
   approvalPolicy: z.string().optional(),
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),

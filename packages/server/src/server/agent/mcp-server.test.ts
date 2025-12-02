@@ -71,7 +71,7 @@ describe("create_agent MCP tool", () => {
     expect(ok.success).toBe(true);
   });
 
-  it("persists provided titles immediately after agent creation", async () => {
+  it("passes caller-provided titles directly into createAgent", async () => {
     const { agentManager, agentRegistry, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "agent-123",
@@ -88,9 +88,11 @@ describe("create_agent MCP tool", () => {
       title: "  Fix auth bug  ",
     });
 
-    expect(spies.agentRegistry.setTitle).toHaveBeenCalledWith(
-      "agent-123",
-      "Fix auth bug"
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/tmp/repo",
+        title: "Fix auth bug",
+      })
     );
   });
 });
