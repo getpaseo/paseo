@@ -628,6 +628,17 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         next.set(agentId, false);
         return next;
       });
+
+      // Update agent's lastActivityAt to track stream activity
+      setAgents(serverId, (prev) => {
+        const agent = prev.get(agentId);
+        if (!agent) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(agentId, { ...agent, lastActivityAt: parsedTimestamp });
+        return next;
+      });
     });
 
     const unsubAgentStreamSnapshot = ws.on("agent_stream_snapshot", (message) => {
