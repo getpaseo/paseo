@@ -1,9 +1,9 @@
-import type { Agent } from "@/contexts/session-context";
 import { useMemo } from "react";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
+import type { AgentDirectoryEntry } from "@/types/agent-directory";
 
-export interface AggregatedAgent extends Agent {
+export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
   serverLabel: string;
 }
@@ -15,26 +15,17 @@ export interface AggregatedAgentsResult {
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates } = useDaemonConnections();
-  const sessions = useSessionStore((state) => state.sessions);
-  const sessionAgents = useMemo(() => {
-    const agentsByServer: Record<string, Map<string, Agent>> = {};
-    for (const [serverId, session] of Object.entries(sessions)) {
-      if (session?.agents) {
-        agentsByServer[serverId] = session.agents;
-      }
-    }
-    return agentsByServer;
-  }, [sessions]);
+  const agentDirectory = useSessionStore((state) => state.agentDirectory);
 
   return useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
-    for (const [serverId, agents] of Object.entries(sessionAgents)) {
-      if (!agents || agents.size === 0) {
+    for (const [serverId, agents] of Object.entries(agentDirectory)) {
+      if (!agents || agents.length === 0) {
         continue;
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
-      for (const agent of agents.values()) {
+      for (const agent of agents) {
         allAgents.push({
           ...agent,
           serverId,
@@ -53,8 +44,8 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       if (!leftRunning && rightRunning) {
         return 1;
       }
-      const leftTime = (left.lastUserMessageAt ?? left.lastActivityAt).getTime();
-      const rightTime = (right.lastUserMessageAt ?? right.lastActivityAt).getTime();
+      const leftTime = left.lastActivityAt.getTime();
+      const rightTime = right.lastActivityAt.getTime();
       return rightTime - leftTime;
     });
 
@@ -70,5 +61,5 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     });
 
     return { agents: allAgents, isLoading };
-  }, [sessionAgents, connectionStates]);
+  }, [agentDirectory, connectionStates]);
 }

@@ -33,6 +33,7 @@ import * as FileSystem from 'expo-file-system';
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import { getNowMs, isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
+import type { AgentDirectoryEntry } from "@/types/agent-directory";
 
 const SESSION_CONTEXT_LOG_TAG = "[SessionContext]";
 
@@ -298,6 +299,22 @@ function buildSessionStateFromSnapshots(serverId: string, snapshots: AgentSnapsh
   return { agents, pendingPermissions };
 }
 
+function buildAgentDirectoryEntries(serverId: string, agents: Map<string, Agent>): AgentDirectoryEntry[] {
+  const entries: AgentDirectoryEntry[] = [];
+  for (const agent of agents.values()) {
+    entries.push({
+      id: agent.id,
+      serverId,
+      title: agent.title ?? null,
+      status: agent.status,
+      lastActivityAt: agent.lastActivityAt,
+      cwd: agent.cwd,
+      provider: agent.provider,
+    });
+  }
+  return entries;
+}
+
 
 export interface SessionContextValue {
   serverId: string;
@@ -400,6 +417,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const setSession = useSessionStore((state) => state.setSession);
   const updateSession = useSessionStore((state) => state.updateSession);
   const clearSession = useSessionStore((state) => state.clearSession);
+  const setAgentDirectory = useSessionStore((state) => state.setAgentDirectory);
+  const clearAgentDirectory = useSessionStore((state) => state.clearAgentDirectory);
 
   useEffect(() => {
     if (ws.isConnected) {
@@ -455,6 +474,13 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const [hasHydratedAgents, setHasHydratedAgents] = useState(false);
 
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map());
+  const lightweightAgentDirectory = useMemo(
+    () => buildAgentDirectoryEntries(serverId, agents),
+    [agents, serverId]
+  );
+  useEffect(() => {
+    setAgentDirectory(serverId, lightweightAgentDirectory);
+  }, [lightweightAgentDirectory, serverId, setAgentDirectory]);
   const [commands, setCommands] = useState<Map<string, Command>>(new Map());
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PendingPermission>>(new Map());
   const [gitDiffs, setGitDiffs] = useState<Map<string, string>>(new Map());
@@ -1892,8 +1918,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   useEffect(() => {
     return () => {
       clearSession(serverId);
+      clearAgentDirectory(serverId);
     };
-  }, [clearSession, serverId]);
+  }, [clearAgentDirectory, clearSession, serverId]);
 
   return (
     <SessionContext.Provider value={value}>
