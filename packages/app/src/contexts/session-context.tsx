@@ -507,11 +507,13 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   // WebSocket message handlers - directly update Zustand store
   useEffect(() => {
+    console.log("[Session] Setting up session_state listener for", serverId);
+
     const unsubSessionState = ws.on("session_state", (message) => {
       if (message.type !== "session_state") return;
       const { agents: agentsList, commands: commandsList } = message.payload;
 
-      console.log("[Session] Session state:", agentsList.length, "agents,", commandsList.length, "commands");
+      console.log("[Session] ✅ Received session_state:", agentsList.length, "agents,", commandsList.length, "commands");
       setInitializingAgents(serverId, new Map());
 
       const agents = new Map();
@@ -1580,6 +1582,51 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       respondToPermission,
     ]
   );
+
+  // Sync imperative methods to Zustand store so useDaemonSession can access them without React Context
+  // Memoize the methods object to avoid infinite re-renders (object reference must be stable)
+  const setSessionMethods = useSessionStore((state) => state.setSessionMethods);
+  const methods = useMemo(() => ({
+    setVoiceDetectionFlags,
+    requestGitDiff,
+    requestDirectoryListing,
+    requestFilePreview,
+    navigateExplorerBack,
+    requestProviderModels,
+    restartServer,
+    initializeAgent,
+    refreshAgent,
+    cancelAgentRun,
+    sendAgentMessage,
+    sendAgentAudio,
+    deleteAgent,
+    createAgent,
+    resumeAgent,
+    setAgentMode,
+    respondToPermission,
+  }), [
+    setVoiceDetectionFlags,
+    requestGitDiff,
+    requestDirectoryListing,
+    requestFilePreview,
+    navigateExplorerBack,
+    requestProviderModels,
+    restartServer,
+    initializeAgent,
+    refreshAgent,
+    cancelAgentRun,
+    sendAgentMessage,
+    sendAgentAudio,
+    deleteAgent,
+    createAgent,
+    resumeAgent,
+    setAgentMode,
+    respondToPermission,
+  ]);
+
+  useEffect(() => {
+    setSessionMethods(serverId, methods);
+  }, [serverId, setSessionMethods, methods]);
 
   return (
     <SessionContext.Provider value={value}>

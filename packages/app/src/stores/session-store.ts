@@ -158,6 +158,42 @@ export interface SessionState {
   // Audio player (immutable reference)
   audioPlayer: ReturnType<typeof useAudioPlayer> | null;
 
+  // Imperative methods from SessionProvider
+  methods: {
+    setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
+    requestGitDiff: (agentId: string) => void;
+    requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
+    requestFilePreview: (agentId: string, path: string) => void;
+    navigateExplorerBack: (agentId: string) => string | null;
+    requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
+    restartServer: (reason?: string) => void;
+    initializeAgent: (params: { agentId: string; requestId?: string }) => void;
+    refreshAgent: (params: { agentId: string; requestId?: string }) => void;
+    cancelAgentRun: (agentId: string) => void;
+    sendAgentMessage: (
+      agentId: string,
+      message: string,
+      images?: Array<{ uri: string; mimeType?: string }>
+    ) => Promise<void>;
+    sendAgentAudio: (
+      agentId: string,
+      audioBlob: Blob,
+      requestId?: string,
+      options?: { mode?: "transcribe_only" | "auto_run" }
+    ) => Promise<void>;
+    deleteAgent: (agentId: string) => void;
+    createAgent: (options: {
+      config: any;
+      initialPrompt: string;
+      git?: any;
+      worktreeName?: string;
+      requestId?: string;
+    }) => void;
+    resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
+    setAgentMode: (agentId: string, modeId: string) => void;
+    respondToPermission: (agentId: string, requestId: string, response: any) => void;
+  } | null;
+
   // Hydration status
   hasHydratedAgents: boolean;
 
@@ -256,6 +292,9 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
 
+  // Imperative methods
+  setSessionMethods: (serverId: string, methods: SessionState["methods"]) => void;
+
   // Agent directory (derived from agents)
   getAgentDirectory: (serverId: string) => AgentDirectoryEntry[] | undefined;
 }
@@ -292,6 +331,7 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
     serverId,
     ws,
     audioPlayer,
+    methods: null,
     hasHydratedAgents: false,
     isPlayingAudio: false,
     focusedAgentId: null,
@@ -665,6 +705,28 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, hasHydratedAgents: hydrated },
+          },
+        };
+      });
+    },
+
+    // Imperative methods
+    setSessionMethods: (serverId, methods) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        // Skip if methods reference is the same (already set)
+        if (session.methods === methods) {
+          return prev;
+        }
+        logSessionStoreUpdate("setSessionMethods", serverId, { hasValue: !!methods });
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: { ...session, methods },
           },
         };
       });

@@ -65,10 +65,9 @@ import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/me
 import { formatConnectionStatus } from "@/utils/daemons";
 import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "@/contexts/session-context";
-import { useSessionForServer } from "@/hooks/use-session-directory";
+import { useDaemonSession } from "@/hooks/use-daemon-session";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useSessionStore } from "@/stores/session-store";
-import { shallow } from "zustand/shallow";
 
 export type CreateAgentInitialValues = {
   workingDir?: string;
@@ -102,17 +101,27 @@ interface ModalWrapperProps {
   serverId?: string | null;
 }
 
-type CreateAgentSessionSlice = Pick<
-  SessionContextValue,
-  | "serverId"
-  | "ws"
-  | "createAgent"
-  | "resumeAgent"
-  | "sendAgentAudio"
-  | "agents"
-  | "providerModels"
-  | "requestProviderModels"
->;
+type CreateAgentSessionSlice = {
+  serverId: string;
+  ws: UseWebSocketReturn | null;
+  createAgent: (options: {
+    config: any;
+    initialPrompt: string;
+    git?: any;
+    worktreeName?: string;
+    requestId?: string;
+  }) => void;
+  resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
+  sendAgentAudio: (
+    agentId: string,
+    audioBlob: Blob,
+    requestId?: string,
+    options?: { mode?: "transcribe_only" | "auto_run" }
+  ) => Promise<void>;
+  agents: Map<string, any>;
+  providerModels: Map<any, any>;
+  requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
+};
 
 const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
 const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
@@ -251,26 +260,33 @@ function AgentFlowModal({
     return exists ? serverId : null;
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
-  const selectSessionSlice = useCallback(
-    (session: import("@/hooks/use-daemon-session").DaemonSession | null): CreateAgentSessionSlice | null => {
-      if (!session) {
-        return null;
-      }
-      return {
-        serverId: session.serverId,
-        ws: session.ws,
-        createAgent: session.createAgent,
-        resumeAgent: session.resumeAgent,
-        sendAgentAudio: session.sendAgentAudio,
-        agents: session.agents,
-        providerModels: session.providerModels,
-        requestProviderModels: session.requestProviderModels,
-      } satisfies CreateAgentSessionSlice;
-    },
-    []
-  );
-  const session = useSessionForServer<CreateAgentSessionSlice | null>(selectedServerId, selectSessionSlice, shallow);
-  const getSession = useSessionStore((state) => state.getSession);
+
+  // Use useDaemonSession to get both state AND APIs
+  const fullSession = useDaemonSession(selectedServerId, { allowUnavailable: true, suppressUnavailableAlert: true });
+
+  // Extract only what we need for CreateAgentSessionSlice
+  const session = useMemo<CreateAgentSessionSlice | null>(() => {
+    if (!fullSession) {
+      return null;
+    }
+    const slice: CreateAgentSessionSlice = {
+      serverId: fullSession.serverId,
+      ws: fullSession.ws,
+      createAgent: fullSession.createAgent,
+      resumeAgent: fullSession.resumeAgent,
+      sendAgentAudio: fullSession.sendAgentAudio,
+      agents: fullSession.agents,
+      providerModels: fullSession.providerModels,
+      requestProviderModels: fullSession.requestProviderModels,
+    };
+    return slice;
+  }, [fullSession]);
+
+  // Helper to get session state for background operations
+  // Note: This only returns state, not APIs. For calling methods, need to send WS messages directly.
+  const getSessionState = useCallback((serverId: string) => {
+    return useSessionStore.getState().sessions[serverId] ?? null;
+  }, []);
 
   useEffect(() => {
     if (selectedServerId) {
@@ -322,7 +338,7 @@ function AgentFlowModal({
     }),
     []
   );
-  const effectiveWs = ws ?? inertWebSocket;
+  const effectiveWs: UseWebSocketReturn = ws ?? inertWebSocket;
   const createAgent = session?.createAgent;
   const resumeAgent = session?.resumeAgent;
   const sessionSendAgentAudio = session?.sendAgentAudio;
@@ -604,14 +620,20 @@ function AgentFlowModal({
   const queueProviderModelFetch = useCallback(
     (
       serverId: string | null,
-      targetSession: Pick<SessionContextValue, "providerModels" | "requestProviderModels"> | null,
       options?: { cwd?: string; delayMs?: number }
     ) => {
-      if (!serverId || !targetSession?.requestProviderModels) {
+      if (!serverId) {
         clearQueuedProviderModelRequest(serverId);
         return;
       }
-      const currentState = targetSession.providerModels?.get(selectedProvider);
+
+      const sessionState = getSessionState(serverId);
+      if (!sessionState?.ws?.isConnected) {
+        clearQueuedProviderModelRequest(serverId);
+        return;
+      }
+
+      const currentState = sessionState.providerModels?.get(selectedProvider);
       if (currentState?.models?.length || currentState?.isLoading) {
         clearQueuedProviderModelRequest(serverId);
         return;
@@ -620,7 +642,17 @@ function AgentFlowModal({
       const delayMs = options?.delayMs ?? 0;
       const trigger = () => {
         providerModelRequestTimersRef.current.delete(serverId);
-        targetSession.requestProviderModels(selectedProvider, options?.cwd ? { cwd: options.cwd } : undefined);
+
+        // Send request directly via WebSocket
+        const message: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "request_provider_models",
+            provider: selectedProvider,
+            cwd: options?.cwd,
+          } as any,
+        };
+        sessionState.ws?.send(message);
       };
       clearQueuedProviderModelRequest(serverId);
       if (delayMs > 0) {
@@ -629,7 +661,7 @@ function AgentFlowModal({
         trigger();
       }
     },
-    [clearQueuedProviderModelRequest, selectedProvider]
+    [clearQueuedProviderModelRequest, selectedProvider, getSessionState]
   );
 
   const setProviderFromUser = useCallback((provider: AgentProvider) => {
@@ -826,7 +858,7 @@ function AgentFlowModal({
       return;
     }
     const trimmed = workingDir.trim();
-    queueProviderModelFetch(targetServerId, session, {
+    queueProviderModelFetch(targetServerId, {
       cwd: trimmed.length > 0 ? trimmed : undefined,
       delayMs: 180,
     });
@@ -963,7 +995,7 @@ function AgentFlowModal({
     if (!agents) {
       return ids;
     }
-    agents.forEach((agent) => {
+    agents.forEach((agent: any) => {
       if (agent.sessionId) {
         ids.add(agent.sessionId);
       }
@@ -1515,11 +1547,7 @@ function AgentFlowModal({
           clearQueuedProviderModelRequest(serverId);
           return;
         }
-        const daemonSession = getSession(serverId) ?? null;
-        if (!daemonSession?.ws?.isConnected) {
-          return;
-        }
-        queueProviderModelFetch(serverId, daemonSession, { delayMs: 320 });
+        queueProviderModelFetch(serverId, { delayMs: 320 });
       });
     });
     return () => {
@@ -1531,7 +1559,6 @@ function AgentFlowModal({
     queueProviderModelFetch,
     selectedProvider,
     selectedServerId,
-    getSession,
   ]);
 
   const trimmedWorkingDir = workingDir.trim();

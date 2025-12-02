@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from "react";
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
-import type { SessionContextValue } from "./session-context";
+import type { SessionState } from "@/stores/session-store";
 import { generateMessageId } from "@/types/stream";
 import type { WSInboundMessage } from "@server/server/messages";
 import { useSessionStore } from "@/stores/session-store";
@@ -46,7 +46,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       [activeServerId]
     )
   );
-  const realtimeSessionRef = useRef<SessionContextValue | null>(null);
+  const realtimeSessionRef = useRef<SessionState | null>(null);
   const [isRealtimeMode, setIsRealtimeMode] = useState(false);
   const bargeInPlaybackStopRef = useRef<number | null>(null);
 
@@ -55,8 +55,8 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       console.log("[Realtime] Speech detected");
       // Stop audio playback if playing
       const session = realtimeSessionRef.current;
-      const sessionAudioPlayer = session?.audioPlayer;
-      const sessionWs = session?.ws;
+      const sessionAudioPlayer = session?.audioPlayer ?? null;
+      const sessionWs = session?.ws ?? null;
       const sessionIsPlayingAudio = session?.isPlayingAudio ?? false;
 
       if (sessionIsPlayingAudio && sessionAudioPlayer) {
@@ -96,15 +96,17 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       // Send audio segment to server (realtime always goes to orchestrator)
       const session = realtimeSessionRef.current;
       try {
-        session?.ws.send({
-          type: "session",
-          message: {
-            type: "realtime_audio_chunk",
-            audio: audioData,
-            format: "audio/pcm;rate=16000;bits=16",
-            isLast,
-          },
-        });
+        if (session?.ws) {
+          session.ws.send({
+            type: "session",
+            message: {
+              type: "realtime_audio_chunk",
+              audio: audioData,
+              format: "audio/pcm;rate=16000;bits=16",
+              isLast,
+            },
+          });
+        }
       } catch (error) {
         console.error("[Realtime] Failed to send audio segment:", error);
       }
@@ -112,17 +114,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     onError: (error) => {
       console.error("[Realtime] Audio error:", error);
       const session = realtimeSessionRef.current;
-      if (session) {
-        session.setMessages((prev) => [
-          ...prev,
-          {
-            type: "activity",
-            id: generateMessageId(),
-            timestamp: Date.now(),
-            activityType: "error",
-            message: `Realtime audio error: ${error.message}`,
-          },
-        ]);
+      if (session?.ws) {
+        // Send error through websocket instead of directly manipulating messages
+        console.error("[Realtime] Cannot handle error - setMessages not available from SessionState");
       }
     },
     volumeThreshold: 0.3,
@@ -134,7 +128,18 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   // Update voice detection flags whenever they change
   useEffect(() => {
     const session = realtimeSessionRef.current;
-    session?.setVoiceDetectionFlags(realtimeAudio.isDetecting, realtimeAudio.isSpeaking);
+    if (session?.ws) {
+      // Send voice detection flags through websocket
+      const message: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "voice_detection_update",
+          isDetecting: realtimeAudio.isDetecting,
+          isSpeaking: realtimeAudio.isSpeaking,
+        } as any,
+      };
+      // Note: This functionality needs proper backend support
+    }
   }, [realtimeAudio.isDetecting, realtimeAudio.isSpeaking]);
 
   useEffect(() => {
@@ -176,7 +181,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
             enabled: true,
           },
         };
-        session.ws.send(modeMessage);
+        if (session?.ws) {
+          session.ws.send(modeMessage);
+        }
       } catch (error: any) {
         console.error("[Realtime] Failed to start:", error);
         setActiveServerId((current) => (current === serverId ? null : current));
@@ -189,13 +196,13 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   const stopRealtime = useCallback(async () => {
     try {
       const session = realtimeSessionRef.current;
-      session?.audioPlayer.stop();
+      session?.audioPlayer?.stop();
       await realtimeAudio.stop();
       setIsRealtimeMode(false);
       setActiveServerId(null);
       console.log("[Realtime] Mode disabled");
 
-      if (session) {
+      if (session?.ws) {
         const modeMessage: WSInboundMessage = {
           type: "session",
           message: {

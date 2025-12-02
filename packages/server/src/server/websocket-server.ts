@@ -104,8 +104,8 @@ export class VoiceAssistantWebSocketServer {
       })`
     );
 
-    // Send initial session state (global agents and commands)
-    await session.sendInitialState();
+    // Don't send initial state here - client will request it via load_conversation_request
+    // This avoids race condition where message arrives before client sets up listeners
 
     // Set up message handler
     ws.on("message", (data) => {

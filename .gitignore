@@ -43,3 +43,6 @@ coverage/
 # Misc
 *.pem
 .vercel
+
+# Local Claude configuration
+CLAUDE.local.md

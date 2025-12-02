@@ -1,6 +1,5 @@
-import { useCallback, useRef, useContext } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Alert } from "react-native";
-import { SessionContext } from "@/contexts/session-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 
@@ -81,63 +80,99 @@ export function useDaemonSession(serverId?: string | null, options?: UseDaemonSe
     [serverId]
   );
   const sessionState = useSessionStore(selectSession);
-  const context = useContext(SessionContext);
   const { connectionStates } = useDaemonConnections();
   const alertedDaemonsRef = useRef<Set<string>>(new Set());
   const loggedDaemonsRef = useRef<Set<string>>(new Set());
   const { suppressUnavailableAlert = false, allowUnavailable = false } = options ?? {};
 
-  // Get store actions
-  const getDraftInput = useSessionStore((state) => state.getDraftInput);
-  const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
-  const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
-  const setMessages = useSessionStore((state) => state.setMessages);
-  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+  // Get store actions (these are already stable from Zustand)
+  const getDraftInputAction = useSessionStore((state) => state.getDraftInput);
+  const saveDraftInputAction = useSessionStore((state) => state.saveDraftInput);
+  const setFocusedAgentIdAction = useSessionStore((state) => state.setFocusedAgentId);
+  const setMessagesAction = useSessionStore((state) => state.setMessages);
+  const setQueuedMessagesAction = useSessionStore((state) => state.setQueuedMessages);
+
+  // Create stable wrapper functions that bind serverId (must be before conditional returns)
+  const boundGetDraftInput = useCallback(
+    (agentId: string) => serverId ? getDraftInputAction(serverId, agentId) : undefined,
+    [serverId, getDraftInputAction]
+  );
+  const boundSaveDraftInput = useCallback(
+    (agentId: string, draft: any) => { if (serverId) saveDraftInputAction(serverId, agentId, draft); },
+    [serverId, saveDraftInputAction]
+  );
+  const boundSetFocusedAgentId = useCallback(
+    (agentId: string | null) => { if (serverId) setFocusedAgentIdAction(serverId, agentId); },
+    [serverId, setFocusedAgentIdAction]
+  );
+  const boundSetMessages = useCallback(
+    (messages: any) => { if (serverId) setMessagesAction(serverId, messages); },
+    [serverId, setMessagesAction]
+  );
+  const boundSetQueuedMessages = useCallback(
+    (value: any) => { if (serverId) setQueuedMessagesAction(serverId, value); },
+    [serverId, setQueuedMessagesAction]
+  );
+
+  // Memoize the combined object to prevent infinite re-renders
+  const combined = useMemo<DaemonSession | null>(() => {
+    if (!serverId || !sessionState || !sessionState.methods) {
+      return null;
+    }
+
+    return {
+      ...sessionState,
+      ...sessionState.methods,
+      getDraftInput: boundGetDraftInput,
+      saveDraftInput: boundSaveDraftInput,
+      setFocusedAgentId: boundSetFocusedAgentId,
+      setMessages: boundSetMessages,
+      setQueuedMessages: boundSetQueuedMessages,
+    };
+  }, [
+    serverId,
+    sessionState,
+    boundGetDraftInput,
+    boundSaveDraftInput,
+    boundSetFocusedAgentId,
+    boundSetMessages,
+    boundSetQueuedMessages,
+  ]);
 
   if (!serverId) {
     return null;
   }
 
-  try {
-    if (!sessionState || !context) {
-      throw new DaemonSessionUnavailableError(serverId);
-    }
-
-    // Combine session state with imperative APIs from context and store actions
-    const combined: DaemonSession = {
-      ...sessionState,
-      ...context,
-      // Wrap store actions to bind serverId
-      getDraftInput: (agentId: string) => getDraftInput(serverId, agentId),
-      saveDraftInput: (agentId: string, draft: any) => saveDraftInput(serverId, agentId, draft),
-      setFocusedAgentId: (agentId: string | null) => setFocusedAgentId(serverId, agentId),
-      setMessages: (messages: any) => setMessages(serverId, messages),
-      setQueuedMessages: (value: any) => setQueuedMessages(serverId, value),
-    };
-
+  if (combined) {
+    console.log("[useDaemonSession] Debug", {
+      serverId,
+      hasSessionState: !!sessionState,
+      hasMethods: !!sessionState?.methods,
+      sessionStateKeys: sessionState ? Object.keys(sessionState).slice(0, 5) : [],
+    });
     return combined;
-  } catch (error) {
-    if (error instanceof DaemonSessionUnavailableError) {
-      const connection = connectionStates.get(serverId);
-      const label = connection?.daemon.label ?? serverId;
-      const status = connection?.status ?? "unknown";
-      const lastError = connection?.lastError ? `\n${connection.lastError}` : "";
-      const message = `${label} isn't connected yet (${status}). Paseo reconnects automatically and will enable actions once it's back.${lastError}`;
-
-      if (!suppressUnavailableAlert && !alertedDaemonsRef.current.has(serverId)) {
-        alertedDaemonsRef.current.add(serverId);
-        Alert.alert("Host unavailable", message.trim());
-      }
-
-      if (!loggedDaemonsRef.current.has(serverId)) {
-        loggedDaemonsRef.current.add(serverId);
-        console.warn(`[useDaemonSession] Session unavailable for daemon "${label}" (${status}).`);
-      }
-
-      if (allowUnavailable) {
-        return null;
-      }
-    }
-    throw error;
   }
+
+  // Handle unavailable session
+  const connection = connectionStates.get(serverId);
+  const label = connection?.daemon.label ?? serverId;
+  const status = connection?.status ?? "unknown";
+  const lastError = connection?.lastError ? `\n${connection.lastError}` : "";
+  const message = `${label} isn't connected yet (${status}). Paseo reconnects automatically and will enable actions once it's back.${lastError}`;
+
+  if (!suppressUnavailableAlert && !alertedDaemonsRef.current.has(serverId)) {
+    alertedDaemonsRef.current.add(serverId);
+    Alert.alert("Host unavailable", message.trim());
+  }
+
+  if (!loggedDaemonsRef.current.has(serverId)) {
+    loggedDaemonsRef.current.add(serverId);
+    console.warn(`[useDaemonSession] Session unavailable for daemon "${label}" (${status}).`);
+  }
+
+  if (allowUnavailable) {
+    return null;
+  }
+
+  throw new DaemonSessionUnavailableError(serverId);
 }

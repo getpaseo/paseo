@@ -233,7 +233,7 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
     { cwd: string; currentBranch: string | null },
     GitRepoInfoResponseMessage
   >({
-    ws,
+    ws: ws!,
     responseType: "git_repo_info_response",
     buildRequest: ({ params, requestId }) => ({
       type: "session",
