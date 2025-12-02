@@ -1095,7 +1095,6 @@ const styles = StyleSheet.create(((theme: any) => ({
   container: {
     flexDirection: "column",
     position: "relative",
-    flex: 1,
   },
   borderSeparator: {
     height: theme.borderWidth[1],

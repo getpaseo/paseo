@@ -144,3 +144,82 @@ The multi-daemon infrastructure is in place: session directory with daemon-scope
 - No regressions or cut corners identified
 
 **All tasks complete. No follow-up items required.**
+
+---
+
+# Session State Performance Plan (2025-12-02)
+
+## Background
+
+The Expo client exposes each daemon **session** (one per host) through `SessionProvider`, which builds a massive `SessionContextValue` object containing agents, stream timelines, messages, git/file explorer caches, audio flags, and all websocket helpers. Every render of that provider pushes the entire object into a hand-rolled global store (`useSessionStore`) that mimics Zustand but always replaces `state.sessions[serverId]` wholesale. Home, Settings, and the global footer subscribe to the whole `sessions` map, so **any websocket tick** forces those screens to recompute their derived data. On-device this manifests as:
+
+- 2–3 s delays when navigating back from the agent view because Home must rebuild the aggregated agent list while streaming updates continue.
+- Perceived jank on every button press (Settings, Import, etc.) due to large, synchronous object copies on the JS thread.
+- Memory growth / eventual OOM because `messages`, `agentStreamState`, and explorer caches never trim yet remain resident in the shared store even when no UI needs them.
+
+## Goals
+
+1. Make basic navigation (Home ⇄ Agent ⇄ Settings) feel instant by eliminating unnecessary re-renders.
+2. Adopt real Zustand so we can update fine-grained slices instead of copying the entire session payload.
+3. Keep heavy per-agent data inside `SessionProvider` unless a screen explicitly opts in, reducing memory retention and serialization overhead.
+4. Preserve multi-host support and current feature set (agent list, realtime, file explorer) while refactoring.
+
+## Non-Goals
+
+- Changing server APIs or backend session semantics.
+- Rewriting the React Navigation / expo-router structure.
+- Shipping UI redesigns beyond what’s needed to validate the perf fix.
+
+## Current Pain Points
+
+- `SessionProvider`’s `useMemo(value)` depends on nearly every hook; each streamed token creates a brand-new object which is immediately spread into the store (`updateSession(serverId, payload)` at `src/contexts/session-context.tsx:1731-1741`).
+- `useSessionStore` lacks structural sharing—selectors always receive fresh references, so memoization never kicks in.
+- `useAggregatedAgents` recomputes the flattened list on every store update even when Home isn’t visible; JSX renders block navigation events.
+- Maps/Sets stored in Context mutate in-place, so cloning them for the store creates additional GC churn and prevents fine-grained equality checks.
+- AsyncStorage persistence saves the full snapshot per host, so restoring a single host involves parsing huge JSON blobs regardless of what the user plans to view.
+
+## Proposed Approach
+
+### Phase 0 – Instrument & Baseline (0.5 day)
+
+1. Add lightweight logging around `useSessionStore` updates (count + payload size) and record navigation timings (press → screen transition) using the RN profiler.
+2. Validate assumptions on both an Android dev build and iOS simulator to set measurable targets (e.g., back navigation <300 ms).
+
+### Phase 1 – Extract Lightweight Agent Directory (0.5 day)
+
+1. Inside `SessionProvider`, derive a minimal `{id, serverId, title, status, lastActivityAt, cwd, provider}` array.
+2. Publish only that array into the shared store (or a new `AgentDirectory` context) so Home/Settings can read it without touching the heavy session object.
+3. Update `useAggregatedAgents` and any other consumers to rely on the minimal shape. This alone should make Home navigation responsive and provides a safety net while the full Zustand migration happens.
+
+### Phase 2 – Introduce Real Zustand Store (1 day)
+
+1. Replace `src/stores/session-store.ts` with `create()` from `zustand` plus the `subscribeWithSelector` middleware for fine-grained updates.
+2. Model state as `{ sessions: Record<serverId, SessionSlice> }`, where each `SessionSlice` only includes data that needs to be globally observable (agents map, connection flags, optional metadata). Keep heavyweight transient data (messages, stream buffers) inside `SessionProvider`.
+3. Refactor `SessionProvider` mutators (`setAgents`, `setPendingPermissions`, etc.) to call the Zustand setters directly instead of copying entire maps.
+4. Update hooks (`useSessionDirectory`, `useDaemonSession`, footer) to select slices via `useSessionStore((state) => state.sessions[serverId]?.agents)` so re-renders are scoped to the relevant server.
+
+### Phase 3 – Trim Heavy Session Data (0.5 day)
+
+1. Cap `messages` and `agentStreamState` lengths per agent (e.g., last 200 entries) and keep them local to the agent screen unless explicitly required elsewhere.
+2. Gate AsyncStorage snapshots to only persist the lightweight agent metadata that Home needs. Provide an opt-in debug toggle to persist everything for dev builds.
+3. Validate memory footprint before/after on a real device (Android Studio profiler or Xcode Instruments).
+
+### Phase 4 – Polish & Guardrails (0.5 day)
+
+1. Add React Profiler/Flipper traces to CI or docs so regressions are easier to catch.
+2. Document the new store architecture in `docs/perf-session-store.md` and note best practices (never spread the entire slice into other contexts, prefer selectors, etc.).
+3. Audit remaining contexts (Realtime, footer) for similar anti-patterns and queue follow-up issues if needed.
+
+## Risks & Mitigations
+
+- **Map/Set mutability:** Zustand selectors won’t detect deep mutations on Maps. Mitigation: convert to plain objects or always replace the Map when updating a slice (e.g., `set(state => ({ ...state, agents: new Map(state.agents) }))`).
+- **AsyncStorage compatibility:** Persisted snapshots may need migration logic to handle the new lightweight format. Solution: version the payload and fall back to a fresh session when parsing fails.
+- **Time overruns:** If Phase 2 proves longer than expected, we can still ship Phase 1 (lightweight directory) to immediately unblock users, then continue iterating.
+
+## Success Metrics
+
+- Back navigation from `/agent/[serverId]/[agentId]` to `/` completes in <300 ms on Android dev build (measure via `Performance.now()` or React Profiler).
+- `useSessionStore` updates drop by >80% when idle (no active runs), confirmed via instrumentation logs.
+- Heap usage on Android no longer grows unbounded during a 10-minute session that opens/closes multiple agents.
+
+Meeting these targets should eliminate the “3 second back press” symptom and provide a scalable foundation for future multi-host features.

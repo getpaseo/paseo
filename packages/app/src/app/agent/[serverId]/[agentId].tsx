@@ -171,7 +171,7 @@ export default function AgentScreen() {
 }
 
 type AgentScreenContentProps = {
-  session: SessionContextValue;
+  session: import("@/hooks/use-daemon-session").DaemonSession;
   agentId?: string;
   routeServerId: string;
   onBack: () => void;

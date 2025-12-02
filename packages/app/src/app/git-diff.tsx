@@ -95,7 +95,7 @@ function GitDiffContent({
   agentId,
   serverLabel,
 }: {
-  session: SessionContextValue;
+  session: import("@/hooks/use-daemon-session").DaemonSession;
   agentId?: string;
   serverLabel: string;
 }) {

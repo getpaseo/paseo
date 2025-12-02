@@ -88,7 +88,7 @@ export default function FileExplorerScreen() {
 }
 
 type FileExplorerContentProps = {
-  session: SessionContextValue;
+  session: import("@/hooks/use-daemon-session").DaemonSession;
   agentId?: string;
   pathParamRaw?: string | string[];
   fileParamRaw?: string | string[];

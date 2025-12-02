@@ -252,7 +252,7 @@ function AgentFlowModal({
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
   const selectSessionSlice = useCallback(
-    (session: SessionContextValue | null): CreateAgentSessionSlice | null => {
+    (session: import("@/hooks/use-daemon-session").DaemonSession | null): CreateAgentSessionSlice | null => {
       if (!session) {
         return null;
       }
