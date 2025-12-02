@@ -1,8 +1,9 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Alert } from "react-native";
 import type { SessionContextValue } from "@/contexts/session-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
+import { useSessionHeavyState } from "@/stores/session-heavy-state";
 
 export class DaemonSessionUnavailableError extends Error {
   serverId: string;
@@ -37,7 +38,21 @@ export function useDaemonSession(serverId?: string | null, options?: UseDaemonSe
     },
     [serverId]
   );
-  const session = useSessionStore(selectSession);
+  const baseSession = useSessionStore(selectSession);
+  const heavyState = useSessionHeavyState(serverId ?? null);
+  const session = useMemo(() => {
+    if (!baseSession) {
+      return null;
+    }
+    if (!serverId || !heavyState) {
+      return baseSession;
+    }
+    return {
+      ...baseSession,
+      messages: heavyState.messages,
+      agentStreamState: heavyState.agentStreamState,
+    } as SessionContextValue;
+  }, [baseSession, heavyState, serverId]);
   const { connectionStates } = useDaemonConnections();
   const alertedDaemonsRef = useRef<Set<string>>(new Set());
   const loggedDaemonsRef = useRef<Set<string>>(new Set());

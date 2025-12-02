@@ -33,6 +33,9 @@ import * as FileSystem from 'expo-file-system';
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
+import { SESSION_DEBUG_PERSIST_FULL_SNAPSHOT } from "@/config/session-debug";
+import { publishSessionHeavyState, clearSessionHeavyState } from "@/stores/session-heavy-state";
+import type { SessionHeavyState } from "@/stores/session-heavy-state";
 
 const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
   const fallbackId =
@@ -204,42 +207,137 @@ const pushHistory = (history: string[], path: string): string[] => {
 };
 
 const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
+const SESSION_SNAPSHOT_VERSION = 2;
+export const MAX_MESSAGES_PER_AGENT = 200;
+export const MAX_STREAM_ITEMS_PER_AGENT = 200;
 
-type PersistedSessionSnapshot = {
+const EMPTY_MESSAGES: MessageEntry[] = [];
+const EMPTY_AGENT_STREAM_STATE = new Map<string, StreamItem[]>();
+const DEFAULT_AGENT_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: false,
+  supportsSessionPersistence: false,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+};
+
+type PersistedDirectoryEntry = Omit<AgentDirectoryEntry, "lastActivityAt"> & {
+  lastActivityAt: string;
+};
+
+type LegacySessionSnapshot = {
   agents: AgentSnapshotPayload[];
   commands: Command[];
   savedAt: string;
 };
 
+type LightweightSessionSnapshot = {
+  version: typeof SESSION_SNAPSHOT_VERSION;
+  directory: PersistedDirectoryEntry[];
+  savedAt: string;
+  full?: {
+    agents: AgentSnapshotPayload[];
+    commands: Command[];
+  };
+};
+
+type LoadedSessionSnapshot =
+  | {
+      kind: "legacy";
+      agents: AgentSnapshotPayload[];
+      commands: Command[];
+      savedAt: string;
+    }
+  | {
+      kind: "lightweight";
+      directory: AgentDirectoryEntry[];
+      savedAt: string;
+      full?: {
+        agents: AgentSnapshotPayload[];
+        commands: Command[];
+      };
+    };
+
 const getSessionSnapshotStorageKey = (serverId: string): string => {
   return `${SESSION_SNAPSHOT_STORAGE_PREFIX}${serverId}`;
 };
 
-async function loadPersistedSessionSnapshot(serverId: string): Promise<PersistedSessionSnapshot | null> {
+function isLegacySessionSnapshot(payload: any): payload is LegacySessionSnapshot {
+  return Array.isArray(payload?.agents) && Array.isArray(payload?.commands);
+}
+
+function isLightweightSessionSnapshot(payload: any): payload is LightweightSessionSnapshot {
+  return (
+    payload?.version === SESSION_SNAPSHOT_VERSION &&
+    Array.isArray(payload?.directory)
+  );
+}
+
+function deserializePersistedDirectoryEntry(entry: PersistedDirectoryEntry): AgentDirectoryEntry {
+  return {
+    ...entry,
+    lastActivityAt: new Date(entry.lastActivityAt),
+  };
+}
+
+function serializeDirectoryEntry(entry: AgentDirectoryEntry): PersistedDirectoryEntry {
+  return {
+    ...entry,
+    lastActivityAt: entry.lastActivityAt.toISOString(),
+  };
+}
+
+async function loadPersistedSessionSnapshot(serverId: string): Promise<LoadedSessionSnapshot | null> {
   try {
     const raw = await AsyncStorage.getItem(getSessionSnapshotStorageKey(serverId));
     if (!raw) {
       return null;
     }
-    const parsed = JSON.parse(raw) as PersistedSessionSnapshot;
-    if (!Array.isArray(parsed?.agents) || !Array.isArray(parsed?.commands)) {
+    const parsed = JSON.parse(raw);
+    if (isLightweightSessionSnapshot(parsed)) {
+      return {
+        kind: "lightweight",
+        directory: parsed.directory.map(deserializePersistedDirectoryEntry),
+        savedAt: parsed.savedAt,
+        full: parsed.full,
+      };
+    }
+    if (!isLegacySessionSnapshot(parsed)) {
       return null;
     }
-    return parsed;
+    return {
+      kind: "legacy",
+      agents: parsed.agents,
+      commands: parsed.commands,
+      savedAt: parsed.savedAt,
+    };
   } catch (error) {
     console.error(`[Session] Failed to load persisted snapshot for ${serverId}`, error);
     return null;
   }
 }
 
-async function persistSessionSnapshot(serverId: string, snapshot: { agents: AgentSnapshotPayload[]; commands: Command[] }) {
+async function persistSessionSnapshot(
+  serverId: string,
+  snapshot: { agents: AgentSnapshotPayload[]; commands: Command[]; directory: AgentDirectoryEntry[] }
+) {
   try {
-    const payload: PersistedSessionSnapshot = {
-      agents: snapshot.agents,
-      commands: snapshot.commands,
+    const payload: LightweightSessionSnapshot = {
+      version: SESSION_SNAPSHOT_VERSION,
+      directory: snapshot.directory.map(serializeDirectoryEntry),
       savedAt: new Date().toISOString(),
+      ...(SESSION_DEBUG_PERSIST_FULL_SNAPSHOT
+        ? { full: { agents: snapshot.agents, commands: snapshot.commands } }
+        : {}),
     };
+    const persistenceMode = SESSION_DEBUG_PERSIST_FULL_SNAPSHOT ? "full" : "directory";
     await AsyncStorage.setItem(getSessionSnapshotStorageKey(serverId), JSON.stringify(payload));
+    console.log("[Session] Persisted snapshot", {
+      serverId,
+      agentCount: snapshot.directory.length,
+      mode: persistenceMode,
+    });
   } catch (error) {
     console.error(`[Session] Failed to persist snapshot for ${serverId}`, error);
   }
@@ -310,6 +408,92 @@ function buildAgentDirectoryEntries(serverId: string, agents: Map<string, Agent>
     });
   }
   return entries;
+}
+
+function buildAgentsFromDirectoryEntries(serverId: string, entries: AgentDirectoryEntry[]) {
+  const agents = new Map<string, Agent>();
+  for (const entry of entries) {
+    const lastActivity = entry.lastActivityAt ?? new Date();
+    agents.set(entry.id, {
+      serverId,
+      id: entry.id,
+      provider: entry.provider,
+      status: entry.status,
+      createdAt: lastActivity,
+      updatedAt: lastActivity,
+      lastUserMessageAt: null,
+      lastActivityAt: lastActivity,
+      sessionId: null,
+      capabilities: DEFAULT_AGENT_CAPABILITIES,
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      lastUsage: undefined,
+      lastError: null,
+      title: entry.title ?? null,
+      cwd: entry.cwd,
+      model: null,
+    });
+  }
+  return agents;
+}
+
+function capMessages(entries: MessageEntry[], serverId: string): MessageEntry[] {
+  if (entries.length <= MAX_MESSAGES_PER_AGENT) {
+    return entries;
+  }
+  const trimmed = entries.slice(-MAX_MESSAGES_PER_AGENT);
+  console.log("[Session] Trimmed messages", {
+    serverId,
+    before: entries.length,
+    after: trimmed.length,
+    cap: MAX_MESSAGES_PER_AGENT,
+  });
+  return trimmed;
+}
+
+function capAgentStreamState(map: Map<string, StreamItem[]>, serverId: string): Map<string, StreamItem[]> {
+  let trimmed = false;
+  const trimmedAgents: Array<{ agentId: string; before: number; after: number }> = [];
+  const next = new Map(map);
+
+  for (const [agentId, stream] of map.entries()) {
+    if (stream.length <= MAX_STREAM_ITEMS_PER_AGENT) {
+      continue;
+    }
+    trimmed = true;
+    const capped = stream.slice(-MAX_STREAM_ITEMS_PER_AGENT);
+    next.set(agentId, capped);
+    trimmedAgents.push({
+      agentId,
+      before: stream.length,
+      after: capped.length,
+    });
+  }
+
+  if (trimmed) {
+    console.log("[Session] Trimmed stream buffers", {
+      serverId,
+      cap: MAX_STREAM_ITEMS_PER_AGENT,
+      agents: trimmedAgents,
+    });
+    return next;
+  }
+
+  return map;
+}
+
+function filterSessionStorePayload(payload: Partial<SessionContextValue>): Partial<SessionContextValue> {
+  const { messages: _messages, agentStreamState: _agentStreamState, ...rest } = payload;
+  const next: Partial<SessionContextValue> = { ...rest };
+  if (_messages !== undefined) {
+    next.messages = EMPTY_MESSAGES;
+  }
+  if (_agentStreamState !== undefined) {
+    next.agentStreamState = EMPTY_AGENT_STREAM_STATE;
+  }
+  return next;
 }
 
 
@@ -463,14 +647,15 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   const syncSessionPartial = useCallback(
     (partial: Partial<SessionContextValue>) => {
+      const filtered = filterSessionStorePayload(partial);
       if (!hasRegisteredSessionRef.current) {
         pendingSessionUpdatesRef.current = {
           ...pendingSessionUpdatesRef.current,
-          ...partial,
+          ...filtered,
         };
         return;
       }
-      updateSession(serverId, partial);
+      updateSession(serverId, filtered);
     },
     [serverId, updateSession]
   );
@@ -532,9 +717,35 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   }, [updateIsPlayingAudio]);
   const [focusedAgentOverride, setFocusedAgentOverride] = useState<string | null>(null);
   const [orchestratorFocusedAgentId, setOrchestratorFocusedAgentId] = useState<string | null>(null);
-  const [messages, setMessages] = useSyncedSessionState("messages", () => [], syncSessionField);
+  const [messages, setLocalMessages] = useState<MessageEntry[]>([]);
+  const setMessages = useCallback<SessionContextValue["setMessages"]>(
+    (valueOrUpdater) => {
+      setLocalMessages((previous) => {
+        const next =
+          typeof valueOrUpdater === "function"
+            ? (valueOrUpdater as (prev: MessageEntry[]) => MessageEntry[])(previous)
+            : valueOrUpdater;
+        return capMessages(next, serverId);
+      });
+    },
+    [serverId]
+  );
   const [currentAssistantMessage, setCurrentAssistantMessage] = useSyncedSessionState("currentAssistantMessage", "", syncSessionField);
-  const [agentStreamState, setAgentStreamState] = useSyncedSessionState("agentStreamState", () => new Map<string, StreamItem[]>(), syncSessionField);
+  const [agentStreamState, setLocalAgentStreamState] = useState<Map<string, StreamItem[]>>(
+    () => new Map<string, StreamItem[]>()
+  );
+  const setAgentStreamState = useCallback<SessionContextValue["setAgentStreamState"]>(
+    (valueOrUpdater) => {
+      setLocalAgentStreamState((previous) => {
+        const next =
+          typeof valueOrUpdater === "function"
+            ? (valueOrUpdater as (prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)(previous)
+            : valueOrUpdater;
+        return capAgentStreamState(next, serverId);
+      });
+    },
+    [serverId]
+  );
   const [initializingAgents, setInitializingAgents] = useSyncedSessionState("initializingAgents", () => new Map<string, boolean>(), syncSessionField);
   const [hasHydratedAgents, setHasHydratedAgents] = useSyncedSessionState("hasHydratedAgents", false, syncSessionField);
 
@@ -563,6 +774,24 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     });
   }, []);
   const [queuedMessages, setQueuedMessages] = useSyncedSessionState("queuedMessages", () => new Map(), syncSessionField);
+  const heavyStateRef = useRef<SessionHeavyState>({
+    messages,
+    agentStreamState,
+  });
+
+  useEffect(() => {
+    heavyStateRef.current = {
+      messages,
+      agentStreamState,
+    };
+    publishSessionHeavyState(serverId, heavyStateRef.current);
+  }, [agentStreamState, messages, serverId]);
+
+  useEffect(() => {
+    return () => {
+      clearSessionHeavyState(serverId);
+    };
+  }, [serverId]);
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<AgentProvider, string>>(new Map());
@@ -601,33 +830,66 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return;
       }
 
-      const { agents: hydratedAgents, pendingPermissions: hydratedPermissions } = buildSessionStateFromSnapshots(
-        serverId,
-        snapshot.agents
-      );
+      const hasFullSnapshot = snapshot.kind === "legacy" || Boolean(snapshot.full);
+      const snapshotMode = hasFullSnapshot ? "full" : "directory";
+      const agentCount =
+        snapshot.kind === "legacy"
+          ? snapshot.agents.length
+          : snapshot.directory.length;
 
-      let applied = false;
-      setAgents((prev) => {
-        if (prev.size > 0) {
-          return prev;
-        }
-        applied = true;
-        return hydratedAgents;
+      console.log("[Session] Hydrating snapshot", {
+        serverId,
+        mode: snapshotMode,
+        agentCount,
       });
 
-      if (!applied) {
-        return;
+      if (hasFullSnapshot) {
+        const fullAgents = snapshot.kind === "legacy" ? snapshot.agents : snapshot.full?.agents ?? [];
+        const fullCommands = snapshot.kind === "legacy" ? snapshot.commands : snapshot.full?.commands ?? [];
+
+        const { agents: hydratedAgents, pendingPermissions: hydratedPermissions } =
+          buildSessionStateFromSnapshots(serverId, fullAgents);
+
+        let applied = false;
+        setAgents((prev) => {
+          if (prev.size > 0) {
+            return prev;
+          }
+          applied = true;
+          return hydratedAgents;
+        });
+
+        if (!applied) {
+          return;
+        }
+
+        setPendingPermissions(hydratedPermissions);
+        setCommands((prev) => {
+          if (prev.size > 0) {
+            return prev;
+          }
+          return new Map(fullCommands.map((command) => [command.id, command]));
+        });
+      } else {
+        const stubAgents = buildAgentsFromDirectoryEntries(serverId, snapshot.directory);
+        let applied = false;
+        setAgents((prev) => {
+          if (prev.size > 0) {
+            return prev;
+          }
+          applied = true;
+          return stubAgents;
+        });
+
+        if (!applied) {
+          return;
+        }
+
+        setPendingPermissions(new Map());
+        setCommands((prev) => (prev.size > 0 ? prev : new Map()));
       }
 
-    setPendingPermissions(hydratedPermissions);
-    const commandEntries = snapshot.commands ?? [];
-    setCommands((prev) => {
-      if (prev.size > 0) {
-        return prev;
-      }
-      return new Map(commandEntries.map((command) => [command.id, command]));
-    });
-    setHasHydratedAgents(true);
+      setHasHydratedAgents(true);
     };
 
     void hydrateFromSnapshot();
@@ -832,6 +1094,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         serverId,
         agentsList
       );
+      const directoryEntries = buildAgentDirectoryEntries(serverId, hydratedAgents);
       const normalizedCommands = commandsList.map((command) => command as Command);
 
       setAgents(hydratedAgents);
@@ -873,7 +1136,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
         return changed ? next : prev;
       });
-      void persistSessionSnapshot(serverId, { agents: agentsList, commands: normalizedCommands });
+      void persistSessionSnapshot(serverId, { agents: agentsList, commands: normalizedCommands, directory: directoryEntries });
       setHasHydratedAgents(true);
       updateConnectionStatus(serverId, { status: "online", lastOnlineAt: new Date().toISOString(), sessionReady: true });
     });
@@ -2043,10 +2306,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   useEffect(() => {
     const initialSnapshot = initialSessionValueRef.current as SessionContextValue;
-    const initialPayload = {
+    const initialPayload = filterSessionStorePayload({
       ...initialSnapshot,
       ...pendingSessionUpdatesRef.current,
-    };
+    }) as SessionContextValue;
     pendingSessionUpdatesRef.current = {};
     setSession(serverId, initialPayload);
     hasRegisteredSessionRef.current = true;
