@@ -101,12 +101,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     }),
     []
   );
-  const noopSendAgentMessage = useCallback<SessionContextValue["sendAgentMessage"]>(async () => {}, []);
-  const noopSendAgentAudio = useCallback<SessionContextValue["sendAgentAudio"]>(async () => {}, []);
-  const noopCancelAgentRun = useCallback<SessionContextValue["cancelAgentRun"]>(() => {}, []);
-  const noopGetDraftInput = useCallback<SessionContextValue["getDraftInput"]>(() => undefined, []);
-  const noopSaveDraftInput = useCallback<SessionContextValue["saveDraftInput"]>(() => {}, []);
-  const noopSetQueuedMessages = useCallback<SessionContextValue["setQueuedMessages"]>(() => {}, []);
+  const noopSendAgentMessage = useCallback(async () => {}, []);
+  const noopSendAgentAudio = useCallback(async () => {}, []);
+  const noopCancelAgentRun = useCallback(() => {}, []);
+  const noopGetDraftInput = useCallback(() => undefined, []);
+  const noopSaveDraftInput = useCallback(() => {}, []);
+  const noopSetQueuedMessages = useCallback(() => {}, []);
   const ws = session?.ws ?? inertWebSocket;
   const sendAgentMessage = session?.sendAgentMessage ?? noopSendAgentMessage;
   const sendAgentAudio = session?.sendAgentAudio ?? noopSendAgentAudio;
@@ -380,7 +380,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     setIsProcessing(true);
 
     try {
-      await sendAgentMessage(agentId, message, imageAttachments);
+      await sendAgentMessage(agentIdRef.current, message, imageAttachments);
     } catch (error) {
       console.error("[AgentInput] Failed to send message:", error);
     } finally {
@@ -662,7 +662,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
 
   const updateQueue = useCallback(
     (updater: (current: QueuedMessage[]) => QueuedMessage[]) => {
-      setQueuedMessagesByAgent((prev) => {
+      setQueuedMessagesByAgent((prev: Map<string, QueuedMessage[]>) => {
         const next = new Map(prev);
         next.set(agentId, updater(prev.get(agentId) ?? []));
         return next;
@@ -831,7 +831,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       return;
     }
     setIsCancellingAgent(true);
-    cancelAgentRun(agentId);
+    cancelAgentRun(agentIdRef.current);
   }
 
   function handleQueueCurrentInput() {
@@ -866,7 +866,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
 
     // Cancels current agent run before sending queued prompt
     handleCancelAgent();
-    await sendAgentMessage(agentId, item.text, item.images);
+    await sendAgentMessage(agentIdRef.current, item.text, item.images);
   }
 
   const realtimeButton = (
