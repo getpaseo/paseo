@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SessionContextValue } from "@/contexts/session-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { useSessionRpc } from "@/hooks/use-session-rpc";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { generateMessageId } from "@/types/stream";
-import type { SessionOutboundMessage } from "@server/server/messages";
 
 export type UseDictationOptions = {
   agentId: string;
@@ -64,6 +64,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [duration, setDuration] = useState(0);
   const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const { waitForResponse: waitForTranscriptionResponse, reset: resetTranscriptionRpc } = useSessionRpc({
+    ws,
+    requestType: "send_agent_audio",
+    responseType: "transcription_result",
+  });
 
   const handleAudioLevel = useCallback((level: number) => {
     setVolume(level);
@@ -263,9 +269,27 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       const requestId = generateMessageId();
       pendingRequestIdRef.current = requestId;
       setPendingRequestId(requestId);
+      const transcription = await waitForTranscriptionResponse({
+        requestId,
+        dispatch: () => sendAgentAudio(agentId, audioData, requestId, { mode }),
+      });
 
-      await sendAgentAudio(agentId, audioData, requestId, { mode });
-      console.log("[useDictation] sendAgentAudio resolved", { requestId });
+      pendingRequestIdRef.current = null;
+      setPendingRequestId(null);
+      setIsProcessing(false);
+
+      const transcriptText = transcription.text?.trim();
+      if (!transcriptText) {
+        return;
+      }
+
+      console.log("[useDictation] transcription_result received", {
+        requestId,
+        textLength: transcriptText.length,
+      });
+      onTranscriptRef.current?.(transcriptText, {
+        requestId: transcription.requestId ?? requestId,
+      });
     } catch (err) {
       pendingRequestIdRef.current = null;
       setPendingRequestId(null);
@@ -273,6 +297,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       isRecordingRef.current = false;
       setIsRecording(false);
       setVolume(0);
+      resetTranscriptionRpc();
       reportError(err, "Failed to complete dictation");
     }
   }, [
@@ -280,10 +305,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     canConfirm,
     isProcessing,
     mode,
+    onTranscriptRef,
     reportError,
+    resetTranscriptionRpc,
     sendAgentAudio,
     stopDurationTracking,
     stopRecorder,
+    waitForTranscriptionResponse,
   ]);
 
   const reset = useCallback(() => {
@@ -296,7 +324,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setDuration(0);
     setVolume(0);
     setError(null);
-  }, [stopDurationTracking]);
+    resetTranscriptionRpc();
+  }, [resetTranscriptionRpc, stopDurationTracking]);
 
   const cancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -323,40 +352,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     pendingRequestIdRef.current = null;
     setPendingRequestId(null);
     setIsProcessing(false);
-  }, [agentId]);
-
-  useEffect(() => {
-    const unsubscribe = ws.on("transcription_result", (message: SessionOutboundMessage) => {
-      if (message.type !== "transcription_result") {
-        return;
-      }
-      const expectedId = pendingRequestIdRef.current;
-      if (!expectedId || message.payload.requestId !== expectedId) {
-        return;
-      }
-
-      pendingRequestIdRef.current = null;
-      setPendingRequestId(null);
-      setIsProcessing(false);
-
-      const transcriptText = message.payload.text?.trim();
-      if (!transcriptText) {
-        return;
-      }
-
-      console.log("[useDictation] transcription_result received", {
-        requestId: expectedId,
-        textLength: transcriptText.length,
-      });
-      onTranscriptRef.current?.(transcriptText, {
-        requestId: message.payload.requestId ?? expectedId,
-      });
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [ws]);
+    resetTranscriptionRpc();
+  }, [agentId, resetTranscriptionRpc]);
 
   useEffect(() => {
     return () => {

@@ -702,7 +702,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
   const initializeAgentRpc = useSessionRpc({
     ws,
-    type: "initialize_agent_request",
+    requestType: "initialize_agent_request",
+    responseType: "initialize_agent_request",
   });
 
   useEffect(() => {

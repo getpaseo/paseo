@@ -3,10 +3,11 @@ import type { SessionInboundMessage, SessionOutboundMessage } from "@server/serv
 import type { UseWebSocketReturn } from "./use-websocket";
 import { generateMessageId } from "@/types/stream";
 
-type SharedType = SessionInboundMessage["type"] & SessionOutboundMessage["type"];
+type RequestType = SessionInboundMessage["type"];
+type ResponseType = SessionOutboundMessage["type"];
 
-type RequestOf<TType extends SharedType> = Extract<SessionInboundMessage, { type: TType }>;
-type ResponseOf<TType extends SharedType> = Extract<SessionOutboundMessage, { type: TType }>;
+type RequestOf<TType extends RequestType> = Extract<SessionInboundMessage, { type: TType }>;
+type ResponseOf<TType extends ResponseType> = Extract<SessionOutboundMessage, { type: TType }>;
 
 type RpcState<T> =
   | { status: "idle"; requestId: null }
@@ -14,30 +15,54 @@ type RpcState<T> =
   | { status: "success"; requestId: string; data: T }
   | { status: "error"; requestId: string | null; error: Error };
 
-type ResponseWithEnvelope<TType extends SharedType> = ResponseOf<TType> extends {
-  payload: { requestId?: string; error?: string };
-}
-  ? ResponseOf<TType>
-  : never;
+type ResponseWithEnvelope<TType extends ResponseType> = Extract<
+  ResponseOf<TType>,
+  { payload: { requestId?: string } }
+>;
 
-type EnsureEnvelope<TType extends SharedType> = ResponseWithEnvelope<TType> extends never ? never : TType;
+type EnsureEnvelope<TType extends ResponseType> = ResponseWithEnvelope<TType> extends never ? never : TType;
 
-type ResponsePayload<TType extends SharedType> = ResponseWithEnvelope<TType> extends { payload: infer P }
+type ResponsePayload<TType extends ResponseType> = ResponseWithEnvelope<TType> extends { payload: infer P }
   ? P
   : never;
 
-type SelectResponse<TType extends SharedType, TData> = (message: ResponseWithEnvelope<TType>) => TData;
+type SelectResponse<TType extends ResponseType, TData> = (message: ResponseWithEnvelope<TType>) => TData;
 
-export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<TType>>(options: {
+type DispatchRequest<TType extends RequestType> = (request: RequestOf<TType>) => void | Promise<void>;
+
+type WaitForResponseOptions = {
+  requestId: string;
+  dispatch?: (requestId: string) => void | Promise<void>;
+};
+
+type UseSessionRpcReturn<TRequest extends RequestType, TData> = {
+  state: RpcState<TData>;
+  send: (params: Omit<RequestOf<TRequest>, "type" | "requestId">) => Promise<TData>;
+  waitForResponse: (options: WaitForResponseOptions) => Promise<TData>;
+  reset: () => void;
+};
+
+export function useSessionRpc<
+  TRequest extends RequestType,
+  TResponse extends ResponseType,
+  TData = ResponsePayload<TResponse>
+>(options: {
   ws: UseWebSocketReturn;
-  type: EnsureEnvelope<TType>;
-  select?: SelectResponse<TType, TData>;
-}) {
-  const { ws, type, select } = options;
+  requestType: TRequest;
+  responseType: EnsureEnvelope<TResponse>;
+  select?: SelectResponse<TResponse, TData>;
+  dispatch?: DispatchRequest<TRequest>;
+}): UseSessionRpcReturn<TRequest, TData> {
+  const { ws, requestType, responseType, select, dispatch } = options;
   const [state, setState] = useState<RpcState<TData>>({ status: "idle", requestId: null });
   const activeRequestIdRef = useRef<string | null>(null);
   const resolveRef = useRef<((value: TData) => void) | null>(null);
   const rejectRef = useRef<((reason?: any) => void) | null>(null);
+  const dispatchRef = useRef<DispatchRequest<TRequest> | undefined>(dispatch);
+
+  useEffect(() => {
+    dispatchRef.current = dispatch;
+  }, [dispatch]);
 
   const clearActiveRequest = useCallback(() => {
     activeRequestIdRef.current = null;
@@ -46,22 +71,27 @@ export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<
   }, []);
 
   useEffect(() => {
-    const unsubscribe = ws.on(type, (message) => {
-      const typedMessage = message as ResponseWithEnvelope<TType>;
+    const unsubscribe = ws.on(responseType, (message) => {
+      const typedMessage = message as ResponseWithEnvelope<TResponse>;
       const payload = typedMessage.payload;
-      if (!payload || payload.requestId !== activeRequestIdRef.current) {
+      const expectedId = activeRequestIdRef.current;
+      if (!payload || !expectedId || payload.requestId !== expectedId) {
         return;
       }
 
-      if (payload.error) {
-        const error = new Error(payload.error);
+      const payloadError =
+        payload && typeof payload === "object" && "error" in payload && typeof (payload as any).error === "string"
+          ? ((payload as any).error as string)
+          : null;
+      if (payloadError) {
+        const error = new Error(payloadError);
         setState({ status: "error", requestId: payload.requestId ?? null, error });
         rejectRef.current?.(error);
         clearActiveRequest();
         return;
       }
 
-      const baseData = typedMessage.payload as ResponsePayload<TType>;
+      const baseData = typedMessage.payload as ResponsePayload<TResponse>;
       const data = select ? select(typedMessage) : (baseData as unknown as TData);
       setState({ status: "success", requestId: payload.requestId ?? null, data });
       resolveRef.current?.(data);
@@ -71,7 +101,7 @@ export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<
     return () => {
       unsubscribe();
     };
-  }, [clearActiveRequest, select, type, ws]);
+  }, [clearActiveRequest, responseType, select, ws]);
 
   useEffect(() => {
     if (ws.isConnected || !activeRequestIdRef.current) {
@@ -83,8 +113,8 @@ export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<
     clearActiveRequest();
   }, [clearActiveRequest, ws.isConnected]);
 
-  const send = useCallback(
-    (params: Omit<RequestOf<TType>, "type" | "requestId">) => {
+  const waitForResponse = useCallback(
+    ({ requestId, dispatch: dispatchOverride }: WaitForResponseOptions) => {
       return new Promise<TData>((resolve, reject) => {
         if (!ws.isConnected) {
           const error = new Error("WebSocket is disconnected");
@@ -93,29 +123,54 @@ export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<
           return;
         }
 
-        const requestId = generateMessageId();
         activeRequestIdRef.current = requestId;
         resolveRef.current = resolve;
         rejectRef.current = reject;
         setState({ status: "loading", requestId });
 
-        const request = {
-          type,
-          ...params,
-          requestId,
-        } as RequestOf<TType>;
+        if (!dispatchOverride) {
+          return;
+        }
 
-        try {
-          ws.send({ type: "session", message: request });
-        } catch (error) {
+        const handleDispatchError = (error: unknown) => {
           const err = error instanceof Error ? error : new Error(String(error));
-          setState({ status: "error", requestId: requestId, error: err });
+          setState({ status: "error", requestId, error: err });
           reject(err);
           clearActiveRequest();
+        };
+
+        try {
+          const maybePromise = dispatchOverride(requestId);
+          if (maybePromise && typeof (maybePromise as Promise<unknown>).then === "function") {
+            (maybePromise as Promise<unknown>).catch(handleDispatchError);
+          }
+        } catch (error) {
+          handleDispatchError(error);
         }
       });
     },
-    [clearActiveRequest, type, ws]
+    [clearActiveRequest, ws.isConnected]
+  );
+
+  const send = useCallback(
+    (params: Omit<RequestOf<TRequest>, "type" | "requestId">) => {
+      const dispatchRequest = dispatchRef.current;
+      return waitForResponse({
+        requestId: generateMessageId(),
+        dispatch: (generatedId) => {
+          const request = {
+            type: requestType,
+            ...params,
+            requestId: generatedId,
+          } as RequestOf<TRequest>;
+          if (dispatchRequest) {
+            return dispatchRequest(request);
+          }
+          ws.send({ type: "session", message: request });
+        },
+      });
+    },
+    [requestType, waitForResponse, ws]
   );
 
   const reset = useCallback(() => {
@@ -123,5 +178,13 @@ export function useSessionRpc<TType extends SharedType, TData = ResponsePayload<
     setState({ status: "idle", requestId: null });
   }, [clearActiveRequest]);
 
-  return useMemo(() => ({ state, send, reset }), [reset, send, state]);
+  return useMemo(
+    () => ({
+      state,
+      send,
+      waitForResponse,
+      reset,
+    }),
+    [reset, send, state, waitForResponse]
+  );
 }
