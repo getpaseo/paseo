@@ -71,6 +71,7 @@ export function useDaemonSession(
   options: UseDaemonSessionOptions & { allowUnavailable: true }
 ): DaemonSession | null;
 export function useDaemonSession(serverId?: string | null, options?: UseDaemonSessionOptions) {
+
   const selectSession = useCallback(
     (state: ReturnType<typeof useSessionStore.getState>) => {
       if (!serverId) {
@@ -93,14 +94,14 @@ export function useDaemonSession(serverId?: string | null, options?: UseDaemonSe
   const setMessagesAction = useSessionStore((state) => state.setMessages);
   const setQueuedMessagesAction = useSessionStore((state) => state.setQueuedMessages);
 
-  // Create stable wrapper functions that bind serverId (must be before conditional returns)
+  // Create stable wrapper functions (must be before conditional returns)
   const boundGetDraftInput = useCallback(
-    (agentId: string) => serverId ? getDraftInputAction(serverId, agentId) : undefined,
-    [serverId, getDraftInputAction]
+    (agentId: string) => getDraftInputAction(agentId),
+    [getDraftInputAction]
   );
   const boundSaveDraftInput = useCallback(
-    (agentId: string, draft: any) => { if (serverId) saveDraftInputAction(serverId, agentId, draft); },
-    [serverId, saveDraftInputAction]
+    (agentId: string, draft: any) => { saveDraftInputAction(agentId, draft); },
+    [saveDraftInputAction]
   );
   const boundSetFocusedAgentId = useCallback(
     (agentId: string | null) => { if (serverId) setFocusedAgentIdAction(serverId, agentId); },

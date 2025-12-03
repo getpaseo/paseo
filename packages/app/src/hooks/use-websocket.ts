@@ -159,6 +159,12 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
                        (sessionMessage as { payload?: { agentId?: string } }).payload?.agentId;
             console.log(`[WS] ← ${sessionMessage.type}`, { size, id: id ?? "-" });
 
+            // Log agent_stream messages for debugging
+            if (sessionMessage.type === "agent_stream") {
+              const payload = (sessionMessage as { payload: { agentId: string; event: { type: string } } }).payload;
+              console.log(`[WS AGENT_STREAM] timestamp=${Date.now()} agentId=${payload.agentId} eventType=${payload.event.type}`);
+            }
+
             // Track conversation ID when loaded
             if (sessionMessage.type === "conversation_loaded") {
               setCurrentConversationId(sessionMessage.payload.conversationId);

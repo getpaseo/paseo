@@ -1,7 +1,7 @@
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
 import { useDaemonSession } from "@/hooks/use-daemon-session";
 import type { SessionContextValue, Agent } from "@/contexts/session-context";
@@ -12,6 +12,10 @@ interface AgentStatusBarProps {
 }
 
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
+  // INVESTIGATION: Log rerenders
+  const renderCountRef = useRef(0);
+  renderCountRef.current++;
+  console.log(`[INVESTIGATION] AgentStatusBar render #${renderCountRef.current}`, { agentId });
   const { theme } = useUnistyles();
   const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
   const noopSetAgentMode = useCallback<SessionContextValue["setAgentMode"]>(() => {}, []);

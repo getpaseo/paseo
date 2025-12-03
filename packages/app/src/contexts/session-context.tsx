@@ -672,11 +672,21 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
       setAgentStreamState(serverId, (prev) => {
         const currentStream = prev.get(agentId) || [];
+        const lastItem = currentStream[currentStream.length - 1];
+        const lastItemText = lastItem && "text" in lastItem ? lastItem.text : "(no text)";
+        console.log(`[AGENT_STREAM BEFORE] agentId=${agentId} currentStreamLength=${currentStream.length} lastText="${lastItemText}"`);
+        console.log(`[AGENT_STREAM CHUNK] incoming type=${event.type}`);
+
         const newStream = reduceStreamUpdate(
           currentStream,
           event as AgentStreamEventPayload,
           parsedTimestamp
         );
+
+        const newLastItem = newStream[newStream.length - 1];
+        const newLastText = newLastItem && "text" in newLastItem ? newLastItem.text : "(no text)";
+        console.log(`[AGENT_STREAM AFTER] newStreamLength=${newStream.length} newLastText="${newLastText}"`);
+
         const next = new Map(prev);
         next.set(agentId, newStream);
         return next;
@@ -1079,12 +1089,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       });
 
       // Remove draft input
-      const session = getSession(serverId);
-      if (session) {
-        const nextDraftInputs = new Map(session.draftInputs);
-        nextDraftInputs.delete(agentId);
-        saveDraftInput(serverId, agentId, { text: "", images: [] }); // Clear it
-      }
+      saveDraftInput(agentId, { text: "", images: [] });
 
       setPendingPermissions(serverId, (prev) => {
         let changed = false;

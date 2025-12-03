@@ -2153,6 +2153,9 @@ function AgentFlowModal({
                     value={initialPrompt}
                     isLoading={isLoading}
                     onChange={(text) => {
+                      console.log('[INVESTIGATION] CreateModal onChange called', {
+                        textLength: text.length,
+                      });
                       setInitialPrompt(text);
                       setErrorMessage("");
                     }}
