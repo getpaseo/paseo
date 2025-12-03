@@ -19,8 +19,7 @@ import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-c
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { theme as defaultTheme } from "@/styles/theme";
 import { BackHeader } from "@/components/headers/back-header";
-import { useSessionForServer } from "@/hooks/use-session-directory";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 
 const delay = (ms: number) =>
@@ -799,12 +798,8 @@ function DaemonCard({
           : theme.colors.mutedForeground;
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
-  const daemonWs = useSessionForServer<UseWebSocketReturn | null>(
-    daemon.id,
-    useCallback((session) => session?.ws ?? null, [])
-  );
-  const fullSession = useDaemonSession(daemon.id, { allowUnavailable: true, suppressUnavailableAlert: true });
-  const restartServerFn = fullSession?.restartServer ?? null;
+  const daemonWs = useSessionStore((state) => state.sessions[daemon.id]?.ws);
+  const restartServerFn = useSessionStore((state) => state.sessions[daemon.id]?.methods?.restartServer);
   const [isRestarting, setIsRestarting] = useState(false);
   const wsIsConnectedRef = useRef(daemonWs?.isConnected ?? false);
   const isTesting = testState?.status === "testing";

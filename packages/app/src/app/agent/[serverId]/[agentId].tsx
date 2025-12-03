@@ -19,13 +19,14 @@ import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { CreateAgentModal, ImportAgentModal, type CreateAgentInitialValues } from "@/components/create-agent-modal";
-import type { Agent, SessionContextValue } from "@/contexts/session-context";
 import { useFooterControls } from "@/contexts/footer-controls-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
+import type { Agent } from "@/stores/session-store";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
+import type { StreamItem } from "@/types/stream";
 import type { SessionOutboundMessage } from "@server/server/messages";
 import {
   buildAgentNavigationKey,
@@ -35,6 +36,7 @@ import {
 } from "@/utils/navigation-timing";
 
 const DROPDOWN_WIDTH = 220;
+const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
 type GitRepoInfoResponseMessage = Extract<
   SessionOutboundMessage,
@@ -90,13 +92,11 @@ export default function AgentScreen() {
   const resolvedAgentId = typeof agentId === "string" ? agentId : undefined;
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
-  const hasConnectionEntry = resolvedServerId ? connectionStates.has(resolvedServerId) : false;
 
-  const session = useDaemonSession(resolvedServerId, {
-    suppressUnavailableAlert: true,
-    allowUnavailable: true,
-  });
-  const sessionServerId = session?.serverId ?? null;
+  // Check if session exists for this serverId
+  const hasSession = useSessionStore((state) =>
+    resolvedServerId ? !!state.sessions[resolvedServerId] : false
+  );
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
@@ -107,7 +107,7 @@ export default function AgentScreen() {
   const lastConnectionError = connection?.lastError ?? null;
 
   const handleBackToHome = useCallback(() => {
-    const targetServerId = resolvedServerId ?? sessionServerId;
+    const targetServerId = resolvedServerId;
     const targetAgentId = resolvedAgentId ?? null;
     if (targetServerId && targetAgentId) {
       startNavigationTiming(HOME_NAVIGATION_KEY, {
@@ -127,10 +127,10 @@ export default function AgentScreen() {
       });
     }
     router.replace("/");
-  }, [resolvedAgentId, resolvedServerId, router, sessionServerId]);
+  }, [resolvedAgentId, resolvedServerId, router]);
 
-  const focusServerId = resolvedServerId ?? sessionServerId;
-  const navigationStatus = session ? "ready" : "session_unavailable";
+  const focusServerId = resolvedServerId;
+  const navigationStatus = hasSession ? "ready" : "session_unavailable";
 
   useFocusEffect(
     useCallback(() => {
@@ -145,7 +145,7 @@ export default function AgentScreen() {
     }, [focusServerId, navigationStatus, resolvedAgentId])
   );
 
-  if (!session) {
+  if (!hasSession || !resolvedServerId) {
     return (
       <AgentSessionUnavailableState
         onBack={handleBackToHome}
@@ -158,26 +158,22 @@ export default function AgentScreen() {
     );
   }
 
-  const routeServerId = resolvedServerId ?? session.serverId;
-
   return (
     <AgentScreenContent
-      session={session}
+      serverId={resolvedServerId}
       agentId={resolvedAgentId}
-      routeServerId={routeServerId}
       onBack={handleBackToHome}
     />
   );
 }
 
 type AgentScreenContentProps = {
-  session: import("@/hooks/use-daemon-session").DaemonSession;
+  serverId: string;
   agentId?: string;
-  routeServerId: string;
   onBack: () => void;
 };
 
-function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentScreenContentProps) {
+function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -192,17 +188,52 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
   const [createAgentInitialValues, setCreateAgentInitialValues] =
     useState<CreateAgentInitialValues | undefined>();
 
-  const {
-    agents,
-    agentStreamState,
-    initializingAgents,
-    pendingPermissions,
-    initializeAgent,
-    refreshAgent,
-    setFocusedAgentId,
-    ws,
-  } = session;
   const resolvedAgentId = agentId;
+
+  // Select only the specific agent
+  const agent = useSessionStore((state) =>
+    resolvedAgentId ? state.sessions[serverId]?.agents?.get(resolvedAgentId) : undefined
+  );
+
+  // Select only the specific stream state - use stable empty array to avoid infinite loop
+  const streamItemsRaw = useSessionStore((state) =>
+    resolvedAgentId ? state.sessions[serverId]?.agentStreamState?.get(resolvedAgentId) : undefined
+  );
+  const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
+
+  // Select only the specific initializing state
+  const isInitializingFromMap = useSessionStore((state) =>
+    resolvedAgentId ? (state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ?? false) : false
+  );
+
+  // Select raw pending permissions - filter with useMemo to avoid new Map on every render
+  const allPendingPermissions = useSessionStore((state) =>
+    state.sessions[serverId]?.pendingPermissions
+  );
+  const pendingPermissions = useMemo(() => {
+    if (!allPendingPermissions || !resolvedAgentId) return new Map();
+    const filtered = new Map();
+    for (const [key, perm] of allPendingPermissions) {
+      if (perm.agentId === resolvedAgentId) {
+        filtered.set(key, perm);
+      }
+    }
+    return filtered;
+  }, [allPendingPermissions, resolvedAgentId]);
+
+  // Get ws for connection status
+  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+
+  // Get methods
+  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
+  const initializeAgent = methods?.initializeAgent;
+  const refreshAgent = methods?.refreshAgent;
+  const setFocusedAgentId = useCallback(
+    (agentId: string | null) => {
+      useSessionStore.getState().setFocusedAgentId(serverId, agentId);
+    },
+    [serverId]
+  );
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const bottomInset = useSharedValue(insets.bottom);
@@ -220,11 +251,6 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
     };
   });
 
-  const agent = resolvedAgentId ? agents.get(resolvedAgentId) : undefined;
-  const streamItems = resolvedAgentId ? agentStreamState.get(resolvedAgentId) || [] : [];
-  const agentPermissions = new Map(
-    Array.from(pendingPermissions.entries()).filter(([_, perm]) => perm.agentId === resolvedAgentId)
-  );
   const agentModel = extractAgentModel(agent);
   const modelDisplayValue = agentModel ?? "Unknown";
 
@@ -289,26 +315,28 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
     };
   }, [resolvedAgentId, setFocusedAgentId]);
 
-  const hasStreamState = resolvedAgentId ? agentStreamState.has(resolvedAgentId) : false;
-  const initializationState = resolvedAgentId ? initializingAgents.get(resolvedAgentId) : undefined;
+  const hasStreamState = useSessionStore((state) =>
+    resolvedAgentId ? state.sessions[serverId]?.agentStreamState?.has(resolvedAgentId) ?? false : false
+  );
+
   const isInitializing = resolvedAgentId
-    ? initializationState !== undefined
-      ? initializationState
+    ? isInitializingFromMap !== false
+      ? isInitializingFromMap
       : !hasStreamState
     : false;
 
   useEffect(() => {
-    if (!resolvedAgentId) {
+    if (!resolvedAgentId || !initializeAgent) {
       return;
     }
 
     console.log("[AgentScreen] initializeAgent effect", {
       agentId: resolvedAgentId,
       hasStreamState,
-      initializationState,
+      isInitializingFromMap,
     });
 
-    if (initializationState !== undefined) {
+    if (isInitializingFromMap !== false) {
       return;
     }
 
@@ -317,12 +345,12 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
     }
 
     initializeAgent({ agentId: resolvedAgentId });
-  }, [resolvedAgentId, initializeAgent, initializationState, hasStreamState]);
+  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, hasStreamState]);
 
   const agentControls = useMemo(() => {
     if (!resolvedAgentId) return null;
-    return <AgentInputArea agentId={resolvedAgentId} serverId={routeServerId} />;
-  }, [resolvedAgentId, routeServerId]);
+    return <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />;
+  }, [resolvedAgentId, serverId]);
 
   useEffect(() => {
     if (!agentControls || !agent || isInitializing) {
@@ -416,11 +444,11 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
         pathname: "/git-diff",
         params: {
           agentId: resolvedAgentId,
-          serverId: routeServerId,
+          serverId: serverId,
         },
       });
     }
-  }, [resolvedAgentId, routeServerId, router, handleCloseMenu]);
+  }, [resolvedAgentId, serverId, router, handleCloseMenu]);
 
   const handleBrowseFiles = useCallback(() => {
     handleCloseMenu();
@@ -429,14 +457,14 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
         pathname: "/file-explorer",
         params: {
           agentId: resolvedAgentId,
-          serverId: routeServerId,
+          serverId: serverId,
         },
       });
     }
-  }, [handleCloseMenu, resolvedAgentId, routeServerId, router]);
+  }, [handleCloseMenu, resolvedAgentId, serverId, router]);
 
   const handleRefreshAgent = useCallback(() => {
-    if (!resolvedAgentId) {
+    if (!resolvedAgentId || !refreshAgent) {
       return;
     }
     handleCloseMenu();
@@ -475,7 +503,7 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
       isVisible={showCreateAgentModal}
       onClose={handleCloseCreateAgentModal}
       initialValues={createAgentInitialValues}
-      serverId={routeServerId}
+      serverId={serverId}
     />
   );
 
@@ -483,7 +511,7 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
     <ImportAgentModal
       isVisible={showImportAgentModal}
       onClose={handleCloseImportAgentModal}
-      serverId={routeServerId}
+      serverId={serverId}
     />
   );
 
@@ -529,10 +557,10 @@ function AgentScreenContent({ session, agentId, routeServerId, onBack }: AgentSc
             ) : (
               <AgentStreamView
                 agentId={agent.id}
-                serverId={routeServerId}
+                serverId={serverId}
                 agent={agent}
                 streamItems={streamItems}
-                pendingPermissions={agentPermissions}
+                pendingPermissions={pendingPermissions}
               />
             )}
           </ReanimatedAnimated.View>

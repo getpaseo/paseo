@@ -32,7 +32,7 @@ import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import type { SessionOutboundMessage } from "@server/server/messages";
@@ -79,7 +79,19 @@ export function AgentStreamView({
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
   const router = useRouter();
-  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
+
+  // Get serverId (fallback to agent's serverId if not provided)
+  const resolvedServerId = serverId ?? agent.serverId ?? "";
+
+  // Get ws for connection status
+  const ws = useSessionStore((state) => state.sessions[resolvedServerId]?.ws);
+
+  // Get methods for file operations
+  const methods = useSessionStore((state) => state.sessions[resolvedServerId]?.methods);
+  const requestDirectoryListing = methods?.requestDirectoryListing;
+  const requestFilePreview = methods?.requestFilePreview;
+
+  // Create inert websocket fallback if ws is null
   const inertWebSocket = useMemo<UseWebSocketReturn>(
     () => ({
       isConnected: false,
@@ -93,10 +105,9 @@ export function AgentStreamView({
     }),
     []
   );
-  const ws = session?.ws ?? inertWebSocket;
-  const requestDirectoryListing = session?.requestDirectoryListing ?? (() => {});
-  const requestFilePreview = session?.requestFilePreview ?? (() => {});
-  const resolvedServerId = serverId ?? session?.serverId ?? agent.serverId ?? "";
+  const wsOrInert = ws ?? inertWebSocket;
+  const requestDirectoryListingOrInert = requestDirectoryListing ?? (() => {});
+  const requestFilePreviewOrInert = requestFilePreview ?? (() => {});
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -120,9 +131,9 @@ export function AgentStreamView({
         return;
       }
 
-      requestDirectoryListing(agentId, normalized.directory);
+      requestDirectoryListingOrInert(agentId, normalized.directory);
       if (normalized.file) {
-        requestFilePreview(agentId, normalized.file);
+        requestFilePreviewOrInert(agentId, normalized.file);
       }
 
       router.push({
@@ -141,7 +152,7 @@ export function AgentStreamView({
         },
       });
     },
-    [agentId, requestDirectoryListing, requestFilePreview, resolvedServerId, router]
+    [agentId, requestDirectoryListingOrInert, requestFilePreviewOrInert, resolvedServerId, router]
   );
 
   const handleScroll = useCallback(
@@ -350,7 +361,7 @@ export function AgentStreamView({
           {pendingPermissionItems.length > 0 ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
-                <PermissionRequestCard key={permission.key} permission={permission} ws={ws} />
+                <PermissionRequestCard key={permission.key} permission={permission} ws={wsOrInert} />
               ))}
             </View>
           ) : null}
@@ -363,7 +374,7 @@ export function AgentStreamView({
         </View>
       </View>
     );
-  }, [pendingPermissionItems, showWorkingIndicator, ws]);
+  }, [pendingPermissionItems, showWorkingIndicator, wsOrInert]);
 
   const flatListData = useMemo(() => {
     return [...streamItems].reverse();

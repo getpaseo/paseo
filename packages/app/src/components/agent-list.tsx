@@ -6,7 +6,7 @@ import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 import { buildAgentNavigationKey, startNavigationTiming } from "@/utils/navigation-timing";
 
 interface AgentListProps {
@@ -18,14 +18,15 @@ interface AgentListProps {
 export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentListProps) {
   const { theme } = useUnistyles();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
-  const actionSession = useDaemonSession(actionAgent?.serverId, {
-    suppressUnavailableAlert: true,
-    allowUnavailable: true,
-  });
 
-  const deleteAgent = actionSession?.deleteAgent;
+  // Get the methods for the specific server
+  const methods = useSessionStore((state) =>
+    actionAgent?.serverId ? state.sessions[actionAgent.serverId]?.methods : undefined
+  );
+  const deleteAgent = methods?.deleteAgent;
+
   const isActionSheetVisible = actionAgent !== null;
-  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionSession);
+  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !methods);
 
   const handleAgentPress = useCallback(
     (serverId: string, agentId: string) => {

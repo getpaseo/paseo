@@ -3,11 +3,10 @@ import { View, Text, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
-import type { SessionContextValue } from "@/contexts/session-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 
 interface ParsedDiffFile {
   path: string;
@@ -58,10 +57,8 @@ export default function GitDiffScreen() {
   const { agentId, serverId } = useLocalSearchParams<{ agentId: string; serverId?: string }>();
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
-  const session = useDaemonSession(resolvedServerId, {
-    suppressUnavailableAlert: true,
-    allowUnavailable: true,
-  });
+
+  const session = useSessionStore((state) => resolvedServerId ? state.sessions[resolvedServerId] : undefined);
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
@@ -83,7 +80,7 @@ export default function GitDiffScreen() {
 
   return (
     <GitDiffContent
-      session={session}
+      serverId={session.serverId}
       agentId={agentId}
       serverLabel={serverLabel}
     />
@@ -91,22 +88,30 @@ export default function GitDiffScreen() {
 }
 
 function GitDiffContent({
-  session,
+  serverId,
   agentId,
   serverLabel,
 }: {
-  session: import("@/hooks/use-daemon-session").DaemonSession;
+  serverId: string;
   agentId?: string;
   serverLabel: string;
 }) {
-  const { agents, gitDiffs, requestGitDiff } = session;
   const [isLoading, setIsLoading] = useState(true);
 
-  const agent = agentId ? agents.get(agentId) : undefined;
-  const diffText = agentId ? gitDiffs.get(agentId) : undefined;
+  const agent = useSessionStore((state) =>
+    agentId && serverId ? state.sessions[serverId]?.agents?.get(agentId) : undefined
+  );
+
+  const diffText = useSessionStore((state) =>
+    agentId && serverId ? state.sessions[serverId]?.gitDiffs?.get(agentId) : undefined
+  );
+
+  const requestGitDiff = useSessionStore((state) =>
+    serverId ? state.sessions[serverId]?.methods?.requestGitDiff : undefined
+  );
 
   useEffect(() => {
-    if (!agentId) {
+    if (!agentId || !requestGitDiff) {
       setIsLoading(false);
       return;
     }

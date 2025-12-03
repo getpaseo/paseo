@@ -29,11 +29,11 @@ import {
   X,
 } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
-import type { ExplorerEntry, SessionContextValue } from "@/contexts/session-context";
+import type { ExplorerEntry } from "@/stores/session-store";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 
 export default function FileExplorerScreen() {
   const {
@@ -49,14 +49,14 @@ export default function FileExplorerScreen() {
   }>();
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
-  const session = useDaemonSession(resolvedServerId, {
-    suppressUnavailableAlert: true,
-    allowUnavailable: true,
-  });
+
+  const session = useSessionStore((state) =>
+    resolvedServerId ? state.sessions[resolvedServerId] : undefined
+  );
 
   const connectionServerId = resolvedServerId ?? null;
   const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
-  const serverLabel = connection?.daemon.label ?? connectionServerId ?? session?.serverId ?? "Selected host";
+  const serverLabel = connection?.daemon.label ?? connectionServerId ?? resolvedServerId ?? "Selected host";
   const connectionStatus = connection?.status ?? "idle";
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastError = connection?.lastError ?? null;
@@ -78,21 +78,19 @@ export default function FileExplorerScreen() {
 
   return (
     <FileExplorerContent
-      session={session}
+      serverId={routeServerId}
       agentId={agentId}
       pathParamRaw={pathParamRaw}
       fileParamRaw={fileParamRaw}
-      routeServerId={routeServerId}
     />
   );
 }
 
 type FileExplorerContentProps = {
-  session: import("@/hooks/use-daemon-session").DaemonSession;
+  serverId: string;
   agentId?: string;
   pathParamRaw?: string | string[];
   fileParamRaw?: string | string[];
-  routeServerId: string;
 };
 
 type FileExplorerSessionUnavailableProps = {
@@ -105,20 +103,29 @@ type FileExplorerSessionUnavailableProps = {
 };
 
 function FileExplorerContent({
-  session,
+  serverId,
   agentId,
   pathParamRaw,
   fileParamRaw,
-  routeServerId,
 }: FileExplorerContentProps) {
   const { theme } = useUnistyles();
-  const {
-    agents,
-    fileExplorer,
-    requestDirectoryListing,
-    requestFilePreview,
-    navigateExplorerBack,
-  } = session;
+
+  const agent = useSessionStore((state) =>
+    agentId && state.sessions[serverId]
+      ? state.sessions[serverId]?.agents.get(agentId)
+      : undefined
+  );
+
+  const explorerState = useSessionStore((state) =>
+    agentId && state.sessions[serverId]
+      ? state.sessions[serverId]?.fileExplorer.get(agentId)
+      : undefined
+  );
+
+  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
+  const requestDirectoryListing = methods?.requestDirectoryListing;
+  const requestFilePreview = methods?.requestFilePreview;
+  const navigateExplorerBack = methods?.navigateExplorerBack;
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const pendingPathParamRef = useRef<string | null>(null);
@@ -136,9 +143,6 @@ function FileExplorerContent({
   const derivedDirectoryFromFile = normalizedFileParam
     ? deriveDirectoryFromFile(normalizedFileParam)
     : null;
-
-  const agent = agentId ? agents.get(agentId) : undefined;
-  const explorerState = agentId ? fileExplorer.get(agentId) : undefined;
   const history = explorerState?.history ?? [];
   const lastKnownDirectory = history[history.length - 1];
   const rememberedDirectory = explorerState?.lastVisitedPath;
@@ -237,7 +241,7 @@ function FileExplorerContent({
   }, [activePath]);
 
   useEffect(() => {
-    if (!agentId || !initialTargetDirectory) {
+    if (!agentId || !initialTargetDirectory || !requestDirectoryListing) {
       pendingPathParamRef.current = null;
       return;
     }
@@ -251,7 +255,7 @@ function FileExplorerContent({
   }, [agentId, initialTargetDirectory, requestDirectoryListing]);
 
   useEffect(() => {
-    if (!agentId || !normalizedFileParam) {
+    if (!agentId || !normalizedFileParam || !requestFilePreview) {
       pendingFileParamRef.current = null;
       return;
     }
@@ -281,7 +285,7 @@ function FileExplorerContent({
 
   const handleEntryPress = useCallback(
     (entry: ExplorerEntry) => {
-      if (!agentId) {
+      if (!agentId || !requestDirectoryListing || !requestFilePreview) {
         return;
       }
 
@@ -330,13 +334,13 @@ function FileExplorerContent({
     if (agentId) {
       router.replace({
         pathname: "/agent/[serverId]/[agentId]",
-        params: { serverId: routeServerId, agentId },
+        params: { serverId, agentId },
       });
       return;
     }
 
     router.back();
-  }, [agentId, routeServerId]);
+  }, [agentId, serverId]);
 
   const handleBackNavigation = useCallback(() => {
     if (!agentId) {
@@ -349,7 +353,7 @@ function FileExplorerContent({
       return true;
     }
 
-    if ((explorerState?.history?.length ?? 0) > 1) {
+    if ((explorerState?.history?.length ?? 0) > 1 && navigateExplorerBack) {
       navigateExplorerBack(agentId);
       return true;
     }
@@ -472,7 +476,7 @@ function FileExplorerContent({
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-      if (!agentId || viewMode !== "grid") {
+      if (!agentId || viewMode !== "grid" || !requestFilePreview) {
         return;
       }
 

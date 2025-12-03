@@ -1662,7 +1662,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     ]
   );
 
-  // Sync imperative methods to Zustand store so useDaemonSession can access them without React Context
+  // Sync imperative methods to Zustand store so components can access them via selectors
   // Memoize the methods object to avoid infinite re-renders (object reference must be stable)
   const setSessionMethods = useSessionStore((state) => state.setSessionMethods);
   const methods = useMemo(() => ({

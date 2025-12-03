@@ -1,36 +1,42 @@
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useState, useCallback, useRef } from "react";
+import { useState, useRef } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
-import type { SessionContextValue, Agent } from "@/contexts/session-context";
+import { useSessionStore } from "@/stores/session-store";
 
 interface AgentStatusBarProps {
   agentId: string;
-  serverId?: string;
+  serverId: string;
 }
 
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   // INVESTIGATION: Log rerenders
   const renderCountRef = useRef(0);
   renderCountRef.current++;
-  console.log(`[INVESTIGATION] AgentStatusBar render #${renderCountRef.current}`, { agentId });
+  console.log(`[INVESTIGATION] AgentStatusBar render #${renderCountRef.current}`, { agentId, serverId });
   const { theme } = useUnistyles();
-  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
-  const noopSetAgentMode = useCallback<SessionContextValue["setAgentMode"]>(() => {}, []);
-  const agents = session?.agents ?? new Map<string, Agent>();
-  const setAgentMode = session?.setAgentMode ?? noopSetAgentMode;
-  const [showModeSelector, setShowModeSelector] = useState(false);
 
-  const agent = agents.get(agentId);
+  // Select only the specific agent (not all agents)
+  const agent = useSessionStore((state) =>
+    state.sessions[serverId]?.agents?.get(agentId)
+  );
+
+  // Get the setAgentMode action (actions are stable, won't cause rerenders)
+  const setAgentMode = useSessionStore((state) =>
+    state.sessions[serverId]?.methods?.setAgentMode
+  );
+
+  const [showModeSelector, setShowModeSelector] = useState(false);
 
   if (!agent) {
     return null;
   }
 
   function handleModeChange(modeId: string) {
-    setAgentMode(agentId, modeId);
+    if (setAgentMode) {
+      setAgentMode(agentId, modeId);
+    }
   }
 
   return (

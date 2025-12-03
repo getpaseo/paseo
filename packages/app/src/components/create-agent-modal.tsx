@@ -65,7 +65,6 @@ import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/me
 import { formatConnectionStatus } from "@/utils/daemons";
 import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "@/contexts/session-context";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -263,26 +262,29 @@ function AgentFlowModal({
   }, [serverId, daemonEntries]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
 
-  // Use useDaemonSession to get both state AND APIs
-  const fullSession = useDaemonSession(selectedServerId, { allowUnavailable: true, suppressUnavailableAlert: true });
+  // [INVESTIGATION] Using useSessionStore directly with granular selectors
+  // Get the complete session state for the selected server
+  const sessionState = useSessionStore((state) =>
+    selectedServerId ? state.sessions[selectedServerId] : undefined
+  );
 
   // Extract only what we need for CreateAgentSessionSlice
   const session = useMemo<CreateAgentSessionSlice | null>(() => {
-    if (!fullSession) {
+    if (!selectedServerId || !sessionState || !sessionState.methods) {
       return null;
     }
     const slice: CreateAgentSessionSlice = {
-      serverId: fullSession.serverId,
-      ws: fullSession.ws,
-      createAgent: fullSession.createAgent,
-      resumeAgent: fullSession.resumeAgent,
-      sendAgentAudio: fullSession.sendAgentAudio,
-      agents: fullSession.agents,
-      providerModels: fullSession.providerModels,
-      requestProviderModels: fullSession.requestProviderModels,
+      serverId: selectedServerId,
+      ws: sessionState.ws,
+      createAgent: sessionState.methods.createAgent,
+      resumeAgent: sessionState.methods.resumeAgent,
+      sendAgentAudio: sessionState.methods.sendAgentAudio,
+      agents: sessionState.agents,
+      providerModels: sessionState.providerModels,
+      requestProviderModels: sessionState.methods.requestProviderModels,
     };
     return slice;
-  }, [fullSession]);
+  }, [selectedServerId, sessionState]);
 
   // Helper to get session state for background operations
   // Note: This only returns state, not APIs. For calling methods, need to send WS messages directly.
@@ -324,7 +326,6 @@ function AgentFlowModal({
     }
   }, [daemonEntries, initialServerId, isVisible, selectedServerId]);
 
-  const ws = session?.ws ?? null;
   const inertWebSocket = useMemo<UseWebSocketReturn>(
     () => ({
       isConnected: false,
@@ -340,6 +341,7 @@ function AgentFlowModal({
     }),
     []
   );
+  const ws = session?.ws ?? null;
   const effectiveWs: UseWebSocketReturn = ws ?? inertWebSocket;
   const createAgent = session?.createAgent;
   const resumeAgent = session?.resumeAgent;

@@ -31,9 +31,8 @@ import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
-import { useDaemonSession } from "@/hooks/use-daemon-session";
+import { useSessionStore } from "@/stores/session-store";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
-import type { SessionContextValue, Agent } from "@/contexts/session-context";
 import type { SessionOutboundMessage } from "@server/server/messages";
 
 type QueuedMessage = {
@@ -44,11 +43,12 @@ type QueuedMessage = {
 
 interface AgentInputAreaProps {
   agentId: string;
-  serverId?: string;
+  serverId: string;
 }
 
 const MIN_INPUT_HEIGHT = 50;
 const MAX_INPUT_HEIGHT = 160;
+const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const MAX_INPUT_WIDTH = 960;
 const BASE_VERTICAL_PADDING = (FOOTER_HEIGHT - MIN_INPUT_HEIGHT) / 2;
 // Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
@@ -85,7 +85,38 @@ type DictationToastConfig = {
 
 export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
-  const session = useDaemonSession(serverId, { allowUnavailable: true, suppressUnavailableAlert: true });
+
+  // [INVESTIGATION] Using granular selectors for WebSocket connection status
+  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+
+  // [INVESTIGATION] Select only the specific agent (not all agents)
+  const agent = useSessionStore((state) =>
+    state.sessions[serverId]?.agents?.get(agentId)
+  );
+
+  // [INVESTIGATION] Get draft input - drafts are at TOP LEVEL (not in session)
+  const getDraftInput = useSessionStore((state) => state.getDraftInput);
+  const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
+
+  // [INVESTIGATION] Get queued messages for this agent - use stable empty array
+  const queuedMessagesRaw = useSessionStore((state) =>
+    state.sessions[serverId]?.queuedMessages?.get(agentId)
+  );
+  const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
+
+  // [INVESTIGATION] Get methods
+  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
+  const sendAgentMessage = methods?.sendAgentMessage;
+  const cancelAgentRun = methods?.cancelAgentRun;
+
+  // [INVESTIGATION] Use store action directly for setQueuedMessages
+  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+
+  // Noop fallback for sendAgentAudio (required by useDictation)
+  const noopSendAgentAudio = useCallback(async () => {}, []);
+  const sendAgentAudio = methods?.sendAgentAudio ?? noopSendAgentAudio;
+
+  // Inert WebSocket fallback for when ws is undefined
   const inertWebSocket = useMemo<UseWebSocketReturn>(
     () => ({
       isConnected: false,
@@ -101,21 +132,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     }),
     []
   );
-  const noopSendAgentMessage = useCallback(async () => {}, []);
-  const noopSendAgentAudio = useCallback(async () => {}, []);
-  const noopCancelAgentRun = useCallback(() => {}, []);
-  const noopGetDraftInput = useCallback(() => undefined, []);
-  const noopSaveDraftInput = useCallback(() => {}, []);
-  const noopSetQueuedMessages = useCallback(() => {}, []);
-  const ws = session?.ws ?? inertWebSocket;
-  const sendAgentMessage = session?.sendAgentMessage ?? noopSendAgentMessage;
-  const sendAgentAudio = session?.sendAgentAudio ?? noopSendAgentAudio;
-  const agents = session?.agents ?? new Map<string, Agent>();
-  const cancelAgentRun = session?.cancelAgentRun ?? noopCancelAgentRun;
-  const getDraftInput = session?.getDraftInput ?? noopGetDraftInput;
-  const saveDraftInput = session?.saveDraftInput ?? noopSaveDraftInput;
-  const queuedMessagesByAgent = session?.queuedMessages ?? new Map<string, QueuedMessage[]>();
-  const setQueuedMessagesByAgent = session?.setQueuedMessages ?? noopSetQueuedMessages;
+
+  const wsOrInert = ws ?? inertWebSocket;
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
   const [userInput, setUserInput] = useState("");
@@ -125,7 +143,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [audioDebugInfo, setAudioDebugInfo] = useState<AudioDebugInfo | null>(null);
   const [connectionStatus, setConnectionStatus] = useState(() =>
-    ws.getConnectionState ? ws.getConnectionState() : { isConnected: ws.isConnected, isConnecting: ws.isConnecting }
+    wsOrInert.getConnectionState ? wsOrInert.getConnectionState() : { isConnected: wsOrInert.isConnected, isConnecting: wsOrInert.isConnecting }
   );
   const [lastSuccessToastAt, setLastSuccessToastAt] = useState<number | null>(null);
   
@@ -180,7 +198,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, []);
 
   const canStartDictation = useCallback(() => {
-    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+    const socketConnected = wsOrInert.getConnectionState ? wsOrInert.getConnectionState().isConnected : wsOrInert.isConnected;
     const allowed = !isRealtimeMode && socketConnected;
     console.log("[AgentInput] canStartDictation", {
       allowed,
@@ -188,17 +206,17 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       wsConnected: socketConnected,
     });
     return allowed;
-  }, [isRealtimeMode, ws]);
+  }, [isRealtimeMode, wsOrInert]);
 
   const canConfirmDictation = useCallback(() => {
-    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
+    const socketConnected = wsOrInert.getConnectionState ? wsOrInert.getConnectionState().isConnected : wsOrInert.isConnected;
     const allowed = socketConnected;
     console.log("[AgentInput] canConfirmDictation", {
       allowed,
       wsConnected: socketConnected,
     });
     return allowed;
-  }, [ws]);
+  }, [wsOrInert]);
 
   const {
     isRecording: isDictating,
@@ -220,7 +238,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   } = useDictation({
     agentId,
     sendAgentAudio,
-    ws,
+    ws: wsOrInert,
     mode: "transcribe_only",
     onTranscript: handleDictationTranscript,
     onError: handleDictationError,
@@ -235,13 +253,13 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, [dictationPendingRequestId]);
 
   useEffect(() => {
-    if (!ws.subscribeConnectionStatus) {
+    if (!wsOrInert.subscribeConnectionStatus) {
       return;
     }
-    return ws.subscribeConnectionStatus((status) => {
+    return wsOrInert.subscribeConnectionStatus((status) => {
       setConnectionStatus(status);
     });
-  }, [ws]);
+  }, [wsOrInert]);
 
   useEffect(() => {
     if (dictationLastOutcome?.type === "success") {
@@ -274,9 +292,9 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const dictationToast = useMemo<DictationToastConfig | null>(() => {
     console.log('[AgentInputArea] Connection status:', {
       isConnected: connectionStatus.isConnected,
-      wsIsConnected: ws.isConnected,
-      wsIsConnecting: ws.isConnecting,
-      hasSession: !!session,
+      wsIsConnected: wsOrInert.isConnected,
+      wsIsConnecting: wsOrInert.isConnecting,
+      hasWs: !!ws,
     });
 
     if (!connectionStatus.isConnected) {
@@ -375,8 +393,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, [sendAgentMessage]);
 
   async function handleSendMessage() {
-    const socketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
-    if (!userInput.trim() || !socketConnected) return;
+    const socketConnected = wsOrInert.getConnectionState ? wsOrInert.getConnectionState().isConnected : wsOrInert.isConnected;
+    if (!userInput.trim() || !socketConnected || !sendAgentMessage) return;
 
     const message = userInput.trim();
     const imageAttachments = selectedImages.length > 0 ? selectedImages : undefined;
@@ -416,7 +434,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     console.log("[AgentInput] handleVoicePress", {
       isDictating,
       isRealtimeMode,
-      wsConnected: ws.isConnected,
+      wsConnected: wsOrInert.isConnected,
     });
     if (isDictating || isRealtimeMode) {
       return;
@@ -480,7 +498,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     if (!shouldShowAudioDebug) {
       return;
     }
-    const unsubscribe = ws.on("transcription_result", (message: SessionOutboundMessage) => {
+    const unsubscribe = wsOrInert.on("transcription_result", (message: SessionOutboundMessage) => {
       if (message.type !== "transcription_result") {
         return;
       }
@@ -506,7 +524,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     return () => {
       unsubscribe();
     };
-  }, [shouldShowAudioDebug, ws]);
+  }, [shouldShowAudioDebug, wsOrInert]);
 
   function isTextAreaLike(value: unknown): value is TextAreaHandle {
     if (!value || typeof value !== "object") {
@@ -656,7 +674,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     });
   }
 
-  const agent = agents.get(agentId);
   const isAgentRunning = agent?.status === "running";
   agentStatusRef.current = agent?.status;
   const hasText = userInput.trim().length > 0;
@@ -664,18 +681,17 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const hasSendableContent = hasText || hasImages;
   const shouldShowSendButton = !isAgentRunning && hasSendableContent;
   const shouldShowVoiceControls = !hasSendableContent;
-  const queuedMessages = queuedMessagesByAgent.get(agentId) ?? [];
   const shouldHandleDesktopSubmit = IS_WEB;
 
   const updateQueue = useCallback(
     (updater: (current: QueuedMessage[]) => QueuedMessage[]) => {
-      setQueuedMessagesByAgent((prev: Map<string, QueuedMessage[]>) => {
+      setQueuedMessages(serverId, (prev: Map<string, QueuedMessage[]>) => {
         const next = new Map(prev);
         next.set(agentId, updater(prev.get(agentId) ?? []));
         return next;
       });
     },
-    [agentId, setQueuedMessagesByAgent],
+    [agentId, serverId, setQueuedMessages],
   );
   useEffect(() => {
     updateQueueRef.current = updateQueue;
@@ -702,23 +718,23 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     }
     event.preventDefault();
     if (isAgentRunning) {
-      if (!hasSendableContent || !ws.isConnected) {
+      if (!hasSendableContent || !wsOrInert.isConnected) {
         return;
       }
       handleQueueCurrentInput();
       return;
     }
-    if (!shouldShowSendButton || isProcessing || !ws.isConnected) {
+    if (!shouldShowSendButton || isProcessing || !wsOrInert.isConnected) {
       return;
     }
     void handleSendMessage();
   }
 
   useEffect(() => {
-    if (!isAgentRunning || !ws.isConnected) {
+    if (!isAgentRunning || !wsOrInert.isConnected) {
       setIsCancellingAgent(false);
     }
-  }, [isAgentRunning, ws.isConnected]);
+  }, [isAgentRunning, wsOrInert.isConnected]);
 
   useEffect(() => {
     if (!IS_WEB) {
@@ -738,7 +754,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
           return;
         }
 
-        if (!isRealtimeMode && shouldShowVoiceControls && ws.isConnected) {
+        if (!isRealtimeMode && shouldShowVoiceControls && wsOrInert.isConnected) {
           void handleVoicePress();
         }
         return;
@@ -759,7 +775,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     isDictating,
     isRealtimeMode,
     shouldShowVoiceControls,
-    ws,
+    wsOrInert,
     handleVoicePress,
     handleSendRecording,
     handleCancelRecording,
@@ -820,7 +836,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       if (isRealtimeMode) {
         await stopRealtime();
       } else {
-        if (!ws.isConnected || !serverId) {
+        if (!wsOrInert.isConnected || !serverId) {
           return;
         }
         await startRealtime(serverId);
@@ -834,7 +850,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     if (!agent || agent.status !== "running" || isCancellingAgent) {
       return;
     }
-    if (!ws.isConnected) {
+    if (!wsOrInert.isConnected || !cancelAgentRun) {
       return;
     }
     setIsCancellingAgent(true);
@@ -867,7 +883,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
 
   async function handleSendQueuedNow(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
-    if (!item || !ws.isConnected) return;
+    if (!item || !wsOrInert.isConnected || !sendAgentMessage) return;
 
     updateQueue((current) => current.filter((q) => q.id !== id));
 
@@ -879,11 +895,11 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const realtimeButton = (
     <Pressable
       onPress={handleRealtimePress}
-      disabled={!ws.isConnected && !isRealtimeMode}
+      disabled={!wsOrInert.isConnected && !isRealtimeMode}
       style={[
         styles.realtimeButton as any,
         (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
-        (!ws.isConnected && !isRealtimeMode ? styles.buttonDisabled : undefined) as any,
+        (!wsOrInert.isConnected && !isRealtimeMode ? styles.buttonDisabled : undefined) as any,
       ]}
     >
       {isRealtimeMode ? (
@@ -897,10 +913,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const voiceButton = (
     <Pressable
       onPress={handleVoicePress}
-      disabled={!ws.isConnected || isRealtimeMode}
+      disabled={!wsOrInert.isConnected || isRealtimeMode}
       style={[
         styles.voiceButton as any,
-        (!ws.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
+        (!wsOrInert.isConnected || isRealtimeMode ? styles.buttonDisabled : undefined) as any,
         (isDictating ? styles.voiceButtonRecording : undefined) as any,
       ]}
     >
@@ -991,7 +1007,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
             multiline
             scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
             onContentSizeChange={handleContentSizeChange}
-            editable={!isDictating && ws.isConnected}
+            editable={!isDictating && wsOrInert.isConnected}
             onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
           />
 
@@ -1001,10 +1017,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
             <View style={styles.leftButtonGroup}>
               <Pressable
                 onPress={handlePickImage}
-                disabled={!ws.isConnected}
+                disabled={!wsOrInert.isConnected}
                 style={[
                   styles.attachButton as any,
-                  (!ws.isConnected ? styles.buttonDisabled : undefined) as any,
+                  (!wsOrInert.isConnected ? styles.buttonDisabled : undefined) as any,
                 ]}
               >
                 <Paperclip size={20} color={theme.colors.foreground} />
@@ -1020,12 +1036,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
                   {hasSendableContent && (
                     <Pressable
                       onPress={handleQueueCurrentInput}
-                      disabled={!ws.isConnected}
+                      disabled={!wsOrInert.isConnected}
                       accessibilityLabel="Queue message while agent is running"
                       accessibilityRole="button"
                       style={[
                         styles.queueButton as any,
-                        (!ws.isConnected ? styles.buttonDisabled : undefined) as any,
+                        (!wsOrInert.isConnected ? styles.buttonDisabled : undefined) as any,
                       ]}
                     >
                       <ArrowUp size={20} color="white" />
@@ -1034,12 +1050,12 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
                   {realtimeButton}
                   <Pressable
                     onPress={handleCancelAgent}
-                    disabled={!ws.isConnected || isCancellingAgent}
+                    disabled={!wsOrInert.isConnected || isCancellingAgent}
                     accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
                     accessibilityRole="button"
                     style={[
                       styles.cancelButton as any,
-                      (!ws.isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
+                      (!wsOrInert.isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
                     ]}
                   >
                     {isCancellingAgent ? (
@@ -1052,10 +1068,10 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
               ) : shouldShowSendButton ? (
                 <Pressable
                   onPress={handleSendMessage}
-                  disabled={!ws.isConnected || isProcessing}
+                  disabled={!wsOrInert.isConnected || isProcessing}
                 style={[
                   styles.sendButton as any,
-                  (!ws.isConnected || isProcessing ? styles.buttonDisabled : undefined) as any,
+                  (!wsOrInert.isConnected || isProcessing ? styles.buttonDisabled : undefined) as any,
                 ]}
                 >
                   <ArrowUp size={20} color="white" />
