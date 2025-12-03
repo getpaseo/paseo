@@ -315,37 +315,38 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     };
   }, [resolvedAgentId, setFocusedAgentId]);
 
-  const hasStreamState = useSessionStore((state) =>
-    resolvedAgentId ? state.sessions[serverId]?.agentStreamState?.has(resolvedAgentId) ?? false : false
-  );
+  const isInitializing = resolvedAgentId ? isInitializingFromMap !== false : false;
 
-  const isInitializing = resolvedAgentId
-    ? isInitializingFromMap !== false
-      ? isInitializingFromMap
-      : !hasStreamState
-    : false;
+  // Track which agent we've already triggered initialization for
+  const initializedAgentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!resolvedAgentId || !initializeAgent) {
       return;
     }
 
-    console.log("[AgentScreen] initializeAgent effect", {
+    // Skip if already initializing
+    if (isInitializingFromMap === true) {
+      return;
+    }
+
+    // Skip if we already triggered initialization for this agent
+    if (initializedAgentRef.current === resolvedAgentId) {
+      return;
+    }
+
+    // Mark this agent as initialized
+    initializedAgentRef.current = resolvedAgentId;
+
+    // Always fetch timeline when opening agent screen
+    // Server returns full snapshot, client replaces cache
+    // This ensures we always have complete history, even after reconnection
+    console.log("[AgentScreen] Fetching agent timeline", {
       agentId: resolvedAgentId,
-      hasStreamState,
-      isInitializingFromMap,
     });
 
-    if (isInitializingFromMap !== false) {
-      return;
-    }
-
-    if (hasStreamState) {
-      return;
-    }
-
     initializeAgent({ agentId: resolvedAgentId });
-  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, hasStreamState]);
+  }, [resolvedAgentId, initializeAgent, isInitializingFromMap]);
 
   const agentControls = useMemo(() => {
     if (!resolvedAgentId) return null;
