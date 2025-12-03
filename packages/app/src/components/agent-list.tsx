@@ -1,4 +1,4 @@
-import { View, Text, Pressable, FlatList, Modal, type ListRenderItem } from "react-native";
+import { View, Text, Pressable, FlatList, Modal, RefreshControl, type ListRenderItem } from "react-native";
 import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -11,9 +11,11 @@ import { buildAgentNavigationKey, startNavigationTiming } from "@/utils/navigati
 
 interface AgentListProps {
   agents: AggregatedAgent[];
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
 }
 
-export function AgentList({ agents }: AgentListProps) {
+export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentListProps) {
   const { theme } = useUnistyles();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const actionSession = useDaemonSession(actionAgent?.serverId, {
@@ -150,6 +152,16 @@ export function AgentList({ agents }: AgentListProps) {
         renderItem={renderAgentItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.mutedForeground}
+              colors={[theme.colors.mutedForeground]}
+            />
+          ) : undefined
+        }
       />
 
       <Modal

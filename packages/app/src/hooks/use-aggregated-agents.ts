@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -13,13 +13,24 @@ export interface AggregatedAgentsResult {
   isLoading: boolean;
   isInitialLoad: boolean;
   isRevalidating: boolean;
+  refreshAll: () => void;
 }
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates } = useDaemonConnections();
   const sessions = useSessionStore((state) => state.sessions);
 
-  return useMemo(() => {
+  const refreshAll = useCallback(() => {
+    console.log('[useAggregatedAgents] Manual refresh triggered for all sessions');
+    for (const [serverId, session] of Object.entries(sessions)) {
+      if (session?.methods?.refreshSession) {
+        console.log(`[useAggregatedAgents] Refreshing session ${serverId}`);
+        session.methods.refreshSession();
+      }
+    }
+  }, [sessions]);
+
+  const result = useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
     // Derive agent directory from all sessions
@@ -124,4 +135,9 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       isRevalidating,
     };
   }, [sessions, connectionStates]);
+
+  return {
+    ...result,
+    refreshAll,
+  };
 }

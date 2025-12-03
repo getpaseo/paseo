@@ -1,4 +1,4 @@
-import { View, ActivityIndicator, Text } from "react-native";
+import { View, ActivityIndicator } from "react-native";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,7 +19,8 @@ export default function HomeScreen() {
   const {
     agents: aggregatedAgents,
     isInitialLoad,
-    isRevalidating
+    isRevalidating,
+    refreshAll,
   } = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -123,16 +124,11 @@ export default function HomeScreen() {
             <ActivityIndicator size="large" color={theme.colors.mutedForeground} />
           </View>
         ) : hasAgents ? (
-          <View style={{ flex: 1 }}>
-            <AgentList agents={aggregatedAgents} />
-
-            {isRevalidating && (
-              <View style={styles.revalidatingBadge}>
-                <ActivityIndicator size="small" color={theme.colors.mutedForeground} />
-                <Text style={styles.revalidatingText}>Reconnecting...</Text>
-              </View>
-            )}
-          </View>
+          <AgentList
+            agents={aggregatedAgents}
+            isRefreshing={isRevalidating}
+            onRefresh={refreshAll}
+          />
         ) : (
           <EmptyState
             onCreateAgent={handleCreateAgent}
@@ -171,22 +167,5 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-  },
-  revalidatingBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: theme.colors.muted,
-    borderRadius: 16,
-    opacity: 0.9,
-  },
-  revalidatingText: {
-    fontSize: 12,
-    color: theme.colors.mutedForeground,
   },
 }));

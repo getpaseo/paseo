@@ -169,6 +169,7 @@ export interface SessionState {
     restartServer: (reason?: string) => void;
     initializeAgent: (params: { agentId: string; requestId?: string }) => void;
     refreshAgent: (params: { agentId: string; requestId?: string }) => void;
+    refreshSession: () => void;
     cancelAgentRun: (agentId: string) => void;
     sendAgentMessage: (
       agentId: string,

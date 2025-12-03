@@ -171,6 +171,7 @@ export interface SessionContextValue {
   restartServer: (reason?: string) => void;
   initializeAgent: (params: { agentId: string; requestId?: string }) => void;
   refreshAgent: (params: { agentId: string; requestId?: string }) => void;
+  refreshSession: () => void;
   cancelAgentRun: (agentId: string) => void;
   sendAgentMessage: (
     agentId: string,
@@ -1589,6 +1590,17 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     return targetPath;
   }, [updateExplorerState, ws]);
 
+  const refreshSession = useCallback(() => {
+    console.log(`[Session] Manual refresh requested for ${serverId}`);
+    ws.send({
+      type: "session",
+      message: {
+        type: "load_conversation_request",
+        conversationId: ws.conversationId ?? "",
+      },
+    });
+  }, [ws, serverId]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1610,6 +1622,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       restartServer,
       initializeAgent,
       refreshAgent,
+      refreshSession,
       cancelAgentRun,
       deleteAgent,
       sendAgentMessage,
@@ -1632,6 +1645,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       restartServer,
       initializeAgent,
       refreshAgent,
+      refreshSession,
       cancelAgentRun,
       deleteAgent,
       sendAgentMessage,
@@ -1656,6 +1670,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     restartServer,
     initializeAgent,
     refreshAgent,
+    refreshSession,
     cancelAgentRun,
     sendAgentMessage,
     sendAgentAudio,
@@ -1674,6 +1689,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     restartServer,
     initializeAgent,
     refreshAgent,
+    refreshSession,
     cancelAgentRun,
     sendAgentMessage,
     sendAgentAudio,
