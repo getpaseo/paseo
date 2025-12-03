@@ -20,9 +20,11 @@ import Animated, {
   FadeIn,
   FadeOut,
 } from "react-native-reanimated";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useDictation } from "@/hooks/use-dictation";
-import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 import { VoiceNoteRecordingOverlay } from "./voice-note-recording-overlay";
 import { DictationStatusNotice, type DictationToastVariant } from "./dictation-status-notice";
 import { generateMessageId } from "@/types/stream";
@@ -85,6 +87,8 @@ type DictationToastConfig = {
 
 export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
 
@@ -825,6 +829,15 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     };
   });
 
+  const keyboardAnimatedStyle = useAnimatedStyle(() => {
+    "worklet";
+    const absoluteHeight = Math.abs(keyboardHeight.value);
+    const shift = Math.max(0, absoluteHeight - insets.bottom);
+    return {
+      transform: [{ translateY: -shift }],
+    };
+  });
+
   async function handleRealtimePress() {
     try {
       if (isRealtimeMode) {
@@ -923,7 +936,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   );
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { paddingBottom: insets.bottom }, keyboardAnimatedStyle]}>
       {/* Border separator */}
       <View style={styles.borderSeparator} />
 
@@ -1104,7 +1117,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
           </View>
         </View>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 

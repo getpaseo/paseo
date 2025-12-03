@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { View, Pressable, Text, Platform, Modal, Alert } from "react-native";
-import { usePathname, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AudioLines, Users, Plus, Download } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { useFooterControls, FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 import { RealtimeControls } from "./realtime-controls";
 import { CreateAgentModal, ImportAgentModal } from "./create-agent-modal";
 import Animated, {
@@ -16,14 +16,12 @@ import Animated, {
 } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 
-export function GlobalFooter() {
+export function HomeFooter() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const pathname = usePathname();
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { connectionStates } = useDaemonConnections();
-  const { controls } = useFooterControls();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showRealtimeHostPicker, setShowRealtimeHostPicker] = useState(false);
@@ -32,12 +30,6 @@ export function GlobalFooter() {
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
   const realtimeFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(250);
   const realtimeFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(250);
-
-  // Determine current screen type
-  const isAgentScreen = pathname?.startsWith("/agent/");
-
-  const hasRegisteredControls = !!controls;
-  const showAgentControls = isAgentScreen && hasRegisteredControls;
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const bottomInset = insets.bottom;
@@ -76,7 +68,7 @@ export function GlobalFooter() {
     }
     if (realtimeEligibleHosts.length === 1) {
       void startRealtime(realtimeEligibleHosts[0].daemon.id).catch((error) => {
-        console.error("[GlobalFooter] Failed to start realtime", error);
+        console.error("[HomeFooter] Failed to start realtime", error);
         Alert.alert("Realtime failed", "Unable to start realtime mode for this host.");
       });
       return;
@@ -88,7 +80,7 @@ export function GlobalFooter() {
     (daemonId: string) => {
       setShowRealtimeHostPicker(false);
       void startRealtime(daemonId).catch((error) => {
-        console.error("[GlobalFooter] Failed to start realtime", error);
+        console.error("[HomeFooter] Failed to start realtime", error);
         Alert.alert("Realtime failed", "Unable to start realtime mode for this host.");
       });
     },
@@ -98,26 +90,6 @@ export function GlobalFooter() {
   const handleDismissHostPicker = useCallback(() => {
     setShowRealtimeHostPicker(false);
   }, []);
-
-  if (showAgentControls) {
-    return (
-      <Animated.View
-        style={[
-          styles.container,
-          {
-            paddingBottom: insets.bottom,
-          },
-          keyboardAnimatedStyle,
-        ]}
-      >
-        {controls}
-      </Animated.View>
-    );
-  }
-
-  if (isAgentScreen) {
-    return null;
-  }
 
   // For home and orchestrator screens, show action buttons with realtime stacked on top
   const nonAgentFooterHeight = isRealtimeMode
@@ -191,7 +163,7 @@ export function GlobalFooter() {
 
             <Pressable
               onPress={() => {
-                console.log("[GlobalFooter] New Agent button pressed");
+                console.log("[HomeFooter] New Agent button pressed");
                 setShowCreateModal(true);
               }}
               style={({ pressed }) => [

@@ -6,6 +6,7 @@ import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller
 import ReanimatedAnimated, { useAnimatedStyle } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HomeHeader } from "@/components/headers/home-header";
+import { HomeFooter } from "@/components/home-footer";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
 import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
@@ -132,6 +133,9 @@ export default function HomeScreen() {
           />
         )}
       </ReanimatedAnimated.View>
+
+      {/* Home Footer */}
+      <HomeFooter />
 
       {/* Create Agent Modal */}
       <CreateAgentModal isVisible={showCreateModal} onClose={handleCloseCreateModal} />

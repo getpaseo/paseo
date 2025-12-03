@@ -19,7 +19,6 @@ import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { CreateAgentModal, ImportAgentModal, type CreateAgentInitialValues } from "@/components/create-agent-modal";
-import { useFooterControls } from "@/contexts/footer-controls-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -177,7 +176,6 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { registerFooterControls, unregisterFooterControls } = useFooterControls();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -347,24 +345,6 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
 
     initializeAgent({ agentId: resolvedAgentId });
   }, [resolvedAgentId, initializeAgent, isInitializingFromMap]);
-
-  const agentControls = useMemo(() => {
-    if (!resolvedAgentId) return null;
-    return <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />;
-  }, [resolvedAgentId, serverId]);
-
-  useEffect(() => {
-    if (!agentControls || !agent || isInitializing) {
-      unregisterFooterControls();
-      return;
-    }
-
-    registerFooterControls(agentControls);
-
-    return () => {
-      unregisterFooterControls();
-    };
-  }, [agentControls, agent, isInitializing, registerFooterControls, unregisterFooterControls]);
 
   const recalculateMenuPosition = useCallback(
     (onMeasured?: () => void) => {
@@ -566,6 +546,11 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
             )}
           </ReanimatedAnimated.View>
         </View>
+
+        {/* Agent Input Area */}
+        {!isInitializing && agent && resolvedAgentId && (
+          <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />
+        )}
 
         {/* Dropdown Menu */}
         <Modal

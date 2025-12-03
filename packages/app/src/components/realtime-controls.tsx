@@ -3,7 +3,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { MicOff, Square } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
 import { useRealtime } from "@/contexts/realtime-context";
-import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 
 const CONTROL_BUTTON_SIZE = 48;
 const VERTICAL_PADDING = (FOOTER_HEIGHT - CONTROL_BUTTON_SIZE) / 2;

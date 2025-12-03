@@ -6,9 +6,7 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator, Text } from "react-native";
-import { GlobalFooter } from "@/components/global-footer";
 import { useUnistyles } from "react-native-unistyles";
-import { FooterControlsProvider } from "@/contexts/footer-controls-context";
 import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
@@ -111,29 +109,26 @@ export default function RootLayout() {
                 <DaemonConnectionsProvider>
                   <MultiDaemonSessionHost />
                   <ProvidersWrapper>
-                    <FooterControlsProvider>
-                      <AppContainer>
-                        <Stack
-                          screenOptions={{
-                            headerShown: false,
-                            animation: "none",
-                            gestureEnabled: true,
-                            gestureDirection: "horizontal",
-                            fullScreenGestureEnabled: true,
-                          }}
-                        >
-                          <Stack.Screen name="index" />
-                          <Stack.Screen name="orchestrator" />
-                          <Stack.Screen name="agent/[id]" />
-                          <Stack.Screen name="agent/[serverId]/[agentId]" />
-                          <Stack.Screen name="settings" />
-                          <Stack.Screen name="audio-test" />
-                          <Stack.Screen name="git-diff" />
-                          <Stack.Screen name="file-explorer" />
-                        </Stack>
-                        <GlobalFooter />
-                      </AppContainer>
-                    </FooterControlsProvider>
+                    <AppContainer>
+                      <Stack
+                        screenOptions={{
+                          headerShown: false,
+                          animation: "none",
+                          gestureEnabled: true,
+                          gestureDirection: "horizontal",
+                          fullScreenGestureEnabled: true,
+                        }}
+                      >
+                        <Stack.Screen name="index" />
+                        <Stack.Screen name="orchestrator" />
+                        <Stack.Screen name="agent/[id]" />
+                        <Stack.Screen name="agent/[serverId]/[agentId]" />
+                        <Stack.Screen name="settings" />
+                        <Stack.Screen name="audio-test" />
+                        <Stack.Screen name="git-diff" />
+                        <Stack.Screen name="file-explorer" />
+                      </Stack>
+                    </AppContainer>
                   </ProvidersWrapper>
                 </DaemonConnectionsProvider>
               </DaemonRegistryProvider>

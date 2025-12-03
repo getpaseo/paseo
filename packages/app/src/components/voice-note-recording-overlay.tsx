@@ -2,7 +2,7 @@ import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X, ArrowUp, RefreshCcw } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
-import { FOOTER_HEIGHT } from "@/contexts/footer-controls-context";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
 
 interface VoiceNoteRecordingOverlayProps {
