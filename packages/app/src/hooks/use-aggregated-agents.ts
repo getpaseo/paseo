@@ -1,7 +1,9 @@
 import { useMemo, useCallback } from "react";
+import { useShallow } from "zustand/shallow";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
+import type { Agent } from "@/stores/session-store";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -18,28 +20,47 @@ export interface AggregatedAgentsResult {
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
   const { connectionStates } = useDaemonConnections();
-  const sessions = useSessionStore((state) => state.sessions);
+
+  const sessionAgents = useSessionStore(
+    useShallow((state) => {
+      const result: Record<string, Map<string, Agent> | undefined> = {};
+      for (const [serverId, session] of Object.entries(state.sessions)) {
+        result[serverId] = session.agents;
+      }
+      return result;
+    })
+  );
+
+  const sessionMethods = useSessionStore(
+    useShallow((state) => {
+      const result: Record<string, NonNullable<typeof state.sessions[string]["methods"]> | undefined> = {};
+      for (const [serverId, session] of Object.entries(state.sessions)) {
+        result[serverId] = session.methods ?? undefined;
+      }
+      return result;
+    })
+  );
 
   const refreshAll = useCallback(() => {
     console.log('[useAggregatedAgents] Manual refresh triggered for all sessions');
-    for (const [serverId, session] of Object.entries(sessions)) {
-      if (session?.methods?.refreshSession) {
+    for (const [serverId, methods] of Object.entries(sessionMethods)) {
+      if (methods?.refreshSession) {
         console.log(`[useAggregatedAgents] Refreshing session ${serverId}`);
-        session.methods.refreshSession();
+        methods.refreshSession();
       }
     }
-  }, [sessions]);
+  }, [sessionMethods]);
 
   const result = useMemo(() => {
     const allAgents: AggregatedAgent[] = [];
 
     // Derive agent directory from all sessions
-    for (const [serverId, session] of Object.entries(sessions)) {
-      if (!session?.agents || session.agents.size === 0) {
+    for (const [serverId, agents] of Object.entries(sessionAgents)) {
+      if (!agents || agents.size === 0) {
         continue;
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
-      for (const agent of session.agents.values()) {
+      for (const agent of agents.values()) {
         // Use agent's own lastActivityAt field directly
         allAgents.push({
           id: agent.id,
@@ -135,7 +156,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       isInitialLoad,
       isRevalidating,
     };
-  }, [sessions, connectionStates]);
+  }, [sessionAgents, connectionStates]);
 
   return {
     ...result,
