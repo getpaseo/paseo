@@ -24,8 +24,6 @@ export default function HomeScreen() {
   } = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [createModalMounted, setCreateModalMounted] = useState(false);
-  const [importModalMounted, setImportModalMounted] = useState(false);
   const [pendingImportServerId, setPendingImportServerId] = useState<string | null>(null);
   const { modal, flow, action, serverId: serverIdParam } = useLocalSearchParams<{
     modal?: string;
@@ -49,13 +47,11 @@ export default function HomeScreen() {
   const hasAgents = aggregatedAgents.length > 0;
 
   const handleCreateAgent = useCallback(() => {
-    setCreateModalMounted(true);
     setShowCreateModal(true);
   }, []);
 
   const openImportModal = useCallback((serverIdOverride?: string | null) => {
     setPendingImportServerId(serverIdOverride ?? null);
-    setImportModalMounted(true);
     setShowImportModal(true);
   }, []);
 
@@ -138,19 +134,12 @@ export default function HomeScreen() {
       </ReanimatedAnimated.View>
 
       {/* Create Agent Modal */}
-      {createModalMounted ? (
-        <CreateAgentModal
-          isVisible={showCreateModal}
-          onClose={handleCloseCreateModal}
-        />
-      ) : null}
-      {importModalMounted ? (
-        <ImportAgentModal
-          isVisible={showImportModal}
-          onClose={handleCloseImportModal}
-          serverId={pendingImportServerId}
-        />
-      ) : null}
+      <CreateAgentModal isVisible={showCreateModal} onClose={handleCloseCreateModal} />
+      <ImportAgentModal
+        isVisible={showImportModal}
+        onClose={handleCloseImportModal}
+        serverId={pendingImportServerId}
+      />
     </View>
   );
 }
