@@ -141,23 +141,6 @@ const BUSY_STATUSES: AgentLifecycleStatus[] = [
   "running",
 ];
 
-const READ_ONLY_AGENT_ERROR_MESSAGE =
-  "ManagedAgent views returned by AgentManager are read-only";
-
-class ReadonlyPendingPermissionsMap<K, V> extends Map<K, V> {
-  override set(): this {
-    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
-  }
-
-  override delete(): boolean {
-    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
-  }
-
-  override clear(): void {
-    throw new Error(READ_ONLY_AGENT_ERROR_MESSAGE);
-  }
-}
-
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.includes(status);
 }
@@ -215,14 +198,14 @@ export class AgentManager {
         if (agent) {
           callback({
             type: "agent_state",
-            agent: this.createAgentView(agent),
+            agent: { ...agent },
           });
         }
       } else {
         for (const agent of this.agents.values()) {
           callback({
             type: "agent_state",
-            agent: this.createAgentView(agent),
+            agent: { ...agent },
           });
         }
       }
@@ -234,9 +217,9 @@ export class AgentManager {
   }
 
   listAgents(): ManagedAgent[] {
-    return Array.from(this.agents.values()).map((agent) =>
-      this.createAgentView(agent)
-    );
+    return Array.from(this.agents.values()).map((agent) => ({
+      ...agent,
+    }));
   }
 
   async listPersistedAgents(
@@ -279,7 +262,7 @@ export class AgentManager {
 
   getAgent(id: string): ManagedAgent | null {
     const agent = this.agents.get(id);
-    return agent ? this.createAgentView(agent) : null;
+    return agent ? { ...agent } : null;
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
@@ -731,7 +714,7 @@ export class AgentManager {
     managed.lifecycle = "idle";
     await this.persistSnapshot(managed);
     this.emitState(managed);
-    return this.createAgentView(managed);
+    return { ...managed };
   }
 
   private async persistSnapshot(
@@ -839,7 +822,7 @@ export class AgentManager {
   private emitState(agent: ManagedAgent): void {
     this.dispatch({
       type: "agent_state",
-      agent: this.createAgentView(agent),
+      agent: { ...agent },
     });
   }
 
@@ -867,157 +850,6 @@ export class AgentManager {
     }
   }
 
-  private createAgentView(agent: ManagedAgent): ManagedAgent {
-    const clone = this.cloneAgent(agent);
-    clone.pendingPermissions = this.createReadonlyPendingPermissionsMap(
-      clone.pendingPermissions
-    );
-
-    this.deepFreezeValue(clone.availableModes);
-    this.deepFreezeValue(clone.timeline);
-    this.deepFreezeValue(clone.capabilities);
-    this.deepFreezeValue(clone.config);
-    if (clone.persistence) {
-      this.deepFreezeValue(clone.persistence);
-    }
-    if (clone.lastUsage) {
-      this.deepFreezeValue(clone.lastUsage);
-    }
-    if (clone.lastUserMessageAt) {
-      Object.freeze(clone.lastUserMessageAt);
-    }
-    Object.freeze(clone.createdAt);
-    Object.freeze(clone.updatedAt);
-
-    return Object.freeze(clone) as ManagedAgent;
-  }
-
-  private cloneAgent(agent: ManagedAgent): ManagedAgent {
-    return {
-      ...agent,
-      createdAt: new Date(agent.createdAt.getTime()),
-      updatedAt: new Date(agent.updatedAt.getTime()),
-      lastUserMessageAt: agent.lastUserMessageAt
-        ? new Date(agent.lastUserMessageAt.getTime())
-        : null,
-      pendingPermissions: new Map(
-        Array.from(agent.pendingPermissions.entries()).map(
-          ([key, value]) => [key, this.cloneValue(value)]
-        )
-      ),
-      availableModes: this.cloneValue(agent.availableModes),
-      timeline: this.cloneValue(agent.timeline),
-      capabilities: this.cloneValue(agent.capabilities),
-      config: this.cloneValue(agent.config),
-      persistence: agent.persistence
-        ? this.cloneValue(agent.persistence)
-        : agent.persistence,
-      lastUsage: agent.lastUsage ? this.cloneValue(agent.lastUsage) : undefined,
-    } as ManagedAgent;
-  }
-
-  private createReadonlyPendingPermissionsMap(
-    source: Map<string, AgentPermissionRequest>
-  ): Map<string, AgentPermissionRequest> {
-    const readonlyMap = new ReadonlyPendingPermissionsMap(source);
-    for (const request of readonlyMap.values()) {
-      this.deepFreezeValue(request);
-    }
-    return Object.freeze(readonlyMap) as Map<string, AgentPermissionRequest>;
-  }
-
-  private cloneValue<T>(value: T): T {
-    if (value === null || typeof value !== "object") {
-      return value;
-    }
-    if (value instanceof Date) {
-      return new Date(value.getTime()) as T;
-    }
-    if (Array.isArray(value)) {
-      return value.map((item) => this.cloneValue(item)) as T;
-    }
-    if (value instanceof Map) {
-      const clone = new Map();
-      for (const [key, entryValue] of value.entries()) {
-        clone.set(this.cloneValue(key), this.cloneValue(entryValue));
-      }
-      return clone as T;
-    }
-    if (value instanceof Set) {
-      const clone = new Set();
-      for (const entryValue of value.values()) {
-        clone.add(this.cloneValue(entryValue));
-      }
-      return clone as T;
-    }
-    if (!this.isPlainObject(value)) {
-      return value;
-    }
-    const clonedObject: Record<string, unknown> = {};
-    for (const [key, entryValue] of Object.entries(value)) {
-      clonedObject[key] = this.cloneValue(entryValue);
-    }
-    return clonedObject as T;
-  }
-
-  private deepFreezeValue<T>(value: T, seen = new WeakSet<object>()): T {
-    if (value === null || typeof value !== "object") {
-      return value;
-    }
-    if (value instanceof Date) {
-      Object.freeze(value);
-      return value;
-    }
-
-    const objectValue = value as object;
-    if (seen.has(objectValue)) {
-      return value;
-    }
-    seen.add(objectValue);
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        this.deepFreezeValue(item, seen);
-      }
-      Object.freeze(value);
-      return value;
-    }
-
-    if (value instanceof Map) {
-      for (const mapValue of value.values()) {
-        this.deepFreezeValue(mapValue, seen);
-      }
-      Object.freeze(value);
-      return value;
-    }
-
-    if (value instanceof Set) {
-      for (const setValue of value.values()) {
-        this.deepFreezeValue(setValue, seen);
-      }
-      Object.freeze(value);
-      return value;
-    }
-
-    if (!this.isPlainObject(value)) {
-      return value;
-    }
-
-    const record = value as Record<string, unknown>;
-    for (const key of Object.keys(record)) {
-      this.deepFreezeValue(record[key], seen);
-    }
-    Object.freeze(record);
-    return value;
-  }
-
-  private isPlainObject(value: unknown): value is Record<string, unknown> {
-    if (value === null || typeof value !== "object") {
-      return false;
-    }
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null;
-  }
 
   private async normalizeConfig(
     config: AgentSessionConfig
