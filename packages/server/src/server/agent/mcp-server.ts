@@ -15,7 +15,6 @@ import type {
 import {
   AgentPermissionRequestPayloadSchema,
   AgentPermissionResponseSchema,
-  AgentTimelineItemPayloadSchema,
   AgentSnapshotPayloadSchema,
   serializeAgentSnapshot,
 } from "../messages.js";
@@ -642,57 +641,49 @@ export async function createAgentMcpServer(
     {
       title: "Get Agent Activity",
       description:
-        "Return recent agent timeline entries. Default response is a curated summary; raw timeline entries are available via format='raw'.",
+        "Return recent agent timeline entries as a curated summary.",
       inputSchema: {
         agentId: z.string(),
-        format: z.enum(["curated", "raw"]).optional().default("curated"),
         limit: z
           .number()
           .optional()
-          .describe("Optional limit for raw entries (most recent first)."),
+          .describe("Optional limit for number of activities to include (most recent first)."),
       },
       outputSchema: {
         agentId: z.string(),
-        format: z.enum(["curated", "raw"]),
         updateCount: z.number(),
         currentModeId: z.string().nullable(),
         content: z.string(),
-        updates: z
-          .array(AgentTimelineItemPayloadSchema)
-          .nullable()
-          .describe("Timeline entries when format='raw'."),
       },
     },
-    async ({ agentId, format = "curated", limit }) => {
+    async ({ agentId, limit }) => {
       const timeline = agentManager.getTimeline(agentId);
       const snapshot = agentManager.getAgent(agentId);
 
-      if (format === "curated") {
-        return {
-          content: [],
-          structuredContent: ensureValidJson({
-            agentId,
-            format: "curated" as const,
-            updateCount: timeline.length,
-            currentModeId: snapshot?.currentModeId ?? null,
-            content: curateAgentActivity(timeline),
-            updates: null,
-          }),
-        };
+      const activitiesToCurate = limit
+        ? timeline.slice(-limit)
+        : timeline;
+
+      const curatedContent = curateAgentActivity(activitiesToCurate);
+      const totalCount = timeline.length;
+      const shownCount = activitiesToCurate.length;
+
+      let countHeader: string;
+      if (limit && shownCount < totalCount) {
+        countHeader = `Showing ${shownCount} of ${totalCount} ${totalCount === 1 ? 'activity' : 'activities'} (limited to ${limit})`;
+      } else {
+        countHeader = `Showing all ${totalCount} ${totalCount === 1 ? 'activity' : 'activities'}`;
       }
 
-      const entries = limit
-        ? timeline.slice(-limit).reverse()
-        : timeline;
+      const contentWithCount = `${countHeader}\n\n${curatedContent}`;
+
       return {
         content: [],
         structuredContent: ensureValidJson({
           agentId,
-          format: "raw" as const,
           updateCount: timeline.length,
           currentModeId: snapshot?.currentModeId ?? null,
-          content: "",
-          updates: entries,
+          content: contentWithCount,
         }),
       };
     }
