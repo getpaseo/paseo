@@ -69,6 +69,10 @@ const CODEX_MODES: AgentMode[] = [
   },
 ];
 
+export const VALID_CODEX_MODES = new Set(
+  CODEX_MODES.map((mode) => mode.id)
+);
+
 const DEFAULT_CODEX_MODE_ID = "auto";
 
 const MODE_PRESETS: Record<

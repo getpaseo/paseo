@@ -72,6 +72,10 @@ const DEFAULT_MODES: AgentMode[] = [
   },
 ];
 
+export const VALID_CLAUDE_MODES = new Set(
+  DEFAULT_MODES.map((mode) => mode.id)
+);
+
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
