@@ -1,7 +1,7 @@
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { ModeSelectorModal } from "./mode-selector-modal";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -11,10 +11,6 @@ interface AgentStatusBarProps {
 }
 
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
-  // INVESTIGATION: Log rerenders
-  const renderCountRef = useRef(0);
-  renderCountRef.current++;
-  console.log(`[INVESTIGATION] AgentStatusBar render #${renderCountRef.current}`, { agentId, serverId });
   const { theme } = useUnistyles();
 
   // Select only the specific agent (not all agents)
