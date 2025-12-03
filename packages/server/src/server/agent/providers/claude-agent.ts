@@ -72,7 +72,7 @@ const DEFAULT_MODES: AgentMode[] = [
   },
 ];
 
-export const VALID_CLAUDE_MODES = new Set(
+const VALID_CLAUDE_MODES = new Set(
   DEFAULT_MODES.map((mode) => mode.id)
 );
 
@@ -271,6 +271,15 @@ class ClaudeAgentSession implements AgentSession {
     this.claudeSessionId = handle?.sessionId ?? handle?.nativeHandle ?? null;
     this.pendingLocalId = this.claudeSessionId ?? `claude-${randomUUID()}`;
     this.persistence = handle ?? null;
+
+    // Validate mode if provided
+    if (config.modeId && !VALID_CLAUDE_MODES.has(config.modeId)) {
+      const validModesList = Array.from(VALID_CLAUDE_MODES).join(", ");
+      throw new Error(
+        `Invalid mode '${config.modeId}' for Claude provider. Valid modes: ${validModesList}`
+      );
+    }
+
     this.currentMode = (config.modeId as PermissionMode) ?? "default";
     if (this.claudeSessionId) {
       this.loadPersistedHistory(this.claudeSessionId);
@@ -386,6 +395,14 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async setMode(modeId: string): Promise<void> {
+    // Validate mode
+    if (!VALID_CLAUDE_MODES.has(modeId)) {
+      const validModesList = Array.from(VALID_CLAUDE_MODES).join(", ");
+      throw new Error(
+        `Invalid mode '${modeId}' for Claude provider. Valid modes: ${validModesList}`
+      );
+    }
+
     const normalized = modeId as PermissionMode;
     const query = await this.ensureQuery();
     await query.setPermissionMode(normalized);

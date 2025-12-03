@@ -22,8 +22,6 @@ import type {
 } from "./agent-sdk-types.js";
 import { resolveAgentModel } from "./model-resolver.js";
 import type { AgentRegistry } from "./agent-registry.js";
-import { VALID_CLAUDE_MODES } from "./providers/claude-agent.js";
-import { VALID_CODEX_MODES } from "./providers/codex-agent.js";
 
 export const AGENT_LIFECYCLE_STATUSES = [
   "initializing",
@@ -164,27 +162,6 @@ function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.includes(status);
 }
 
-function getValidModesForProvider(provider: AgentProvider): Set<string> {
-  switch (provider) {
-    case "claude":
-      return VALID_CLAUDE_MODES;
-    case "codex":
-      return VALID_CODEX_MODES;
-    default:
-      return new Set();
-  }
-}
-
-function validateMode(provider: AgentProvider, modeId: string): void {
-  const validModes = getValidModesForProvider(provider);
-  if (!validModes.has(modeId)) {
-    const validModesList = Array.from(validModes).join(", ");
-    throw new Error(
-      `Invalid mode '${modeId}' for provider '${provider}'. Valid modes: ${validModesList}`
-    );
-  }
-}
-
 function createAbortError(
   signal: AbortSignal | undefined,
   fallbackMessage: string
@@ -315,12 +292,6 @@ export class AgentManager {
     agentId?: string
   ): Promise<ManagedAgent> {
     const normalizedConfig = await this.normalizeConfig(config);
-
-    // Validate mode if provided
-    if (normalizedConfig.modeId) {
-      validateMode(normalizedConfig.provider, normalizedConfig.modeId);
-    }
-
     const client = this.requireClient(normalizedConfig.provider);
     const session = await client.createSession(normalizedConfig);
     return this.registerSession(
@@ -342,12 +313,6 @@ export class AgentManager {
       provider: handle.provider,
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(mergedConfig);
-
-    // Validate mode if provided
-    if (normalizedConfig.modeId) {
-      validateMode(handle.provider, normalizedConfig.modeId);
-    }
-
     const resumeOverrides =
       normalizedConfig.model !== mergedConfig.model
         ? { ...overrides, model: normalizedConfig.model }
@@ -409,10 +374,6 @@ export class AgentManager {
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
-
-    // Validate mode before attempting to set it
-    validateMode(agent.provider, modeId);
-
     await agent.session.setMode(modeId);
     agent.currentModeId = modeId;
     this.emitState(agent);

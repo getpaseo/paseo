@@ -69,7 +69,7 @@ const CODEX_MODES: AgentMode[] = [
   },
 ];
 
-export const VALID_CODEX_MODES = new Set(
+const VALID_CODEX_MODES = new Set(
   CODEX_MODES.map((mode) => mode.id)
 );
 
@@ -294,6 +294,15 @@ class CodexAgentSession implements AgentSession {
   constructor(codex: Codex, config: CodexAgentConfig, handle?: AgentPersistenceHandle) {
     this.codex = codex;
     this.config = { ...config };
+
+    // Validate mode if provided
+    if (config.modeId && !VALID_CODEX_MODES.has(config.modeId)) {
+      const validModesList = Array.from(VALID_CODEX_MODES).join(", ");
+      throw new Error(
+        `Invalid mode '${config.modeId}' for Codex provider. Valid modes: ${validModesList}`
+      );
+    }
+
     this.currentMode = this.config.modeId ?? DEFAULT_CODEX_MODE_ID;
     this.threadOptions = this.buildThreadOptions(this.currentMode);
     this.codexSessionDir = this.resolveCodexSessionDir(handle);
@@ -424,8 +433,13 @@ class CodexAgentSession implements AgentSession {
     if (modeId === this.currentMode) {
       return;
     }
-    if (!this.availableModes.some((mode) => mode.id === modeId)) {
-      throw new Error(`Mode '${modeId}' not supported by Codex`);
+
+    // Validate mode
+    if (!VALID_CODEX_MODES.has(modeId)) {
+      const validModesList = Array.from(VALID_CODEX_MODES).join(", ");
+      throw new Error(
+        `Invalid mode '${modeId}' for Codex provider. Valid modes: ${validModesList}`
+      );
     }
 
     this.currentMode = modeId;
