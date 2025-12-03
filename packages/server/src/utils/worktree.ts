@@ -4,6 +4,10 @@ import { existsSync, readFileSync } from "fs";
 import { join, basename, dirname } from "path";
 
 const execAsync = promisify(exec);
+const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  GIT_OPTIONAL_LOCKS: "0",
+};
 
 interface RepoInfo {
   type: "bare" | "normal";
@@ -88,6 +92,7 @@ export async function detectRepoInfo(cwd: string): Promise<RepoInfo> {
     try {
       const { stdout } = await execAsync("git rev-parse --show-toplevel", {
         cwd,
+        env: READ_ONLY_GIT_ENV,
       });
       const repoRoot = stdout.trim();
       return {

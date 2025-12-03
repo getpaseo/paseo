@@ -72,6 +72,10 @@ type AgentMcpClientConfig = {
 };
 
 const execAsync = promisify(exec);
+const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  GIT_OPTIONAL_LOCKS: "0",
+};
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
@@ -1526,11 +1530,11 @@ export class Session {
       const repoInfo = await detectRepoInfo(resolvedCwd);
       const { stdout: branchesRaw } = await execAsync(
         "git branch --format='%(refname:short)'",
-        { cwd: repoInfo.path }
+        { cwd: repoInfo.path, env: READ_ONLY_GIT_ENV }
       );
       const { stdout: currentRaw } = await execAsync(
         "git rev-parse --abbrev-ref HEAD",
-        { cwd: resolvedCwd }
+        { cwd: resolvedCwd, env: READ_ONLY_GIT_ENV }
       );
       const currentBranch = currentRaw.trim();
       const branches = branchesRaw
@@ -1687,7 +1691,10 @@ export class Session {
 
   private async isWorkingTreeDirty(cwd: string): Promise<boolean> {
     try {
-      const { stdout } = await execAsync("git status --porcelain", { cwd });
+      const { stdout } = await execAsync("git status --porcelain", {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
       return stdout.trim().length > 0;
     } catch (error) {
       throw new Error(

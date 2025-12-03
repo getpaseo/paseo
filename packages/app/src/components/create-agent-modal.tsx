@@ -82,6 +82,7 @@ interface AgentFlowModalProps {
   flow: "create" | "import";
   initialValues?: CreateAgentInitialValues;
   serverId?: string | null;
+  onAfterClose?: () => void;
 }
 
 type DictationToastConfig = {
@@ -237,6 +238,7 @@ function AgentFlowModal({
   flow,
   initialValues,
   serverId,
+  onAfterClose,
 }: AgentFlowModalProps) {
   const insets = useSafeAreaInsets();
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
@@ -1326,7 +1328,8 @@ function AgentFlowModal({
     resetFormState();
     setIsMounted(false);
     navigateToAgentIfNeeded();
-  }, [navigateToAgentIfNeeded, resetFormState]);
+    onAfterClose?.();
+  }, [navigateToAgentIfNeeded, onAfterClose, resetFormState]);
 
   const requestImportCandidates = useCallback(
     (provider?: AgentProvider) => {
@@ -2433,12 +2436,33 @@ function AgentFlowModal({
   );
 }
 
+function LazyAgentFlowModal(props: Omit<AgentFlowModalProps, "onAfterClose">) {
+  const { isVisible } = props;
+  const [shouldRender, setShouldRender] = useState(isVisible);
+
+  useEffect(() => {
+    if (isVisible) {
+      setShouldRender(true);
+    }
+  }, [isVisible]);
+
+  const handleAfterClose = useCallback(() => {
+    setShouldRender(false);
+  }, []);
+
+  if (!shouldRender) {
+    return null;
+  }
+
+  return <AgentFlowModal {...props} onAfterClose={handleAfterClose} />;
+}
+
 export function CreateAgentModal(props: ModalWrapperProps) {
-  return <AgentFlowModal {...props} flow="create" />;
+  return <LazyAgentFlowModal {...props} flow="create" />;
 }
 
 export function ImportAgentModal(props: ModalWrapperProps) {
-  return <AgentFlowModal {...props} flow="import" />;
+  return <LazyAgentFlowModal {...props} flow="import" />;
 }
 
 interface ModalHeaderProps {

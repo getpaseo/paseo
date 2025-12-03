@@ -171,7 +171,9 @@ export function GlobalFooter() {
             </Pressable>
 
             <Pressable
-              onPress={() => setShowImportModal(true)}
+              onPress={() => {
+                setShowImportModal(true);
+              }}
               style={({ pressed }) => [
                 styles.footerButton,
                 pressed && styles.buttonPressed,
