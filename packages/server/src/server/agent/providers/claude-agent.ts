@@ -1250,7 +1250,7 @@ class ClaudeAgentSession implements AgentSession {
       existing.server = existing.name;
     }
 
-    if (block.type === "tool_use") {
+    if (block.type === "tool_use" || block.type === "mcp_tool_use" || block.type === "server_tool_use") {
       const input = this.normalizeToolInput(block.input);
       if (input) {
         this.applyToolInput(existing, input);
