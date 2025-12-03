@@ -243,6 +243,9 @@ interface SessionStoreState {
 
   // Single draft for the create agent modal
   createModalDraft: DraftInput | null;
+
+  // Agent activity timestamps (top-level, keyed by agentId to prevent cascade rerenders)
+  agentLastActivity: Map<string, Date>;
 }
 
 // Action types
@@ -271,6 +274,9 @@ interface SessionStoreActions {
 
   // Agents
   setAgents: (serverId: string, agents: Map<string, Agent> | ((prev: Map<string, Agent>) => Map<string, Agent>)) => void;
+
+  // Agent activity timestamps
+  setAgentLastActivity: (agentId: string, timestamp: Date) => void;
 
   // Commands
   setCommands: (serverId: string, commands: Map<string, Command> | ((prev: Map<string, Command>) => Map<string, Command>)) => void;
@@ -363,6 +369,7 @@ export const useSessionStore = create<SessionStore>()(
     sessions: {},
     drafts: new Map(),
     createModalDraft: null,
+    agentLastActivity: new Map(),
 
     // Session management
     initializeSession: (serverId, ws, audioPlayer) => {
@@ -573,6 +580,22 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
+    // Agent activity timestamps (top-level, does NOT mutate session object)
+    setAgentLastActivity: (agentId, timestamp) => {
+      set((prev) => {
+        const currentTimestamp = prev.agentLastActivity.get(agentId);
+        if (currentTimestamp && currentTimestamp.getTime() === timestamp.getTime()) {
+          return prev;
+        }
+        const nextActivity = new Map(prev.agentLastActivity);
+        nextActivity.set(agentId, timestamp);
+        return {
+          ...prev,
+          agentLastActivity: nextActivity,
+        };
+      });
+    },
+
     // Commands
     setCommands: (serverId, commands) => {
       set((prev) => {
@@ -775,19 +798,22 @@ export const useSessionStore = create<SessionStore>()(
 
     // Agent directory - derived from agents (computed on-demand)
     getAgentDirectory: (serverId) => {
-      const session = get().sessions[serverId];
+      const state = get();
+      const session = state.sessions[serverId];
       if (!session) {
         return undefined;
       }
 
       const entries: AgentDirectoryEntry[] = [];
       for (const agent of session.agents.values()) {
+        // Get lastActivityAt from top-level slice, fallback to agent.lastActivityAt
+        const lastActivityAt = state.agentLastActivity.get(agent.id) ?? agent.lastActivityAt;
         entries.push({
           id: agent.id,
           serverId,
           title: agent.title ?? null,
           status: agent.status,
-          lastActivityAt: agent.lastActivityAt,
+          lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
         });

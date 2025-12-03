@@ -223,6 +223,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const setHasHydratedAgents = useSessionStore((state) => state.setHasHydratedAgents);
   const setAgents = useSessionStore((state) => state.setAgents);
+  const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
   const setCommands = useSessionStore((state) => state.setCommands);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
@@ -324,10 +325,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
       const agents = new Map();
       const pendingPermissions = new Map();
+      const agentLastActivity = new Map();
 
       for (const agentSnapshot of snapshot.agents) {
         const agent = normalizeAgentSnapshot(agentSnapshot, serverId);
         agents.set(agent.id, agent);
+        agentLastActivity.set(agent.id, agent.lastActivityAt);
         for (const request of agent.pendingPermissions) {
           const key = derivePendingPermissionKey(agent.id, request);
           pendingPermissions.set(key, { key, agentId: agent.id, request });
@@ -340,6 +343,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         }
         return agents;
       });
+
+      // Initialize agentLastActivity slice (top-level)
+      for (const [agentId, timestamp] of agentLastActivity.entries()) {
+        setAgentLastActivity(agentId, timestamp);
+      }
 
       setPendingPermissions(serverId, pendingPermissions);
       const commandEntries = snapshot.commands ?? [];
@@ -579,10 +587,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
       const agents = new Map();
       const pendingPermissions = new Map();
+      const agentLastActivity = new Map();
 
       for (const agentSnapshot of agentsList) {
         const agent = normalizeAgentSnapshot(agentSnapshot, serverId);
         agents.set(agent.id, agent);
+        agentLastActivity.set(agent.id, agent.lastActivityAt);
         for (const request of agent.pendingPermissions) {
           const key = derivePendingPermissionKey(agent.id, request);
           pendingPermissions.set(key, { key, agentId: agent.id, request });
@@ -592,6 +602,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       const normalizedCommands = commandsList.map((command) => command);
 
       setAgents(serverId, agents);
+
+      // Initialize agentLastActivity slice (top-level)
+      for (const [agentId, timestamp] of agentLastActivity.entries()) {
+        setAgentLastActivity(agentId, timestamp);
+      }
+
       setPendingPermissions(serverId, pendingPermissions);
       setCommands(serverId, new Map(normalizedCommands.map((command: any) => [command.id, command])));
       setAgentStreamState(serverId, (prev) => {
@@ -648,6 +664,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return next;
       });
 
+      // Update agentLastActivity slice (top-level)
+      setAgentLastActivity(agent.id, agent.lastActivityAt);
+
       setPendingPermissions(serverId, (prev) => {
         const next = new Map(prev);
         for (const [key, pending] of Array.from(next.entries())) {
@@ -702,16 +721,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return next;
       });
 
-      // Update agent's lastActivityAt to track stream activity
-      setAgents(serverId, (prev) => {
-        const agent = prev.get(agentId);
-        if (!agent) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, { ...agent, lastActivityAt: parsedTimestamp });
-        return next;
-      });
+      // NOTE: We don't update lastActivityAt on every stream event to prevent
+      // cascading rerenders. The agent_state handler updates agent.lastActivityAt
+      // on status changes, which is sufficient for sorting and display purposes.
     });
 
     const unsubAgentStreamSnapshot = ws.on("agent_stream_snapshot", (message) => {
@@ -1079,6 +1091,19 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         return next;
       });
 
+      // Remove from agentLastActivity slice (top-level)
+      useSessionStore.setState((state) => {
+        if (!state.agentLastActivity.has(agentId)) {
+          return state;
+        }
+        const nextActivity = new Map(state.agentLastActivity);
+        nextActivity.delete(agentId);
+        return {
+          ...state,
+          agentLastActivity: nextActivity,
+        };
+      });
+
       setAgentStreamState(serverId, (prev) => {
         if (!prev.has(agentId)) {
           return prev;
@@ -1146,7 +1171,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       unsubProviderModels();
       unsubAgentDeleted();
     };
-  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setInitializingAgents, setAgents, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
+  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setInitializingAgents, setAgents, setAgentLastActivity, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
 
   // Auto-flush queued messages when agent transitions from running -> not running
   useEffect(() => {

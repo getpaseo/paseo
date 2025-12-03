@@ -514,7 +514,11 @@ export class Session {
           timestamp: new Date().toISOString(),
         } as const;
 
-        console.log(`[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type}`);
+        const itemType = event.event.type === "timeline" ? event.event.item.type : undefined;
+        const logMessage = itemType
+          ? `[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type} itemType=${itemType}`
+          : `[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type}`;
+        console.log(logMessage);
         this.emit({
           type: "agent_stream",
           payload,

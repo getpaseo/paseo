@@ -40,6 +40,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       }
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
       for (const agent of session.agents.values()) {
+        // Use agent's own lastActivityAt field directly
         allAgents.push({
           id: agent.id,
           serverId,

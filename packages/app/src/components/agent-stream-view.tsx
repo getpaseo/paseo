@@ -62,14 +62,6 @@ export function AgentStreamView({
   streamItems,
   pendingPermissions,
 }: AgentStreamViewProps) {
-  // INVESTIGATION: Log rerenders
-  const renderCountRef = useRef(0);
-  renderCountRef.current++;
-  console.log(`[INVESTIGATION] AgentStreamView render #${renderCountRef.current}`, {
-    agentId,
-    streamItemsLength: streamItems.length,
-    pendingPermissionsSize: pendingPermissions.size,
-  });
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const insets = useSafeAreaInsets();
   const [isNearBottom, setIsNearBottom] = useState(true);
