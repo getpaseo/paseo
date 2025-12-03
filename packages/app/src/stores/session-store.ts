@@ -230,9 +230,6 @@ export interface SessionState {
   // Provider models
   providerModels: Map<AgentProvider, ProviderModelState>;
 
-  // Draft inputs (non-serializable, stored in Map)
-  draftInputs: Map<string, DraftInput>;
-
   // Queued messages
   queuedMessages: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>;
 }
@@ -240,6 +237,12 @@ export interface SessionState {
 // Global store state
 interface SessionStoreState {
   sessions: Record<string, SessionState>;
+
+  // Top-level drafts (keyed by agentId, not serverId:agentId since agent IDs are globally unique)
+  drafts: Map<string, DraftInput>;
+
+  // Single draft for the create agent modal
+  createModalDraft: DraftInput | null;
 }
 
 // Action types
@@ -284,9 +287,13 @@ interface SessionStoreActions {
   // Provider models
   setProviderModels: (serverId: string, models: Map<AgentProvider, ProviderModelState> | ((prev: Map<AgentProvider, ProviderModelState>) => Map<AgentProvider, ProviderModelState>)) => void;
 
-  // Draft inputs
-  getDraftInput: (serverId: string, agentId: string) => DraftInput | undefined;
-  saveDraftInput: (serverId: string, agentId: string, draft: DraftInput) => void;
+  // Draft inputs (top-level, not in sessions)
+  getDraftInput: (agentId: string) => DraftInput | undefined;
+  saveDraftInput: (agentId: string, draft: DraftInput) => void;
+
+  // Create modal draft
+  getCreateModalDraft: () => DraftInput | null;
+  saveCreateModalDraft: (draft: DraftInput | null) => void;
 
   // Queued messages
   setQueuedMessages: (serverId: string, value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
@@ -347,7 +354,6 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
     gitDiffs: new Map(),
     fileExplorer: new Map(),
     providerModels: new Map(),
-    draftInputs: new Map(),
     queuedMessages: new Map(),
   };
 }
@@ -355,6 +361,8 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => ({
     sessions: {},
+    drafts: new Map(),
+    createModalDraft: null,
 
     // Session management
     initializeSession: (serverId, ws, audioPlayer) => {
@@ -675,32 +683,32 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
-    // Draft inputs
-    getDraftInput: (serverId, agentId) => {
-      const session = get().sessions[serverId];
-      if (!session) {
-        return undefined;
-      }
-      return session.draftInputs.get(agentId);
+    // Draft inputs (top-level, keyed by agentId only)
+    getDraftInput: (agentId) => {
+      return get().drafts.get(agentId);
     },
 
-    saveDraftInput: (serverId, agentId, draft) => {
+    saveDraftInput: (agentId, draft) => {
       set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        const nextDraftInputs = new Map(session.draftInputs);
-        nextDraftInputs.set(agentId, draft);
-        logSessionStoreUpdate("saveDraftInput", serverId, { agentId });
+        const nextDrafts = new Map(prev.drafts);
+        nextDrafts.set(agentId, draft);
         return {
           ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: { ...session, draftInputs: nextDraftInputs },
-          },
+          drafts: nextDrafts,
         };
       });
+    },
+
+    // Create modal draft
+    getCreateModalDraft: () => {
+      return get().createModalDraft;
+    },
+
+    saveCreateModalDraft: (draft) => {
+      set((prev) => ({
+        ...prev,
+        createModalDraft: draft,
+      }));
     },
 
     // Queued messages

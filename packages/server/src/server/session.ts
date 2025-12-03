@@ -514,6 +514,7 @@ export class Session {
           timestamp: new Date().toISOString(),
         } as const;
 
+        console.log(`[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type}`);
         this.emit({
           type: "agent_stream",
           payload,
