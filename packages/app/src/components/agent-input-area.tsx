@@ -86,30 +86,24 @@ type DictationToastConfig = {
 export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
 
-  // [INVESTIGATION] Using granular selectors for WebSocket connection status
   const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
 
-  // [INVESTIGATION] Select only the specific agent (not all agents)
   const agent = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.get(agentId)
   );
 
-  // [INVESTIGATION] Get draft input - drafts are at TOP LEVEL (not in session)
   const getDraftInput = useSessionStore((state) => state.getDraftInput);
   const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
 
-  // [INVESTIGATION] Get queued messages for this agent - use stable empty array
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId)
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
-  // [INVESTIGATION] Get methods
   const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
   const sendAgentMessage = methods?.sendAgentMessage;
   const cancelAgentRun = methods?.cancelAgentRun;
 
-  // [INVESTIGATION] Use store action directly for setQueuedMessages
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
   // Noop fallback for sendAgentAudio (required by useDictation)
