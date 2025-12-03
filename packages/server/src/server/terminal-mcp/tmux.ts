@@ -376,16 +376,21 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
     homeDir,
   ]);
 
-  // Disable automatic window renaming for all windows in the session
+  const session = await findSessionByName(name);
+  if (!session) {
+    return null;
+  }
+
+  // Disable automatic window renaming for all windows in the session (session target works; ':0' does not)
   await executeTmux([
     "set-window-option",
     "-t",
-    name,
+    session.id,
     "automatic-rename",
     "off",
   ]);
 
-  return findSessionByName(name);
+  return session;
 }
 
 /**

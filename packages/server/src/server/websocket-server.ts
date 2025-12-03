@@ -211,9 +211,39 @@ export class VoiceAssistantWebSocketServer {
       // Safe error logging - avoid crashing on large/circular objects
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       const errorStack = error instanceof Error ? error.stack : undefined;
+      let rawPayload: string | null = null;
+      let parsedPayload: unknown = null;
+
+      try {
+        const buffer = Array.isArray(data)
+          ? Buffer.concat(
+              data.map((item) =>
+                Buffer.isBuffer(item)
+                  ? item
+                  : Buffer.from(item as ArrayBuffer)
+              )
+            )
+          : Buffer.isBuffer(data)
+            ? data
+            : Buffer.from(data as ArrayBuffer);
+        rawPayload = buffer.toString();
+        parsedPayload = JSON.parse(rawPayload);
+      } catch (payloadError) {
+        rawPayload = rawPayload ?? "<unreadable>";
+        parsedPayload = parsedPayload ?? rawPayload;
+        console.error("[WS] Failed to decode raw payload:", payloadError);
+      }
+
+      const trimmedRawPayload =
+        typeof rawPayload === "string" && rawPayload.length > 2000
+          ? `${rawPayload.slice(0, 2000)}... (truncated)`
+          : rawPayload;
+
       console.error("[WS] Failed to parse/handle message:", {
         message: errorMessage,
         stack: errorStack,
+        rawPayload: trimmedRawPayload,
+        parsedPayload,
       });
       // Send error to client
       this.sendToClient(

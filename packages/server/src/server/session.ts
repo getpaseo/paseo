@@ -224,6 +224,8 @@ export class Session {
   > | null = null;
   private terminalTools: ToolSet | null = null;
   private terminalManager: TerminalManager | null = null;
+  private terminalInitPromise: Promise<void> | null = null;
+  private terminalInitError: Error | null = null;
   private agentMcpClient: Awaited<
     ReturnType<typeof experimental_createMCPClient>
   > | null = null;
@@ -265,8 +267,23 @@ export class Session {
     this.ttsManager = new TTSManager(this.conversationId);
     this.sttManager = new STTManager(this.conversationId);
 
-    // Initialize terminal + agent MCP clients asynchronously
-    void this.initializeTerminalMcp();
+    // Initialize terminal + agent MCP clients asynchronously, but keep promise handles to avoid orphaned rejections
+    this.terminalInitPromise = this.initializeTerminalMcp().catch((error) => {
+      const normalizedError =
+        error instanceof Error
+          ? error
+          : new Error(
+              typeof error === "string"
+                ? error
+                : "Unknown terminal initialization error"
+            );
+      this.terminalInitError = normalizedError;
+      console.error(
+        `[Session ${this.clientId}] Terminal MCP init failed:`,
+        normalizedError
+      );
+    });
+
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
@@ -2013,7 +2030,15 @@ export class Session {
 
       // Get live commands from terminal manager
       let commands: any[] = [];
-      if (this.terminalManager) {
+      if (this.terminalInitPromise) {
+        await this.terminalInitPromise;
+      }
+      if (this.terminalInitError) {
+        console.error(
+          `[Session ${this.clientId}] Skipping command listing due to terminal init failure:`,
+          this.terminalInitError
+        );
+      } else if (this.terminalManager) {
         try {
           commands = await this.terminalManager.listCommands();
         } catch (error) {

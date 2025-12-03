@@ -345,6 +345,8 @@ export const ListProviderModelsRequestMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// Legacy alias used by older clients; keep for compatibility
+
 export const GitRepoInfoRequestMessageSchema = z.object({
   type: z.literal("git_repo_info_request"),
   cwd: z.string(),

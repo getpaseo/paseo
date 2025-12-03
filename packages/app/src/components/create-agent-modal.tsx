@@ -644,13 +644,15 @@ function AgentFlowModal({
         providerModelRequestTimersRef.current.delete(serverId);
 
         // Send request directly via WebSocket
+        const requestId = generateMessageId();
         const message: WSInboundMessage = {
           type: "session",
           message: {
-            type: "request_provider_models",
+            type: "list_provider_models_request",
             provider: selectedProvider,
-            cwd: options?.cwd,
-          } as any,
+            ...(options?.cwd ? { cwd: options.cwd } : {}),
+            requestId,
+          },
         };
         sessionState.ws?.send(message);
       };
