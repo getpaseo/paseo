@@ -319,7 +319,9 @@ class ClaudeAgentSession implements AgentSession {
       }
       cancelIssued = true;
       this.turnCancelRequested = true;
-      void this.interruptActiveTurn();
+      this.interruptActiveTurn().catch((error) => {
+        console.warn("[ClaudeAgentSession] Failed to interrupt during cancel:", error);
+      });
       queue.end();
     };
     this.cancelCurrentTurn = requestCancel;
@@ -330,7 +332,9 @@ class ClaudeAgentSession implements AgentSession {
       this.historyPending = false;
       this.persistedHistory = [];
     }
-    void this.forwardPromptEvents(sdkMessage, queue);
+    this.forwardPromptEvents(sdkMessage, queue).catch((error) => {
+      console.error("[ClaudeAgentSession] Unexpected error in forwardPromptEvents:", error);
+    });
 
     try {
       for await (const event of queue) {
