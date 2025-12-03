@@ -540,7 +540,7 @@ class ClaudeAgentSession implements AgentSession {
       playwright: {
         type: "stdio",
         command: "npx",
-        args: ["@playwright/mcp", "--headless"],
+        args: ["@playwright/mcp", "--headless", "--isolated"],
       },
     };
 
