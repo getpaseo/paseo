@@ -1,4 +1,4 @@
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Text } from "react-native";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,7 +16,11 @@ import { endNavigationTiming, HOME_NAVIGATION_KEY } from "@/utils/navigation-tim
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
-  const { agents: aggregatedAgents, isLoading } = useAggregatedAgents();
+  const {
+    agents: aggregatedAgents,
+    isInitialLoad,
+    isRevalidating
+  } = useAggregatedAgents();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [createModalMounted, setCreateModalMounted] = useState(false);
@@ -114,12 +118,21 @@ export default function HomeScreen() {
 
       {/* Content Area with Keyboard Animation */}
       <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-        {isLoading ? (
+        {isInitialLoad ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={theme.colors.mutedForeground} />
           </View>
         ) : hasAgents ? (
-          <AgentList agents={aggregatedAgents} />
+          <View style={{ flex: 1 }}>
+            <AgentList agents={aggregatedAgents} />
+
+            {isRevalidating && (
+              <View style={styles.revalidatingBadge}>
+                <ActivityIndicator size="small" color={theme.colors.mutedForeground} />
+                <Text style={styles.revalidatingText}>Reconnecting...</Text>
+              </View>
+            )}
+          </View>
         ) : (
           <EmptyState
             onCreateAgent={handleCreateAgent}
@@ -158,5 +171,22 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  revalidatingBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: theme.colors.muted,
+    borderRadius: 16,
+    opacity: 0.9,
+  },
+  revalidatingText: {
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
   },
 }));

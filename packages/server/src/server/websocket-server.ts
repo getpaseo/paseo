@@ -135,7 +135,10 @@ export class VoiceAssistantWebSocketServer {
 
     // Set up error handler
     ws.on("error", async (error) => {
-      console.error(`[WS] Client error:`, error);
+      // Safe error logging
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.error(`[WS] Client error:`, { message: errorMessage, stack: errorStack });
       const session = this.sessions.get(ws);
       if (!session) return;
 
@@ -162,7 +165,14 @@ export class VoiceAssistantWebSocketServer {
       // Validate with Zod
       const message = WSInboundMessageSchema.parse(parsed);
 
-      console.log(`[WS] Received message type: ${message.type}`, message);
+      // Safe logging that handles large objects without crashing
+      const messageSummary = {
+        type: message.type,
+        ...(message.type === "session" && message.message ? {
+          sessionMessageType: message.message.type,
+        } : {}),
+      };
+      console.log(`[WS] Received message:`, messageSummary);
 
       // Handle WebSocket-level messages
       switch (message.type) {
@@ -198,8 +208,13 @@ export class VoiceAssistantWebSocketServer {
           return;
       }
     } catch (error) {
-      console.error("[WS] Failed to parse/handle message:", error);
+      // Safe error logging - avoid crashing on large/circular objects
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      console.error("[WS] Failed to parse/handle message:", {
+        message: errorMessage,
+        stack: errorStack,
+      });
       // Send error to client
       this.sendToClient(
         ws,

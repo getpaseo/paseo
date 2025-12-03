@@ -246,6 +246,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const providerModelRequestIdsRef = useRef<Map<any, string>>(new Map());
   const hasHydratedSnapshotRef = useRef(false);
   const hasRequestedInitialSnapshotRef = useRef(false);
+  const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -260,6 +261,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   useEffect(() => {
     initializeSession(serverId, ws, audioPlayer);
   }, [serverId, ws, audioPlayer, initializeSession]);
+
+  const updateSessionWebSocket = useSessionStore((state) => state.updateSessionWebSocket);
+  useEffect(() => {
+    updateSessionWebSocket(serverId, ws);
+  }, [serverId, ws, updateSessionWebSocket]);
 
   // Connection status tracking
   useEffect(() => {
@@ -496,14 +502,62 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       return;
     }
     hasRequestedInitialSnapshotRef.current = true;
-    ws.send({
-      type: "session",
-      message: {
-        type: "load_conversation_request",
-        conversationId: ws.conversationId ?? "",
-      },
-    });
-  }, [wsIsConnected, ws]);
+
+    const MAX_RETRIES = 3;
+    const TIMEOUT_MS = 15000;
+    const RETRY_DELAY_MS = 2000;
+
+    let retryCount = 0;
+
+    const requestSessionState = () => {
+      console.log(`[Session] Requesting session_state (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`, { serverId });
+
+      ws.send({
+        type: "session",
+        message: {
+          type: "load_conversation_request",
+          conversationId: ws.conversationId ?? "",
+        },
+      });
+
+      if (sessionStateTimeoutRef.current) {
+        clearTimeout(sessionStateTimeoutRef.current);
+      }
+
+      sessionStateTimeoutRef.current = setTimeout(() => {
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.warn(`[Session] session_state timeout, retrying in ${RETRY_DELAY_MS}ms`, {
+            serverId,
+            attempt: retryCount,
+            maxRetries: MAX_RETRIES,
+          });
+
+          setTimeout(() => {
+            requestSessionState();
+          }, RETRY_DELAY_MS);
+        } else {
+          console.error(`[Session] session_state failed after ${MAX_RETRIES} retries`, { serverId });
+
+          setHasHydratedAgents(serverId, true);
+          updateConnectionStatus(serverId, {
+            status: "online",
+            lastOnlineAt: new Date().toISOString(),
+            sessionReady: true
+          });
+        }
+      }, TIMEOUT_MS);
+    };
+
+    requestSessionState();
+
+    return () => {
+      if (sessionStateTimeoutRef.current) {
+        clearTimeout(sessionStateTimeoutRef.current);
+        sessionStateTimeoutRef.current = null;
+      }
+    };
+  }, [wsIsConnected, ws, serverId, setHasHydratedAgents, updateConnectionStatus]);
 
   // WebSocket message handlers - directly update Zustand store
   useEffect(() => {
@@ -511,6 +565,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
     const unsubSessionState = ws.on("session_state", (message) => {
       if (message.type !== "session_state") return;
+
+      if (sessionStateTimeoutRef.current) {
+        clearTimeout(sessionStateTimeoutRef.current);
+        sessionStateTimeoutRef.current = null;
+      }
+
       const { agents: agentsList, commands: commandsList } = message.payload;
 
       console.log("[Session] ✅ Received session_state:", agentsList.length, "agents,", commandsList.length, "commands");

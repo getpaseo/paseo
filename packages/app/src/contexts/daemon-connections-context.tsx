@@ -3,11 +3,11 @@ import type { ReactNode } from "react";
 import { useDaemonRegistry, type DaemonProfile } from "./daemon-registry-context";
 
 export type ConnectionState =
-  | { status: "idle"; lastError: null; lastOnlineAt: string | null; sessionReady: false }
-  | { status: "connecting"; lastError: null; lastOnlineAt: string | null; sessionReady: false }
-  | { status: "online"; lastError: null; lastOnlineAt: string; sessionReady: boolean }
-  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null; sessionReady: false }
-  | { status: "error"; lastError: string; lastOnlineAt: string | null; sessionReady: false };
+  | { status: "idle"; lastError: null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: false }
+  | { status: "connecting"; lastError: null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean }
+  | { status: "online"; lastError: null; lastOnlineAt: string; sessionReady: boolean; hasEverReceivedSessionState: boolean }
+  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean }
+  | { status: "error"; lastError: string; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean };
 
 export type ConnectionStatus = ConnectionState["status"];
 
@@ -36,6 +36,7 @@ function createDefaultConnectionState(): ConnectionState {
     lastError: null,
     lastOnlineAt: null,
     sessionReady: false,
+    hasEverReceivedSessionState: false,
   };
 }
 
@@ -45,20 +46,31 @@ function resolveNextConnectionState(
 ): ConnectionState {
   switch (update.status) {
     case "idle":
-      return { status: "idle", lastError: null, lastOnlineAt: existing.lastOnlineAt, sessionReady: false };
+      return {
+        status: "idle",
+        lastError: null,
+        lastOnlineAt: existing.lastOnlineAt,
+        sessionReady: false,
+        hasEverReceivedSessionState: false,
+      };
     case "connecting":
       return {
         status: "connecting",
         lastError: null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
         sessionReady: false,
+        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
       };
     case "online":
+      const currentSessionReady = update.sessionReady ?? (existing.status === "online" ? existing.sessionReady : false);
+
       return {
         status: "online",
         lastError: null,
         lastOnlineAt: update.lastOnlineAt,
-        sessionReady: update.sessionReady ?? (existing.status === "online" ? existing.sessionReady : false),
+        sessionReady: currentSessionReady,
+        hasEverReceivedSessionState:
+          currentSessionReady || existing.hasEverReceivedSessionState || false,
       };
     case "offline":
       return {
@@ -66,6 +78,7 @@ function resolveNextConnectionState(
         lastError: update.lastError ?? null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
         sessionReady: false,
+        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
       };
     case "error":
       return {
@@ -73,6 +86,7 @@ function resolveNextConnectionState(
         lastError: update.lastError,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
         sessionReady: false,
+        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
       };
   }
 }

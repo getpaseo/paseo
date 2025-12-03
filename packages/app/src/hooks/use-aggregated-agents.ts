@@ -11,6 +11,8 @@ export interface AggregatedAgent extends AgentDirectoryEntry {
 export interface AggregatedAgentsResult {
   agents: AggregatedAgent[];
   isLoading: boolean;
+  isInitialLoad: boolean;
+  isRevalidating: boolean;
 }
 
 export function useAggregatedAgents(): AggregatedAgentsResult {
@@ -55,17 +57,71 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       return rightTime - leftTime;
     });
 
-    const isLoading = Array.from(connectionStates.values()).some(c => {
-      // Only these states count as "loading":
-      // 1. Actively connecting
-      // 2. Online but session not yet received
-      if (c.status === 'connecting') return true;
-      if (c.status === 'online' && !c.sessionReady) return true;
+    // Check if we have any cached data
+    const hasAnyData = allAgents.length > 0;
 
-      // Offline/error = not loading, just unavailable (normal state)
+    // Check if any connection is currently loading
+    const connectingReasons: string[] = [];
+    const isConnecting = Array.from(connectionStates.entries()).some(([id, c]) => {
+      const shortId = id.substring(0, 20);
+
+      // First-time connection (never received session state)
+      if (c.status === 'connecting' && !c.hasEverReceivedSessionState) {
+        connectingReasons.push(`${shortId}: first-time connecting`);
+        return true;
+      }
+      if (c.status === 'online' && !c.hasEverReceivedSessionState) {
+        connectingReasons.push(`${shortId}: online but no session_state yet`);
+        return true;
+      }
+
+      // Reconnecting (have received session state before)
+      if (c.status === 'connecting' && c.hasEverReceivedSessionState) {
+        connectingReasons.push(`${shortId}: reconnecting`);
+        return true;
+      }
+      if (c.status === 'online' && !c.sessionReady && c.hasEverReceivedSessionState) {
+        connectingReasons.push(`${shortId}: online but sessionReady=false (waiting for session_state)`);
+        return true;
+      }
+
       return false;
     });
 
-    return { agents: allAgents, isLoading };
+    // isInitialLoad: Loading for the first time (no cached data)
+    const isInitialLoad = isConnecting && !hasAnyData;
+
+    // isRevalidating: Loading but we have cached data (reconnecting)
+    const isRevalidating = isConnecting && hasAnyData;
+
+    // isLoading: Generic loading flag (either initial or revalidating)
+    const isLoading = isConnecting;
+
+    const connectionStatesArray = Array.from(connectionStates.entries()).map(([id, state]) => ({
+      id: id.substring(0, 20) + (id.length > 20 ? '...' : ''),
+      status: state.status,
+      sessionReady: state.sessionReady,
+      hasEverReceivedSessionState: state.hasEverReceivedSessionState,
+    }));
+
+    console.log('[useAggregatedAgents] States:', {
+      hasAnyData,
+      isConnecting,
+      isInitialLoad,
+      isRevalidating,
+      totalConnectionStates: connectionStates.size,
+      connectingReasons: connectingReasons.length > 0 ? connectingReasons : 'none',
+    });
+
+    console.log('[useAggregatedAgents] Connection States Detail:',
+      JSON.stringify(connectionStatesArray, null, 2)
+    );
+
+    return {
+      agents: allAgents,
+      isLoading,
+      isInitialLoad,
+      isRevalidating,
+    };
   }, [sessions, connectionStates]);
 }

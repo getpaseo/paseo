@@ -247,6 +247,7 @@ interface SessionStoreActions {
   initializeSession: (serverId: string, ws: UseWebSocketReturn, audioPlayer: ReturnType<typeof useAudioPlayer>) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
+  updateSessionWebSocket: (serverId: string, ws: UseWebSocketReturn) => void;
 
   // Audio state
   setIsPlayingAudio: (serverId: string, playing: boolean) => void;
@@ -380,6 +381,37 @@ export const useSessionStore = create<SessionStore>()(
         const nextSessions = { ...prev.sessions };
         delete nextSessions[serverId];
         return { ...prev, sessions: nextSessions };
+      });
+    },
+
+    updateSessionWebSocket: (serverId, ws) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+
+        if (!session) {
+          return prev;
+        }
+
+        if (session.ws === ws) {
+          return prev;
+        }
+
+        logSessionStoreUpdate("updateSessionWebSocket", serverId, {
+          wasNull: session.ws === null,
+          isNowConnected: ws.isConnected,
+          isNowConnecting: ws.isConnecting,
+        });
+
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: {
+              ...session,
+              ws,
+            },
+          },
+        };
       });
     },
 

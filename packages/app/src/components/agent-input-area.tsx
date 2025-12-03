@@ -272,6 +272,13 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   }, [discardFailedDictation]);
 
   const dictationToast = useMemo<DictationToastConfig | null>(() => {
+    console.log('[AgentInputArea] Connection status:', {
+      isConnected: connectionStatus.isConnected,
+      wsIsConnected: ws.isConnected,
+      wsIsConnecting: ws.isConnecting,
+      hasSession: !!session,
+    });
+
     if (!connectionStatus.isConnected) {
       return {
         variant: "warning",
