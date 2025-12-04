@@ -334,6 +334,7 @@ function AgentFlowModal({
       on: () => () => {},
       sendPing: () => {},
       sendUserMessage: () => {},
+      clearAgentAttention: () => {},
       subscribeConnectionStatus: () => () => {},
       getConnectionState: () => ({ isConnected: false, isConnecting: false }),
     }),

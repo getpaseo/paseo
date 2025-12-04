@@ -94,6 +94,9 @@ export interface Agent {
   title: string | null;
   cwd: string;
   model: string | null;
+  requiresAttention?: boolean;
+  attentionReason?: "finished" | "error" | "permission" | null;
+  attentionTimestamp?: Date | null;
 }
 
 export interface Command {
@@ -816,6 +819,9 @@ export const useSessionStore = create<SessionStore>()(
           lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
+          requiresAttention: agent.requiresAttention ?? false,
+          attentionReason: agent.attentionReason ?? null,
+          attentionTimestamp: agent.attentionTimestamp ?? null,
         });
       }
       return entries;

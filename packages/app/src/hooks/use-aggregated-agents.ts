@@ -71,6 +71,9 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
           provider: agent.provider,
+          requiresAttention: agent.requiresAttention,
+          attentionReason: agent.attentionReason,
+          attentionTimestamp: agent.attentionTimestamp,
         });
       }
     }

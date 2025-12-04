@@ -94,6 +94,7 @@ export function AgentStreamView({
       on: () => () => {},
       sendPing: () => {},
       sendUserMessage: () => {},
+      clearAgentAttention: () => {},
     }),
     []
   );

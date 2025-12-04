@@ -125,6 +125,7 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       on: () => () => {},
       sendPing: () => {},
       sendUserMessage: () => {},
+      clearAgentAttention: () => {},
       subscribeConnectionStatus: () => () => {},
       getConnectionState: () => ({ isConnected: false, isConnecting: false }),
     }),
