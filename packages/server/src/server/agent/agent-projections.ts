@@ -43,6 +43,13 @@ export function toStoredAgentRecord(
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     persistence,
+    requiresAttention: agent.attention.requiresAttention,
+    attentionReason: agent.attention.requiresAttention
+      ? agent.attention.attentionReason
+      : null,
+    attentionTimestamp: agent.attention.requiresAttention
+      ? agent.attention.attentionTimestamp.toISOString()
+      : null,
   } satisfies StoredAgentRecord;
 }
 
@@ -77,6 +84,16 @@ export function toAgentPayload(
 
   if (agent.lastError !== undefined) {
     payload.lastError = agent.lastError;
+  }
+
+  // Handle attention state
+  payload.requiresAttention = agent.attention.requiresAttention;
+  if (agent.attention.requiresAttention) {
+    payload.attentionReason = agent.attention.attentionReason;
+    payload.attentionTimestamp = agent.attention.attentionTimestamp.toISOString();
+  } else {
+    payload.attentionReason = null;
+    payload.attentionTimestamp = null;
   }
 
   return payload;

@@ -41,6 +41,9 @@ const STORED_AGENT_SCHEMA = z.object({
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
   persistence: PERSISTENCE_HANDLE_SCHEMA,
+  requiresAttention: z.boolean().optional(),
+  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionTimestamp: z.string().nullable().optional(),
 });
 
 export type SerializableAgentConfig = Pick<

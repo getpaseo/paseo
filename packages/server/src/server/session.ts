@@ -837,6 +837,10 @@ export class Session {
         case "list_provider_models_request":
           await this.handleListProviderModelsRequest(msg);
           break;
+
+        case "clear_agent_attention":
+          await this.handleClearAgentAttention(msg.agentId);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -1841,6 +1845,25 @@ export class Session {
         },
       });
       throw error;
+    }
+  }
+
+  /**
+   * Handle clearing agent attention flag
+   */
+  private async handleClearAgentAttention(agentId: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Clearing attention for agent ${agentId}`
+    );
+
+    try {
+      await this.agentManager.clearAgentAttention(agentId);
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to clear agent attention:`,
+        error
+      );
+      // Don't throw - this is not critical
     }
   }
 

@@ -821,6 +821,7 @@ export function reduceStreamUpdate(
     case "turn_failed":
     case "permission_requested":
     case "permission_resolved":
+    case "attention_required":
       return finalizeActiveThoughts(state);
     default:
       return state;

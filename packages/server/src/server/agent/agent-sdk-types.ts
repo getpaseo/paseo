@@ -80,6 +80,12 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       requestId: string;
       resolution: AgentPermissionResponse;
+    }
+  | {
+      type: "attention_required";
+      provider: AgentProvider;
+      reason: "finished" | "error" | "permission";
+      timestamp: string;
     };
 
 export type AgentPermissionRequestKind = "tool" | "plan" | "mode" | "other";

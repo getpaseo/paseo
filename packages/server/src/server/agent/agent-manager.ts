@@ -66,6 +66,14 @@ export type WaitForAgentResult = {
   lastMessage: string | null;
 };
 
+type AttentionState =
+  | { requiresAttention: false }
+  | {
+      requiresAttention: true;
+      attentionReason: "finished" | "error" | "permission";
+      attentionTimestamp: Date;
+    };
+
 type ManagedAgentBase = {
   id: string;
   provider: AgentProvider;
@@ -84,6 +92,7 @@ type ManagedAgentBase = {
   sessionId: string | null;
   lastUsage?: AgentUsage;
   lastError?: string;
+  attention: AttentionState;
 };
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -166,6 +175,7 @@ export class AgentManager {
   private readonly maxTimelineItems: number;
   private readonly idFactory: () => string;
   private readonly registry?: AgentRegistry;
+  private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
 
   constructor(options?: AgentManagerOptions) {
     this.maxTimelineItems =
@@ -343,6 +353,8 @@ export class AgentManager {
   async closeAgent(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.agents.delete(agentId);
+    // Clean up previousStatus to prevent memory leak
+    this.previousStatuses.delete(agentId);
     const session = agent.session;
     const closedAgent: ManagedAgent = {
       ...agent,
@@ -360,6 +372,15 @@ export class AgentManager {
     await agent.session.setMode(modeId);
     agent.currentModeId = modeId;
     this.emitState(agent);
+  }
+
+  async clearAgentAttention(agentId: string): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    if (agent.attention.requiresAttention) {
+      agent.attention = { requiresAttention: false };
+      await this.persistSnapshot(agent);
+      this.emitState(agent);
+    }
   }
 
   async runAgent(
@@ -702,9 +723,12 @@ export class AgentManager {
       persistence: session.describePersistence(),
       historyPrimed: false,
       lastUserMessageAt: null,
+      attention: { requiresAttention: false },
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
+    // Initialize previousStatus to track transitions
+    this.previousStatuses.set(agentId, managed.lifecycle);
     await this.persistSnapshot(managed, {
       title: config.title ?? null,
     });
@@ -820,9 +844,73 @@ export class AgentManager {
   }
 
   private emitState(agent: ManagedAgent): void {
+    // Check if attention should be set based on status change
+    this.checkAndSetAttention(agent);
+
     this.dispatch({
       type: "agent_state",
       agent: { ...agent },
+    });
+  }
+
+  private checkAndSetAttention(agent: ManagedAgent): void {
+    const previousStatus = this.previousStatuses.get(agent.id);
+    const currentStatus = agent.lifecycle;
+
+    // Track the new status
+    this.previousStatuses.set(agent.id, currentStatus);
+
+    // Skip if already requires attention
+    if (agent.attention.requiresAttention) {
+      return;
+    }
+
+    // Check if agent transitioned from running to idle (finished)
+    if (previousStatus === "running" && currentStatus === "idle") {
+      agent.attention = {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date(),
+      };
+      this.broadcastAgentAttention(agent, "finished");
+      void this.persistSnapshot(agent);
+      return;
+    }
+
+    // Check if agent entered error state
+    if (currentStatus === "error") {
+      agent.attention = {
+        requiresAttention: true,
+        attentionReason: "error",
+        attentionTimestamp: new Date(),
+      };
+      this.broadcastAgentAttention(agent, "error");
+      void this.persistSnapshot(agent);
+      return;
+    }
+
+    // Check if agent has pending permissions
+    if (agent.pendingPermissions.size > 0) {
+      agent.attention = {
+        requiresAttention: true,
+        attentionReason: "permission",
+        attentionTimestamp: new Date(),
+      };
+      this.broadcastAgentAttention(agent, "permission");
+      void this.persistSnapshot(agent);
+      return;
+    }
+  }
+
+  private broadcastAgentAttention(
+    agent: ManagedAgent,
+    reason: "finished" | "error" | "permission"
+  ): void {
+    this.dispatchStream(agent.id, {
+      type: "attention_required",
+      provider: agent.provider,
+      reason,
+      timestamp: new Date().toISOString(),
     });
   }
 

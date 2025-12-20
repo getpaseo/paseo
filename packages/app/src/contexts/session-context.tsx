@@ -114,6 +114,7 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
   const lastUserMessageAt = snapshot.lastUserMessageAt ? new Date(snapshot.lastUserMessageAt) : null;
+  const attentionTimestamp = snapshot.attentionTimestamp ? new Date(snapshot.attentionTimestamp) : null;
   return {
     serverId,
     id: snapshot.id,
@@ -134,6 +135,9 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
+    requiresAttention: snapshot.requiresAttention ?? false,
+    attentionReason: snapshot.attentionReason ?? null,
+    attentionTimestamp,
   };
 }
 

@@ -196,6 +196,12 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       requestId: z.string(),
       resolution: AgentPermissionResponseSchema,
     }),
+    z.object({
+      type: z.literal("attention_required"),
+      provider: AgentProviderSchema,
+      reason: z.enum(["finished", "error", "permission"]),
+      timestamp: z.string(),
+    }),
 ]);
 
 const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> =
@@ -226,6 +232,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
+  requiresAttention: z.boolean().optional(),
+  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionTimestamp: z.string().nullable().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -448,6 +457,11 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
 });
 
+export const ClearAgentAttentionMessageSchema = z.object({
+  type: z.literal("clear_agent_attention"),
+  agentId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   RealtimeAudioChunkMessageSchema,
@@ -473,6 +487,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileExplorerRequestSchema,
   ListPersistedAgentsRequestMessageSchema,
   GitRepoInfoRequestMessageSchema,
+  ClearAgentAttentionMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -811,6 +826,7 @@ export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
+export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)
