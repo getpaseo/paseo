@@ -23,7 +23,7 @@ export interface UseWebSocketReturn {
   ) => () => void;
   sendPing: () => void;
   sendUserMessage: (message: string) => void;
-  clearAgentAttention: (agentId: string) => void;
+  clearAgentAttention: (agentId: string | string[]) => void;
   subscribeConnectionStatus?: (listener: (status: ConnectionStatusSnapshot) => void) => () => void;
   getConnectionState?: () => ConnectionStatusSnapshot;
 }
@@ -291,7 +291,7 @@ export function useWebSocket(url: string, conversationId?: string | null): UseWe
   );
 
   const clearAgentAttention = useCallback(
-    (agentId: string) => {
+    (agentId: string | string[]) => {
       send({
         type: "session",
         message: {

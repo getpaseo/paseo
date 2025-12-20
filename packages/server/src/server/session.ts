@@ -1851,13 +1851,16 @@ export class Session {
   /**
    * Handle clearing agent attention flag
    */
-  private async handleClearAgentAttention(agentId: string): Promise<void> {
+  private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
+    const agentIds = Array.isArray(agentId) ? agentId : [agentId];
     console.log(
-      `[Session ${this.clientId}] Clearing attention for agent ${agentId}`
+      `[Session ${this.clientId}] Clearing attention for ${agentIds.length} agent(s): ${agentIds.join(", ")}`
     );
 
     try {
-      await this.agentManager.clearAgentAttention(agentId);
+      await Promise.all(
+        agentIds.map((id) => this.agentManager.clearAgentAttention(id))
+      );
     } catch (error: any) {
       console.error(
         `[Session ${this.clientId}] Failed to clear agent attention:`,
