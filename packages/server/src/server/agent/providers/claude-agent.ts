@@ -1095,11 +1095,17 @@ class ClaudeAgentSession implements AgentSession {
       return structured;
     }
 
-    // Fallback to legacy format
+    // Fallback format - try to parse JSON first
     const result: Record<string, unknown> = {};
 
     if (content.length > 0) {
-      result.result = { output: content };
+      try {
+        // If content is a JSON string, parse it
+        result.output = JSON.parse(content);
+      } catch {
+        // If not JSON, return as-is (no extra wrapping)
+        result.output = content;
+      }
     }
 
     // Preserve file changes tracked during tool execution

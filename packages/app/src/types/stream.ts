@@ -112,6 +112,7 @@ export interface AgentToolCallData {
   callId?: string;
   displayName?: string;
   kind?: string;
+  input?: unknown;
   result?: unknown;
   error?: unknown;
   parsedEdits?: EditEntry[];
@@ -784,6 +785,7 @@ export function reduceStreamUpdate(
               callId: item.callId,
               displayName: item.displayName,
               kind: item.kind,
+              input: item.input,
               result: item.output,
               error: item.error,
             },
