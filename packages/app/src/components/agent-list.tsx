@@ -1,5 +1,5 @@
-import { View, Text, Pressable, FlatList, Modal, RefreshControl, type ListRenderItem } from "react-native";
-import { useCallback, useState } from "react";
+import { View, Text, Pressable, SectionList, Modal, RefreshControl, type SectionListRenderItem } from "react-native";
+import { useCallback, useState, useMemo } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
@@ -15,9 +15,38 @@ interface AgentListProps {
   onRefresh?: () => void;
 }
 
+interface AgentSection {
+  title: string;
+  data: AggregatedAgent[];
+}
+
 export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentListProps) {
   const { theme } = useUnistyles();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+
+  // Group agents by attention status
+  const sections = useMemo<AgentSection[]>(() => {
+    const requiresAttention: AggregatedAgent[] = [];
+    const normal: AggregatedAgent[] = [];
+
+    for (const agent of agents) {
+      if (agent.requiresAttention) {
+        requiresAttention.push(agent);
+      } else {
+        normal.push(agent);
+      }
+    }
+
+    const result: AgentSection[] = [];
+    if (requiresAttention.length > 0) {
+      result.push({ title: "Requires Attention", data: requiresAttention });
+    }
+    if (normal.length > 0) {
+      result.push({ title: "All Agents", data: normal });
+    }
+
+    return result;
+  }, [agents]);
 
   // Get the methods for the specific server
   const methods = useSessionStore((state) =>
@@ -33,6 +62,13 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
       if (isActionSheetVisible) {
         return;
       }
+
+      // Clear attention flag when opening agent
+      const session = useSessionStore.getState().sessions[serverId];
+      if (session?.ws) {
+        session.ws.clearAgentAttention(agentId);
+      }
+
       const navigationKey = buildAgentNavigationKey(serverId, agentId);
       startNavigationTiming(navigationKey, {
         from: "home",
@@ -66,75 +102,75 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
-  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
+  const renderAgentItem = useCallback<SectionListRenderItem<AggregatedAgent, AgentSection>>(
     ({ item: agent }) => {
-        const statusColor = getAgentStatusColor(agent.status);
-        const statusLabel = getAgentStatusLabel(agent.status);
-        const timeAgo = formatTimeAgo(agent.lastActivityAt);
-        const providerLabel = getAgentProviderDefinition(agent.provider).label;
+      const statusColor = getAgentStatusColor(agent.status);
+      const statusLabel = getAgentStatusLabel(agent.status);
+      const timeAgo = formatTimeAgo(agent.lastActivityAt);
+      const providerLabel = getAgentProviderDefinition(agent.provider).label;
 
-        return (
-          <Pressable
-            style={({ pressed }) => [
-              styles.agentItem,
-              pressed && styles.agentItemPressed,
-            ]}
-            onPress={() => handleAgentPress(agent.serverId, agent.id)}
-            onLongPress={() => handleAgentLongPress(agent)}
-          >
-            <View style={styles.agentContent}>
-              <View style={styles.titleRow}>
+      return (
+        <Pressable
+          style={({ pressed }) => [
+            styles.agentItem,
+            pressed && styles.agentItemPressed,
+          ]}
+          onPress={() => handleAgentPress(agent.serverId, agent.id)}
+          onLongPress={() => handleAgentLongPress(agent)}
+        >
+          <View style={styles.agentContent}>
+            <View style={styles.titleRow}>
+              <Text
+                style={styles.agentTitle}
+                numberOfLines={1}
+              >
+                {agent.title || "New Agent"}
+              </Text>
+              <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
                 <Text
-                  style={styles.agentTitle}
+                  style={[styles.hostText, { color: theme.colors.mutedForeground }]}
                   numberOfLines={1}
                 >
-                  {agent.title || "New Agent"}
+                  {agent.serverLabel}
                 </Text>
-                <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
+              </View>
+            </View>
+
+            <Text style={styles.agentDirectory} numberOfLines={1}>
+              {agent.cwd}
+            </Text>
+
+            <View style={styles.statusRow}>
+              <View style={styles.statusGroup}>
+                <View
+                  style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
+                >
                   <Text
-                    style={[styles.hostText, { color: theme.colors.mutedForeground }]}
+                    style={[styles.providerText, { color: theme.colors.mutedForeground }]}
                     numberOfLines={1}
                   >
-                    {agent.serverLabel}
+                    {providerLabel}
+                  </Text>
+                </View>
+
+                <View style={styles.statusBadge}>
+                  <View
+                    style={[styles.statusDot, { backgroundColor: statusColor }]}
+                  />
+                  <Text style={[styles.statusText, { color: statusColor }]}>
+                    {statusLabel}
                   </Text>
                 </View>
               </View>
 
-              <Text style={styles.agentDirectory} numberOfLines={1}>
-                {agent.cwd}
+              <Text style={styles.timeAgo}>
+                {timeAgo}
               </Text>
-
-              <View style={styles.statusRow}>
-                <View style={styles.statusGroup}>
-                  <View
-                    style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
-                  >
-                    <Text
-                      style={[styles.providerText, { color: theme.colors.mutedForeground }]}
-                      numberOfLines={1}
-                    >
-                      {providerLabel}
-                    </Text>
-                  </View>
-
-                  <View style={styles.statusBadge}>
-                    <View
-                      style={[styles.statusDot, { backgroundColor: statusColor }]}
-                    />
-                    <Text style={[styles.statusText, { color: statusColor }]}>
-                      {statusLabel}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text style={styles.timeAgo}>
-                  {timeAgo}
-                </Text>
-              </View>
             </View>
-          </Pressable>
-        );
-      },
+          </View>
+        </Pressable>
+      );
+    },
     [handleAgentLongPress, handleAgentPress, theme.colors.muted, theme.colors.mutedForeground]
   );
 
@@ -143,16 +179,27 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     []
   );
 
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: AgentSection }) => (
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+      </View>
+    ),
+    []
+  );
+
   return (
     <>
-      <FlatList
-        data={agents}
+      <SectionList
+        sections={sections}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
         renderItem={renderAgentItem}
+        renderSectionHeader={renderSectionHeader}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        stickySectionHeadersEnabled={false}
         refreshControl={
           onRefresh ? (
             <RefreshControl
@@ -218,6 +265,17 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[4],
+  },
+  sectionHeader: {
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+  },
+  sectionTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.mutedForeground,
+    textTransform: "uppercase",
   },
   agentItem: {
     paddingVertical: theme.spacing[4],
