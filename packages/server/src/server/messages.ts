@@ -459,7 +459,7 @@ export const FileExplorerRequestSchema = z.object({
 
 export const ClearAgentAttentionMessageSchema = z.object({
   type: z.literal("clear_agent_attention"),
-  agentId: z.string(),
+  agentId: z.union([z.string(), z.array(z.string())]),
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [

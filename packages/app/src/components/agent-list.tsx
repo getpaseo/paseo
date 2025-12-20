@@ -2,6 +2,7 @@ import { View, Text, Pressable, SectionList, Modal, RefreshControl, type Section
 import { useCallback, useState, useMemo } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Check } from "lucide-react-native";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
@@ -102,6 +103,24 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
+  const handleClearAllAttention = useCallback((agentsInSection: AggregatedAgent[]) => {
+    // Group agents by serverId for batch clearing
+    const agentsByServer = new Map<string, string[]>();
+    for (const agent of agentsInSection) {
+      const agentIds = agentsByServer.get(agent.serverId) || [];
+      agentIds.push(agent.id);
+      agentsByServer.set(agent.serverId, agentIds);
+    }
+
+    // Send one batch request per server
+    for (const [serverId, agentIds] of agentsByServer) {
+      const session = useSessionStore.getState().sessions[serverId];
+      if (session?.ws) {
+        session.ws.clearAgentAttention(agentIds);
+      }
+    }
+  }, []);
+
   const renderAgentItem = useCallback<SectionListRenderItem<AggregatedAgent, AgentSection>>(
     ({ item: agent }) => {
       const statusColor = getAgentStatusColor(agent.status);
@@ -183,9 +202,20 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     ({ section }: { section: AgentSection }) => (
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{section.title}</Text>
+        {section.title === "Requires Attention" && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.clearAllButton,
+              pressed && styles.clearAllButtonPressed,
+            ]}
+            onPress={() => handleClearAllAttention(section.data)}
+          >
+            <Check size={16} color={theme.colors.mutedForeground} />
+          </Pressable>
+        )}
       </View>
     ),
-    []
+    [handleClearAllAttention, theme.colors.mutedForeground]
   );
 
   return (
@@ -267,6 +297,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
   },
   sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
@@ -276,6 +309,14 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.mutedForeground,
     textTransform: "uppercase",
+  },
+  clearAllButton: {
+    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+  },
+  clearAllButtonPressed: {
+    opacity: 0.5,
+    backgroundColor: theme.colors.muted,
   },
   agentItem: {
     paddingVertical: theme.spacing[4],

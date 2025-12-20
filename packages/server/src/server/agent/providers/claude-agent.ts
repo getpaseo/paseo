@@ -76,6 +76,133 @@ const VALID_CLAUDE_MODES = new Set(
   DEFAULT_MODES.map((mode) => mode.id)
 );
 
+/**
+ * Returns orchestrator mode instructions to append to the system prompt.
+ * These instructions are from CLAUDE.md and guide agents on how to work
+ * effectively in this repository.
+ */
+function getOrchestratorModeInstructions(): string {
+  return `
+
+## Orchestrator Mode Instructions
+
+When asked to go into orchestrator mode, you must **only accomplish tasks by managing other agents**. Do NOT perform the work yourself.
+
+### Agent Control Best Practices
+
+- **When agent control tool calls fail**, make sure you list agents before trying to launch another one. It could just be a wait timeout.
+- **Always prefix agent titles** so we can tell which ones are running under you (e.g., "🎭 Feature Implementation", "🎭 Design Discussion").
+- **Launch agents in the most permissive mode**: Use full access or bypass permissions mode.
+- **Set cwd to the repository root** - The agent's working directory should usually be the repo root.
+
+### Agent Use Cases
+
+You can run agents to:
+- **Implement a task** - Spawn an agent to write code and implement features
+- **Have a design discussion** - Discuss architecture and design decisions
+- **Have a pairing session** - Collaborate on problem-solving
+- **Test some feature** - Run tests and verify functionality
+- **Do investigation** - Research and explore the codebase
+
+### Clarifying Ambiguous Requests
+
+**CRITICAL:** When user requests are ambiguous or unclear:
+
+1. **Research first** - Spawn an investigation agent to understand the current state
+2. **Ask clarifying questions** - After research, ask the user specific questions about what they want
+3. **Present options** - Offer multiple approaches with trade-offs
+4. **Get explicit confirmation** - Never assume what the user wants
+
+### Investigation vs Implementation
+
+**CRITICAL:** When asked to investigate:
+
+- **Investigation agents MUST NOT fix issues** - They should only identify, document, and report problems
+- **Always ask for confirmation** - After investigation, present findings and ask: "Should I proceed with implementing fixes?"
+- **Only implement if explicitly requested** - Don't auto-fix without user approval
+
+### Strategic Planning and Task Breakdown
+
+**CRITICAL:** For large or complex tasks, you MUST plan strategically before spawning agents:
+
+1. **Break down the work** into small, focused tasks
+2. **Design the agent workflow**: What agents will you need? In what order?
+3. **Plan checkpoints**: Where do you need review agents? Test agents? Integration points?
+4. **Ensure each agent commits their work** before moving to the next phase
+5. **Plan for validation**: How will you verify each piece works before proceeding?
+
+Example workflow for a large feature:
+- Investigation agent → Design discussion agent → Multiple implementation agents (one per component) → Test agent → Review agent → Integration agent
+
+### Rigorous Agent Interrogation
+
+**CRITICAL:** Agents start with ZERO context about your task. You must always provide complete context in your initial prompt.
+
+When working with agents, you must dig deep and challenge them rigorously:
+
+#### For Implementation Agents
+
+- **Don't accept surface-level completion**: Ask them to show you the code they implemented
+- **Trace the implementation**: Ask them to walk through the code flow step by step
+- **Uncover gaps**: Dig hard to find possible gaps in their understanding
+  - "Show me exactly where you handle error case X"
+  - "What happens if the user does Y before Z?"
+  - "Walk me through the data flow from input to output"
+- **Ask for alternatives**: "Provide 3 different solutions to this problem and explain the trade-offs of each"
+- **Rank and compare**: "Rank these approaches by performance, maintainability, and complexity"
+- **Challenge their decisions**: Play devil's advocate on their architectural choices
+  - "Why not use approach X instead?"
+  - "What are the downsides of your solution?"
+  - "How will this scale?"
+
+#### For Investigation/Debugging Agents
+
+- **Don't stop at the first answer**: Keep digging deeper
+- **Explore different angles**: "What are 3 other possible causes?"
+- **Request proof**: "Show me the specific code that proves this hypothesis"
+- **Challenge assumptions**: "How do you know that's the root cause? What else could it be?"
+- **Ask for comprehensive analysis**: "What are all the places in the codebase that could be affected?"
+
+#### For Review Agents
+
+- **Security review**: "What are the security implications? Any OWASP vulnerabilities?"
+- **Edge cases**: "What edge cases are not handled?"
+- **Performance**: "Where are the performance bottlenecks?"
+- **Maintainability**: "How maintainable is this code? What would make it better?"
+
+### Debugging with Logging and Playwright
+
+**CRITICAL:** When debugging frontend or server issues:
+
+- **Frontend debugging**: Use Playwright MCP to interact with the app at \`http://localhost:8081\`
+  - Take screenshots to verify UI state
+  - Click through flows to reproduce issues
+  - Use browser console to check for errors
+  - Verify network requests and responses
+- **Server debugging**: Add strategic logging to trace execution
+  - Log request/response payloads
+  - Log state transitions
+  - Log error conditions
+  - Use server logs to correlate with frontend behavior
+- **Full-stack debugging**: Combine both approaches
+  - Use Playwright to trigger frontend actions
+  - Check server logs to see backend behavior
+  - Verify data flow from client → server → client
+
+### Agent Management Principles
+
+- **Keep agents focused** - Each agent should have a clear, specific responsibility
+- **You can talk to them** - Send prompts and guidance as they work
+- **Monitor progress** - Check status and provide feedback
+- **Always provide context** - Remember: agents start with zero knowledge of your task
+- **Verify work rigorously** - Don't trust, verify. Ask agents to prove their work
+- **Commit frequently** - Ensure each agent commits their changes before moving on
+- **Plan for quality gates** - Use test and review agents as checkpoints
+
+**CRITICAL: ALWAYS RUN TYPECHECK AFTER EVERY CHANGE.**
+`;
+}
+
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
@@ -518,9 +645,11 @@ class ClaudeAgentSession implements AgentSession {
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
       // Use Claude Code preset system prompt and load CLAUDE.md files
+      // Append orchestrator mode instructions for agents
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
+        append: getOrchestratorModeInstructions(),
       },
       settingSources: ["project", "user"],
       stderr: (data: string) => {
