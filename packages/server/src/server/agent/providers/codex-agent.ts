@@ -3,6 +3,7 @@ import { promises as fs, constants as fsConstants } from "node:fs";
 import type { Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execSync } from "node:child_process";
 
 import {
   Codex,
@@ -208,13 +209,38 @@ function normalizeExtraOptions(extra?: Record<string, unknown>): CodexOptionsOve
   return normalized;
 }
 
+function detectSystemCodexPath(): string | undefined {
+  try {
+    const codexPath = execSync("which codex", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+    if (codexPath && codexPath.length > 0) {
+      return codexPath;
+    }
+  } catch {
+    // which command failed - codex not in PATH
+  }
+  return undefined;
+}
+
 export class CodexAgentClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities = CODEX_CAPABILITIES;
   private readonly codex: Codex;
 
   constructor(options?: CodexOptions) {
-    this.codex = new Codex(options);
+    const codexOptions = { ...options };
+
+    // If no explicit codexPathOverride, try to use system-installed codex from PATH
+    if (!codexOptions.codexPathOverride) {
+      const systemCodexPath = detectSystemCodexPath();
+      if (systemCodexPath) {
+        codexOptions.codexPathOverride = systemCodexPath;
+        console.log(`[Codex] Using system binary: ${systemCodexPath}`);
+      } else {
+        console.log("[Codex] Using embedded binary (no system codex found in PATH)");
+      }
+    }
+
+    this.codex = new Codex(codexOptions);
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
