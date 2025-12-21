@@ -354,7 +354,7 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 23:45)**: Implemented end-to-end parent-child agent ID injection. Added `setManagedAgentId()` to `AgentSession` interface (optional). `ClaudeAgentSession` stores the ID and includes it as `X-Caller-Agent-Id` header when connecting to agent-control MCP. `AgentManager.registerSession()` calls `setManagedAgentId()` after registration. MCP server extracts the header and auto-injects it as `parentAgentId` in `create_agent` handler. Typecheck passes.
 
-- [ ] **Test**: Re-verify parent/child hierarchy after MCP fix.
+- [x] **Test**: Re-verify parent/child hierarchy after MCP fix.
 
   - Create a root agent via the UI
   - Use MCP to spawn a child agent from within the root agent
@@ -362,6 +362,23 @@ Files requiring modification:
   - Verify homepage only shows the root agent (not the child)
   - Verify root agent's menu shows the child in "Sub-Agents" section
   - Click child agent in menu, verify navigation works
+  - **Done (2025-12-21 17:45)**: PARTIAL PASS - MCP header injection IS working correctly. The `X-Caller-Agent-Id` header is being sent by parent agents and received by the MCP server. The `callerAgentId` is correctly used as `parentAgentId` when creating child agents. HOWEVER, discovered a bug: `parentAgentId` is stored in `persistence.metadata` but NOT at the top-level of the stored agent record. The `toStoredAgentRecord()` function in `agent-projections.ts` and the `STORED_AGENT_SCHEMA` in `agent-registry.ts` are missing `parentAgentId`. Fix task added below.
+
+- [ ] **Fix**: Add parentAgentId to stored agent record schema.
+
+  - Add `parentAgentId` to `STORED_AGENT_SCHEMA` in `agent-registry.ts`
+  - Add `parentAgentId` to `toStoredAgentRecord()` output in `agent-projections.ts`
+  - Read `parentAgentId` from `agent.parentAgentId` (which is on `ManagedAgentBase`)
+  - Run typecheck after changes.
+
+- [ ] **Test**: Re-test parent/child hierarchy after storage fix.
+
+  - Create a root agent via the UI
+  - Use MCP to spawn a child agent from the root agent
+  - Verify child agent has `parentAgentId` at top-level in agents.json
+  - Verify homepage only shows root agent (not child)
+  - Verify root agent's menu shows child in Sub-Agents section
+  - Click child agent, verify navigation works
 
 - [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
 
