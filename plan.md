@@ -372,7 +372,7 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 17:52)**: Added `parentAgentId: z.string().nullable().optional()` to `STORED_AGENT_SCHEMA` in `agent-registry.ts:56`. Added `parentAgentId: agent.parentAgentId ?? null` to `toStoredAgentRecord()` output in `agent-projections.ts:55`. Typecheck passes.
 
-- [ ] **Test**: Re-test parent/child hierarchy after storage fix.
+- [x] **Test**: Re-test parent/child hierarchy after storage fix.
 
   - Create a root agent via the UI
   - Use MCP to spawn a child agent from the root agent
@@ -380,6 +380,33 @@ Files requiring modification:
   - Verify homepage only shows root agent (not child)
   - Verify root agent's menu shows child in Sub-Agents section
   - Click child agent, verify navigation works
+  - **Done (2025-12-21 18:05)**: PARTIAL PASS with issues. Test details:
+    1. ✅ Created parent agent "Spawn Test Child Agent" (c2e6c29f-6ccf-4087-b157-805165e5f919)
+    2. ✅ Parent agent successfully called MCP `create_agent` to spawn child "Test Child from Parent"
+    3. ✅ MCP header injection working - server logs show `callerAgentId=c2e6c29f-6ccf-4087-b157-805165e5f919`
+    4. ❌ `parentAgentId` stored in `persistence.metadata` but NOT at top-level of agents.json record
+    5. ❌ Child agent (b2e8949e-abc2-4cb3-a9d4-89afe8b907d0) missing top-level `parentAgentId` field
+    6. ❌ Infinite loop bug in `AgentScreenContent` at `[agentId].tsx:136` - crashes when opening agent screen
+    7. Homepage filtering unclear due to UI crash
+
+    **Root cause**: The `parentAgentId` is being passed through MCP correctly, but when `toStoredAgentRecord()` is called, `agent.parentAgentId` on the `ManagedAgent` object may be undefined. Need to investigate why the value isn't being preserved on the managed agent when created via MCP.
+
+    **Additional bug**: `childAgents` selector in `AgentScreenContent` causes infinite loop despite `useShallow` wrapper - the selector creates new object references on each call.
+
+- [ ] **Fix**: Debug why parentAgentId is not set on ManagedAgent when created via MCP.
+
+  - Add debug logging to MCP `create_agent` handler to confirm `resolvedParentAgentId` value
+  - Add debug logging to `agentManager.createAgent()` to confirm `config.parentAgentId` is passed
+  - Add debug logging to `registerSession()` to confirm `managed.parentAgentId` is set
+  - Add debug logging to `toStoredAgentRecord()` to confirm `agent.parentAgentId` value
+  - Identify where the value is being lost
+
+- [ ] **Fix**: Fix childAgents selector infinite loop in AgentScreenContent.
+
+  - The `useShallow` wrapper doesn't prevent infinite loops when selector returns new object references
+  - Consider extracting just agent IDs and using a separate lookup
+  - Or use `useMemo` with proper dependency tracking
+  - Ensure the selector returns stable references
 
 - [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
 
