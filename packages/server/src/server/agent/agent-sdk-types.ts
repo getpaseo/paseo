@@ -180,6 +180,12 @@ export interface AgentSession {
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Set the managed agent ID for this session. This is called by AgentManager
+   * after registration to allow the session to include its ID in MCP requests
+   * (for parent-child agent relationships).
+   */
+  setManagedAgentId?(agentId: string): void;
 }
 
 export interface AgentClient {

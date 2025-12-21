@@ -116,11 +116,13 @@ async function main() {
 
   const agentMcpTransports: AgentMcpTransportMap = new Map();
 
-  const createAgentMcpTransport = async () => {
+  const createAgentMcpTransport = async (callerAgentId?: string) => {
     // Create a NEW McpServer instance per session (not shared across sessions)
+    // Pass the caller agent ID so create_agent can auto-set parentAgentId
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
       agentRegistry,
+      callerAgentId,
     });
 
     const transport = new StreamableHTTPServerTransport({
@@ -183,7 +185,9 @@ async function main() {
           });
           return;
         }
-        transport = await createAgentMcpTransport();
+        // Extract caller agent ID from header (sent by agents when connecting)
+        const callerAgentId = req.header("X-Caller-Agent-Id");
+        transport = await createAgentMcpTransport(callerAgentId);
       }
 
       await transport.handleRequest(

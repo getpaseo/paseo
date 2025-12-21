@@ -389,6 +389,7 @@ class ClaudeAgentSession implements AgentSession {
   private cancelCurrentTurn: (() => void) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
+  private managedAgentId: string | null = null;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -650,6 +651,10 @@ class ClaudeAgentSession implements AgentSession {
     this.input = null;
   }
 
+  setManagedAgentId(agentId: string): void {
+    this.managedAgentId = agentId;
+  }
+
   private async ensureQuery(): Promise<Query> {
     if (this.query) {
       return this.query;
@@ -685,11 +690,16 @@ class ClaudeAgentSession implements AgentSession {
 
     // Always include the agent-control MCP server so agents can launch other agents
     const agentControlConfig = this.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
+    // Merge base headers with the caller agent ID header for parent-child relationships
+    const agentControlHeaders: Record<string, string> = {
+      ...agentControlConfig.headers,
+      ...(this.managedAgentId ? { "X-Caller-Agent-Id": this.managedAgentId } : {}),
+    };
     const defaultMcpServers: Record<string, ClaudeMcpServerConfig> = {
       "agent-control": {
         type: "http",
         url: agentControlConfig.url,
-        ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
+        ...(Object.keys(agentControlHeaders).length > 0 ? { headers: agentControlHeaders } : {}),
       },
       playwright: {
         type: "stdio",

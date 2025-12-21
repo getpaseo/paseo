@@ -636,6 +636,12 @@ class CodexAgentSession implements AgentSession {
     this.pendingPermissions.clear();
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  setManagedAgentId(_agentId: string): void {
+    // Codex agents don't currently use MCP for agent-control
+    // This is a no-op but satisfies the AgentSession interface
+  }
+
   private drainHistoryEvents(): AgentStreamEvent[] {
     if (!this.historyEvents.length) {
       return [];

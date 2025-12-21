@@ -28,6 +28,11 @@ import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentRegistry: AgentRegistry;
+  /**
+   * ID of the agent that is connecting to this MCP server.
+   * When set, create_agent will auto-inject this as parentAgentId.
+   */
+  callerAgentId?: string;
 }
 
 const AgentProviderEnum = z.enum(
@@ -166,7 +171,7 @@ async function serializeSnapshotWithMetadata(
 export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
-  const { agentManager, agentRegistry } = options;
+  const { agentManager, agentRegistry, callerAgentId } = options;
   const waitTracker = new WaitForAgentTracker();
 
   const server = new McpServer({
@@ -267,12 +272,14 @@ export async function createAgentMcpServer(
 
       const provider: AgentProvider = agentType ?? "claude";
       const normalizedTitle = title?.trim() ?? null;
+      // Use explicit parentAgentId if provided, otherwise default to caller agent ID
+      const resolvedParentAgentId = parentAgentId ?? callerAgentId;
       const snapshot = await agentManager.createAgent({
         provider,
         cwd: resolvedCwd,
         modeId: initialMode,
         title: normalizedTitle ?? undefined,
-        parentAgentId,
+        parentAgentId: resolvedParentAgentId,
       });
 
       if (initialPrompt) {

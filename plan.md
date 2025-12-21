@@ -345,13 +345,14 @@ Files requiring modification:
   - If issues found: add fix tasks + re-test task.
   - **Done (2025-12-21 22:30)**: PARTIAL PASS with issues found. Fixed infinite loop bug (added `useShallow` to `childAgents` selector). Agent screen loads correctly. Sub-Agents menu section shows "No sub-agents". Parent agent successfully created child via MCP `create_agent`. However, child appears on homepage because `parentAgentId` not set - MCP server doesn't auto-inject calling agent's ID. Fix task added.
 
-- [ ] **Fix**: Auto-inject parentAgentId in MCP create_agent tool.
+- [x] **Fix**: Auto-inject parentAgentId in MCP create_agent tool.
 
   - The MCP server needs to know which agent is calling it
   - Explore passing agent ID context when MCP transport is created
   - Or: Have each agent's MCP session be scoped to that agent
   - Update `create_agent` handler to automatically set `parentAgentId`
   - Run typecheck after changes.
+  - **Done (2025-12-21 23:45)**: Implemented end-to-end parent-child agent ID injection. Added `setManagedAgentId()` to `AgentSession` interface (optional). `ClaudeAgentSession` stores the ID and includes it as `X-Caller-Agent-Id` header when connecting to agent-control MCP. `AgentManager.registerSession()` calls `setManagedAgentId()` after registration. MCP server extracts the header and auto-injects it as `parentAgentId` in `create_agent` handler. Typecheck passes.
 
 - [ ] **Test**: Re-verify parent/child hierarchy after MCP fix.
 

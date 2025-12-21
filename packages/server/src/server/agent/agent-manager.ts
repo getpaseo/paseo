@@ -706,6 +706,9 @@ export class AgentManager {
       throw new Error(`Agent with id ${agentId} already exists`);
     }
 
+    // Inform the session of its managed agent ID for MCP parent-child relationships
+    session.setManagedAgentId?.(agentId);
+
     const managed = {
       id: agentId,
       provider: config.provider,
