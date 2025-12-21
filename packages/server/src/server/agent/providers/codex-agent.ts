@@ -35,6 +35,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  AgentRuntimeInfo,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
@@ -66,19 +67,21 @@ const CODEX_MODES: AgentMode[] = [
   {
     id: "full-access",
     label: "Full Access",
-    description: "Codex can edit files, run commands, and access the network without additional prompts.",
+    description:
+      "Codex can edit files, run commands, and access the network without additional prompts.",
   },
 ];
 
-const VALID_CODEX_MODES = new Set(
-  CODEX_MODES.map((mode) => mode.id)
-);
+const VALID_CODEX_MODES = new Set(CODEX_MODES.map((mode) => mode.id));
 
 const DEFAULT_CODEX_MODE_ID = "auto";
 
 const MODE_PRESETS: Record<
   string,
-  Partial<ThreadOptions> & { networkAccessEnabled?: boolean; webSearchEnabled?: boolean }
+  Partial<ThreadOptions> & {
+    networkAccessEnabled?: boolean;
+    webSearchEnabled?: boolean;
+  }
 > = {
   "read-only": {
     sandboxMode: "read-only",
@@ -100,7 +103,9 @@ const MODE_PRESETS: Record<
   },
 };
 
-type CodexOptionsOverrides = Partial<ThreadOptions> & { skipGitRepoCheck?: boolean };
+type CodexOptionsOverrides = Partial<ThreadOptions> & {
+  skipGitRepoCheck?: boolean;
+};
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 5;
 const PERSISTED_TIMELINE_LIMIT = 20;
@@ -142,7 +147,10 @@ function normalizeCallId(value?: string | null): string | undefined {
 
 function extractThreadItemCallId(item: ThreadItem): string | undefined {
   const withCallId = item as ThreadItemWithOptionalCallId;
-  return normalizeCallId(withCallId.call_id) ?? normalizeCallId((item as { id?: string }).id);
+  return (
+    normalizeCallId(withCallId.call_id) ??
+    normalizeCallId((item as { id?: string }).id)
+  );
 }
 
 function buildCommandDisplayName(command?: unknown): string {
@@ -155,7 +163,9 @@ function buildCommandDisplayName(command?: unknown): string {
   return "Command";
 }
 
-function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
+function buildFileChangeSummary(
+  files: { path: string; kind: string }[]
+): string {
   if (!files.length) {
     return "File change";
   }
@@ -167,7 +177,11 @@ function buildFileChangeSummary(files: { path: string; kind: string }[]): string
 
 function coerceSandboxMode(value?: string): SandboxMode | undefined {
   if (!value) return undefined;
-  if (value === "read-only" || value === "workspace-write" || value === "danger-full-access") {
+  if (
+    value === "read-only" ||
+    value === "workspace-write" ||
+    value === "danger-full-access"
+  ) {
     return value;
   }
   return undefined;
@@ -175,21 +189,35 @@ function coerceSandboxMode(value?: string): SandboxMode | undefined {
 
 function coerceApprovalMode(value?: string): ApprovalMode | undefined {
   if (!value) return undefined;
-  if (value === "never" || value === "on-request" || value === "on-failure" || value === "untrusted") {
+  if (
+    value === "never" ||
+    value === "on-request" ||
+    value === "on-failure" ||
+    value === "untrusted"
+  ) {
     return value;
   }
   return undefined;
 }
 
-function coerceReasoningEffort(value?: string): ModelReasoningEffort | undefined {
+function coerceReasoningEffort(
+  value?: string
+): ModelReasoningEffort | undefined {
   if (!value) return undefined;
-  if (value === "minimal" || value === "low" || value === "medium" || value === "high") {
+  if (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high"
+  ) {
     return value;
   }
   return undefined;
 }
 
-function normalizeExtraOptions(extra?: Record<string, unknown>): CodexOptionsOverrides | undefined {
+function normalizeExtraOptions(
+  extra?: Record<string, unknown>
+): CodexOptionsOverrides | undefined {
   if (!extra) return undefined;
   const allowedKeys = new Set([
     "model",
@@ -211,7 +239,10 @@ function normalizeExtraOptions(extra?: Record<string, unknown>): CodexOptionsOve
 
 function detectSystemCodexPath(): string | undefined {
   try {
-    const codexPath = execSync("which codex", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+    const codexPath = execSync("which codex", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
     if (codexPath && codexPath.length > 0) {
       return codexPath;
     }
@@ -236,7 +267,9 @@ export class CodexAgentClient implements AgentClient {
         codexOptions.codexPathOverride = systemCodexPath;
         console.log(`[Codex] Using system binary: ${systemCodexPath}`);
       } else {
-        console.log("[Codex] Using embedded binary (no system codex found in PATH)");
+        console.log(
+          "[Codex] Using embedded binary (no system codex found in PATH)"
+        );
       }
     }
 
@@ -248,18 +281,25 @@ export class CodexAgentClient implements AgentClient {
     return CodexAgentSession.create(this.codex, codexConfig);
   }
 
-  async resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+  async resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>
+  ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const merged = { ...metadata, ...overrides } as Partial<AgentSessionConfig>;
     if (!merged.cwd) {
-      throw new Error("Codex resume requires the original working directory in metadata");
+      throw new Error(
+        "Codex resume requires the original working directory in metadata"
+      );
     }
     const mergedConfig = { ...merged, provider: "codex" } as AgentSessionConfig;
     const codexConfig = this.assertConfig(mergedConfig);
     return CodexAgentSession.create(this.codex, codexConfig, handle);
   }
 
-  async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
+  async listPersistedAgents(
+    options?: ListPersistedAgentsOptions
+  ): Promise<PersistedAgentDescriptor[]> {
     const sessionRoot = resolveCodexSessionRoot();
     if (!sessionRoot) {
       return [];
@@ -271,7 +311,11 @@ export class CodexAgentClient implements AgentClient {
     const candidates = await collectRecentRolloutFiles(sessionRoot, limit * 3);
     const descriptors: PersistedAgentDescriptor[] = [];
     for (const candidate of candidates) {
-      const descriptor = await parseRolloutDescriptor(candidate.path, candidate.mtime, sessionRoot);
+      const descriptor = await parseRolloutDescriptor(
+        candidate.path,
+        candidate.mtime,
+        sessionRoot
+      );
       if (descriptor) {
         descriptors.push(descriptor);
       }
@@ -284,14 +328,20 @@ export class CodexAgentClient implements AgentClient {
 
   private assertConfig(config: AgentSessionConfig): CodexAgentConfig {
     if (config.provider !== "codex") {
-      throw new Error(`CodexAgentClient received config for provider '${config.provider}'`);
+      throw new Error(
+        `CodexAgentClient received config for provider '${config.provider}'`
+      );
     }
     return config as CodexAgentConfig;
   }
 }
 
 class CodexAgentSession implements AgentSession {
-  static async create(codex: Codex, config: CodexAgentConfig, handle?: AgentPersistenceHandle): Promise<CodexAgentSession> {
+  static async create(
+    codex: Codex,
+    config: CodexAgentConfig,
+    handle?: AgentPersistenceHandle
+  ): Promise<CodexAgentSession> {
     const session = new CodexAgentSession(codex, config, handle);
     if (handle) {
       await session.loadReplayHistory(handle);
@@ -316,8 +366,13 @@ class CodexAgentSession implements AgentSession {
   private historyEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private cancelCurrentTurn: (() => void) | null = null;
+  private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
 
-  constructor(codex: Codex, config: CodexAgentConfig, handle?: AgentPersistenceHandle) {
+  constructor(
+    codex: Codex,
+    config: CodexAgentConfig,
+    handle?: AgentPersistenceHandle
+  ) {
     this.codex = codex;
     this.config = { ...config };
 
@@ -336,6 +391,7 @@ class CodexAgentSession implements AgentSession {
     this.threadId = handle?.sessionId ?? handle?.nativeHandle ?? null;
     this.pendingLocalId = this.threadId ?? `codex-${randomUUID()}`;
     this.persistence = handle ?? null;
+    this.cachedRuntimeInfo = null;
     if (handle && !this.threadId) {
       throw new Error("Codex resume requires a thread id");
     }
@@ -348,7 +404,31 @@ class CodexAgentSession implements AgentSession {
     return this.threadId;
   }
 
-  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    if (!this.cachedRuntimeInfo) {
+      await this.refreshRuntimeInfoFromRollout();
+    }
+    if (this.cachedRuntimeInfo) {
+      return { ...this.cachedRuntimeInfo };
+    }
+    const modelFromRollout = await this.readRuntimeModelFromRollout();
+    const info: AgentRuntimeInfo = {
+      provider: "codex",
+      sessionId: this.threadId ?? this.pendingLocalId ?? null,
+      model:
+        modelFromRollout ??
+        this.threadOptions.model ??
+        null,
+      modeId: this.currentMode ?? null,
+    };
+    this.cachedRuntimeInfo = info;
+    return { ...info };
+  }
+
+  async run(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions
+  ): Promise<AgentRunResult> {
     const events = this.stream(prompt, options);
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
@@ -367,6 +447,9 @@ class CodexAgentSession implements AgentSession {
       }
     }
 
+    // Update runtime info cache after the turn completes
+    await this.refreshRuntimeInfoFromRollout();
+
     return {
       sessionId: this.threadId ?? this.pendingLocalId,
       finalText,
@@ -375,7 +458,10 @@ class CodexAgentSession implements AgentSession {
     };
   }
 
-  async *stream(prompt: AgentPromptInput, options?: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
+  async *stream(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions
+  ): AsyncGenerator<AgentStreamEvent> {
     const thread = this.thread;
     if (!thread) {
       throw new Error("Codex session is closed");
@@ -405,7 +491,10 @@ class CodexAgentSession implements AgentSession {
           type: "turn.completed",
         } as ThreadEvent);
         void cancellation.catch((error) => {
-          console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
+          console.warn(
+            "[CodexAgentSession] Failed to stop Codex stream:",
+            error
+          );
         });
       } catch (error) {
         console.warn("[CodexAgentSession] Failed to stop Codex stream:", error);
@@ -433,6 +522,7 @@ class CodexAgentSession implements AgentSession {
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
+      await this.refreshRuntimeInfoFromRollout();
     }
   }
 
@@ -484,10 +574,15 @@ class CodexAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values());
   }
 
-  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse
+  ): Promise<void> {
     const request = this.pendingPermissions.get(requestId);
     if (!request) {
-      throw new Error(`No pending Codex permission request with id '${requestId}'`);
+      throw new Error(
+        `No pending Codex permission request with id '${requestId}'`
+      );
     }
 
     this.pendingPermissions.delete(requestId);
@@ -522,12 +617,13 @@ class CodexAgentSession implements AgentSession {
     if (!this.threadId) {
       return null;
     }
+    const { model: _ignoredModel, ...restConfig } = this.config;
     this.persistence = {
       provider: "codex",
       sessionId: this.threadId,
       nativeHandle: this.threadId,
       metadata: {
-        ...this.config,
+        ...restConfig,
         codexSessionDir: this.codexSessionDir ?? undefined,
         codexRolloutPath: this.rolloutPath ?? undefined,
       },
@@ -568,10 +664,13 @@ class CodexAgentSession implements AgentSession {
       options.model = this.config.model;
     }
     if (this.config.sandboxMode) {
-      options.sandboxMode = coerceSandboxMode(this.config.sandboxMode) ?? options.sandboxMode;
+      options.sandboxMode =
+        coerceSandboxMode(this.config.sandboxMode) ?? options.sandboxMode;
     }
     if (this.config.approvalPolicy) {
-      options.approvalPolicy = coerceApprovalMode(this.config.approvalPolicy) ?? options.approvalPolicy;
+      options.approvalPolicy =
+        coerceApprovalMode(this.config.approvalPolicy) ??
+        options.approvalPolicy;
     }
     if (typeof this.config.networkAccess === "boolean") {
       options.networkAccessEnabled = this.config.networkAccess;
@@ -581,10 +680,13 @@ class CodexAgentSession implements AgentSession {
     }
     if (this.config.reasoningEffort) {
       options.modelReasoningEffort =
-        coerceReasoningEffort(this.config.reasoningEffort) ?? options.modelReasoningEffort;
+        coerceReasoningEffort(this.config.reasoningEffort) ??
+        options.modelReasoningEffort;
     }
 
-    const extra = normalizeExtraOptions(this.config.extra?.codex as Record<string, unknown> | undefined);
+    const extra = normalizeExtraOptions(
+      this.config.extra?.codex as Record<string, unknown> | undefined
+    );
     if (extra) {
       Object.assign(options, extra);
     }
@@ -592,7 +694,9 @@ class CodexAgentSession implements AgentSession {
     return options;
   }
 
-  private async loadReplayHistory(handle: AgentPersistenceHandle): Promise<void> {
+  private async loadReplayHistory(
+    handle: AgentPersistenceHandle
+  ): Promise<void> {
     const threadIdentifier = handle.sessionId ?? handle.nativeHandle;
     if (!threadIdentifier || !this.codexSessionDir) {
       return;
@@ -604,7 +708,10 @@ class CodexAgentSession implements AgentSession {
     }
 
     if (!rolloutFile) {
-      rolloutFile = await findRolloutFile(threadIdentifier, this.codexSessionDir);
+      rolloutFile = await findRolloutFile(
+        threadIdentifier,
+        this.codexSessionDir
+      );
     }
 
     if (!rolloutFile) {
@@ -612,6 +719,7 @@ class CodexAgentSession implements AgentSession {
     }
 
     this.rolloutPath = rolloutFile;
+    await this.refreshRuntimeInfoFromRollout();
 
     try {
       const events = await parseRolloutFile(rolloutFile, threadIdentifier);
@@ -619,11 +727,16 @@ class CodexAgentSession implements AgentSession {
         this.historyEvents = events;
       }
     } catch (error) {
-      console.warn(`[CodexAgentSession] Failed to parse rollout ${rolloutFile}:`, error);
+      console.warn(
+        `[CodexAgentSession] Failed to parse rollout ${rolloutFile}:`,
+        error
+      );
     }
   }
 
-  private resolveCodexSessionDir(handle?: AgentPersistenceHandle): string | null {
+  private resolveCodexSessionDir(
+    handle?: AgentPersistenceHandle
+  ): string | null {
     const metadataDir = readMetadataString(handle, "codexSessionDir");
     if (metadataDir) {
       return metadataDir;
@@ -639,7 +752,8 @@ class CodexAgentSession implements AgentSession {
     }
 
     const extraHome = readCodexExtraString(this.config, "home");
-    const codexHome = extraHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+    const codexHome =
+      extraHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
     return path.join(codexHome, "sessions");
   }
 
@@ -650,6 +764,46 @@ class CodexAgentSession implements AgentSession {
     }
     const extraRollout = readCodexExtraString(this.config, "rolloutPath");
     return extraRollout ?? null;
+  }
+
+  private async refreshRuntimeInfoFromRollout(): Promise<void> {
+    if (!this.rolloutPath) {
+      const threadIdentifier = this.threadId;
+      if (threadIdentifier && this.codexSessionDir) {
+        const rolloutFile = await findRolloutFile(
+          threadIdentifier,
+          this.codexSessionDir
+        );
+        if (rolloutFile) {
+          this.rolloutPath = rolloutFile;
+        }
+      }
+    }
+    const modelFromRollout = await this.readRuntimeModelFromRollout();
+    if (!modelFromRollout && this.cachedRuntimeInfo) {
+      return;
+    }
+    this.cachedRuntimeInfo = {
+      provider: "codex",
+      sessionId: this.threadId ?? this.pendingLocalId ?? null,
+      model:
+        modelFromRollout ??
+        this.threadOptions.model ??
+        null,
+      modeId: this.currentMode ?? null,
+    };
+  }
+
+  private async readRuntimeModelFromRollout(): Promise<string | null> {
+    const rollout = this.rolloutPath;
+    if (!rollout) {
+      return null;
+    }
+    try {
+      return await readLatestTurnContextModel(rollout);
+    } catch {
+      return null;
+    }
   }
 
   private buildTurnOptions(options?: AgentRunOptions): TurnOptions {
@@ -680,7 +834,11 @@ class CodexAgentSession implements AgentSession {
         this.threadId = event.thread_id;
         this.pendingLocalId = event.thread_id;
         this.persistence = null;
-        yield { type: "thread_started", provider: "codex", sessionId: event.thread_id };
+        yield {
+          type: "thread_started",
+          provider: "codex",
+          sessionId: event.thread_id,
+        };
         break;
       case "turn.started":
         yield { type: "turn_started", provider: "codex" };
@@ -724,7 +882,10 @@ class CodexAgentSession implements AgentSession {
   }
 
   private handlePermissionEvent(event: ThreadEvent): AgentStreamEvent[] | null {
-    const eventType = typeof (event as { type?: string }).type === "string" ? (event as { type?: string }).type : null;
+    const eventType =
+      typeof (event as { type?: string }).type === "string"
+        ? (event as { type?: string }).type
+        : null;
     if (!eventType) {
       return null;
     }
@@ -742,7 +903,9 @@ class CodexAgentSession implements AgentSession {
     return null;
   }
 
-  private enqueuePermissionRequest(request: AgentPermissionRequest | null): AgentStreamEvent[] | null {
+  private enqueuePermissionRequest(
+    request: AgentPermissionRequest | null
+  ): AgentStreamEvent[] | null {
     if (!request) {
       return null;
     }
@@ -769,7 +932,9 @@ class CodexAgentSession implements AgentSession {
     return events;
   }
 
-  private buildExecPermissionRequest(rawInput: unknown): AgentPermissionRequest | null {
+  private buildExecPermissionRequest(
+    rawInput: unknown
+  ): AgentPermissionRequest | null {
     if (!rawInput || typeof rawInput !== "object") {
       return null;
     }
@@ -778,14 +943,24 @@ class CodexAgentSession implements AgentSession {
     const commandParts: string[] = Array.isArray(raw.command)
       ? raw.command.filter((entry: unknown) => typeof entry === "string")
       : typeof raw.command === "string"
-        ? [raw.command]
-        : [];
+      ? [raw.command]
+      : [];
     const commandText = commandParts.join(" ").trim();
-    const cwd = typeof raw.cwd === "string" && raw.cwd.length ? raw.cwd : undefined;
-    const requestId = typeof raw.call_id === "string" && raw.call_id.length ? raw.call_id : randomUUID();
-    const reason = typeof raw.reason === "string" && raw.reason.length ? raw.reason : undefined;
-    const risk = raw.risk && typeof raw.risk === "object" ? raw.risk : undefined;
-    const parsedCommand = Array.isArray(raw.parsed_cmd) ? raw.parsed_cmd : undefined;
+    const cwd =
+      typeof raw.cwd === "string" && raw.cwd.length ? raw.cwd : undefined;
+    const requestId =
+      typeof raw.call_id === "string" && raw.call_id.length
+        ? raw.call_id
+        : randomUUID();
+    const reason =
+      typeof raw.reason === "string" && raw.reason.length
+        ? raw.reason
+        : undefined;
+    const risk =
+      raw.risk && typeof raw.risk === "object" ? raw.risk : undefined;
+    const parsedCommand = Array.isArray(raw.parsed_cmd)
+      ? raw.parsed_cmd
+      : undefined;
 
     const metadata: Record<string, unknown> = {
       callId: raw.call_id,
@@ -822,21 +997,35 @@ class CodexAgentSession implements AgentSession {
     return request;
   }
 
-  private buildPatchPermissionRequest(rawInput: unknown): AgentPermissionRequest | null {
+  private buildPatchPermissionRequest(
+    rawInput: unknown
+  ): AgentPermissionRequest | null {
     if (!rawInput || typeof rawInput !== "object") {
       return null;
     }
     const raw = rawInput as PatchPermissionRequestPayload;
 
-    const requestId = typeof raw.call_id === "string" && raw.call_id.length ? raw.call_id : randomUUID();
-    const changes = raw.changes && typeof raw.changes === "object" ? raw.changes : undefined;
+    const requestId =
+      typeof raw.call_id === "string" && raw.call_id.length
+        ? raw.call_id
+        : randomUUID();
+    const changes =
+      raw.changes && typeof raw.changes === "object" ? raw.changes : undefined;
     const filePaths = changes ? Object.keys(changes) : [];
-    const grantRoot = typeof raw.grant_root === "string" && raw.grant_root.length ? raw.grant_root : undefined;
-    const reason = typeof raw.reason === "string" && raw.reason.length ? raw.reason : undefined;
+    const grantRoot =
+      typeof raw.grant_root === "string" && raw.grant_root.length
+        ? raw.grant_root
+        : undefined;
+    const reason =
+      typeof raw.reason === "string" && raw.reason.length
+        ? raw.reason
+        : undefined;
 
     const title =
       filePaths.length > 0
-        ? `Apply patch to ${filePaths.length} file${filePaths.length === 1 ? "" : "s"}`
+        ? `Apply patch to ${filePaths.length} file${
+            filePaths.length === 1 ? "" : "s"
+          }`
         : "Apply patch";
 
     const metadata: Record<string, unknown> = {
@@ -881,17 +1070,24 @@ class CodexAgentSession implements AgentSession {
         const exitCode = (item as any)?.exit_code;
         const cwd = (item as any)?.cwd;
         const commandValue = item.command;
-        const command = typeof commandValue === "string" ? commandValue :
-                       Array.isArray(commandValue) ? (commandValue as string[]).join(" ") : "command";
+        const command =
+          typeof commandValue === "string"
+            ? commandValue
+            : Array.isArray(commandValue)
+            ? (commandValue as string[]).join(" ")
+            : "command";
 
         // Build structured command result matching StructuredToolResult type
-        const structuredOutput = typeof aggregatedOutput === "string" ? {
-          type: "command" as const,
-          command,
-          output: aggregatedOutput,
-          exitCode: typeof exitCode === "number" ? exitCode : undefined,
-          cwd,
-        } : undefined;
+        const structuredOutput =
+          typeof aggregatedOutput === "string"
+            ? {
+                type: "command" as const,
+                command,
+                output: aggregatedOutput,
+                exitCode: typeof exitCode === "number" ? exitCode : undefined,
+                cwd,
+              }
+            : undefined;
 
         return createToolCallTimelineItem({
           server: "command",
@@ -906,7 +1102,10 @@ class CodexAgentSession implements AgentSession {
         });
       }
       case "file_change": {
-        const files = item.changes.map((change) => ({ path: change.path, kind: change.kind }));
+        const files = item.changes.map((change) => ({
+          path: change.path,
+          kind: change.kind,
+        }));
         return createToolCallTimelineItem({
           server: "file_change",
           tool: "apply_patch",
@@ -968,7 +1167,10 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function findRolloutFile(threadId: string, root: string): Promise<string | null> {
+async function findRolloutFile(
+  threadId: string,
+  root: string
+): Promise<string | null> {
   const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
   while (stack.length > 0) {
     const { dir, depth } = stack.pop()!;
@@ -983,7 +1185,8 @@ async function findRolloutFile(threadId: string, root: string): Promise<string |
       if (entry.isFile()) {
         const matchesThread = entry.name.includes(threadId);
         const matchesPrefix = entry.name.startsWith("rollout-");
-        const matchesExtension = entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
+        const matchesExtension =
+          entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
         if (matchesThread && matchesPrefix && matchesExtension) {
           return entryPath;
         }
@@ -995,10 +1198,18 @@ async function findRolloutFile(threadId: string, root: string): Promise<string |
   return null;
 }
 
-async function parseRolloutFile(filePath: string, threadId: string): Promise<AgentStreamEvent[]> {
+async function parseRolloutFile(
+  filePath: string,
+  threadId: string
+): Promise<AgentStreamEvent[]> {
   const content = await fs.readFile(filePath, "utf8");
-  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const events: AgentStreamEvent[] = [{ type: "thread_started", provider: "codex", sessionId: threadId }];
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const events: AgentStreamEvent[] = [
+    { type: "thread_started", provider: "codex", sessionId: threadId },
+  ];
   const commandCalls = new Map<string, { command: string; cwd?: string }>();
 
   for (const line of lines) {
@@ -1015,6 +1226,40 @@ async function parseRolloutFile(filePath: string, threadId: string): Promise<Age
   return events;
 }
 
+export async function readLatestTurnContextModel(
+  filePath: string
+): Promise<string | null> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  const lines = content.split(/\r?\n/).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    try {
+      const parsed = JSON.parse(line);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { type?: string }).type === "turn_context"
+      ) {
+        const payload = (parsed as { payload?: unknown }).payload;
+        if (payload && typeof payload === "object") {
+          const model = (payload as Record<string, unknown>).model;
+          if (typeof model === "string" && model.trim().length > 0) {
+            return model.trim();
+          }
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 function parseRolloutEntry(line: string): RolloutEntry | null {
   if (!line) {
     return null;
@@ -1024,7 +1269,11 @@ function parseRolloutEntry(line: string): RolloutEntry | null {
     if (isRolloutEntry(parsed)) {
       return parsed;
     }
-    if (parsed && typeof parsed === "object" && typeof (parsed as { output?: unknown }).output === "string") {
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { output?: unknown }).output === "string"
+    ) {
       return parseRolloutEntry((parsed as { output: string }).output);
     }
   } catch {
@@ -1042,7 +1291,11 @@ function isRolloutEntry(value: unknown): value is RolloutEntry {
 }
 
 function isSessionMetaEntry(value: unknown): value is SessionMetaEntry {
-  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "session_meta");
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { type?: unknown }).type === "session_meta"
+  );
 }
 
 function handleRolloutResponseItem(
@@ -1059,12 +1312,20 @@ function handleRolloutResponseItem(
       const text = extractMessageText(payload.content);
       if (text) {
         if (payload.role === "assistant") {
-          events.push({ type: "timeline", provider: "codex", item: { type: "assistant_message", text } });
+          events.push({
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text },
+          });
         } else if (payload.role === "user") {
           if (isSyntheticRolloutUserMessage(text)) {
             break;
           }
-          events.push({ type: "timeline", provider: "codex", item: { type: "user_message", text } });
+          events.push({
+            type: "timeline",
+            provider: "codex",
+            item: { type: "user_message", text },
+          });
         }
       }
       break;
@@ -1072,7 +1333,11 @@ function handleRolloutResponseItem(
     case "reasoning": {
       const text = extractReasoningText(payload);
       if (text) {
-        events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text } });
+        events.push({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "reasoning", text },
+        });
       }
       break;
     }
@@ -1093,12 +1358,19 @@ function handleRolloutResponseItem(
   }
 }
 
-function handleRolloutEventMessage(payload: RolloutEventPayload | undefined, events: AgentStreamEvent[]): void {
+function handleRolloutEventMessage(
+  payload: RolloutEventPayload | undefined,
+  events: AgentStreamEvent[]
+): void {
   if (!payload || typeof payload !== "object") {
     return;
   }
   if (payload.type === "agent_reasoning" && typeof payload.text === "string") {
-    events.push({ type: "timeline", provider: "codex", item: { type: "reasoning", text: payload.text } });
+    events.push({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "reasoning", text: payload.text },
+    });
   }
 }
 
@@ -1115,9 +1387,12 @@ function handleRolloutFunctionCall(
   if (SHELL_FUNCTION_NAMES.has(name)) {
     const args = safeJsonParse<Record<string, unknown>>(payload.arguments);
     const command = formatCommand(args);
-    const cwd = args && typeof args === "object" && typeof (args as { workdir?: unknown }).workdir === "string"
-      ? ((args as { workdir?: unknown }).workdir as string)
-      : undefined;
+    const cwd =
+      args &&
+      typeof args === "object" &&
+      typeof (args as { workdir?: unknown }).workdir === "string"
+        ? ((args as { workdir?: unknown }).workdir as string)
+        : undefined;
     if (command && typeof payload.call_id === "string") {
       commandCalls.set(payload.call_id, { command, cwd });
       events.push({
@@ -1141,7 +1416,11 @@ function handleRolloutFunctionCall(
     const args = safeJsonParse<{ plan?: unknown }>(payload.arguments);
     const planItems = parsePlanItems(args);
     if (planItems.length) {
-      events.push({ type: "timeline", provider: "codex", item: { type: "todo", items: planItems } });
+      events.push({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "todo", items: planItems },
+      });
     }
     return;
   }
@@ -1175,16 +1454,19 @@ function finalizeRolloutFunctionCall(
   }
   const result = safeJsonParse<CommandExecutionResult>(payload.output);
   const exitCode = result?.metadata?.exit_code;
-  const status = exitCode === undefined || exitCode === 0 ? "completed" : "failed";
+  const status =
+    exitCode === undefined || exitCode === 0 ? "completed" : "failed";
 
   // Build structured command output
-  const output = result?.stdout ? {
-    type: "command" as const,
-    command: command.command,
-    output: result.stdout,
-    exitCode,
-    cwd: command.cwd,
-  } : result;
+  const output = result?.stdout
+    ? {
+        type: "command" as const,
+        command: command.command,
+        output: result.stdout,
+        exitCode,
+        cwd: command.cwd,
+      }
+    : result;
 
   events.push({
     type: "timeline",
@@ -1203,7 +1485,10 @@ function finalizeRolloutFunctionCall(
   commandCalls.delete(payload.call_id);
 }
 
-function handleRolloutCustomToolCall(payload: RolloutCustomToolCallPayload, events: AgentStreamEvent[]): void {
+function handleRolloutCustomToolCall(
+  payload: RolloutCustomToolCallPayload,
+  events: AgentStreamEvent[]
+): void {
   if (payload?.name === "apply_patch" && typeof payload.input === "string") {
     const patchText = payload.input;
     const files = parsePatchFiles(patchText);
@@ -1339,7 +1624,10 @@ type SessionMetaEntry = {
   payload?: SessionMetaPayload;
 };
 
-async function collectRecentRolloutFiles(rootDir: string, limit: number): Promise<RolloutCandidate[]> {
+async function collectRecentRolloutFiles(
+  rootDir: string,
+  limit: number
+): Promise<RolloutCandidate[]> {
   const candidates: RolloutCandidate[] = [];
   async function traverse(dir: string): Promise<void> {
     let entries: Dirent[];
@@ -1402,8 +1690,12 @@ async function parseRolloutDescriptor(
       continue;
     }
     if (!sessionId && isSessionMetaEntry(entry) && entry.payload) {
-      sessionId = typeof entry.payload.id === "string" ? entry.payload.id : null;
-      if (typeof entry.payload.cwd === "string" && entry.payload.cwd.length > 0) {
+      sessionId =
+        typeof entry.payload.id === "string" ? entry.payload.id : null;
+      if (
+        typeof entry.payload.cwd === "string" &&
+        entry.payload.cwd.length > 0
+      ) {
         cwd = entry.payload.cwd;
       }
     }
@@ -1467,7 +1759,8 @@ function extractMessageText(content: unknown): string {
       parts.push(text.trim());
       continue;
     }
-    const message = typeof record.message === "string" ? record.message : undefined;
+    const message =
+      typeof record.message === "string" ? record.message : undefined;
     if (message && message.trim()) {
       parts.push(message.trim());
     }
@@ -1482,7 +1775,10 @@ export function isSyntheticRolloutUserMessage(text: string): boolean {
   }
 
   const lower = normalized.toLowerCase();
-  if (lower.startsWith("# agents.md instructions for") && lower.includes("<instructions>")) {
+  if (
+    lower.startsWith("# agents.md instructions for") &&
+    lower.includes("<instructions>")
+  ) {
     return true;
   }
 
@@ -1510,7 +1806,10 @@ function extractReasoningText(payload: RolloutReasoningPayload): string {
   return "";
 }
 
-async function loadCodexPersistedTimeline(filePath: string, threadId: string): Promise<AgentTimelineItem[]> {
+async function loadCodexPersistedTimeline(
+  filePath: string,
+  threadId: string
+): Promise<AgentTimelineItem[]> {
   try {
     const events = await parseRolloutFile(filePath, threadId);
     const timeline: AgentTimelineItem[] = [];
@@ -1525,13 +1824,19 @@ async function loadCodexPersistedTimeline(filePath: string, threadId: string): P
     }
     return timeline;
   } catch (error) {
-    console.warn(`[CodexAgentSession] Failed to load persisted timeline for ${threadId}:`, error);
+    console.warn(
+      `[CodexAgentSession] Failed to load persisted timeline for ${threadId}:`,
+      error
+    );
     return [];
   }
 }
 
 function parsePlanItems(args: unknown): { text: string; completed: boolean }[] {
-  const planValue = typeof args === "object" && args ? (args as { plan?: unknown }).plan : undefined;
+  const planValue =
+    typeof args === "object" && args
+      ? (args as { plan?: unknown }).plan
+      : undefined;
   const plan = Array.isArray(planValue) ? planValue : [];
   const items: { text: string; completed: boolean }[] = [];
   for (const step of plan) {
@@ -1539,7 +1844,12 @@ function parsePlanItems(args: unknown): { text: string; completed: boolean }[] {
       continue;
     }
     const record = step as { step?: unknown; text?: unknown; status?: unknown };
-    const text = typeof record.step === "string" ? record.step : typeof record.text === "string" ? record.text : "";
+    const text =
+      typeof record.step === "string"
+        ? record.step
+        : typeof record.text === "string"
+        ? record.text
+        : "";
     if (!text) {
       continue;
     }
@@ -1600,7 +1910,10 @@ function formatCommand(args: unknown): string | null {
   return null;
 }
 
-function readCodexExtraString(config: CodexAgentConfig, key: string): string | undefined {
+function readCodexExtraString(
+  config: CodexAgentConfig,
+  key: string
+): string | undefined {
   const extras = config.extra?.codex;
   if (!extras || typeof extras !== "object") {
     return undefined;
@@ -1609,7 +1922,10 @@ function readCodexExtraString(config: CodexAgentConfig, key: string): string | u
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readMetadataString(handle: AgentPersistenceHandle | undefined, key: string): string | undefined {
+function readMetadataString(
+  handle: AgentPersistenceHandle | undefined,
+  key: string
+): string | undefined {
   if (!handle?.metadata || typeof handle.metadata !== "object") {
     return undefined;
   }
@@ -1617,8 +1933,12 @@ function readMetadataString(handle: AgentPersistenceHandle | undefined, key: str
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function sanitizeMetadata(metadata: Record<string, unknown>): Record<string, unknown> | undefined {
-  const entries = Object.entries(metadata).filter(([_, value]) => value !== undefined && value !== null);
+function sanitizeMetadata(
+  metadata: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const entries = Object.entries(metadata).filter(
+    ([_, value]) => value !== undefined && value !== null
+  );
   if (!entries.length) {
     return undefined;
   }

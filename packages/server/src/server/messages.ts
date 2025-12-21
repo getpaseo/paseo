@@ -12,6 +12,7 @@ import type {
   AgentPermissionResponse,
   AgentPersistenceHandle,
   AgentProvider,
+  AgentRuntimeInfo,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
@@ -214,6 +215,14 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> =
     })
     .nullable();
 
+const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
+  provider: AgentProviderSchema,
+  sessionId: z.string().nullable(),
+  model: z.string().nullable().optional(),
+  modeId: z.string().nullable().optional(),
+  extra: z.record(z.unknown()).optional(),
+});
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -229,6 +238,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   availableModes: z.array(AgentModeSchema),
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
   persistence: AgentPersistenceHandleSchema.nullable(),
+  runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),

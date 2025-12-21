@@ -33,6 +33,7 @@ import {
   HOME_NAVIGATION_KEY,
   startNavigationTiming,
 } from "@/utils/navigation-timing";
+import { extractAgentModel } from "@/utils/extract-agent-model";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -43,47 +44,6 @@ type GitRepoInfoResponseMessage = Extract<
 >;
 
 type BranchStatus = "idle" | "loading" | "ready" | "error";
-
-function extractAgentModel(agent?: Agent | null): string | null {
-  if (!agent) {
-    return null;
-  }
-
-  const directModel = typeof agent.model === "string" ? agent.model.trim() : "";
-  if (directModel.length > 0) {
-    return directModel;
-  }
-
-  const metadata = agent.persistence?.metadata;
-  if (!metadata || typeof metadata !== "object") {
-    return null;
-  }
-
-  const persistedModel = (metadata as Record<string, unknown>).model;
-  if (typeof persistedModel === "string" && persistedModel.trim().length > 0) {
-    return persistedModel.trim();
-  }
-
-  const extra = (metadata as Record<string, unknown>).extra;
-  if (!extra || typeof extra !== "object") {
-    return null;
-  }
-
-  const getModelFrom = (source: unknown) => {
-    if (!source || typeof source !== "object") {
-      return null;
-    }
-    const candidate = (source as Record<string, unknown>).model;
-    return typeof candidate === "string" && candidate.trim().length > 0
-      ? candidate.trim()
-      : null;
-  };
-
-  return (
-    getModelFrom((extra as Record<string, unknown>).codex) ??
-    getModelFrom((extra as Record<string, unknown>).claude)
-  );
-}
 
 export default function AgentScreen() {
   const router = useRouter();

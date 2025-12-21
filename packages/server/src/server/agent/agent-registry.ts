@@ -40,6 +40,15 @@ const STORED_AGENT_SCHEMA = z.object({
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
+  runtimeInfo: z
+    .object({
+      provider: z.string(),
+      sessionId: z.string().nullable(),
+      model: z.string().nullable().optional(),
+      modeId: z.string().nullable().optional(),
+      extra: z.record(z.unknown()).optional(),
+    })
+    .optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

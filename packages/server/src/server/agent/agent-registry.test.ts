@@ -19,6 +19,8 @@ type ManagedAgentOverrides = Omit<
   pendingPermissions?: Map<string, AgentPermissionRequest>;
   session?: AgentSession | null;
   pendingRun?: ManagedAgent["pendingRun"];
+  runtimeInfo?: ManagedAgent["runtimeInfo"];
+  attention?: ManagedAgent["attention"];
 };
 
 function createManagedAgent(
@@ -71,6 +73,14 @@ function createManagedAgent(
       new Map<string, AgentPermissionRequest>(),
     pendingRun,
     timeline: overrides.timeline ?? [],
+    attention: overrides.attention ?? { requiresAttention: false },
+    runtimeInfo:
+      overrides.runtimeInfo ?? {
+        provider,
+        sessionId: overrides.sessionId ?? "session-123",
+        model: config.model ?? null,
+        modeId: config.modeId ?? null,
+      },
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? now,

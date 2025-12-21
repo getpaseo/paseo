@@ -130,6 +130,7 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
     availableModes: snapshot.availableModes ?? [],
     pendingPermissions: snapshot.pendingPermissions ?? [],
     persistence: snapshot.persistence ?? null,
+    runtimeInfo: snapshot.runtimeInfo,
     lastUsage: snapshot.lastUsage,
     lastError: snapshot.lastError ?? null,
     title: snapshot.title ?? null,

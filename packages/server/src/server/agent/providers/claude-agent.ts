@@ -35,6 +35,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  AgentRuntimeInfo,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
@@ -386,6 +387,8 @@ class ClaudeAgentSession implements AgentSession {
   private streamedAssistantTextThisTurn = false;
   private streamedReasoningThisTurn = false;
   private cancelCurrentTurn: (() => void) | null = null;
+  private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
+  private lastOptionsModel: string | null = null;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -417,6 +420,20 @@ class ClaudeAgentSession implements AgentSession {
     return this.claudeSessionId;
   }
 
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    if (this.cachedRuntimeInfo) {
+      return { ...this.cachedRuntimeInfo };
+    }
+    const info: AgentRuntimeInfo = {
+      provider: "claude",
+      sessionId: this.claudeSessionId ?? this.pendingLocalId ?? null,
+      model: this.lastOptionsModel,
+      modeId: this.currentMode ?? null,
+    };
+    this.cachedRuntimeInfo = info;
+    return { ...info };
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     const events = this.stream(prompt, options);
     const timeline: AgentTimelineItem[] = [];
@@ -435,6 +452,13 @@ class ClaudeAgentSession implements AgentSession {
         throw new Error(event.error);
       }
     }
+
+    this.cachedRuntimeInfo = {
+      provider: "claude",
+      sessionId: this.claudeSessionId ?? this.pendingLocalId ?? null,
+      model: this.lastOptionsModel,
+      modeId: this.currentMode ?? null,
+    };
 
     return {
       sessionId: this.claudeSessionId ?? this.pendingLocalId,
@@ -608,11 +632,12 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
+    const { model: _ignoredModel, ...restConfig } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: this.config,
+      metadata: restConfig,
     };
     return this.persistence;
   }
@@ -684,6 +709,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.config.model) {
       base.model = this.config.model;
     }
+    this.lastOptionsModel = base.model ?? null;
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
       base.continue = true;

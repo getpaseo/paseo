@@ -74,6 +74,14 @@ export type ProviderModelState = {
   isLoading: boolean;
 };
 
+export interface AgentRuntimeInfo {
+  provider: AgentProvider;
+  sessionId: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  extra?: Record<string, unknown>;
+}
+
 export interface Agent {
   serverId: string;
   id: string;
@@ -89,6 +97,7 @@ export interface Agent {
   availableModes: AgentMode[];
   pendingPermissions: any[];
   persistence: AgentPersistenceHandle | null;
+  runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;
   title: string | null;

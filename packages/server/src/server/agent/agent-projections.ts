@@ -27,6 +27,7 @@ export function toStoredAgentRecord(
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
   const config = buildSerializableConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
+  const runtimeInfo = sanitizeOptionalJsonValue(agent.runtimeInfo);
 
   return {
     id: agent.id,
@@ -42,6 +43,7 @@ export function toStoredAgentRecord(
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
+    runtimeInfo,
     persistence,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention
@@ -57,11 +59,14 @@ export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions
 ): AgentSnapshotPayload {
+  const runtimeInfo = sanitizeOptionalJsonValue(agent.runtimeInfo);
+
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
     model: agent.config.model ?? null,
+    runtimeInfo,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt

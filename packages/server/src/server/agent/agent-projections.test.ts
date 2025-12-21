@@ -83,11 +83,18 @@ function createManagedAgent(
       pendingPermissionsOverride ?? new Map<string, AgentPermissionRequest>(),
     pendingRun: pendingRunValue as ManagedAgent["pendingRun"],
     timeline: [],
+    runtimeInfo: {
+      provider: "claude",
+      sessionId: "session-123",
+      model: "claude-3.5-sonnet",
+      modeId: "plan",
+    },
     persistence: { ...basePersistence },
     lastUsage: undefined,
     lastError: lastErrorValue,
     historyPrimed: true,
     lastUserMessageAt: now,
+    attention: { requiresAttention: false },
   };
 
   return {
@@ -148,6 +155,12 @@ describe("toStoredAgentRecord", () => {
         resumedAt: "2025-01-05T00:00:00.000Z",
         note: "warm",
       },
+    });
+    expect(record.runtimeInfo).toEqual({
+      provider: "claude",
+      sessionId: "session-123",
+      model: "claude-3.5-sonnet",
+      modeId: "plan",
     });
     expect(record.config).toEqual({
       modeId: agent.config.modeId,
@@ -232,6 +245,8 @@ describe("toAgentPayload", () => {
       requestedAt: "2025-02-02T00:00:00.000Z",
       extra: { flag: true },
     });
+    expect(payload.runtimeInfo).toEqual(agent.runtimeInfo);
+    expect(payload.runtimeInfo).not.toBe(agent.runtimeInfo);
     expect(payload.availableModes).not.toBe(agent.availableModes);
     expect(payload.availableModes).toEqual(agent.availableModes);
     expect(payload.capabilities).not.toBe(agent.capabilities);

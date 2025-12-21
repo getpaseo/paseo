@@ -123,6 +123,14 @@ export type AgentRunResult = {
   timeline: AgentTimelineItem[];
 };
 
+export type AgentRuntimeInfo = {
+  provider: AgentProvider;
+  sessionId: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  extra?: Record<string, unknown>;
+};
+
 export type ListPersistedAgentsOptions = {
   limit?: number;
 };
@@ -162,6 +170,7 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   stream(prompt: AgentPromptInput, options?: AgentRunOptions): AsyncGenerator<AgentStreamEvent>;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
   setMode(modeId: string): Promise<void>;

@@ -17,10 +17,10 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  AgentRuntimeInfo,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
-import { resolveAgentModel } from "./model-resolver.js";
 import type { AgentRegistry } from "./agent-registry.js";
 
 export const AGENT_LIFECYCLE_STATUSES = [
@@ -80,6 +80,7 @@ type ManagedAgentBase = {
   cwd: string;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
+  runtimeInfo?: AgentRuntimeInfo;
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
@@ -479,21 +480,21 @@ export class AgentManager {
     const self = this;
 
     return (async function* streamForwarder() {
+      let finalizeError: string | undefined;
       try {
         for await (const event of iterator) {
           self.handleStreamEvent(agent, event);
           yield event;
         }
-        finalize();
       } catch (error) {
-        const message =
+        finalizeError =
           error instanceof Error ? error.message : "Agent stream failed";
-        finalize(message);
         throw error;
       } finally {
+        await self.refreshRuntimeInfo(agent);
         // Ensure we always clear the pending run and emit state when the stream is
         // cancelled early (e.g., via .return()) so the UI can exit the cancelling state.
-        finalize();
+        finalize(finalizeError);
       }
     })();
   }
@@ -712,6 +713,7 @@ export class AgentManager {
       sessionId: session.id,
       capabilities: session.capabilities,
       config,
+      runtimeInfo: undefined,
       lifecycle: "initializing",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -729,6 +731,7 @@ export class AgentManager {
     this.agents.set(agentId, managed);
     // Initialize previousStatus to track transitions
     this.previousStatuses.set(agentId, managed.lifecycle);
+    await this.refreshRuntimeInfo(managed);
     await this.persistSnapshot(managed, {
       title: config.title ?? null,
     });
@@ -773,6 +776,16 @@ export class AgentManager {
     } catch {
       agent.pendingPermissions.clear();
     }
+
+    await this.refreshRuntimeInfo(agent);
+  }
+
+  private async refreshRuntimeInfo(agent: ActiveManagedAgent): Promise<void> {
+    try {
+      agent.runtimeInfo = await agent.session.getRuntimeInfo();
+    } catch {
+      // Keep existing runtimeInfo if refresh fails.
+    }
   }
 
   private async primeHistory(agent: ActiveManagedAgent): Promise<void> {
@@ -813,6 +826,7 @@ export class AgentManager {
       case "turn_completed":
         agent.lastUsage = event.usage;
         agent.lastError = undefined;
+        void this.refreshRuntimeInfo(agent);
         break;
       case "turn_failed":
         agent.lastError = event.error;
@@ -949,15 +963,7 @@ export class AgentManager {
       normalized.cwd = resolve(normalized.cwd);
     }
 
-    const resolvedModel = await resolveAgentModel({
-      provider: normalized.provider,
-      requestedModel: normalized.model,
-      cwd: normalized.cwd,
-    });
-
-    if (resolvedModel) {
-      normalized.model = resolvedModel;
-    } else if (typeof normalized.model === "string") {
+    if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
       normalized.model = trimmed.length > 0 ? trimmed : undefined;
     }
