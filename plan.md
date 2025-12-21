@@ -23,6 +23,17 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
 - Don't break existing functionality
 - Test in the running app when possible
 
+## Autonomous Loop Requirements (CRITICAL)
+
+- **Always add follow-up tasks.** Every task type must add new tasks to keep the loop running:
+  - **Plan** tasks → add implementation tasks, test tasks, and another Plan task to re-audit later
+  - **Implement** tasks → add test task to verify the implementation
+  - **Test** tasks → if issues found, add fix tasks + re-test task; if passing, document and continue
+  - **Fix** tasks → add re-test task to verify the fix
+  - **Review** tasks → add fix tasks for issues + another review task after fixes
+- **Insert tasks at the right position.** New tasks go immediately after the current task, not at the end.
+- **Never leave the plan empty.** If you're the last task, add a checkpoint or review task.
+
 ## Testing Requirements (CRITICAL)
 
 - **Nothing is done until tested.** Every implementation task must be followed by a testing task using Playwright MCP.
@@ -95,17 +106,20 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Simpler than parsing modelUsage, same result
   - **Done (2025-12-21 13:25)**: Updated `handleSystemMessage()` in `claude-agent.ts:868-882` to capture `message.model` from the SDK init message and invalidate cached runtime info. Typecheck passes.
 
-- [ ] **Test**: Verify current Codex runtime model detection works.
+- [x] **Test**: Verify current Codex runtime model detection works.
   - Create a Codex agent with default model
   - Wait for first turn to complete
   - Verify the model displayed matches actual runtime model (e.g., `gpt-4.1`)
   - Check that it's not just echoing configured model
+  - If issues found: add fix tasks immediately after this task, then add re-test task after fixes.
+  - **Done (2025-12-21 13:35)**: PASSED. Created Codex agent with "Automatic" model config. After first turn, UI correctly displays `gpt-5.1-codex-max` (actual runtime model from rollout file), not "Automatic". Runtime model detection working correctly.
 
 - [ ] **Test**: Verify Claude agent model display behavior.
   - Create a Claude agent with default model
   - Wait for first turn to complete
   - Check what model is displayed
   - Document whether it's configured or runtime model
+  - If issues found: add fix tasks immediately after this task, then add re-test task after fixes.
 
 - [ ] **Plan**: Re-audit after investigation and initial tests complete.
   - Review test results
@@ -122,6 +136,16 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Sub-agents should be navigable from the menu.
   - Ensure back button works properly when navigating agent hierarchy.
   - Add implementation tasks based on findings.
+  - Add another **Plan** task at an appropriate position to re-audit after some progress.
+
+- [ ] **Plan**: Tool call details in bottom sheet on mobile.
+
+  - Currently tool calls in agent stream expand inline which is awkward on mobile.
+  - Tool call tap should open details in a bottom sheet instead.
+  - Review current tool call rendering in agent stream.
+  - Design bottom sheet component for tool call details.
+  - Add implementation tasks based on findings.
+  - Add test tasks to verify on mobile web via Playwright MCP.
   - Add another **Plan** task at an appropriate position to re-audit after some progress.
 
 - [ ] agent=codex **Review**: Code quality and types review.
