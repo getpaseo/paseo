@@ -122,12 +122,13 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - If issues found: add fix tasks immediately after this task, then add re-test task after fixes.
   - **Done (2025-12-21 13:50)**: FAILED. Created Claude agent with "Automatic" model config. Agent self-reported running on `claude-opus-4-1-20250805` (Opus 4.1), but UI shows **Model: Unknown** in agent info menu. The implementation to capture model from SDK init message is not working - model is not being propagated to the UI.
 
-- [ ] **Fix**: Debug and fix Claude agent model capture from SDK init message.
+- [x] **Fix**: Debug and fix Claude agent model capture from SDK init message.
   - Check server logs to see if `handleSystemMessage()` is receiving the init message with model
   - Verify `this.lastOptionsModel` is being set correctly
   - Check if `getRuntimeInfo()` is being called after stream completion
   - Ensure runtime info is being persisted and sent to client via WebSocket
   - The model should show `claude-opus-4-1-20250805` instead of "Unknown"
+  - **Done (2025-12-21 14:10)**: Found and fixed the bug. The issue was in `agent-manager.ts:refreshRuntimeInfo()` - it updated `agent.runtimeInfo` but never called `emitState(agent)` to notify clients. Fixed by adding change detection and emitting state when runtimeInfo changes. Also added debug logging to `handleSystemMessage()` to confirm model capture from SDK init message. Typecheck passes.
 
 - [ ] **Test**: Re-verify Claude agent model display after fix.
   - Create a new Claude agent with default model
@@ -140,6 +141,15 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Determine if Claude SDK exposes runtime model info
   - Add implementation tasks if improvements needed
   - Add fix tasks if tests reveal issues
+
+- [ ] **Plan**: Fix agent git diff not loading.
+
+  - Investigate why git diff is not loading in agent view.
+  - Find where git diff is fetched and rendered.
+  - Identify the root cause of the loading failure.
+  - Add implementation/fix tasks based on findings.
+  - Add test task to verify git diff loads correctly via Playwright MCP.
+  - Add another **Plan** task to re-audit after fix if needed.
 
 - [ ] **Plan**: Design and implement agent parent/child hierarchy.
 

@@ -875,6 +875,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
     // Capture actual model from SDK init message (not just the configured model)
     if (message.model) {
+      console.log(`[ClaudeAgentSession] Captured model from SDK init: ${message.model}`);
       this.lastOptionsModel = message.model;
       // Invalidate cached runtime info so it picks up the new model
       this.cachedRuntimeInfo = null;
