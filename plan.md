@@ -641,7 +641,14 @@ interface ToolCallSheetData {
     5. ✅ TypeScript typecheck passes
     **Note**: Could not test clicking tool badge in orchestrator view as `session.messages` is empty (no messages aggregated from sessions). However, fix is verified correct - `ToolCall` uses same `useToolCallSheet` hook that works in agent stream view.
 
-- [ ] agent=codex **Review**: Re-review after orchestrator tool call sheet fix.
+- [x] agent=codex **Review**: Re-review after orchestrator tool call sheet fix.
 
   - Confirm the provider placement and types.
   - Check for any remaining unwrapped `ToolCall` usages.
+  - **Done (2025-12-21 18:43)**: Reviewed `ToolCallSheetProvider` integration; `ToolCall` is only rendered under providers in agent and orchestrator views (`agent-stream-view.tsx`, `orchestrator-messages-view.tsx`). No additional unwrapped usages or type issues found.
+
+- [ ] **Test**: Populate orchestrator messages with real tool calls and verify bottom sheet.
+
+  - Trigger a real orchestrator tool call (e.g., MCP create_agent) so `session.messages` is non-empty.
+  - Tap the tool badge in `/orchestrator` and ensure the bottom sheet opens with correct details.
+  - Confirm no context errors and that args/results render correctly.
