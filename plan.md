@@ -172,11 +172,12 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Restart server and verify new model is used.
   - **Done (2025-12-21 17:45)**: Updated `@anthropic-ai/claude-agent-sdk` from 0.1.74 to 0.1.75. SDK now includes Opus 4.5 model (`claude-opus-4-5-20251101`). Typecheck passes. Server restarted in tmux session. Test task will verify the model is being used.
 
-- [ ] **Test**: Verify Claude agent uses Opus 4.5 after SDK update.
+- [x] **Test**: Verify Claude agent uses Opus 4.5 after SDK update.
 
   - Create a new Claude agent with default model.
   - Check model displays as `claude-opus-4-5-20251101` or similar.
   - Confirm upgrade worked.
+  - **Done (2025-12-21 17:50)**: PASSED. Created Claude agent with "Automatic" model config. Agent self-reported running on `claude-opus-4-5-20251101` (Opus 4.5). Agent info menu correctly displays **Model: claude-opus-4-5-20251101**. SDK update to 0.1.75 successfully upgraded Claude agents to Opus 4.5.
 
 - [x] **Plan**: Fix agent git diff not loading.
 
