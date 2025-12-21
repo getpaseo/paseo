@@ -782,7 +782,16 @@ export class AgentManager {
 
   private async refreshRuntimeInfo(agent: ActiveManagedAgent): Promise<void> {
     try {
-      agent.runtimeInfo = await agent.session.getRuntimeInfo();
+      const newInfo = await agent.session.getRuntimeInfo();
+      const changed =
+        newInfo.model !== agent.runtimeInfo?.model ||
+        newInfo.sessionId !== agent.runtimeInfo?.sessionId ||
+        newInfo.modeId !== agent.runtimeInfo?.modeId;
+      agent.runtimeInfo = newInfo;
+      // Emit state if runtimeInfo changed so clients get the updated model
+      if (changed) {
+        this.emitState(agent);
+      }
     } catch {
       // Keep existing runtimeInfo if refresh fails.
     }
