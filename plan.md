@@ -164,12 +164,13 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Add fix tasks if tests reveal issues
   - **Done (2025-12-21 15:00)**: Re-audit complete. All model info tests PASSED. Claude SDK investigation found model exposed in init message; implementation captured it in `handleSystemMessage()`. Fixed `refreshRuntimeInfo()` to emit state on changes. Both Claude (shows `claude-opus-4-1-20250805`) and Codex (shows `gpt-5.1-codex-max`) now correctly display actual runtime models. Feature complete - no additional tasks needed for model info tracking.
 
-- [ ] **Implement**: Update Claude SDK package to use Opus 4.5.
+- [x] **Implement**: Update Claude SDK package to use Opus 4.5.
 
   - Update `@anthropic-ai/claude-agent-sdk` to latest version.
   - Verify the SDK defaults to Opus 4.5 (`claude-opus-4-5-20251101`).
   - Run typecheck after update.
   - Restart server and verify new model is used.
+  - **Done (2025-12-21 17:45)**: Updated `@anthropic-ai/claude-agent-sdk` from 0.1.74 to 0.1.75. SDK now includes Opus 4.5 model (`claude-opus-4-5-20251101`). Typecheck passes. Server restarted in tmux session. Test task will verify the model is being used.
 
 - [ ] **Test**: Verify Claude agent uses Opus 4.5 after SDK update.
 
