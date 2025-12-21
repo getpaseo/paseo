@@ -1,0 +1,113 @@
+# Plan
+
+## Context
+
+Voice-controlled terminal assistant using OpenAI's Realtime API. Monorepo with Express backend and Expo cross-platform app.
+
+**Focus**: Agent model info tracking. Two distinct concepts:
+1. **Configured model**: What the user requested (default or specific model)
+2. **Runtime model**: What the agent is actually using (from the agent process itself)
+
+Hard requirement: We must get the actual runtime model, not just echo back the requested config.
+
+## Environment
+
+- **Expo app**: Running in tmux session `moboudra:mobile` - check logs with `tmux capture-pane -t moboudra:mobile -p`
+- **Server**: Running in tmux session `moboudra:server` - check logs with `tmux capture-pane -t moboudra:server -p`
+- **Web testing**: Use Playwright MCP at `http://localhost:8081`
+
+## Guiding Principles
+
+- Keep changes minimal and focused
+- Run typecheck after every change
+- Don't break existing functionality
+- Test in the running app when possible
+
+## Testing Requirements (CRITICAL)
+
+- **Nothing is done until tested.** Every implementation task must be followed by a testing task using Playwright MCP.
+- **Test tasks verify specific behaviors.** Not "test the feature" but "verify X does Y when Z".
+- **Test failures spawn fix tasks.** If a test finds issues, add fix tasks immediately after.
+- **Fix tasks get their own test tasks.** After a fix task, add a re-test task to verify the fix.
+- **Loop until it works.** The cycle is: implement → test → fix → re-test → ... until verified working.
+- **Testers own the plan.** Test tasks can and should add new tasks (fixes, re-tests) to keep the loop going.
+- **Never claim done without verification.** If you can't test it with Playwright MCP, you can't mark it complete.
+
+## Tasks
+
+- [x] **Plan**: Audit current model info implementation and expand this plan.
+
+  - Find where model config is set when creating agents.
+  - Find where runtime model info is fetched/displayed.
+  - Document how each provider (Claude SDK, Codex SDK) exposes actual model info.
+  - Check if we're currently showing requested model vs actual runtime model.
+  - Add implementation tasks based on findings.
+  - Add test tasks as needed.
+  - Add another **Plan** task at an appropriate position to re-audit after some progress.
+  - **Done (2025-12-21 12:45)**: Completed full audit. See findings below.
+
+### Audit Findings: Model Info Implementation
+
+**Current Architecture (Working Well)**:
+- Model config is set via `AgentSessionConfig.model` in `agent-sdk-types.ts:148-164`
+- Runtime info uses `AgentRuntimeInfo` type with `model` field in `agent-sdk-types.ts:126-132`
+- UI correctly uses `extractAgentModel()` which reads `runtimeInfo.model` (not config)
+- Displayed in agent screen header at line 555 of `[agentId].tsx`
+
+**Claude SDK**:
+- `claude-agent.ts:423-435` - `getRuntimeInfo()` returns `this.lastOptionsModel`
+- Model comes from Claude SDK options passed during agent creation
+- Currently echoes back the configured model (not truly "runtime detected")
+
+**Codex SDK**:
+- `codex-agent.ts:407-426` - `getRuntimeInfo()` reads actual runtime model
+- `codex-agent.ts:1229-1261` - Parses rollout file for `turn_context.payload.model`
+- This IS the actual runtime model (correctly implemented)
+- Falls back to config model if rollout not available yet
+
+**Gap Identified**:
+- Claude agents: Model info is the configured model, not detected from Claude SDK
+- Codex agents: Model info IS detected from runtime (via rollout file) ✓
+- Claude SDK may expose actual model in response metadata - needs investigation
+
+**Data Flow**:
+1. Config: `config.model` → agent creation
+2. Runtime: `agent.session.getRuntimeInfo()` called after stream/turn completion
+3. Storage: `runtimeInfo` persisted in agent registry
+4. Client: Receives via WebSocket, displayed via `extractAgentModel()`
+
+---
+
+- [ ] **Investigate**: Check if Claude SDK exposes actual model in response/stream metadata.
+  - Look at `@anthropic-ai/claude-agent-sdk` types for model info in responses
+  - Check if `query()` returns model information
+  - Document findings for implementation task
+
+- [ ] **Test**: Verify current Codex runtime model detection works.
+  - Create a Codex agent with default model
+  - Wait for first turn to complete
+  - Verify the model displayed matches actual runtime model (e.g., `gpt-4.1`)
+  - Check that it's not just echoing configured model
+
+- [ ] **Test**: Verify Claude agent model display behavior.
+  - Create a Claude agent with default model
+  - Wait for first turn to complete
+  - Check what model is displayed
+  - Document whether it's configured or runtime model
+
+- [ ] **Plan**: Re-audit after investigation and initial tests complete.
+  - Review test results
+  - Determine if Claude SDK exposes runtime model info
+  - Add implementation tasks if improvements needed
+  - Add fix tasks if tests reveal issues
+
+- [ ] **Plan**: Design and implement agent parent/child hierarchy.
+
+  - Add `parentId` field to agents.
+  - Agents created via MCP should auto-set parentId to the calling agent.
+  - Homepage should only show top-level agents (no parentId).
+  - Agent screen three-dot menu should show sub-agents of that agent.
+  - Sub-agents should be navigable from the menu.
+  - Ensure back button works properly when navigating agent hierarchy.
+  - Add implementation tasks based on findings.
+  - Add another **Plan** task at an appropriate position to re-audit after some progress.
