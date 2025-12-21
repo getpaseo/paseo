@@ -611,7 +611,7 @@ interface ToolCallSheetData {
 
 **Conclusion**: Tool call sheet implementation is complete and working. No blocking issues found. Desktop-specific UX polish is optional enhancement.
 
-- [ ] agent=codex **Review**: Code quality and types review.
+- [x] agent=codex **Review**: Code quality and types review.
 
   - Review all changed files for code quality issues.
   - Check TypeScript types are correct and complete.
@@ -619,3 +619,21 @@ interface ToolCallSheetData {
   - Check for proper error handling.
   - Add fix tasks for any issues found.
   - Add another `agent=codex **Review**` task after fix tasks to verify fixes.
+  - **Done (2025-12-21 18:33)**: Found a crash path: `ToolCall` now requires `ToolCallSheetProvider`, but `orchestrator-messages-view.tsx` renders `ToolCall` without the provider, so orchestrator tool calls will throw `useToolCallSheet must be used within a ToolCallSheetProvider`. Added fix/test/re-review tasks.
+
+- [ ] **Fix**: Wrap orchestrator tool calls with ToolCallSheetProvider.
+
+  - `ToolCall` throws when used without `ToolCallSheetProvider`; orchestrator view currently renders it bare (`orchestrator-messages-view.tsx:18-106`).
+  - Wrap the orchestrator messages view (or a parent) with `ToolCallSheetProvider` so tool call badges open the bottom sheet instead of crashing.
+  - Keep provider scope narrow to avoid unintended rerenders.
+
+- [ ] **Test**: Verify orchestrator tool call sheet works.
+
+  - Trigger a tool call in the orchestrator view (e.g., MCP `create_agent`).
+  - Tap the tool badge and confirm the bottom sheet opens with details.
+  - Ensure no `useToolCallSheet` context error is thrown.
+
+- [ ] agent=codex **Review**: Re-review after orchestrator tool call sheet fix.
+
+  - Confirm the provider placement and types.
+  - Check for any remaining unwrapped `ToolCall` usages.
