@@ -334,7 +334,7 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 22:00)**: Added Sub-Agents section to agent info menu in `[agentId].tsx`. Added `childAgents` selector to query agents with matching `parentAgentId`. Added `handleNavigateToChildAgent` callback for navigation. UI shows "No sub-agents" when empty, or clickable list of child agents with chevron icons. Typecheck passes.
 
-- [ ] **Test**: Verify parent/child hierarchy end-to-end.
+- [x] **Test**: Verify parent/child hierarchy end-to-end.
 
   - Create a root agent via the UI
   - Use MCP to spawn a child agent from within the root agent
@@ -343,6 +343,24 @@ Files requiring modification:
   - Click child agent in menu, verify navigation works
   - Verify back button returns to parent agent screen
   - If issues found: add fix tasks + re-test task.
+  - **Done (2025-12-21 22:30)**: PARTIAL PASS with issues found. Fixed infinite loop bug (added `useShallow` to `childAgents` selector). Agent screen loads correctly. Sub-Agents menu section shows "No sub-agents". Parent agent successfully created child via MCP `create_agent`. However, child appears on homepage because `parentAgentId` not set - MCP server doesn't auto-inject calling agent's ID. Fix task added.
+
+- [ ] **Fix**: Auto-inject parentAgentId in MCP create_agent tool.
+
+  - The MCP server needs to know which agent is calling it
+  - Explore passing agent ID context when MCP transport is created
+  - Or: Have each agent's MCP session be scoped to that agent
+  - Update `create_agent` handler to automatically set `parentAgentId`
+  - Run typecheck after changes.
+
+- [ ] **Test**: Re-verify parent/child hierarchy after MCP fix.
+
+  - Create a root agent via the UI
+  - Use MCP to spawn a child agent from within the root agent
+  - Verify child agent has `parentAgentId` set automatically
+  - Verify homepage only shows the root agent (not the child)
+  - Verify root agent's menu shows the child in "Sub-Agents" section
+  - Click child agent in menu, verify navigation works
 
 - [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
 

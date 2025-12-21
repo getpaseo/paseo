@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useCallback, useState } from "react";
+import { useShallow } from "zustand/shallow";
 import {
   View,
   Text,
@@ -154,18 +155,21 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   );
 
   // Select child agents (agents where parentAgentId === current agentId)
-  const childAgents = useSessionStore((state) => {
-    if (!resolvedAgentId) return [];
-    const agents = state.sessions[serverId]?.agents;
-    if (!agents) return [];
-    const children: Array<{ id: string; title: string | null }> = [];
-    for (const [id, a] of agents) {
-      if (a.parentAgentId === resolvedAgentId) {
-        children.push({ id, title: a.title });
+  // Use useShallow to avoid creating new array references on every render
+  const childAgents = useSessionStore(
+    useShallow((state) => {
+      if (!resolvedAgentId) return [];
+      const agents = state.sessions[serverId]?.agents;
+      if (!agents) return [];
+      const children: Array<{ id: string; title: string | null }> = [];
+      for (const [id, a] of agents) {
+        if (a.parentAgentId === resolvedAgentId) {
+          children.push({ id, title: a.title });
+        }
       }
-    }
-    return children;
-  });
+      return children;
+    })
+  );
 
   // Select only the specific stream state - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
