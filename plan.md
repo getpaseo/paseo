@@ -222,13 +222,14 @@ Remove `requestGitDiff` from useEffect dependencies in `git-diff.tsx`. Use a ref
 
 ---
 
-- [ ] **Fix**: Remove requestGitDiff from useEffect dependencies in git-diff.tsx.
+- [x] **Fix**: Remove requestGitDiff from useEffect dependencies in git-diff.tsx.
 
   - The `requestGitDiff` function reference changes on every store update
   - Remove it from the dependency array to prevent infinite loop
   - Use a ref to track if we've already requested the diff
   - Keep `agentId` as the only dependency (or use empty deps with agentId check)
   - Run typecheck after fix.
+  - **Done (2025-12-21 18:10)**: Added `hasRequestedRef` to track if a request was already made for the current agentId. The ref prevents duplicate requests when `requestGitDiff` reference changes due to store updates. Typecheck passes.
 
 - [ ] **Test**: Verify git diff loads correctly after fix.
 

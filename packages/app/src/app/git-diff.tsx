@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View, Text, ScrollView, ActivityIndicator } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
@@ -97,6 +97,7 @@ function GitDiffContent({
   serverLabel: string;
 }) {
   const [isLoading, setIsLoading] = useState(true);
+  const hasRequestedRef = useRef<string | null>(null);
 
   const agent = useSessionStore((state) =>
     agentId && serverId ? state.sessions[serverId]?.agents?.get(agentId) : undefined
@@ -115,6 +116,12 @@ function GitDiffContent({
       setIsLoading(false);
       return;
     }
+
+    // Prevent duplicate requests for the same agentId
+    if (hasRequestedRef.current === agentId) {
+      return;
+    }
+    hasRequestedRef.current = agentId;
 
     setIsLoading(true);
     requestGitDiff(agentId);
