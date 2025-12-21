@@ -300,12 +300,13 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 19:45)**: Added `parentAgentId?: string` to `ManagedAgentBase` in `agent-manager.ts:97`, `AgentSessionConfig` in `agent-sdk-types.ts:164`, and `AgentSnapshotPayloadSchema` in `messages.ts:248`. Updated `toAgentPayload()` in `agent-projections.ts:83` to include `parentAgentId` in the payload. Typecheck passes.
 
-- [ ] **Implement**: Add parentAgentId to MCP create_agent tool.
+- [x] **Implement**: Add parentAgentId to MCP create_agent tool.
 
   - Add `parentAgentId` to tool input schema in `mcp-server.ts:183`
   - Pass `parentAgentId` to `agentManager.createAgent()` call in `mcp-server.ts:263`
   - The MCP server has access to the calling agent context - use that ID
   - Run typecheck after changes.
+  - **Done (2025-12-21 21:15)**: Added `parentAgentId` optional field to `create_agent` tool input schema in `mcp-server.ts:223-228`. Updated handler to accept `parentAgentId` parameter and pass it to `agentManager.createAgent()` in `mcp-server.ts:275`. Also updated `registerSession()` in `agent-manager.ts:730` to copy `parentAgentId` from config to the managed agent. Typecheck passes.
 
 - [ ] **Implement**: Add parentAgentId to client types and session store.
 

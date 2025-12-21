@@ -220,6 +220,12 @@ export async function createAgentMcpServer(
           .describe(
             "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
           ),
+        parentAgentId: z
+          .string()
+          .optional()
+          .describe(
+            "Optional parent agent ID. When set, this agent is a child of the specified parent agent."
+          ),
       },
       outputSchema: {
         agentId: z.string(),
@@ -246,6 +252,7 @@ export async function createAgentMcpServer(
       worktreeName,
       background = false,
       title,
+      parentAgentId,
     }) => {
       let resolvedCwd = expandPath(cwd);
 
@@ -265,6 +272,7 @@ export async function createAgentMcpServer(
         cwd: resolvedCwd,
         modeId: initialMode,
         title: normalizedTitle ?? undefined,
+        parentAgentId,
       });
 
       if (initialPrompt) {

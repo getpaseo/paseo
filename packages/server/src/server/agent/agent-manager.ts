@@ -727,6 +727,7 @@ export class AgentManager {
       historyPrimed: false,
       lastUserMessageAt: null,
       attention: { requiresAttention: false },
+      parentAgentId: config.parentAgentId,
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
