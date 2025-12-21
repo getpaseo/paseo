@@ -89,10 +89,11 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
     - Fix: Update `handleSystemMessage()` to capture `message.model` as `lastOptionsModel`
     - Alternatively: Extract model name from `modelUsage` keys in `SDKResultMessage`
 
-- [ ] **Implement**: Capture actual model from Claude SDK init message.
+- [x] **Implement**: Capture actual model from Claude SDK init message.
   - In `handleSystemMessage()`, set `this.lastOptionsModel = message.model`
   - This gives us the actual model the SDK selected (not just our config)
   - Simpler than parsing modelUsage, same result
+  - **Done (2025-12-21 13:25)**: Updated `handleSystemMessage()` in `claude-agent.ts:868-882` to capture `message.model` from the SDK init message and invalidate cached runtime info. Typecheck passes.
 
 - [ ] **Test**: Verify current Codex runtime model detection works.
   - Create a Codex agent with default model

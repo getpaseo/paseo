@@ -873,6 +873,12 @@ class ClaudeAgentSession implements AgentSession {
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
     this.persistence = null;
+    // Capture actual model from SDK init message (not just the configured model)
+    if (message.model) {
+      this.lastOptionsModel = message.model;
+      // Invalidate cached runtime info so it picks up the new model
+      this.cachedRuntimeInfo = null;
+    }
   }
 
   private convertUsage(message: SDKResultMessage): AgentUsage | undefined {
