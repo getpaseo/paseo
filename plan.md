@@ -546,12 +546,13 @@ interface ToolCallSheetData {
   - Run typecheck after changes.
   - **Done (2025-12-21 19:25)**: Updated `ToolCall` in `message.tsx` to use `useToolCallSheet` hook. On tap, calls `openToolCall()` with tool data instead of expanding inline. Removed ~300 lines of unused code including `toolCallStylesheet`, `formatFullValue`, `buildLineDiffFromStrings`, `isStructuredToolResult`, and inline rendering logic (all now in `tool-call-sheet.tsx`). Cleaned up imports (`ScrollView`, `DiffViewer`, `DiffLine` no longer needed). Typecheck passes.
 
-- [ ] **Implement**: Integrate ToolCallSheetProvider in agent stream view.
+- [x] **Implement**: Integrate ToolCallSheetProvider in agent stream view.
 
   - Wrap `AgentStreamView` content with `ToolCallSheetProvider`
   - Or add at the agent screen level if needed for proper context scope
   - Ensure sheet renders above the stream content
   - Run typecheck after changes.
+  - **Done (2025-12-21 20:48)**: Added `ToolCallSheetProvider` import and wrapped the entire return content of `AgentStreamView` with it. The provider wraps the `View` container which includes the `FlatList` and scroll-to-bottom button, ensuring the bottom sheet renders above the stream content. Typecheck passes.
 
 - [ ] **Test**: Verify tool call bottom sheet works on mobile web.
 
