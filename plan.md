@@ -150,11 +150,12 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Should show actual runtime model like `claude-opus-4-1-20250805`
   - **Done (2025-12-21 14:55)**: PASSED. Created Claude agent with "Automatic" model config. Agent responded with "Hello! I'm Claude Code running on the Opus 4.1 model (claude-opus-4-1-20250805)." The agent info menu now correctly displays **Model: claude-opus-4-1-20250805** instead of "Unknown". The fix is working - runtime model is now captured from SDK init message and propagated to the UI.
 
-- [ ] **Plan**: Re-audit after investigation and initial tests complete.
+- [x] **Plan**: Re-audit after investigation and initial tests complete.
   - Review test results
   - Determine if Claude SDK exposes runtime model info
   - Add implementation tasks if improvements needed
   - Add fix tasks if tests reveal issues
+  - **Done (2025-12-21 15:00)**: Re-audit complete. All model info tests PASSED. Claude SDK investigation found model exposed in init message; implementation captured it in `handleSystemMessage()`. Fixed `refreshRuntimeInfo()` to emit state on changes. Both Claude (shows `claude-opus-4-1-20250805`) and Codex (shows `gpt-5.1-codex-max`) now correctly display actual runtime models. Feature complete - no additional tasks needed for model info tracking.
 
 - [ ] **Plan**: Fix agent git diff not loading.
 
