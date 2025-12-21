@@ -27,7 +27,7 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
 
 - **Always add follow-up tasks.** Every task type must add new tasks to keep the loop running:
   - **Plan** tasks → add implementation tasks, test tasks, and another Plan task to re-audit later
-  - **Implement** tasks → add test task to verify the implementation
+  - **Implement** tasks → just implement, test task should already be in the plan
   - **Test** tasks → if issues found, add fix tasks + re-test task; if passing, document and continue
   - **Fix** tasks → add re-test task to verify the fix
   - **Review** tasks → add fix tasks for issues + another review task after fixes
@@ -114,12 +114,26 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - If issues found: add fix tasks immediately after this task, then add re-test task after fixes.
   - **Done (2025-12-21 13:35)**: PASSED. Created Codex agent with "Automatic" model config. After first turn, UI correctly displays `gpt-5.1-codex-max` (actual runtime model from rollout file), not "Automatic". Runtime model detection working correctly.
 
-- [ ] **Test**: Verify Claude agent model display behavior.
+- [x] **Test**: Verify Claude agent model display behavior.
   - Create a Claude agent with default model
   - Wait for first turn to complete
   - Check what model is displayed
   - Document whether it's configured or runtime model
   - If issues found: add fix tasks immediately after this task, then add re-test task after fixes.
+  - **Done (2025-12-21 13:50)**: FAILED. Created Claude agent with "Automatic" model config. Agent self-reported running on `claude-opus-4-1-20250805` (Opus 4.1), but UI shows **Model: Unknown** in agent info menu. The implementation to capture model from SDK init message is not working - model is not being propagated to the UI.
+
+- [ ] **Fix**: Debug and fix Claude agent model capture from SDK init message.
+  - Check server logs to see if `handleSystemMessage()` is receiving the init message with model
+  - Verify `this.lastOptionsModel` is being set correctly
+  - Check if `getRuntimeInfo()` is being called after stream completion
+  - Ensure runtime info is being persisted and sent to client via WebSocket
+  - The model should show `claude-opus-4-1-20250805` instead of "Unknown"
+
+- [ ] **Test**: Re-verify Claude agent model display after fix.
+  - Create a new Claude agent with default model
+  - Wait for first turn to complete
+  - Verify model displays correctly (not "Unknown")
+  - Should show actual runtime model like `claude-opus-4-1-20250805`
 
 - [ ] **Plan**: Re-audit after investigation and initial tests complete.
   - Review test results
