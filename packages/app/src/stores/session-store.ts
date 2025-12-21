@@ -106,6 +106,7 @@ export interface Agent {
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
+  parentAgentId?: string;
 }
 
 export interface Command {
@@ -831,6 +832,7 @@ export const useSessionStore = create<SessionStore>()(
           requiresAttention: agent.requiresAttention ?? false,
           attentionReason: agent.attentionReason ?? null,
           attentionTimestamp: agent.attentionTimestamp ?? null,
+          parentAgentId: agent.parentAgentId,
         });
       }
       return entries;

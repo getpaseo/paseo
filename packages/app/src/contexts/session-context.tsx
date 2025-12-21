@@ -139,6 +139,7 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
+    parentAgentId: snapshot.parentAgentId,
   };
 }
 
