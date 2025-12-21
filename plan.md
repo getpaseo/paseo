@@ -308,19 +308,21 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 21:15)**: Added `parentAgentId` optional field to `create_agent` tool input schema in `mcp-server.ts:223-228`. Updated handler to accept `parentAgentId` parameter and pass it to `agentManager.createAgent()` in `mcp-server.ts:275`. Also updated `registerSession()` in `agent-manager.ts:730` to copy `parentAgentId` from config to the managed agent. Typecheck passes.
 
-- [ ] **Implement**: Add parentAgentId to client types and session store.
+- [x] **Implement**: Add parentAgentId to client types and session store.
 
   - Add `parentAgentId?: string` to `Agent` interface in `session-store.ts:85`
   - Add `parentAgentId?: string` to `AgentDirectoryEntry` in `agent-directory.ts:4`
   - Update message schema if needed in `messages.ts:351`
   - Run typecheck after changes.
+  - **Done (2025-12-21 21:30)**: Added `parentAgentId?: string` to `Agent` interface in `session-store.ts:109`, `AgentDirectoryEntry` in `agent-directory.ts:15`, and updated `getAgentDirectory()` in `session-store.ts:835` to include it. Also updated `normalizeAgentSnapshot()` in `session-context.tsx:142` to map from server payload. Server's `AgentSnapshotPayloadSchema` already had `parentAgentId`. Typecheck passes.
 
-- [ ] **Implement**: Filter homepage to show only root agents.
+- [x] **Implement**: Filter homepage to show only root agents.
 
   - In `use-aggregated-agents.ts`, filter agents: `agents.filter(a => !a.parentAgentId)`
   - Or filter in `agent-list.tsx` before rendering
   - Root agents are those with `parentAgentId === undefined` or `null`
   - Run typecheck after changes.
+  - **Done (2025-12-21 21:45)**: Added filter in `use-aggregated-agents.ts:66-68` to skip agents with `parentAgentId` when building the aggregated agents list. Also included `parentAgentId` in the aggregated agent object. Typecheck passes.
 
 - [ ] **Implement**: Add sub-agents section to agent info menu.
 
