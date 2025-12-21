@@ -537,13 +537,14 @@ interface ToolCallSheetData {
   - Run typecheck after changes.
   - **Done (2025-12-21 19:15)**: Created `tool-call-sheet.tsx` with `ToolCallSheetProvider` and `useToolCallSheet` hook. Component uses `@gorhom/bottom-sheet` BottomSheetModal with snap points ["50%", "90%"]. Includes header with tool icon, name, and status badge. Content reuses same rendering logic from `ToolCall.renderDetails()` for commands, file edits, file reads, and generic results. Typecheck passes.
 
-- [ ] **Implement**: Update ToolCall component to open bottom sheet on tap.
+- [x] **Implement**: Update ToolCall component to open bottom sheet on tap.
 
   - Import `useToolCallSheet` from new context
   - Replace inline expansion with `openToolCall(data)` on tap
   - Keep badge display unchanged (icon, label, loading state)
   - Remove `isExpanded` state and `renderDetails` prop from ExpandableBadge usage
   - Run typecheck after changes.
+  - **Done (2025-12-21 19:25)**: Updated `ToolCall` in `message.tsx` to use `useToolCallSheet` hook. On tap, calls `openToolCall()` with tool data instead of expanding inline. Removed ~300 lines of unused code including `toolCallStylesheet`, `formatFullValue`, `buildLineDiffFromStrings`, `isStructuredToolResult`, and inline rendering logic (all now in `tool-call-sheet.tsx`). Cleaned up imports (`ScrollView`, `DiffViewer`, `DiffLine` no longer needed). Typecheck passes.
 
 - [ ] **Implement**: Integrate ToolCallSheetProvider in agent stream view.
 
