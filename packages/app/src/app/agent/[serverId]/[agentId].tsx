@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MoreVertical, GitBranch, Folder, RotateCcw, PlusCircle, Download } from "lucide-react-native";
+import { MoreVertical, GitBranch, Folder, RotateCcw, PlusCircle, Download, Users, ChevronRight } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -152,6 +152,20 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   const agent = useSessionStore((state) =>
     resolvedAgentId ? state.sessions[serverId]?.agents?.get(resolvedAgentId) : undefined
   );
+
+  // Select child agents (agents where parentAgentId === current agentId)
+  const childAgents = useSessionStore((state) => {
+    if (!resolvedAgentId) return [];
+    const agents = state.sessions[serverId]?.agents;
+    if (!agents) return [];
+    const children: Array<{ id: string; title: string | null }> = [];
+    for (const [id, a] of agents) {
+      if (a.parentAgentId === resolvedAgentId) {
+        children.push({ id, title: a.title });
+      }
+    }
+    return children;
+  });
 
   // Select only the specific stream state - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
@@ -439,6 +453,20 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     setShowImportAgentModal(false);
   }, []);
 
+  const handleNavigateToChildAgent = useCallback(
+    (childAgentId: string) => {
+      handleCloseMenu();
+      router.push({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: {
+          serverId: serverId,
+          agentId: childAgentId,
+        },
+      });
+    },
+    [handleCloseMenu, router, serverId]
+  );
+
   const createAgentModal = (
     <CreateAgentModal
       isVisible={showCreateAgentModal}
@@ -581,6 +609,36 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                     )}
                   </View>
                 </View>
+              </View>
+
+              <View style={styles.menuDivider} />
+
+              {/* Sub-Agents Section */}
+              <View style={styles.menuSubAgentsSection}>
+                <View style={styles.menuSubAgentsHeader}>
+                  <Users size={16} color={theme.colors.mutedForeground} />
+                  <Text style={styles.menuSubAgentsLabel}>Sub-Agents</Text>
+                </View>
+                {childAgents.length === 0 ? (
+                  <Text style={styles.menuSubAgentsEmpty}>No sub-agents</Text>
+                ) : (
+                  childAgents.map((child) => (
+                    <Pressable
+                      key={child.id}
+                      onPress={() => handleNavigateToChildAgent(child.id)}
+                      style={styles.menuSubAgentItem}
+                    >
+                      <Text
+                        style={styles.menuSubAgentText}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {child.title || "Untitled Agent"}
+                      </Text>
+                      <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                    </Pressable>
+                  ))
+                )}
               </View>
 
               <View style={styles.menuDivider} />
@@ -829,5 +887,41 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
+  },
+  menuSubAgentsSection: {
+    gap: theme.spacing[1],
+  },
+  menuSubAgentsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[1],
+    paddingBottom: theme.spacing[1],
+  },
+  menuSubAgentsLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.mutedForeground,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  menuSubAgentsEmpty: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.mutedForeground,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  menuSubAgentItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+  },
+  menuSubAgentText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    flex: 1,
+    marginRight: theme.spacing[2],
   },
 }));
