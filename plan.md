@@ -137,16 +137,18 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Should show actual runtime model like `claude-opus-4-1-20250805`
   - **Done (2025-12-21 14:30)**: FAILED. Model still shows "Unknown". Root cause: The server wasn't restarted after the fix was implemented. The dev server uses tsx with explicit restart messaging - it doesn't auto-reload on file changes. Verified by checking that the debug log `[ClaudeAgentSession] Captured model from SDK init` doesn't appear in server logs (and isn't in the compiled dist either). The fix code is correct in source but the server is running stale code.
 
-- [ ] **Fix**: Restart server to apply model capture fix.
+- [x] **Fix**: Restart server to apply model capture fix.
   - The server needs to be restarted to pick up the changes to claude-agent.ts and agent-manager.ts
   - After restart, the SDK init message model capture and emitState fix should work
   - Verify the debug log appears in server logs when creating a new Claude agent
+  - **Done (2025-12-21 14:45)**: Server successfully restarted in tmux session `moboudra:server`. Sent Ctrl-C to stop the running server, then ran `npm run dev` to restart. Server is now running with the updated code that includes the model capture from SDK init message and the emitState fix for runtimeInfo changes. Ready for testing.
 
-- [ ] **Test**: Re-test Claude model display after server restart.
+- [x] **Test**: Re-test Claude model display after server restart.
   - Create a new Claude agent with default model
   - Check server logs for `[ClaudeAgentSession] Captured model from SDK init`
   - Verify model displays correctly in agent info menu (not "Unknown")
   - Should show actual runtime model like `claude-opus-4-1-20250805`
+  - **Done (2025-12-21 14:55)**: PASSED. Created Claude agent with "Automatic" model config. Agent responded with "Hello! I'm Claude Code running on the Opus 4.1 model (claude-opus-4-1-20250805)." The agent info menu now correctly displays **Model: claude-opus-4-1-20250805** instead of "Unknown". The fix is working - runtime model is now captured from SDK init message and propagated to the UI.
 
 - [ ] **Plan**: Re-audit after investigation and initial tests complete.
   - Review test results
