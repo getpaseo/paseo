@@ -526,7 +526,7 @@ interface ToolCallSheetData {
 
 ---
 
-- [ ] **Implement**: Create ToolCallSheet component with bottom sheet and context.
+- [x] **Implement**: Create ToolCallSheet component with bottom sheet and context.
 
   - Create `tool-call-sheet.tsx` in `packages/app/src/components/`
   - Implement `ToolCallSheetContext` with `openToolCall()` and `closeToolCall()`
@@ -535,6 +535,7 @@ interface ToolCallSheetData {
   - Add header with tool name, kind icon, status
   - Snap points: ["50%", "90%"]
   - Run typecheck after changes.
+  - **Done (2025-12-21 19:15)**: Created `tool-call-sheet.tsx` with `ToolCallSheetProvider` and `useToolCallSheet` hook. Component uses `@gorhom/bottom-sheet` BottomSheetModal with snap points ["50%", "90%"]. Includes header with tool icon, name, and status badge. Content reuses same rendering logic from `ToolCall.renderDetails()` for commands, file edits, file reads, and generic results. Typecheck passes.
 
 - [ ] **Implement**: Update ToolCall component to open bottom sheet on tap.
 
