@@ -443,7 +443,7 @@ Files requiring modification:
 
 **Conclusion:** Core hierarchy feature is working for new agents. Legacy data has inconsistencies but doesn't break the app. No blocking issues found.
 
-- [ ] **Plan**: Tool call details in bottom sheet on mobile.
+- [x] **Plan**: Tool call details in bottom sheet on mobile.
 
   - Currently tool calls in agent stream expand inline which is awkward on mobile.
   - Tool call tap should open details in a bottom sheet instead.
@@ -452,6 +452,122 @@ Files requiring modification:
   - Add implementation tasks based on findings.
   - Add test tasks to verify on mobile web via Playwright MCP.
   - Add another **Plan** task at an appropriate position to re-audit after some progress.
+  - **Done (2025-12-21 19:00)**: Planning complete. See design below.
+
+### Tool Call Bottom Sheet Design
+
+**Overview**: Replace inline tool call expansion with a bottom sheet on mobile for better UX.
+
+**Current Implementation**:
+- `ToolCall` component in `message.tsx:1282-1670` uses `ExpandableBadge`
+- `ExpandableBadge` expands content inline below the badge when tapped
+- Content includes Arguments, Results, Errors, DiffViewer for edits, command output
+- `renderDetails()` callback generates the expanded content
+
+**Existing Infrastructure**:
+- `@gorhom/bottom-sheet` v5.2.6 already installed
+- `BottomSheetModalProvider` already configured in `_layout.tsx:106`
+- Can use `useBottomSheetModal()` hook to trigger sheets
+- `ArtifactDrawer` in `artifact-drawer.tsx` uses `Modal` with `presentationStyle="pageSheet"` - similar pattern
+
+**Design Decision**: Use `@gorhom/bottom-sheet` BottomSheetModal
+- Provides gesture support (drag to dismiss)
+- Snap points for different content heights
+- Already integrated in app
+- Better UX than React Native Modal for this use case
+
+**Architecture**:
+1. Create `ToolCallSheet` component with:
+   - Reusable bottom sheet for any tool call data
+   - Header with tool name, kind icon, status indicator
+   - Scrollable content area (reuse `renderDetails` logic)
+   - Close button/drag handle
+   - Snap points: ["50%", "90%"] for flexibility
+
+2. Create context `ToolCallSheetContext` to manage sheet state:
+   - `openToolCall(data: ToolCallProps)` - opens sheet with tool call data
+   - `closeToolCall()` - closes sheet
+   - Prevents prop drilling through component tree
+
+3. Update `ToolCall` component:
+   - On tap, call `openToolCall()` instead of expanding inline
+   - Keep badge display unchanged
+   - Remove inline expansion logic
+
+4. Integrate at `AgentStreamView` level:
+   - Wrap stream with `ToolCallSheetProvider`
+   - Or integrate at agent screen level
+
+**Files to Create/Modify**:
+1. **NEW** `packages/app/src/components/tool-call-sheet.tsx` - Bottom sheet component + context
+2. **MODIFY** `packages/app/src/components/message.tsx` - Update ToolCall to use sheet
+3. **MODIFY** `packages/app/src/components/agent-stream-view.tsx` - Add provider wrapper
+
+**Snap Point Strategy**:
+- Initial: "50%" - shows header and first section
+- Expanded: "90%" - shows full content
+- User can drag between states
+- Dismiss by dragging down
+
+**Props Interface**:
+```typescript
+interface ToolCallSheetData {
+  toolName: string;
+  kind?: string;
+  status?: "executing" | "completed" | "failed";
+  args?: unknown;
+  result?: unknown;
+  error?: unknown;
+  parsedEditEntries?: EditEntry[];
+  parsedReadEntries?: ReadEntry[];
+  parsedCommandDetails?: CommandDetails | null;
+}
+```
+
+---
+
+- [ ] **Implement**: Create ToolCallSheet component with bottom sheet and context.
+
+  - Create `tool-call-sheet.tsx` in `packages/app/src/components/`
+  - Implement `ToolCallSheetContext` with `openToolCall()` and `closeToolCall()`
+  - Create `ToolCallSheet` component using `@gorhom/bottom-sheet`
+  - Reuse rendering logic from `ToolCall.renderDetails()`
+  - Add header with tool name, kind icon, status
+  - Snap points: ["50%", "90%"]
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Update ToolCall component to open bottom sheet on tap.
+
+  - Import `useToolCallSheet` from new context
+  - Replace inline expansion with `openToolCall(data)` on tap
+  - Keep badge display unchanged (icon, label, loading state)
+  - Remove `isExpanded` state and `renderDetails` prop from ExpandableBadge usage
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Integrate ToolCallSheetProvider in agent stream view.
+
+  - Wrap `AgentStreamView` content with `ToolCallSheetProvider`
+  - Or add at the agent screen level if needed for proper context scope
+  - Ensure sheet renders above the stream content
+  - Run typecheck after changes.
+
+- [ ] **Test**: Verify tool call bottom sheet works on mobile web.
+
+  - Use Playwright MCP to navigate to agent screen
+  - Wait for tool calls to appear in stream
+  - Tap a tool call badge
+  - Verify bottom sheet opens (not inline expansion)
+  - Verify content displays correctly (args, result, diffs)
+  - Verify drag-to-dismiss works
+  - Verify different tool call types render correctly
+  - If issues found: add fix tasks + re-test task.
+
+- [ ] **Plan**: Re-audit tool call sheet after implementation.
+
+  - Review test results
+  - Check for edge cases (empty content, very long content, errors)
+  - Consider desktop behavior (keep inline or also use sheet?)
+  - Add polish tasks if needed
 
 - [ ] agent=codex **Review**: Code quality and types review.
 
