@@ -41,6 +41,7 @@ import {
   extractEditEntries,
   extractReadEntries,
 } from "@/utils/tool-call-parsers";
+import { ToolCallSheetProvider } from "./tool-call-sheet";
 
 const MAX_CHAT_WIDTH = 960;
 type PermissionResolvedMessage = Extract<
@@ -382,63 +383,64 @@ export function AgentStreamView({
   );
 
   return (
-    <View style={stylesheet.container}>
-      <FlatList
-        ref={flatListRef}
-        data={flatListData}
-        renderItem={renderStreamItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{
-          paddingVertical: 0,
-          flexGrow: 1,
-        }}
-        style={stylesheet.list}
-        onScroll={handleScroll}
-        onScrollBeginDrag={handleScrollBeginDrag}
-        onScrollEndDrag={handleScrollEnd}
-        onMomentumScrollBegin={handleMomentumScrollBegin}
-        onMomentumScrollEnd={handleScrollEnd}
-        scrollEventThrottle={16}
-        ListEmptyComponent={
-          <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
-            <Text style={stylesheet.emptyStateText}>
-              Start chatting with this agent...
-            </Text>
-          </View>
-        }
-        ListHeaderComponent={listHeaderComponent}
-        extraData={flatListExtraData}
-        maintainVisibleContentPosition={{
-          minIndexForVisible: 0,
-          autoscrollToTopThreshold: 40,
-        }}
-        initialNumToRender={12}
-        windowSize={10}
-        inverted
-      />
+    <ToolCallSheetProvider>
+      <View style={stylesheet.container}>
+        <FlatList
+          ref={flatListRef}
+          data={flatListData}
+          renderItem={renderStreamItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{
+            paddingVertical: 0,
+            flexGrow: 1,
+          }}
+          style={stylesheet.list}
+          onScroll={handleScroll}
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScrollEndDrag={handleScrollEnd}
+          onMomentumScrollBegin={handleMomentumScrollBegin}
+          onMomentumScrollEnd={handleScrollEnd}
+          scrollEventThrottle={16}
+          ListEmptyComponent={
+            <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+              <Text style={stylesheet.emptyStateText}>
+                Start chatting with this agent...
+              </Text>
+            </View>
+          }
+          ListHeaderComponent={listHeaderComponent}
+          extraData={flatListExtraData}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 40,
+          }}
+          initialNumToRender={12}
+          windowSize={10}
+          inverted
+        />
 
-      {/* Scroll to bottom button */}
-      {!isNearBottom && (
-        <Animated.View
-          style={stylesheet.scrollToBottomContainer}
-          entering={scrollIndicatorFadeIn}
-          exiting={scrollIndicatorFadeOut}
-        >
-          <View style={stylesheet.scrollToBottomInner}>
-            <Pressable
-              style={stylesheet.scrollToBottomButton}
-              onPress={scrollToBottom}
-            >
-              <ChevronDown
-                size={24}
-                color={stylesheet.scrollToBottomIcon.color}
-              />
-            </Pressable>
-          </View>
-        </Animated.View>
-      )}
-
-    </View>
+        {/* Scroll to bottom button */}
+        {!isNearBottom && (
+          <Animated.View
+            style={stylesheet.scrollToBottomContainer}
+            entering={scrollIndicatorFadeIn}
+            exiting={scrollIndicatorFadeOut}
+          >
+            <View style={stylesheet.scrollToBottomInner}>
+              <Pressable
+                style={stylesheet.scrollToBottomButton}
+                onPress={scrollToBottom}
+              >
+                <ChevronDown
+                  size={24}
+                  color={stylesheet.scrollToBottomIcon.color}
+                />
+              </Pressable>
+            </View>
+          </Animated.View>
+        )}
+      </View>
+    </ToolCallSheetProvider>
   );
 }
 
