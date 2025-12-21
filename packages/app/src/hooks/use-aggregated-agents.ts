@@ -62,6 +62,10 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       const serverLabel = connectionStates.get(serverId)?.daemon.label ?? serverId;
       for (const agent of agents.values()) {
         // Use agent's own lastActivityAt field directly
+        // Skip child agents - only show root agents on homepage
+        if (agent.parentAgentId) {
+          continue;
+        }
         allAgents.push({
           id: agent.id,
           serverId,
@@ -74,6 +78,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,
+          parentAgentId: agent.parentAgentId,
         });
       }
     }
