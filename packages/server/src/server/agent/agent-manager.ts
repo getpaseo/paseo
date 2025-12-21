@@ -94,6 +94,7 @@ type ManagedAgentBase = {
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
+  parentAgentId?: string;
 };
 
 type ManagedAgentWithSession = ManagedAgentBase & {
