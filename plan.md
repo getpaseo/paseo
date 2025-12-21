@@ -292,12 +292,13 @@ Files requiring modification:
 
 ---
 
-- [ ] **Implement**: Add parentAgentId field to server types.
+- [x] **Implement**: Add parentAgentId field to server types.
 
   - Add `parentAgentId?: string` to `ManagedAgentBase` in `agent-manager.ts:77`
   - Add `parentAgentId?: string` to `AgentSessionConfig` in `agent-sdk-types.ts:148`
   - Update `toAgentPayload()` in `agent-projections.ts` to include `parentAgentId`
   - Run typecheck after changes.
+  - **Done (2025-12-21 19:45)**: Added `parentAgentId?: string` to `ManagedAgentBase` in `agent-manager.ts:97`, `AgentSessionConfig` in `agent-sdk-types.ts:164`, and `AgentSnapshotPayloadSchema` in `messages.ts:248`. Updated `toAgentPayload()` in `agent-projections.ts:83` to include `parentAgentId` in the payload. Typecheck passes.
 
 - [ ] **Implement**: Add parentAgentId to MCP create_agent tool.
 

@@ -161,6 +161,7 @@ export type AgentSessionConfig = {
     claude?: Partial<ClaudeAgentOptions>;
   };
   mcpServers?: Record<string, unknown>;
+  parentAgentId?: string;
 };
 
 export interface AgentSession {

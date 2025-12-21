@@ -80,6 +80,7 @@ export function toAgentPayload(
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
+    parentAgentId: agent.parentAgentId,
   };
 
   const usage = sanitizeOptionalJsonValue<AgentUsage>(agent.lastUsage);
