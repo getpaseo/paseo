@@ -34,6 +34,13 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
 - **Insert tasks at the right position.** New tasks go immediately after the current task, not at the end.
 - **Never leave the plan empty.** If you're the last task, add a checkpoint or review task.
 
+## Code Review Requirements
+
+- **Large implementations need Codex review.** After completing a significant feature or multi-file change, add a `agent=codex **Review**` task.
+- **Codex reviews focus on code quality and types.** Check for type errors, unsafe casts, missing error handling, and code smells.
+- **Reviews spawn fix tasks.** If issues found, add fix tasks immediately after, then add another `agent=codex **Review**` task to verify fixes.
+- **Loop until clean.** Review → fix → re-review → ... until no issues remain.
+
 ## Testing Requirements (CRITICAL)
 
 - **Nothing is done until tested.** Every implementation task must be followed by a testing task using Playwright MCP.
@@ -157,7 +164,20 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Add fix tasks if tests reveal issues
   - **Done (2025-12-21 15:00)**: Re-audit complete. All model info tests PASSED. Claude SDK investigation found model exposed in init message; implementation captured it in `handleSystemMessage()`. Fixed `refreshRuntimeInfo()` to emit state on changes. Both Claude (shows `claude-opus-4-1-20250805`) and Codex (shows `gpt-5.1-codex-max`) now correctly display actual runtime models. Feature complete - no additional tasks needed for model info tracking.
 
-- [ ] **Plan**: Fix agent git diff not loading.
+- [ ] **Implement**: Update Claude SDK package to use Opus 4.5.
+
+  - Update `@anthropic-ai/claude-agent-sdk` to latest version.
+  - Verify the SDK defaults to Opus 4.5 (`claude-opus-4-5-20251101`).
+  - Run typecheck after update.
+  - Restart server and verify new model is used.
+
+- [ ] **Test**: Verify Claude agent uses Opus 4.5 after SDK update.
+
+  - Create a new Claude agent with default model.
+  - Check model displays as `claude-opus-4-5-20251101` or similar.
+  - Confirm upgrade worked.
+
+- [x] **Plan**: Fix agent git diff not loading.
 
   - Investigate why git diff is not loading in agent view.
   - Find where git diff is fetched and rendered.
@@ -165,6 +185,56 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Add implementation/fix tasks based on findings.
   - Add test task to verify git diff loads correctly via Playwright MCP.
   - Add another **Plan** task to re-audit after fix if needed.
+  - **Done (2025-12-21 16:30)**: Root cause identified. See findings below.
+
+### Git Diff Loading Bug Findings
+
+**Symptom**: Git diff screen shows "Loading changes..." forever, even though data is being received successfully.
+
+**Root Cause**: Infinite loop caused by unstable `requestGitDiff` function reference.
+
+**Data Flow Analysis**:
+1. `git-diff.tsx:109-111` - Gets `requestGitDiff` from session store methods
+2. `git-diff.tsx:113-127` - `useEffect` depends on `requestGitDiff` and calls it
+3. `session-context.tsx:1492-1501` - `requestGitDiff` depends on `gitDiffRequest`
+4. `session-context.tsx:1698-1736` - `methods` object is memoized with `requestGitDiff` as dependency
+5. `session-context.tsx:1738-1740` - `setSessionMethods` is called when `methods` changes
+
+**The Loop**:
+1. Component mounts, effect calls `requestGitDiff(agentId)`
+2. Response comes back, `setGitDiffs` is called, which updates store
+3. Store update causes `useDaemonRequest` internal state to change
+4. `gitDiffRequest` reference changes → `requestGitDiff` reference changes
+5. `methods` object changes → `setSessionMethods` is called
+6. `requestGitDiff` selector returns new reference → effect runs again → goto step 1
+
+**Console Evidence**:
+- `setGitDiffs` called 250+ times in seconds
+- `setSessionMethods` called 250+ times in seconds
+- `git_diff_request` sent repeatedly
+- `git_diff_response` received successfully each time (1575 bytes)
+- UI stuck on "Loading changes..." despite data being stored
+
+**Fix Required**:
+Remove `requestGitDiff` from useEffect dependencies in `git-diff.tsx`. Use a ref to track if we've already requested, or use a more stable approach.
+
+---
+
+- [ ] **Fix**: Remove requestGitDiff from useEffect dependencies in git-diff.tsx.
+
+  - The `requestGitDiff` function reference changes on every store update
+  - Remove it from the dependency array to prevent infinite loop
+  - Use a ref to track if we've already requested the diff
+  - Keep `agentId` as the only dependency (or use empty deps with agentId check)
+  - Run typecheck after fix.
+
+- [ ] **Test**: Verify git diff loads correctly after fix.
+
+  - Navigate to an agent screen
+  - Click "View Changes" in the agent info menu
+  - Verify the diff content displays (or "No changes" if clean)
+  - Confirm no infinite loop in console (no repeated requests)
+  - Verify the loading spinner goes away
 
 - [ ] **Plan**: Design and implement agent parent/child hierarchy.
 
