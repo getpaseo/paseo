@@ -393,13 +393,14 @@ Files requiring modification:
 
     **Additional bug**: `childAgents` selector in `AgentScreenContent` causes infinite loop despite `useShallow` wrapper - the selector creates new object references on each call.
 
-- [ ] **Fix**: Debug why parentAgentId is not set on ManagedAgent when created via MCP.
+- [x] **Fix**: Debug why parentAgentId is not set on ManagedAgent when created via MCP.
 
   - Add debug logging to MCP `create_agent` handler to confirm `resolvedParentAgentId` value
   - Add debug logging to `agentManager.createAgent()` to confirm `config.parentAgentId` is passed
   - Add debug logging to `registerSession()` to confirm `managed.parentAgentId` is set
   - Add debug logging to `toStoredAgentRecord()` to confirm `agent.parentAgentId` value
   - Identify where the value is being lost
+  - **Done (2025-12-21 18:15)**: CONFIRMED WORKING. Added debug logging to trace the full data flow. Testing revealed that `parentAgentId` IS being set correctly on ManagedAgent when created via MCP. The child agent `8f2959d3-2b64-41ca-9297-7473af713fb1` has `parentAgentId=24e6353c-24d9-4fc8-b3e0-e829adb000f5` both on the managed object and at the top-level of the stored record. The previous test failure was due to stale data from agents created before the storage fix was applied. Removed debug logging after confirming success.
 
 - [ ] **Fix**: Fix childAgents selector infinite loop in AgentScreenContent.
 
