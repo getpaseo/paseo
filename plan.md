@@ -240,7 +240,7 @@ Remove `requestGitDiff` from useEffect dependencies in `git-diff.tsx`. Use a ref
   - Verify the loading spinner goes away
   - **Done (2025-12-21 18:20)**: PASSED. Tested via Playwright MCP - navigated to agent screen, clicked "View Changes", and git diff loaded successfully showing changes to `plan.md`. Only one `git_diff_request` was sent (no infinite loop). The `setGitDiffs` was called once and content rendered correctly. Fix verified working.
 
-- [ ] **Plan**: Design and implement agent parent/child hierarchy.
+- [x] **Plan**: Design and implement agent parent/child hierarchy.
 
   - Add `parentId` field to agents.
   - Agents created via MCP should auto-set parentId to the calling agent.
@@ -250,6 +250,101 @@ Remove `requestGitDiff` from useEffect dependencies in `git-diff.tsx`. Use a ref
   - Ensure back button works properly when navigating agent hierarchy.
   - Add implementation tasks based on findings.
   - Add another **Plan** task at an appropriate position to re-audit after some progress.
+  - **Done (2025-12-21 19:30)**: Design complete. See findings below.
+
+### Agent Parent/Child Hierarchy Design
+
+**Overview**: Enable agents to spawn child agents, with UI support for viewing and navigating the hierarchy.
+
+**Architecture Summary**:
+
+Files requiring modification:
+1. **Server Types** (`agent-manager.ts:77`): Add `parentAgentId?: string` to `ManagedAgentBase`
+2. **SDK Types** (`agent-sdk-types.ts:148`): Add to `AgentSessionConfig` interface
+3. **App Types** (`session-store.ts:85`, `agent-directory.ts:4`): Add to `Agent` and `AgentDirectoryEntry`
+4. **MCP Server** (`mcp-server.ts:183`): Add `parentAgentId` to `create_agent` tool input schema
+5. **Session Handler** (`session.ts:1248`): Pass `parentAgentId` in `handleCreateAgentRequest()`
+6. **Message Schema** (`messages.ts:351`): Add to `CreateAgentRequestMessageSchema`
+7. **Agent Projections** (`agent-projections.ts`): Include `parentAgentId` in serialized payload
+8. **Homepage** (`agent-list.tsx`): Filter to show only root agents (no `parentAgentId`)
+9. **Agent Menu** (`[agentId].tsx:536`): Add "Sub-Agents" section showing child agents
+10. **Create Agent** (`[agentId].tsx:415`): Pass current agent ID as `parentAgentId` when spawning
+
+**Data Flow**:
+1. MCP `create_agent` tool receives `parentAgentId` from calling agent context
+2. Server stores `parentAgentId` on `ManagedAgent`
+3. Agent projections include `parentAgentId` in client payload
+4. Client stores `parentAgentId` in session store
+5. Homepage filters: `agents.filter(a => !a.parentAgentId)`
+6. Agent menu queries: `agents.filter(a => a.parentAgentId === currentAgentId)`
+
+**UI/UX Design**:
+- Homepage shows only root agents (agents with no parent)
+- Agent info menu adds "Sub-Agents" section with clickable child agents
+- Tapping a child agent navigates to that agent's screen
+- Back button works naturally via router history
+- Child agents show parent info in their menu (optional enhancement)
+
+**MCP Context**:
+- The MCP server runs in the context of a specific agent
+- `create_agent` tool knows the calling agent's ID
+- Automatically set `parentAgentId` to calling agent ID
+
+---
+
+- [ ] **Implement**: Add parentAgentId field to server types.
+
+  - Add `parentAgentId?: string` to `ManagedAgentBase` in `agent-manager.ts:77`
+  - Add `parentAgentId?: string` to `AgentSessionConfig` in `agent-sdk-types.ts:148`
+  - Update `toAgentPayload()` in `agent-projections.ts` to include `parentAgentId`
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Add parentAgentId to MCP create_agent tool.
+
+  - Add `parentAgentId` to tool input schema in `mcp-server.ts:183`
+  - Pass `parentAgentId` to `agentManager.createAgent()` call in `mcp-server.ts:263`
+  - The MCP server has access to the calling agent context - use that ID
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Add parentAgentId to client types and session store.
+
+  - Add `parentAgentId?: string` to `Agent` interface in `session-store.ts:85`
+  - Add `parentAgentId?: string` to `AgentDirectoryEntry` in `agent-directory.ts:4`
+  - Update message schema if needed in `messages.ts:351`
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Filter homepage to show only root agents.
+
+  - In `use-aggregated-agents.ts`, filter agents: `agents.filter(a => !a.parentAgentId)`
+  - Or filter in `agent-list.tsx` before rendering
+  - Root agents are those with `parentAgentId === undefined` or `null`
+  - Run typecheck after changes.
+
+- [ ] **Implement**: Add sub-agents section to agent info menu.
+
+  - In `[agentId].tsx:536`, add a "Sub-Agents" section to the menu
+  - Query the session store for agents where `parentAgentId === currentAgentId`
+  - Display child agents as clickable menu items
+  - Tapping a child agent navigates to that agent's screen
+  - Show "No sub-agents" if none exist
+  - Run typecheck after changes.
+
+- [ ] **Test**: Verify parent/child hierarchy end-to-end.
+
+  - Create a root agent via the UI
+  - Use MCP to spawn a child agent from within the root agent
+  - Verify homepage only shows the root agent (not the child)
+  - Verify root agent's menu shows the child in "Sub-Agents" section
+  - Click child agent in menu, verify navigation works
+  - Verify back button returns to parent agent screen
+  - If issues found: add fix tasks + re-test task.
+
+- [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
+
+  - Review test results
+  - Check for edge cases (orphaned agents, deep nesting)
+  - Consider showing parent info on child agent screens
+  - Add polish tasks if needed
 
 - [ ] **Plan**: Tool call details in bottom sheet on mobile.
 
