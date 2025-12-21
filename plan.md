@@ -231,13 +231,14 @@ Remove `requestGitDiff` from useEffect dependencies in `git-diff.tsx`. Use a ref
   - Run typecheck after fix.
   - **Done (2025-12-21 18:10)**: Added `hasRequestedRef` to track if a request was already made for the current agentId. The ref prevents duplicate requests when `requestGitDiff` reference changes due to store updates. Typecheck passes.
 
-- [ ] **Test**: Verify git diff loads correctly after fix.
+- [x] **Test**: Verify git diff loads correctly after fix.
 
   - Navigate to an agent screen
   - Click "View Changes" in the agent info menu
   - Verify the diff content displays (or "No changes" if clean)
   - Confirm no infinite loop in console (no repeated requests)
   - Verify the loading spinner goes away
+  - **Done (2025-12-21 18:20)**: PASSED. Tested via Playwright MCP - navigated to agent screen, clicked "View Changes", and git diff loaded successfully showing changes to `plan.md`. Only one `git_diff_request` was sent (no infinite loop). The `setGitDiffs` was called once and content rendered correctly. Fix verified working.
 
 - [ ] **Plan**: Design and implement agent parent/child hierarchy.
 
