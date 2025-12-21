@@ -324,7 +324,7 @@ Files requiring modification:
   - Run typecheck after changes.
   - **Done (2025-12-21 21:45)**: Added filter in `use-aggregated-agents.ts:66-68` to skip agents with `parentAgentId` when building the aggregated agents list. Also included `parentAgentId` in the aggregated agent object. Typecheck passes.
 
-- [ ] **Implement**: Add sub-agents section to agent info menu.
+- [x] **Implement**: Add sub-agents section to agent info menu.
 
   - In `[agentId].tsx:536`, add a "Sub-Agents" section to the menu
   - Query the session store for agents where `parentAgentId === currentAgentId`
@@ -332,6 +332,7 @@ Files requiring modification:
   - Tapping a child agent navigates to that agent's screen
   - Show "No sub-agents" if none exist
   - Run typecheck after changes.
+  - **Done (2025-12-21 22:00)**: Added Sub-Agents section to agent info menu in `[agentId].tsx`. Added `childAgents` selector to query agents with matching `parentAgentId`. Added `handleNavigateToChildAgent` callback for navigation. UI shows "No sub-agents" when empty, or clickable list of child agents with chevron icons. Typecheck passes.
 
 - [ ] **Test**: Verify parent/child hierarchy end-to-end.
 
