@@ -52,6 +52,7 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
+    parentAgentId: agent.parentAgentId ?? null,
   } satisfies StoredAgentRecord;
 }
 

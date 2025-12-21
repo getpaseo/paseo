@@ -364,12 +364,13 @@ Files requiring modification:
   - Click child agent in menu, verify navigation works
   - **Done (2025-12-21 17:45)**: PARTIAL PASS - MCP header injection IS working correctly. The `X-Caller-Agent-Id` header is being sent by parent agents and received by the MCP server. The `callerAgentId` is correctly used as `parentAgentId` when creating child agents. HOWEVER, discovered a bug: `parentAgentId` is stored in `persistence.metadata` but NOT at the top-level of the stored agent record. The `toStoredAgentRecord()` function in `agent-projections.ts` and the `STORED_AGENT_SCHEMA` in `agent-registry.ts` are missing `parentAgentId`. Fix task added below.
 
-- [ ] **Fix**: Add parentAgentId to stored agent record schema.
+- [x] **Fix**: Add parentAgentId to stored agent record schema.
 
   - Add `parentAgentId` to `STORED_AGENT_SCHEMA` in `agent-registry.ts`
   - Add `parentAgentId` to `toStoredAgentRecord()` output in `agent-projections.ts`
   - Read `parentAgentId` from `agent.parentAgentId` (which is on `ManagedAgentBase`)
   - Run typecheck after changes.
+  - **Done (2025-12-21 17:52)**: Added `parentAgentId: z.string().nullable().optional()` to `STORED_AGENT_SCHEMA` in `agent-registry.ts:56`. Added `parentAgentId: agent.parentAgentId ?? null` to `toStoredAgentRecord()` output in `agent-projections.ts:55`. Typecheck passes.
 
 - [ ] **Test**: Re-test parent/child hierarchy after storage fix.
 
