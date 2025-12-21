@@ -1,4 +1,4 @@
-import { View, ScrollView } from "react-native";
+import { ScrollView } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { forwardRef } from "react";
 import {
@@ -7,6 +7,7 @@ import {
   ActivityLog,
   ToolCall,
 } from "@/components/message";
+import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import type { MessageEntry } from "@/contexts/session-context";
 
 interface OrchestratorMessagesViewProps {
@@ -19,7 +20,7 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
   function OrchestratorMessagesView({ messages, currentAssistantMessage, onArtifactClick }, ref) {
 
     return (
-      <>
+      <ToolCallSheetProvider>
         <ScrollView
           ref={ref}
           style={styles.scrollView}
@@ -101,8 +102,7 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
           />
         )}
       </ScrollView>
-
-    </>
+      </ToolCallSheetProvider>
     );
   }
 );

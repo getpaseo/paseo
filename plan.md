@@ -621,11 +621,12 @@ interface ToolCallSheetData {
   - Add another `agent=codex **Review**` task after fix tasks to verify fixes.
   - **Done (2025-12-21 18:33)**: Found a crash path: `ToolCall` now requires `ToolCallSheetProvider`, but `orchestrator-messages-view.tsx` renders `ToolCall` without the provider, so orchestrator tool calls will throw `useToolCallSheet must be used within a ToolCallSheetProvider`. Added fix/test/re-review tasks.
 
-- [ ] **Fix**: Wrap orchestrator tool calls with ToolCallSheetProvider.
+- [x] **Fix**: Wrap orchestrator tool calls with ToolCallSheetProvider.
 
   - `ToolCall` throws when used without `ToolCallSheetProvider`; orchestrator view currently renders it bare (`orchestrator-messages-view.tsx:18-106`).
   - Wrap the orchestrator messages view (or a parent) with `ToolCallSheetProvider` so tool call badges open the bottom sheet instead of crashing.
   - Keep provider scope narrow to avoid unintended rerenders.
+  - **Done (2025-12-21 18:45)**: Wrapped the `OrchestratorMessagesView` content with `ToolCallSheetProvider` in `orchestrator-messages-view.tsx`. Removed unused `View` import. Typecheck passes.
 
 - [ ] **Test**: Verify orchestrator tool call sheet works.
 
