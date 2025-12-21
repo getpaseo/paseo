@@ -78,10 +78,21 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
 
 ---
 
-- [ ] **Investigate**: Check if Claude SDK exposes actual model in response/stream metadata.
+- [x] **Investigate**: Check if Claude SDK exposes actual model in response/stream metadata.
   - Look at `@anthropic-ai/claude-agent-sdk` types for model info in responses
   - Check if `query()` returns model information
   - Document findings for implementation task
+  - **Done (2025-12-21 13:15)**: YES, the Claude SDK exposes actual model info in TWO places:
+    1. `SDKSystemMessage` (subtype: "init") has `model: string` field (sdk.d.ts:334)
+    2. `SDKResultMessage` has `modelUsage: { [modelName: string]: ModelUsage }` (sdk.d.ts:299-300)
+    - Current implementation ignores both - only uses `config.model` (claude-agent.ts:712)
+    - Fix: Update `handleSystemMessage()` to capture `message.model` as `lastOptionsModel`
+    - Alternatively: Extract model name from `modelUsage` keys in `SDKResultMessage`
+
+- [ ] **Implement**: Capture actual model from Claude SDK init message.
+  - In `handleSystemMessage()`, set `this.lastOptionsModel = message.model`
+  - This gives us the actual model the SDK selected (not just our config)
+  - Simpler than parsing modelUsage, same result
 
 - [ ] **Test**: Verify current Codex runtime model detection works.
   - Create a Codex agent with default model
@@ -111,3 +122,12 @@ Hard requirement: We must get the actual runtime model, not just echo back the r
   - Ensure back button works properly when navigating agent hierarchy.
   - Add implementation tasks based on findings.
   - Add another **Plan** task at an appropriate position to re-audit after some progress.
+
+- [ ] agent=codex **Review**: Code quality and types review.
+
+  - Review all changed files for code quality issues.
+  - Check TypeScript types are correct and complete.
+  - Look for any type errors or unsafe casts.
+  - Check for proper error handling.
+  - Add fix tasks for any issues found.
+  - Add another `agent=codex **Review**` task after fix tasks to verify fixes.
