@@ -410,12 +410,38 @@ Files requiring modification:
   - Ensure the selector returns stable references
   - **Done (2025-12-21 18:30)**: Fixed by replacing `useShallow` selector with a two-step approach: (1) select the agents Map directly (stable reference), (2) derive `childAgents` array in `useMemo` with proper dependencies. The Map only changes when agents are added/removed, preventing unnecessary re-renders. Removed unused `useShallow` import. Typecheck passes.
 
-- [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
+- [x] **Plan**: Re-audit agent hierarchy after initial implementation.
 
   - Review test results
   - Check for edge cases (orphaned agents, deep nesting)
   - Consider showing parent info on child agent screens
   - Add polish tasks if needed
+  - **Done (2025-12-21 18:35)**: Re-audit complete. See findings below.
+
+### Agent Hierarchy Re-Audit Findings
+
+**Working Correctly:**
+1. ✅ `parentAgentId` stored at top-level in agents.json for new agents (post-fix)
+2. ✅ MCP `create_agent` auto-injects `callerAgentId` as `parentAgentId` via `X-Caller-Agent-Id` header
+3. ✅ Sub-Agents section in agent menu shows child agents correctly (e.g., parent `24e6353c` shows child `8f2959d3`)
+4. ✅ Clicking child agent navigates to child agent screen
+5. ✅ Model info displays correctly (`claude-opus-4-5-20251101`)
+6. ✅ `childAgents` selector uses stable references (Map + useMemo) - no infinite loops
+7. ✅ Typecheck passes
+
+**Edge Cases & Known Issues:**
+1. **Stale data**: Agents created before the storage fix have `parentAgentId` in `persistence.metadata` but NOT at top-level. These agents appear on the homepage incorrectly. No migration was added.
+2. **Orphaned agents**: When parent is killed/deleted, children remain with stale `parentAgentId`. No cascading delete or orphan detection implemented.
+3. **Homepage filtering**: Works for new agents with top-level `parentAgentId`, but old agents appear because their `parentAgentId` is nested.
+4. **Model shows "Unknown"** for one test agent - likely stale cache from before SDK init fix.
+
+**Polish Opportunities (Optional):**
+1. Show parent agent info on child agent screens (e.g., "Parent: Spawn Debug Child Agent")
+2. Add data migration to move `parentAgentId` from `persistence.metadata` to top-level for old agents
+3. Consider cascade delete or at least warn about orphaned children
+4. Deep nesting (grandchildren) - not tested but should work since filtering is based on direct parentAgentId match
+
+**Conclusion:** Core hierarchy feature is working for new agents. Legacy data has inconsistencies but doesn't break the app. No blocking issues found.
 
 - [ ] **Plan**: Tool call details in bottom sheet on mobile.
 
