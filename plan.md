@@ -402,12 +402,13 @@ Files requiring modification:
   - Identify where the value is being lost
   - **Done (2025-12-21 18:15)**: CONFIRMED WORKING. Added debug logging to trace the full data flow. Testing revealed that `parentAgentId` IS being set correctly on ManagedAgent when created via MCP. The child agent `8f2959d3-2b64-41ca-9297-7473af713fb1` has `parentAgentId=24e6353c-24d9-4fc8-b3e0-e829adb000f5` both on the managed object and at the top-level of the stored record. The previous test failure was due to stale data from agents created before the storage fix was applied. Removed debug logging after confirming success.
 
-- [ ] **Fix**: Fix childAgents selector infinite loop in AgentScreenContent.
+- [x] **Fix**: Fix childAgents selector infinite loop in AgentScreenContent.
 
   - The `useShallow` wrapper doesn't prevent infinite loops when selector returns new object references
   - Consider extracting just agent IDs and using a separate lookup
   - Or use `useMemo` with proper dependency tracking
   - Ensure the selector returns stable references
+  - **Done (2025-12-21 18:30)**: Fixed by replacing `useShallow` selector with a two-step approach: (1) select the agents Map directly (stable reference), (2) derive `childAgents` array in `useMemo` with proper dependencies. The Map only changes when agents are added/removed, preventing unnecessary re-renders. Removed unused `useShallow` import. Typecheck passes.
 
 - [ ] **Plan**: Re-audit agent hierarchy after initial implementation.
 
