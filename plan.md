@@ -786,8 +786,14 @@ interface ToolCallSheetData {
   - Run typecheck after fix
   - **Done (2025-12-22 15:30)**: Fixed by replacing `react-native-gesture-handler`'s ScrollView with React Native's built-in ScrollView in `tool-call-sheet.tsx`. The gesture handler's ScrollView was causing text rendering issues inside `@gorhom/bottom-sheet`. Also added `backgroundColor: theme.colors.card` to `scrollArea` and `jsonScroll` styles for consistent background. Verified via Playwright MCP - JSON content now clearly visible with proper contrast. Typecheck passes.
 
-- [ ] **Test**: Re-verify tool call bottom sheet is readable after fix.
+- [x] **Test**: Re-verify tool call bottom sheet is readable after fix.
 
   - Take Playwright MCP screenshot
   - **Success criteria**: All text in bottom sheet has proper contrast and is readable
   - Tool name, arguments JSON, and result content must all be visible
+  - **Done (2025-12-22 15:45)**: PASSED. Tested via Playwright MCP on mobile web at `http://localhost:8081`. Verified multiple tool call types:
+    1. ✅ **MCP tool calls** (`mcp__agent-control__create_agent`): Bottom sheet opens with header showing tool icon, name, and green "Done" badge. JSON result content clearly visible with syntax highlighting (orange keys, green string values) on dark background with good contrast.
+    2. ✅ **Read tool calls**: Bottom sheet shows "READ RESULT" label, file path in dark code block, and file content with line numbers - all clearly readable.
+    3. ✅ **Close button**: X button dismisses sheet correctly.
+    4. ✅ **Drag handle**: Present for gesture-based dismissal.
+    Screenshots saved to `.playwright-mcp/tool-call-bottom-sheet-after-fix.png` and `.playwright-mcp/tool-call-read-bottom-sheet.png` confirm text visibility.
