@@ -678,11 +678,12 @@ interface ToolCallSheetData {
   - If fails: add fix task
   - **Done (2025-12-22 13:02)**: PASSED. Created Claude parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065). Parent successfully spawned child agent "Child Agent for Parent Test" (0489cffa-f9ff-411f-867d-3960f78a07c3) via MCP create_agent. Child confirmed: "Hello! I'm a child agent running under your orchestration." Navigated back to homepage - parent agent visible, child agent correctly filtered out (not shown in list). Homepage filtering working correctly.
 
-- [ ] **Test**: Verify sub-agents are visible in parent agent menu.
+- [x] **Test**: Verify sub-agents are visible in parent agent menu.
 
   - **Steps**: Create an agent → Have it spawn a sub-agent → Open parent agent's info menu (three dots)
   - **Success criteria**: Menu shows "Sub-agents" section with the child agent listed, tapping it navigates to child agent screen
   - If fails: add fix task
+  - **Done (2025-12-22 13:15)**: PASSED. Used existing parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065) with child agent (0489cffa-f9ff-411f-867d-3960f78a07c3). Opened parent's three-dot menu via Playwright MCP. Menu correctly shows "Sub-Agents" section with child agent listed. Clicked child agent and successfully navigated to child agent screen (URL changed to child's agent ID). Sub-agent visibility and navigation working correctly.
 
 - [ ] **Test**: Verify back button works after navigating to child agent.
 
