@@ -685,11 +685,30 @@ interface ToolCallSheetData {
   - If fails: add fix task
   - **Done (2025-12-22 13:15)**: PASSED. Used existing parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065) with child agent (0489cffa-f9ff-411f-867d-3960f78a07c3). Opened parent's three-dot menu via Playwright MCP. Menu correctly shows "Sub-Agents" section with child agent listed. Clicked child agent and successfully navigated to child agent screen (URL changed to child's agent ID). Sub-agent visibility and navigation working correctly.
 
-- [ ] **Test**: Verify back button works after navigating to child agent.
+- [x] **Test**: Verify back button works after navigating to child agent.
 
   - **Steps**: Navigate to parent agent → Open menu → Tap on child agent → Press back button
   - **Success criteria**: Returns to parent agent screen (not homepage), parent agent content is preserved
   - If fails: add fix task
+  - **Done (2025-12-22 13:25)**: FAILED. Tested via Playwright MCP:
+    1. ✅ Navigated to parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065)
+    2. ✅ Opened three-dot menu, found Sub-Agents section with child agent
+    3. ✅ Clicked child agent "Greet User; Confirm Child Agent" - navigated to child screen (0489cffa-f9ff-411f-867d-3960f78a07c3)
+    4. ❌ Pressed back button (arrow icon in header) - navigated to **homepage** instead of parent agent screen
+    **Root cause**: The `handleNavigateToChildAgent` in `[agentId].tsx` uses `router.push()` which adds to history, but the back button handler (`handleBack` at line ~202) uses `router.canGoBack() ? router.back() : router.push("/")` - this is working correctly for browser history. The issue is that when navigating from Sub-Agents menu, it closes the menu first and the navigation happens. The browser history should be: homepage → parent → child. But the navigation log shows `from: agent, to: home` suggesting the back action went directly to homepage. This may be due to router history being reset when the menu modal closes or a race condition.
+
+- [ ] **Fix**: Ensure back button returns to parent agent when navigating from sub-agent menu.
+
+  - Investigate why router history shows `from: agent, to: home` instead of `from: child, to: parent`
+  - The navigation from parent to child via Sub-Agents menu should properly add to browser history
+  - Check if menu dismissal or modal closing is affecting router state
+  - Test with `router.replace()` vs `router.push()` in `handleNavigateToChildAgent`
+  - Ensure expo-router preserves navigation stack when navigating between agent screens
+
+- [ ] **Test**: Re-verify back button after fix.
+
+  - Same steps as original test
+  - Success criteria: Back button returns to parent agent screen, not homepage
 
 - [ ] **Test**: Verify tool call bottom sheet opens on mobile web.
 
