@@ -6,8 +6,7 @@ import React, {
   useRef,
   ReactNode,
 } from "react";
-import { View, Text, Pressable } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
   BottomSheetModal,
@@ -681,6 +680,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.base,
     maxHeight: 260,
+    backgroundColor: theme.colors.card,
   },
   scrollContent: {
     padding: theme.spacing[2],
@@ -695,6 +695,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.base,
+    backgroundColor: theme.colors.card,
   },
   jsonScrollError: {
     borderColor: theme.colors.destructive,

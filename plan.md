@@ -777,13 +777,14 @@ interface ToolCallSheetData {
     Screenshots saved: `tool-call-bottom-sheet.png`, `tool-call-mcp-bottom-sheet.png` in `.playwright-mcp/` directory.
     **Root cause**: The result text in `ToolCallSheet` component likely uses a color with poor contrast against the dark bottom sheet background. Fix task already exists below.
 
-- [ ] **Fix**: Fix tool call bottom sheet contrast issue.
+- [x] **Fix**: Fix tool call bottom sheet contrast issue.
 
   - The bottom sheet content is rendering white text on white background
   - Check `ToolCallSheet` component styles for text color
   - Ensure text color adapts to light/dark mode properly
   - Check if theme colors are being applied correctly
   - Run typecheck after fix
+  - **Done (2025-12-22 15:30)**: Fixed by replacing `react-native-gesture-handler`'s ScrollView with React Native's built-in ScrollView in `tool-call-sheet.tsx`. The gesture handler's ScrollView was causing text rendering issues inside `@gorhom/bottom-sheet`. Also added `backgroundColor: theme.colors.card` to `scrollArea` and `jsonScroll` styles for consistent background. Verified via Playwright MCP - JSON content now clearly visible with proper contrast. Typecheck passes.
 
 - [ ] **Test**: Re-verify tool call bottom sheet is readable after fix.
 
