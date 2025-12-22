@@ -706,10 +706,17 @@ interface ToolCallSheetData {
   - Ensure expo-router preserves navigation stack when navigating between agent screens
   - **Done (2025-12-22 13:55)**: Fixed back navigation for child agents. The issue was that `BackHeader` always used the `onBack` prop which called `handleBackToHome` (always navigates to homepage). Added `handleBack` callback in `AgentScreenContent` that checks if the agent has a `parentAgentId` - if so, navigates to the parent agent screen; otherwise falls back to homepage navigation. Typecheck passes.
 
-- [ ] **Test**: Re-verify back button after fix.
+- [x] **Test**: Re-verify back button after fix.
 
   - Same steps as original test
   - Success criteria: Back button returns to parent agent screen, not homepage
+  - **Done (2025-12-22 14:18)**: PASSED. Tested via Playwright MCP:
+    1. ✅ Navigated to parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065)
+    2. ✅ Opened three-dot menu, found Sub-Agents section with child agent "Greet User; Confirm Child Agent"
+    3. ✅ Clicked child agent - navigated to child screen (0489cffa-f9ff-411f-867d-3960f78a07c3)
+    4. ✅ Pressed back button (arrow icon in header) - navigated to **parent agent screen** (not homepage!)
+    5. ✅ Parent agent content preserved (shows MCP create_agent tool call and conversation)
+    **Fix verified working.** Back button now correctly returns to parent agent instead of homepage.
 
 - [ ] **Test**: Verify tool call bottom sheet opens on mobile web.
 
