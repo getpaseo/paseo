@@ -858,3 +858,24 @@ The previous test was wrong. The screenshot clearly shows a WHITE bottom sheet b
   - Move screenshot to ~/public for manual verification
   - **Success criteria**: The bottom sheet background is DARK, not white. Period.
   - **Done (2025-12-22 16:26)**: PASSED. Tested via Playwright MCP on mobile web. Bottom sheet background is DARK, matching the app's dark theme. Screenshot saved to `~/public/bottom-sheet-dark-mode-test.png`. All elements visible with good contrast: dark background, gray drag handle, "Read" header with green "Done" badge, "READ RESULT" label, file path in dark code block, and syntax-highlighted content with line numbers. The fix from the previous task is working correctly.
+
+---
+
+## Bottom Sheet Polish Issues
+
+- [x] agent=codex **Fix**: Fix bottom sheet handle color and content padding.
+
+  - The bottom sheet drag handle is still WHITE - should be gray/dark in dark mode
+  - Check `handleIndicatorStyle` in BottomSheet component and set appropriate dark color
+  - The bottom sheet content has NO padding - stuff is at the edges of the screen
+  - Add horizontal padding to the content container (16px or similar)
+  - Run typecheck after fix
+  - **Done (2025-12-22 04:21)**: Darkened the bottom sheet handle indicator color and added explicit horizontal/vertical padding to the sheet content container; `npm run typecheck` passes.
+
+- [ ] **Test**: Verify bottom sheet handle is dark and content has padding.
+
+  - Take Playwright MCP screenshot
+  - Move screenshot to ~/public for manual verification
+  - **Success criteria**:
+    1. Drag handle is gray/dark, NOT white
+    2. Content has horizontal padding, NOT touching screen edges
