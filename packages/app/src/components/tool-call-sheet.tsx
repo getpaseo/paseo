@@ -575,7 +575,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.card,
   },
   handleIndicator: {
-    backgroundColor: theme.colors.mutedForeground,
+    backgroundColor: theme.colors.palette.zinc[600],
   },
   container: {
     flex: 1,
@@ -643,7 +643,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.card,
   },
   contentContainer: {
-    padding: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
     gap: theme.spacing[4],
   },
   section: {
