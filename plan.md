@@ -797,3 +797,40 @@ interface ToolCallSheetData {
     3. ✅ **Close button**: X button dismisses sheet correctly.
     4. ✅ **Drag handle**: Present for gesture-based dismissal.
     Screenshots saved to `.playwright-mcp/tool-call-bottom-sheet-after-fix.png` and `.playwright-mcp/tool-call-read-bottom-sheet.png` confirm text visibility.
+
+---
+
+## Bottom Sheet Dark Mode Background Bug
+
+- [x] **Test**: Verify bottom sheet background color in dark mode.
+
+  - **Steps**: Enable dark mode in browser → Navigate to agent with tool calls → Tap tool call badge → Take Playwright MCP screenshot
+  - **Success criteria**: Bottom sheet background should be DARK (not white) in dark mode. The entire sheet including header, content area, and handle should have a dark background that matches the app's dark theme.
+  - If white background in dark mode: this is a BUG, add fix task
+  - Take screenshot as evidence
+  - **Done (2025-12-22 15:55)**: PASSED. Tested via Playwright MCP on mobile web at `http://localhost:8081`. Navigated to agent "Spawn Test Child Agent", clicked "Read" tool call badge. Bottom sheet opened with:
+    1. ✅ **Dark background** - Sheet background is dark, matching app's dark theme (NOT white)
+    2. ✅ **Visible drag handle** - Gray handle bar at top
+    3. ✅ **Readable header** - "Read" with edit icon and green "Done" badge visible with good contrast
+    4. ✅ **READ RESULT label** - Visible with proper contrast
+    5. ✅ **File path** - `/home/moboudra/dev/voice-dev/plan.md` displayed in dark code block
+    6. ✅ **Content area** - Syntax-highlighted code with line numbers on dark background, fully readable
+    Screenshot saved to `.playwright-mcp/tool-call-bottom-sheet-dark-mode.png`. **No bug found - bottom sheet already respects dark mode correctly.**
+
+- [x] **Fix**: Fix bottom sheet background to respect dark mode. *(SKIPPED - Not needed)*
+
+  - The bottom sheet is showing WHITE background in dark mode - this is wrong
+  - Check `@gorhom/bottom-sheet` configuration for background color
+  - Ensure `backgroundStyle` or `handleStyle` uses theme colors
+  - Check `ToolCallSheet` component for hardcoded white/light colors
+  - The sheet background, handle, and content area must all use dark theme colors in dark mode
+  - Run typecheck after fix
+  - Restart Metro/server if needed to see changes
+  - **Done (2025-12-22 15:55)**: SKIPPED. Test above confirmed bottom sheet already has dark background in dark mode. No fix needed.
+
+- [x] **Test**: Re-verify bottom sheet respects dark mode after fix. *(SKIPPED - Not needed)*
+
+  - Take Playwright MCP screenshot in dark mode
+  - **Success criteria**: Bottom sheet has dark background matching app theme, NOT white
+  - All content text is readable with proper contrast against dark background
+  - **Done (2025-12-22 15:55)**: SKIPPED. Initial test passed - bottom sheet already works correctly in dark mode. No re-verification needed.
