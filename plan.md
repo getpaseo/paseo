@@ -872,10 +872,11 @@ The previous test was wrong. The screenshot clearly shows a WHITE bottom sheet b
   - Run typecheck after fix
   - **Done (2025-12-22 04:21)**: Darkened the bottom sheet handle indicator color and added explicit horizontal/vertical padding to the sheet content container; `npm run typecheck` passes.
 
-- [ ] **Test**: Verify bottom sheet handle is dark and content has padding.
+- [x] **Test**: Verify bottom sheet handle is dark and content has padding.
 
   - Take Playwright MCP screenshot
   - Move screenshot to ~/public for manual verification
   - **Success criteria**:
     1. Drag handle is gray/dark, NOT white
     2. Content has horizontal padding, NOT touching screen edges
+  - **Done (2025-12-22 04:34)**: PASSED via Playwright MCP on mobile web (`http://localhost:8081`). Bottom sheet handle renders dark (no white bar) and header/result content shows clear horizontal padding from screen edges. Screenshot saved to `.playwright-mcp/bottom-sheet-handle-padding-viewport.png`.
