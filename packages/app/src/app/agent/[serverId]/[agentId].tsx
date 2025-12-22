@@ -153,6 +153,26 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     resolvedAgentId ? state.sessions[serverId]?.agents?.get(resolvedAgentId) : undefined
   );
 
+  // Get parent agent ID for back navigation
+  const parentAgentId = agent?.parentAgentId;
+
+  // Navigate to parent agent if this is a child, otherwise go to homepage
+  const handleBack = useCallback(() => {
+    if (parentAgentId) {
+      // Child agent: navigate back to parent
+      router.push({
+        pathname: "/agent/[serverId]/[agentId]",
+        params: {
+          serverId: serverId,
+          agentId: parentAgentId,
+        },
+      });
+    } else {
+      // Root agent: navigate to homepage
+      onBack();
+    }
+  }, [parentAgentId, router, serverId, onBack]);
+
   // Select the agents Map directly - this is a stable reference that only changes when agents are added/removed
   const allAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
 
@@ -507,7 +527,7 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
         {/* Header */}
         <BackHeader
           title={agent.title || "Agent"}
-          onBack={onBack}
+          onBack={handleBack}
           rightContent={
             <View ref={menuButtonRef} collapsable={false}>
               <Pressable onPress={handleOpenMenu} style={styles.menuButton}>

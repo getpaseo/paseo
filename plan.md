@@ -697,13 +697,14 @@ interface ToolCallSheetData {
     4. ❌ Pressed back button (arrow icon in header) - navigated to **homepage** instead of parent agent screen
     **Root cause**: The `handleNavigateToChildAgent` in `[agentId].tsx` uses `router.push()` which adds to history, but the back button handler (`handleBack` at line ~202) uses `router.canGoBack() ? router.back() : router.push("/")` - this is working correctly for browser history. The issue is that when navigating from Sub-Agents menu, it closes the menu first and the navigation happens. The browser history should be: homepage → parent → child. But the navigation log shows `from: agent, to: home` suggesting the back action went directly to homepage. This may be due to router history being reset when the menu modal closes or a race condition.
 
-- [ ] **Fix**: Ensure back button returns to parent agent when navigating from sub-agent menu.
+- [x] **Fix**: Ensure back button returns to parent agent when navigating from sub-agent menu.
 
   - Investigate why router history shows `from: agent, to: home` instead of `from: child, to: parent`
   - The navigation from parent to child via Sub-Agents menu should properly add to browser history
   - Check if menu dismissal or modal closing is affecting router state
   - Test with `router.replace()` vs `router.push()` in `handleNavigateToChildAgent`
   - Ensure expo-router preserves navigation stack when navigating between agent screens
+  - **Done (2025-12-22 13:55)**: Fixed back navigation for child agents. The issue was that `BackHeader` always used the `onBack` prop which called `handleBackToHome` (always navigates to homepage). Added `handleBack` callback in `AgentScreenContent` that checks if the agent has a `parentAgentId` - if so, navigates to the parent agent screen; otherwise falls back to homepage navigation. Typecheck passes.
 
 - [ ] **Test**: Re-verify back button after fix.
 
