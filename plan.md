@@ -852,8 +852,9 @@ The previous test was wrong. The screenshot clearly shows a WHITE bottom sheet b
   - Take a new screenshot to verify
   - **Done (2025-12-22 04:04)**: Updated BottomSheet modal, container, and content to use the card background color so the sheet matches the dark theme; typecheck passes. Visual verification pending dedicated test task.
 
-- [ ] **Test**: Verify bottom sheet is actually dark in dark mode.
+- [x] **Test**: Verify bottom sheet is actually dark in dark mode.
 
   - Take Playwright MCP screenshot
   - Move screenshot to ~/public for manual verification
   - **Success criteria**: The bottom sheet background is DARK, not white. Period.
+  - **Done (2025-12-22 16:26)**: PASSED. Tested via Playwright MCP on mobile web. Bottom sheet background is DARK, matching the app's dark theme. Screenshot saved to `~/public/bottom-sheet-dark-mode-test.png`. All elements visible with good contrast: dark background, gray drag handle, "Read" header with green "Done" badge, "READ RESULT" label, file path in dark code block, and syntax-highlighted content with line numbers. The fix from the previous task is working correctly.
