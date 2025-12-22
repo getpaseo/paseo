@@ -759,3 +759,34 @@ interface ToolCallSheetData {
     6. ✅ Tool call bottom sheet - all tool types work on mobile
     7. ✅ Git diff no infinite loop - single request, loads correctly
     **All core features verified working. No additional fix tasks needed.**
+
+---
+
+## Tool Call Bottom Sheet Visual Bug
+
+- [x] **Test**: Verify tool call bottom sheet text is visible (not white on white).
+
+  - **Steps**: Navigate to agent with tool calls → Tap tool call badge → Take Playwright MCP screenshot of bottom sheet
+  - **Success criteria**: Text content (tool name, arguments, result) is clearly visible with proper contrast. NOT white text on white background.
+  - Take screenshot and inspect colors
+  - If fails: add fix task
+  - **Done (2025-12-22 15:15)**: FAILED. Tested via Playwright MCP on mobile web:
+    1. ✅ Header section (tool name "mcp__agent-control__create_agent", "Done" badge) - visible with good contrast
+    2. ✅ "RESULT" label - visible but muted gray
+    3. ❌ **Result content (JSON data) is nearly invisible** - very faint gray text on dark background, extremely hard to read
+    Screenshots saved: `tool-call-bottom-sheet.png`, `tool-call-mcp-bottom-sheet.png` in `.playwright-mcp/` directory.
+    **Root cause**: The result text in `ToolCallSheet` component likely uses a color with poor contrast against the dark bottom sheet background. Fix task already exists below.
+
+- [ ] **Fix**: Fix tool call bottom sheet contrast issue.
+
+  - The bottom sheet content is rendering white text on white background
+  - Check `ToolCallSheet` component styles for text color
+  - Ensure text color adapts to light/dark mode properly
+  - Check if theme colors are being applied correctly
+  - Run typecheck after fix
+
+- [ ] **Test**: Re-verify tool call bottom sheet is readable after fix.
+
+  - Take Playwright MCP screenshot
+  - **Success criteria**: All text in bottom sheet has proper contrast and is readable
+  - Tool name, arguments JSON, and result content must all be visible
