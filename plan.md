@@ -671,11 +671,12 @@ interface ToolCallSheetData {
   - If fails: add fix task
   - **Done (2025-12-22 12:48)**: PASSED. Created Codex agent with "Automatic" model config. Agent responded with "I'm Codex, based on GPT-5." Agent info menu correctly displays **Model: gpt-5.1-codex-max** (actual runtime model from rollout file). Runtime model detection working correctly.
 
-- [ ] **Test**: Verify homepage only shows root agents (no child agents).
+- [x] **Test**: Verify homepage only shows root agents (no child agents).
 
   - **Steps**: Navigate to homepage → Create a parent agent → Have that agent spawn a sub-agent via MCP create_agent → Navigate back to homepage
   - **Success criteria**: Homepage shows ONLY the parent agent, child agent is NOT visible in the list
   - If fails: add fix task
+  - **Done (2025-12-22 13:02)**: PASSED. Created Claude parent agent "Spawn Child Agent via MCP" (d5ba9a18-e39a-471b-9219-bdf2fe55e065). Parent successfully spawned child agent "Child Agent for Parent Test" (0489cffa-f9ff-411f-867d-3960f78a07c3) via MCP create_agent. Child confirmed: "Hello! I'm a child agent running under your orchestration." Navigated back to homepage - parent agent visible, child agent correctly filtered out (not shown in list). Homepage filtering working correctly.
 
 - [ ] **Test**: Verify sub-agents are visible in parent agent menu.
 
