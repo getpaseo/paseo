@@ -732,11 +732,19 @@ interface ToolCallSheetData {
     6. ✅ **Drag handle**: Present for drag-to-dismiss gesture
     7. ✅ **Backdrop**: Semi-transparent backdrop appears behind sheet (backdrop click blocked by sheet handle which is expected behavior)
 
-- [ ] **Test**: Verify git diff screen loads without infinite loop.
+- [x] **Test**: Verify git diff screen loads without infinite loop.
 
   - **Steps**: Navigate to an agent that has uncommitted changes → Open agent info menu → Tap "View Changes"
   - **Success criteria**: Diff content loads and displays within 5 seconds. Console shows NO repeated `git_diff_request` messages. Loading spinner disappears.
   - If fails: add fix task
+  - **Done (2025-12-22 14:55)**: PASSED. Tested via Playwright MCP:
+    1. ✅ Navigated to agent screen "Spawn Test Child Agent"
+    2. ✅ Opened three-dot menu, clicked "View Changes"
+    3. ✅ Git diff screen loaded immediately showing changes to `plan.md`
+    4. ✅ Console shows only ONE `git_diff_request` sent and ONE `git_diff_response` received - NO infinite loop
+    5. ✅ Waited 3 additional seconds - no repeated requests, page stable
+    6. ✅ Content displays correctly with diff lines (added/removed lines visible)
+    The `hasRequestedRef` fix in `git-diff.tsx` is working correctly - prevents duplicate requests when `requestGitDiff` reference changes.
 
 - [ ] **Checkpoint**: Review all verification test results.
 
