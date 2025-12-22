@@ -746,7 +746,16 @@ interface ToolCallSheetData {
     6. ✅ Content displays correctly with diff lines (added/removed lines visible)
     The `hasRequestedRef` fix in `git-diff.tsx` is working correctly - prevents duplicate requests when `requestGitDiff` reference changes.
 
-- [ ] **Checkpoint**: Review all verification test results.
+- [x] **Checkpoint**: Review all verification test results.
 
   - If all tests passed: mark as complete, add a final summary
   - If any tests failed: ensure fix tasks were added and will be re-tested
+  - **Done (2025-12-22 15:00)**: All 7 verification tests PASSED:
+    1. ✅ Claude agent runtime model - shows `claude-opus-4-5-20251101`
+    2. ✅ Codex agent runtime model - shows `gpt-5.1-codex-max`
+    3. ✅ Homepage root agents only - child agents filtered correctly
+    4. ✅ Sub-agents in parent menu - visible and navigable
+    5. ✅ Back button to parent - fixed, returns to parent not homepage
+    6. ✅ Tool call bottom sheet - all tool types work on mobile
+    7. ✅ Git diff no infinite loop - single request, loads correctly
+    **All core features verified working. No additional fix tasks needed.**
