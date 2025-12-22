@@ -647,8 +647,60 @@ interface ToolCallSheetData {
   - Check for any remaining unwrapped `ToolCall` usages.
   - **Done (2025-12-21 18:43)**: Reviewed `ToolCallSheetProvider` integration; `ToolCall` is only rendered under providers in agent and orchestrator views (`agent-stream-view.tsx`, `orchestrator-messages-view.tsx`). No additional unwrapped usages or type issues found.
 
-- [ ] **Test**: Populate orchestrator messages with real tool calls and verify bottom sheet.
+- [⏳] **Test**: Populate orchestrator messages with real tool calls and verify bottom sheet.
 
   - Trigger a real orchestrator tool call (e.g., MCP create_agent) so `session.messages` is non-empty.
   - Tap the tool badge in `/orchestrator` and ensure the bottom sheet opens with correct details.
   - Confirm no context errors and that args/results render correctly.
+
+---
+
+## Double-Check Verification Tests
+
+- [x] **Test**: Verify Claude agent displays runtime model correctly.
+
+  - **Steps**: Navigate to homepage → Create new Claude agent with "Automatic" model → Send a message and wait for response → Open agent info menu (three dots)
+  - **Success criteria**: Model field shows `claude-opus-4-5-20251101` or similar Opus 4.5 model ID, NOT "Unknown" or "Automatic"
+  - If fails: add fix task
+  - **Done (2025-12-22 12:38)**: PASSED. Created Claude agent with "Automatic" model. Agent responded "Hi! I'm running on Claude Opus 4.5 (model ID: claude-opus-4-5-20251101)." Agent info menu correctly displays **Model: claude-opus-4-5-20251101**. Runtime model detection working correctly.
+
+- [ ] **Test**: Verify Codex agent displays runtime model correctly.
+
+  - **Steps**: Navigate to homepage → Create new Codex agent with "Automatic" model → Send a message and wait for response → Open agent info menu (three dots)
+  - **Success criteria**: Model field shows actual model like `gpt-5.1-codex-max`, NOT "Unknown" or "Automatic"
+  - If fails: add fix task
+
+- [ ] **Test**: Verify homepage only shows root agents (no child agents).
+
+  - **Steps**: Navigate to homepage → Create a parent agent → Have that agent spawn a sub-agent via MCP create_agent → Navigate back to homepage
+  - **Success criteria**: Homepage shows ONLY the parent agent, child agent is NOT visible in the list
+  - If fails: add fix task
+
+- [ ] **Test**: Verify sub-agents are visible in parent agent menu.
+
+  - **Steps**: Create an agent → Have it spawn a sub-agent → Open parent agent's info menu (three dots)
+  - **Success criteria**: Menu shows "Sub-agents" section with the child agent listed, tapping it navigates to child agent screen
+  - If fails: add fix task
+
+- [ ] **Test**: Verify back button works after navigating to child agent.
+
+  - **Steps**: Navigate to parent agent → Open menu → Tap on child agent → Press back button
+  - **Success criteria**: Returns to parent agent screen (not homepage), parent agent content is preserved
+  - If fails: add fix task
+
+- [ ] **Test**: Verify tool call bottom sheet opens on mobile web.
+
+  - **Steps**: Navigate to an agent with tool calls in the stream → Tap on a tool call badge (e.g., "Read", "Bash", "Edit")
+  - **Success criteria**: Bottom sheet slides up showing tool name, arguments, and result. Sheet can be dismissed by tapping outside or swiping down.
+  - If fails: add fix task
+
+- [ ] **Test**: Verify git diff screen loads without infinite loop.
+
+  - **Steps**: Navigate to an agent that has uncommitted changes → Open agent info menu → Tap "View Changes"
+  - **Success criteria**: Diff content loads and displays within 5 seconds. Console shows NO repeated `git_diff_request` messages. Loading spinner disappears.
+  - If fails: add fix task
+
+- [ ] **Checkpoint**: Review all verification test results.
+
+  - If all tests passed: mark as complete, add a final summary
+  - If any tests failed: ensure fix tasks were added and will be re-tested
