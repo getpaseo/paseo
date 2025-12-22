@@ -664,11 +664,12 @@ interface ToolCallSheetData {
   - If fails: add fix task
   - **Done (2025-12-22 12:38)**: PASSED. Created Claude agent with "Automatic" model. Agent responded "Hi! I'm running on Claude Opus 4.5 (model ID: claude-opus-4-5-20251101)." Agent info menu correctly displays **Model: claude-opus-4-5-20251101**. Runtime model detection working correctly.
 
-- [ ] **Test**: Verify Codex agent displays runtime model correctly.
+- [x] **Test**: Verify Codex agent displays runtime model correctly.
 
   - **Steps**: Navigate to homepage → Create new Codex agent with "Automatic" model → Send a message and wait for response → Open agent info menu (three dots)
   - **Success criteria**: Model field shows actual model like `gpt-5.1-codex-max`, NOT "Unknown" or "Automatic"
   - If fails: add fix task
+  - **Done (2025-12-22 12:48)**: PASSED. Created Codex agent with "Automatic" model config. Agent responded with "I'm Codex, based on GPT-5." Agent info menu correctly displays **Model: gpt-5.1-codex-max** (actual runtime model from rollout file). Runtime model detection working correctly.
 
 - [ ] **Test**: Verify homepage only shows root agents (no child agents).
 
