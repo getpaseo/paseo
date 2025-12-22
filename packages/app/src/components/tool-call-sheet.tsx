@@ -572,13 +572,14 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
 
 const styles = StyleSheet.create((theme) => ({
   sheetBackground: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.card,
   },
   handleIndicator: {
     backgroundColor: theme.colors.mutedForeground,
   },
   container: {
     flex: 1,
+    backgroundColor: theme.colors.card,
   },
   header: {
     flexDirection: "row",
@@ -639,6 +640,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     flex: 1,
+    backgroundColor: theme.colors.card,
   },
   contentContainer: {
     padding: theme.spacing[4],

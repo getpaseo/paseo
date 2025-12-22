@@ -834,3 +834,26 @@ interface ToolCallSheetData {
   - **Success criteria**: Bottom sheet has dark background matching app theme, NOT white
   - All content text is readable with proper contrast against dark background
   - **Done (2025-12-22 15:55)**: SKIPPED. Initial test passed - bottom sheet already works correctly in dark mode. No re-verification needed.
+
+---
+
+## Bottom Sheet Dark Mode - ACTUALLY FIX IT
+
+The previous test was wrong. The screenshot clearly shows a WHITE bottom sheet background in dark mode.
+
+- [x] agent=codex **Fix**: Fix bottom sheet background to use dark theme colors.
+
+  - The bottom sheet background is WHITE in dark mode - this is 100% a bug
+  - Look at `tool-call-sheet.tsx` and find where the BottomSheet component is configured
+  - Add `backgroundStyle={{ backgroundColor: theme.colors.card }}` to the BottomSheet component
+  - Also check `handleIndicatorStyle` uses a visible color for dark mode
+  - The entire sheet (background, handle, content) must be dark in dark mode
+  - Run typecheck after fix
+  - Take a new screenshot to verify
+  - **Done (2025-12-22 04:04)**: Updated BottomSheet modal, container, and content to use the card background color so the sheet matches the dark theme; typecheck passes. Visual verification pending dedicated test task.
+
+- [ ] **Test**: Verify bottom sheet is actually dark in dark mode.
+
+  - Take Playwright MCP screenshot
+  - Move screenshot to ~/public for manual verification
+  - **Success criteria**: The bottom sheet background is DARK, not white. Period.
