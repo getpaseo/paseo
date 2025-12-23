@@ -1256,10 +1256,8 @@ export class Session {
     );
 
     try {
-      const sessionConfig = await this.buildAgentSessionConfig(
-        config,
-        git,
-        worktreeName
+      const sessionConfig = this.withCodexAgentControl(
+        await this.buildAgentSessionConfig(config, git, worktreeName)
       );
       const snapshot = await this.agentManager.createAgent(sessionConfig);
       this.setCachedTitle(snapshot.id, null);
@@ -1354,7 +1352,14 @@ export class Session {
       `[Session ${this.clientId}] Resuming agent ${handle.sessionId} (${handle.provider})`
     );
     try {
-      const snapshot = await this.agentManager.resumeAgent(handle, overrides);
+      const normalizedOverrides = this.withCodexAgentControl(
+        overrides ?? {},
+        handle.provider
+      );
+      const snapshot = await this.agentManager.resumeAgent(
+        handle,
+        normalizedOverrides
+      );
       this.setCachedTitle(snapshot.id, null);
       await this.agentManager.primeAgentHistory(snapshot.id);
       await this.forwardAgentState(snapshot);
@@ -1414,11 +1419,11 @@ export class Session {
             `Agent ${agentId} cannot be refreshed because it lacks persistence`
           );
         }
-        snapshot = await this.agentManager.resumeAgent(
-          handle,
+        const overrides = this.withCodexAgentControl(
           buildConfigOverrides(record),
-          agentId
+          record.provider
         );
+        snapshot = await this.agentManager.resumeAgent(handle, overrides, agentId);
         this.setCachedTitle(agentId, null);
       }
       await this.agentManager.primeAgentHistory(agentId);
@@ -1526,6 +1531,37 @@ export class Session {
     return {
       ...config,
       cwd,
+    };
+  }
+
+  private withCodexAgentControl<T extends Partial<AgentSessionConfig>>(
+    config: T,
+    providerOverride?: AgentProvider
+  ): T {
+    const provider =
+      providerOverride ?? (config as AgentSessionConfig).provider;
+    if (provider !== "codex") {
+      return config;
+    }
+    const agentControlMcpUrl = this.agentMcpConfig?.agentMcpUrl;
+    if (!agentControlMcpUrl) {
+      return config;
+    }
+    const extra = (config.extra ?? {}) as AgentSessionConfig["extra"];
+    const codexExtra =
+      extra?.codex && typeof extra.codex === "object"
+        ? { ...extra.codex }
+        : {};
+    if (typeof (codexExtra as Record<string, unknown>).agentControlMcpUrl !== "string") {
+      (codexExtra as Record<string, unknown>).agentControlMcpUrl =
+        agentControlMcpUrl;
+    }
+    return {
+      ...config,
+      extra: {
+        ...extra,
+        codex: codexExtra,
+      },
     };
   }
 
