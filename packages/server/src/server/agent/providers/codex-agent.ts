@@ -277,9 +277,29 @@ function resolveAgentControlMcpUrl(config: CodexAgentConfig): string | null {
     : baseUrl;
 }
 
+function resolveAgentControlBearerToken(
+  config: CodexAgentConfig
+): string | null {
+  const header = config.agentControlMcp?.headers?.Authorization;
+  if (!header || typeof header !== "string") {
+    return null;
+  }
+  const trimmed = header.trim();
+  if (trimmed.toLowerCase().startsWith("bearer ")) {
+    const token = trimmed.slice("bearer ".length).trim();
+    return token.length > 0 ? token : null;
+  }
+  if (trimmed.toLowerCase().startsWith("basic ")) {
+    const token = trimmed.slice("basic ".length).trim();
+    return token.length > 0 ? token : null;
+  }
+  return null;
+}
+
 async function createCodexWrapperScript(
   realCodexPath: string,
   mcpUrl: string,
+  mcpBearerToken: string | null,
   developerInstructions: string
 ): Promise<CodexWrapperInfo> {
   const templatePath = await resolveCodexWrapperTemplatePath();
@@ -289,6 +309,10 @@ async function createCodexWrapperScript(
   const content = template
     .replace("__REAL_CODEX__", escapeBashValue(realCodexPath))
     .replace("__MCP_URL__", escapeBashValue(mcpUrl))
+    .replace(
+      "__MCP_BEARER__",
+      escapeBashValue(mcpBearerToken ?? "")
+    )
     .replace(
       "__DEV_INSTRUCTIONS__",
       escapeBashTomlValue(encodeTomlBasicString(developerInstructions))
@@ -459,6 +483,7 @@ export class CodexAgentClient implements AgentClient {
     config: CodexAgentConfig
   ): Promise<CodexSessionBootstrap> {
     const mcpUrl = resolveAgentControlMcpUrl(config);
+    const mcpBearerToken = resolveAgentControlBearerToken(config);
     const developerInstructions = resolveDeveloperInstructions(config);
     if ((!mcpUrl && !developerInstructions) || !this.baseCodexPath) {
       if ((mcpUrl || developerInstructions) && !this.baseCodexPath) {
@@ -470,6 +495,7 @@ export class CodexAgentClient implements AgentClient {
     const wrapper = await createCodexWrapperScript(
       this.baseCodexPath,
       mcpUrl ?? "",
+      mcpBearerToken,
       developerInstructions ?? ""
     );
     const env = {
