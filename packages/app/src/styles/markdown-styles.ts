@@ -216,26 +216,32 @@ export function createMarkdownStyles(theme: Theme) {
     bullet_list: {
       marginVertical: theme.spacing[2],
       paddingLeft: theme.spacing[1],
+      width: "100%" as const,
     },
 
     ordered_list: {
       marginVertical: theme.spacing[2],
       paddingLeft: theme.spacing[1],
+      width: "100%" as const,
     },
 
     list_item: {
       marginBottom: theme.spacing[1],
       flexDirection: "row" as const,
       alignItems: "flex-start" as const,
+      width: "100%" as const,
+      flexShrink: 1,
     },
 
     bullet_list_content: {
       flex: 1,
+      flexShrink: 1,
       flexWrap: "wrap" as const,
     },
 
     ordered_list_content: {
       flex: 1,
+      flexShrink: 1,
       flexWrap: "wrap" as const,
     },
 
