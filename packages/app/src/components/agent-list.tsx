@@ -132,23 +132,21 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
                   </Text>
                 </View>
 
-                {agent.requiresAttention && (
-                  <View style={styles.statusBadge}>
-                    <View style={[styles.statusDot, { backgroundColor: "#22c55e" }]} />
-                    <Text style={[styles.statusText, { color: "#22c55e" }]}>
-                      Finished
-                    </Text>
-                  </View>
-                )}
-
-                {isRunning && (
+                {isRunning ? (
                   <View style={styles.statusBadge}>
                     <View style={[styles.statusDot, { backgroundColor: "#3b82f6" }]} />
                     <Text style={[styles.statusText, { color: "#3b82f6" }]}>
                       Running
                     </Text>
                   </View>
-                )}
+                ) : agent.requiresAttention ? (
+                  <View style={styles.statusBadge}>
+                    <View style={[styles.statusDot, { backgroundColor: "#22c55e" }]} />
+                    <Text style={[styles.statusText, { color: "#22c55e" }]}>
+                      Finished
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               <Text style={styles.timeAgo}>
