@@ -231,6 +231,17 @@ const DEFAULT_AGENT_CONTROL_MCP: AgentControlMcpConfig = {
   },
 };
 
+function appendCallerAgentId(url: string, agentId: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("callerAgentId", agentId);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}callerAgentId=${encodeURIComponent(agentId)}`;
+  }
+}
+
 export function extractUserMessageText(
   content: string | ClaudeContentChunk[]
 ): string | null {
@@ -690,16 +701,14 @@ class ClaudeAgentSession implements AgentSession {
 
     // Always include the agent-control MCP server so agents can launch other agents
     const agentControlConfig = this.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
-    // Merge base headers with the caller agent ID header for parent-child relationships
-    const agentControlHeaders: Record<string, string> = {
-      ...agentControlConfig.headers,
-      ...(this.managedAgentId ? { "X-Caller-Agent-Id": this.managedAgentId } : {}),
-    };
+    const agentControlUrl = this.managedAgentId
+      ? appendCallerAgentId(agentControlConfig.url, this.managedAgentId)
+      : agentControlConfig.url;
     const defaultMcpServers: Record<string, ClaudeMcpServerConfig> = {
       "agent-control": {
         type: "http",
-        url: agentControlConfig.url,
-        ...(Object.keys(agentControlHeaders).length > 0 ? { headers: agentControlHeaders } : {}),
+        url: agentControlUrl,
+        ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
       },
       playwright: {
         type: "stdio",

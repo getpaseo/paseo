@@ -185,8 +185,14 @@ async function main() {
           });
           return;
         }
-        // Extract caller agent ID from header (sent by agents when connecting)
-        const callerAgentId = req.header("X-Caller-Agent-Id");
+        // Extract optional caller agent ID from query string (sent by agents when connecting)
+        const callerAgentIdRaw = req.query.callerAgentId;
+        const callerAgentId =
+          typeof callerAgentIdRaw === "string"
+            ? callerAgentIdRaw
+            : Array.isArray(callerAgentIdRaw)
+              ? callerAgentIdRaw[0]
+              : undefined;
         transport = await createAgentMcpTransport(callerAgentId);
       }
 
