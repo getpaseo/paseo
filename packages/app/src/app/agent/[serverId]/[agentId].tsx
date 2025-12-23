@@ -7,6 +7,7 @@ import {
   Modal,
   useWindowDimensions,
   LayoutChangeEvent,
+  ScrollView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -180,12 +181,13 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   // This prevents infinite loops caused by useShallow not doing deep equality on object arrays
   const childAgents = useMemo(() => {
     if (!resolvedAgentId || !allAgents) return [];
-    const children: Array<{ id: string; title: string | null }> = [];
+    const children: Array<{ id: string; title: string | null; createdAt: Date }> = [];
     for (const [id, a] of allAgents) {
       if (a.parentAgentId === resolvedAgentId) {
-        children.push({ id, title: a.title });
+        children.push({ id, title: a.title, createdAt: a.createdAt });
       }
     }
+    children.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return children;
   }, [allAgents, resolvedAgentId]);
 
@@ -644,22 +646,28 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                 {childAgents.length === 0 ? (
                   <Text style={styles.menuSubAgentsEmpty}>No sub-agents</Text>
                 ) : (
-                  childAgents.map((child) => (
-                    <Pressable
-                      key={child.id}
-                      onPress={() => handleNavigateToChildAgent(child.id)}
-                      style={styles.menuSubAgentItem}
-                    >
-                      <Text
-                        style={styles.menuSubAgentText}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
+                  <ScrollView
+                    style={styles.menuSubAgentsList}
+                    contentContainerStyle={styles.menuSubAgentsListContent}
+                    showsVerticalScrollIndicator={childAgents.length > 3}
+                  >
+                    {childAgents.map((child) => (
+                      <Pressable
+                        key={child.id}
+                        onPress={() => handleNavigateToChildAgent(child.id)}
+                        style={styles.menuSubAgentItem}
                       >
-                        {child.title || "Untitled Agent"}
-                      </Text>
-                      <ChevronRight size={16} color={theme.colors.mutedForeground} />
-                    </Pressable>
-                  ))
+                        <Text
+                          style={styles.menuSubAgentText}
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
+                        >
+                          {child.title || "Untitled Agent"}
+                        </Text>
+                        <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                      </Pressable>
+                    ))}
+                  </ScrollView>
                 )}
               </View>
 
@@ -931,6 +939,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  menuSubAgentsList: {
+    maxHeight: (theme.spacing[2] * 2 + theme.fontSize.sm) * 3,
+  },
+  menuSubAgentsListContent: {
+    gap: theme.spacing[1],
   },
   menuSubAgentItem: {
     flexDirection: "row",
