@@ -684,19 +684,19 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
               <View style={styles.menuDivider} />
 
               <Pressable onPress={handleViewChanges} style={styles.menuItem}>
-                <GitBranch size={20} color={theme.colors.foreground} />
+                  <GitBranch size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>View Changes</Text>
               </Pressable>
               <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
-                <Folder size={20} color={theme.colors.foreground} />
+                  <Folder size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Browse Files</Text>
               </Pressable>
               <Pressable onPress={handleImportAgent} style={styles.menuItem}>
-                <Download size={20} color={theme.colors.foreground} />
+                  <Download size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Import Agent</Text>
               </Pressable>
               <Pressable onPress={handleCreateNewAgent} style={styles.menuItem}>
-                <PlusCircle size={20} color={theme.colors.foreground} />
+                  <PlusCircle size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>New Agent</Text>
               </Pressable>
               <Pressable
@@ -707,7 +707,7 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                 ]}
                 disabled={isInitializing}
               >
-                <RotateCcw size={20} color={theme.colors.foreground} />
+                <RotateCcw size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>
                   {isInitializing ? "Refreshing..." : "Refresh"}
                 </Text>
@@ -929,14 +929,14 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   menuSubAgentsSection: {
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
   },
   menuSubAgentsHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[1],
-    paddingBottom: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
   },
   menuSubAgentsLabel: {
     fontSize: theme.fontSize.xs,
@@ -945,13 +945,13 @@ const styles = StyleSheet.create((theme) => ({
     textTransform: "uppercase",
   },
   menuSubAgentsEmpty: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.mutedForeground,
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
   },
   menuSubAgentsList: {
-    maxHeight: (theme.spacing[2] * 2 + theme.fontSize.sm) * 3,
+    maxHeight: (theme.spacing[2] * 2 + theme.fontSize.base) * 3,
   },
   menuSubAgentsListContent: {
     gap: theme.spacing[1],
@@ -960,12 +960,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
   },
   menuSubAgentText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flex: 1,
     marginRight: theme.spacing[2],
