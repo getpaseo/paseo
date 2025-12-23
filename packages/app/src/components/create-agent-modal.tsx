@@ -1524,6 +1524,9 @@ function AgentFlowModal({
     ? daemonAvailabilityError ??
       "Repository details will load automatically once the selected host is back online."
     : null;
+  const isNonGitDirectory =
+    repoRequestStatus === "error" &&
+    /not in a git repository/i.test(repoRequestError?.message ?? "");
   const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
     ? "idle"
     : repoAvailabilityError
@@ -1531,11 +1534,16 @@ function AgentFlowModal({
       : repoRequestStatus === "loading"
         ? "loading"
         : repoRequestStatus === "error"
-          ? "error"
+          ? isNonGitDirectory
+            ? "idle"
+            : "error"
           : repoRequestStatus === "success"
             ? "ready"
             : "idle";
-  const repoInfoError = repoAvailabilityError ?? repoRequestError?.message ?? null;
+  const repoInfoError = repoAvailabilityError ?? (isNonGitDirectory ? null : repoRequestError?.message ?? null);
+  const gitHelperText = isNonGitDirectory
+    ? "No git repository detected. Git options are disabled for this directory."
+    : null;
 
   useEffect(() => {
     if (!shouldInspectRepo) {
@@ -1574,6 +1582,35 @@ function AgentFlowModal({
       return prev;
     });
   }, [repoInfo]);
+
+  useEffect(() => {
+    if (!isNonGitDirectory) {
+      return;
+    }
+    if (
+      createNewBranch ||
+      createWorktree ||
+      baseBranch.trim().length > 0 ||
+      branchName.trim().length > 0 ||
+      worktreeSlug.trim().length > 0
+    ) {
+      setCreateNewBranch(false);
+      setCreateWorktree(false);
+      setBaseBranch("");
+      setBranchName("");
+      setWorktreeSlug("");
+      setBranchNameEdited(false);
+      setWorktreeSlugEdited(false);
+      shouldSyncBaseBranchRef.current = true;
+    }
+  }, [
+    baseBranch,
+    branchName,
+    createNewBranch,
+    createWorktree,
+    isNonGitDirectory,
+    worktreeSlug,
+  ]);
 
   const handleCreate = useCallback(async () => {
     const trimmedPath = workingDir.trim();
@@ -1638,7 +1675,7 @@ function AgentFlowModal({
       createWorktree ||
       (trimmedBaseBranch.length > 0 && trimmedBaseBranch !== currentBranch);
 
-    const gitOptions = shouldIncludeBase
+    const gitOptions = shouldIncludeBase && !isNonGitDirectory
       ? {
           ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
           ...(createNewBranch
@@ -1904,6 +1941,9 @@ function AgentFlowModal({
   ) : null;
 
   const gitBlockingError = useMemo(() => {
+    if (isNonGitDirectory) {
+      return null;
+    }
     const trimmedBase = baseBranch.trim();
     const currentBranch = repoInfo?.currentBranch ?? "";
     const isCustomBase =
@@ -1950,6 +1990,7 @@ function AgentFlowModal({
     branchName,
     createNewBranch,
     createWorktree,
+    isNonGitDirectory,
     repoInfo,
     validateWorktreeName,
     worktreeSlug,
@@ -2189,6 +2230,8 @@ function AgentFlowModal({
                     branches={repoInfo?.branches ?? []}
                     status={repoInfoStatus}
                     repoError={repoInfoError}
+                    helperText={gitHelperText}
+                    isGitDisabled={Boolean(gitHelperText)}
                     warning={
                       !createWorktree && repoInfo?.isDirty
                         ? "Working directory has uncommitted changes"
@@ -3075,6 +3118,7 @@ interface GitOptionsSectionProps {
   branches: Array<{ name: string; isCurrent: boolean }>;
   status: "idle" | "loading" | "ready" | "error";
   repoError: string | null;
+  helperText?: string | null;
   warning: string | null;
   createNewBranch: boolean;
   onToggleCreateNewBranch: (value: boolean) => void;
@@ -3085,6 +3129,7 @@ interface GitOptionsSectionProps {
   worktreeSlug: string;
   onWorktreeSlugChange: (value: string) => void;
   gitValidationError: string | null;
+  isGitDisabled?: boolean;
   isBaseDropdownOpen: boolean;
   onToggleBaseDropdown: () => void;
   onCloseDropdown: () => void;
@@ -3096,6 +3141,7 @@ function GitOptionsSection({
   branches,
   status,
   repoError,
+  helperText,
   warning,
   createNewBranch,
   onToggleCreateNewBranch,
@@ -3106,6 +3152,7 @@ function GitOptionsSection({
   worktreeSlug,
   onWorktreeSlugChange,
   gitValidationError,
+  isGitDisabled,
   isBaseDropdownOpen,
   onToggleBaseDropdown,
   onCloseDropdown,
@@ -3122,6 +3169,7 @@ function GitOptionsSection({
   const currentBranchLabel =
     branches.find((branch) => branch.isCurrent)?.name ?? "";
   const baseInputRef = useRef<TextInput | null>(null);
+  const gitInputsDisabled = Boolean(isGitDisabled) || status === "loading";
 
   useEffect(() => {
     if (isBaseDropdownOpen) {
@@ -3143,13 +3191,14 @@ function GitOptionsSection({
         value={baseBranch}
         placeholder={currentBranchLabel || "main"}
         onPress={onToggleBaseDropdown}
-        disabled={status === "loading"}
+        disabled={gitInputsDisabled}
         errorMessage={repoError}
-        warningMessage={!gitValidationError ? warning : null}
+        warningMessage={!gitValidationError && !isGitDisabled ? warning : null}
         helperText={
-          status === "loading"
+          helperText ??
+          (status === "loading"
             ? "Inspecting repository…"
-            : "Search existing branches, then tap to select."
+            : "Search existing branches, then tap to select.")
         }
       />
       <DropdownSheet
@@ -3215,6 +3264,7 @@ function GitOptionsSection({
         description="Create a feature branch before launching the agent"
         value={createNewBranch}
         onToggle={onToggleCreateNewBranch}
+        disabled={isGitDisabled}
       />
       {createNewBranch ? (
         <TextInput
@@ -3233,6 +3283,7 @@ function GitOptionsSection({
         description="Use an isolated directory so your current branch stays untouched"
         value={createWorktree}
         onToggle={onToggleCreateWorktree}
+        disabled={isGitDisabled}
       />
       {createWorktree ? (
         <TextInput
