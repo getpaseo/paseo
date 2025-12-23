@@ -133,9 +133,10 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
                 </View>
 
                 {agent.requiresAttention && (
-                  <View style={[styles.attentionBadge, { backgroundColor: theme.colors.primary }]}>
-                    <Text style={[styles.attentionText, { color: theme.colors.primaryForeground }]}>
-                      Needs attention
+                  <View style={styles.statusBadge}>
+                    <View style={[styles.statusDot, { backgroundColor: "#22c55e" }]} />
+                    <Text style={[styles.statusText, { color: "#22c55e" }]}>
+                      Finished
                     </Text>
                   </View>
                 )}
@@ -313,15 +314,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  attentionBadge: {
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 2,
-  },
-  attentionText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
