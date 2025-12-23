@@ -42,6 +42,20 @@ import type {
 
 type CodexAgentConfig = AgentSessionConfig & { provider: "codex" };
 
+type CodexExtraConfig = {
+  agentControlMcpUrl?: string;
+};
+
+type CodexWrapperInfo = {
+  path: string;
+  dir: string;
+};
+
+type CodexSessionBootstrap = {
+  codex: Codex;
+  wrapper?: CodexWrapperInfo;
+};
+
 const CODEX_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -252,10 +266,77 @@ function detectSystemCodexPath(): string | undefined {
   return undefined;
 }
 
+function resolveAgentControlMcpUrl(config: CodexAgentConfig): string | null {
+  const extras = config.extra?.codex as CodexExtraConfig | undefined;
+  if (!extras || typeof extras !== "object") {
+    return null;
+  }
+  const baseUrl = extras.agentControlMcpUrl;
+  if (!baseUrl || typeof baseUrl !== "string") {
+    return null;
+  }
+  return config.parentAgentId
+    ? appendCallerAgentId(baseUrl, config.parentAgentId)
+    : baseUrl;
+}
+
+async function createCodexWrapperScript(
+  realCodexPath: string,
+  mcpUrl: string
+): Promise<CodexWrapperInfo> {
+  const templatePath = await resolveCodexWrapperTemplatePath();
+  const template = await fs.readFile(templatePath, "utf8");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-wrapper-"));
+  const wrapperPath = path.join(dir, "codex-wrapper");
+  const content = template
+    .replace("__REAL_CODEX__", escapeBashValue(realCodexPath))
+    .replace("__MCP_URL__", escapeBashValue(mcpUrl));
+  await fs.writeFile(wrapperPath, content, { mode: 0o700 });
+  await fs.chmod(wrapperPath, 0o700);
+  return { path: wrapperPath, dir };
+}
+
+async function resolveCodexWrapperTemplatePath(): Promise<string> {
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = path.join(dir, "scripts", "codex-mcp-wrapper-template.sh");
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  throw new Error(
+    "Unable to locate scripts/codex-mcp-wrapper-template.sh for Codex MCP wrapper"
+  );
+}
+
+function appendCallerAgentId(url: string, agentId: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("callerAgentId", agentId);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}callerAgentId=${encodeURIComponent(agentId)}`;
+  }
+}
+
+function escapeBashValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$");
+}
+
 export class CodexAgentClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities = CODEX_CAPABILITIES;
-  private readonly codex: Codex;
+  private readonly baseOptions: CodexOptions;
+  private readonly baseCodexPath: string | null;
 
   constructor(options?: CodexOptions) {
     const codexOptions = { ...options };
@@ -273,12 +354,19 @@ export class CodexAgentClient implements AgentClient {
       }
     }
 
-    this.codex = new Codex(codexOptions);
+    this.baseOptions = codexOptions;
+    this.baseCodexPath = codexOptions.codexPathOverride ?? null;
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const codexConfig = this.assertConfig(config);
-    return CodexAgentSession.create(this.codex, codexConfig);
+    const bootstrap = await this.createCodexForSession(codexConfig);
+    return CodexAgentSession.create(
+      bootstrap.codex,
+      codexConfig,
+      undefined,
+      bootstrap.wrapper
+    );
   }
 
   async resumeSession(
@@ -294,7 +382,13 @@ export class CodexAgentClient implements AgentClient {
     }
     const mergedConfig = { ...merged, provider: "codex" } as AgentSessionConfig;
     const codexConfig = this.assertConfig(mergedConfig);
-    return CodexAgentSession.create(this.codex, codexConfig, handle);
+    const bootstrap = await this.createCodexForSession(codexConfig);
+    return CodexAgentSession.create(
+      bootstrap.codex,
+      codexConfig,
+      handle,
+      bootstrap.wrapper
+    );
   }
 
   async listPersistedAgents(
@@ -334,15 +428,43 @@ export class CodexAgentClient implements AgentClient {
     }
     return config as CodexAgentConfig;
   }
+
+  private async createCodexForSession(
+    config: CodexAgentConfig
+  ): Promise<CodexSessionBootstrap> {
+    const mcpUrl = resolveAgentControlMcpUrl(config);
+    if (!mcpUrl || !this.baseCodexPath) {
+      if (mcpUrl && !this.baseCodexPath) {
+        console.warn("[Codex] MCP wrapper skipped (no codex binary path available)");
+      }
+      return { codex: new Codex(this.baseOptions) };
+    }
+
+    const wrapper = await createCodexWrapperScript(this.baseCodexPath, mcpUrl);
+    const env = {
+      ...process.env,
+      ...(this.baseOptions.env ?? {}),
+    };
+
+    return {
+      codex: new Codex({
+        ...this.baseOptions,
+        codexPathOverride: wrapper.path,
+        env,
+      }),
+      wrapper,
+    };
+  }
 }
 
 class CodexAgentSession implements AgentSession {
   static async create(
     codex: Codex,
     config: CodexAgentConfig,
-    handle?: AgentPersistenceHandle
+    handle?: AgentPersistenceHandle,
+    wrapper?: CodexWrapperInfo
   ): Promise<CodexAgentSession> {
-    const session = new CodexAgentSession(codex, config, handle);
+    const session = new CodexAgentSession(codex, config, handle, wrapper);
     if (handle) {
       await session.loadReplayHistory(handle);
     }
@@ -363,6 +485,7 @@ class CodexAgentSession implements AgentSession {
   private availableModes: AgentMode[] = CODEX_MODES;
   private readonly codexSessionDir: string | null;
   private rolloutPath: string | null;
+  private readonly wrapper: CodexWrapperInfo | null;
   private historyEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private cancelCurrentTurn: (() => void) | null = null;
@@ -371,10 +494,12 @@ class CodexAgentSession implements AgentSession {
   constructor(
     codex: Codex,
     config: CodexAgentConfig,
-    handle?: AgentPersistenceHandle
+    handle?: AgentPersistenceHandle,
+    wrapper?: CodexWrapperInfo
   ) {
     this.codex = codex;
     this.config = { ...config };
+    this.wrapper = wrapper ?? null;
 
     // Validate mode if provided
     if (config.modeId && !VALID_CODEX_MODES.has(config.modeId)) {
@@ -634,6 +759,14 @@ class CodexAgentSession implements AgentSession {
   async close(): Promise<void> {
     this.thread = null;
     this.pendingPermissions.clear();
+    if (this.wrapper) {
+      try {
+        await fs.rm(this.wrapper.path, { force: true });
+        await fs.rm(this.wrapper.dir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failures
+      }
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -695,6 +828,14 @@ class CodexAgentSession implements AgentSession {
     );
     if (extra) {
       Object.assign(options, extra);
+    }
+
+    // Codex CLI currently disables MCP tool availability when approval_policy is set.
+    // When injecting MCP servers, omit approvalPolicy/webSearchEnabled/networkAccessEnabled to ensure MCP tools are discoverable.
+    if (resolveAgentControlMcpUrl(this.config)) {
+      delete (options as Partial<ThreadOptions>).approvalPolicy;
+      delete (options as Partial<ThreadOptions>).webSearchEnabled;
+      delete (options as Partial<ThreadOptions>).networkAccessEnabled;
     }
 
     return options;

@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
+import { createServer as createHTTPServer } from "http";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, promises as fs } from "node:fs";
 import type { Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import express from "express";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { CodexAgentClient, isSyntheticRolloutUserMessage } from "./codex-agent.js";
 import {
@@ -23,6 +28,9 @@ import type {
   AgentPersistenceHandle,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentRegistry } from "../agent-registry.js";
+import { createAgentMcpServer } from "../mcp-server.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(os.tmpdir(), "codex-agent-e2e-"));
@@ -50,6 +58,130 @@ function log(message: string): void {
 }
 
 type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+type AgentMcpServerHandle = {
+  url: string;
+  close: () => Promise<void>;
+};
+
+async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
+  const app = express();
+  app.use(express.json());
+  const httpServer = createHTTPServer(app);
+
+  const registryDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-mcp-registry-"));
+  const registryPath = path.join(registryDir, "agents.json");
+  const agentRegistry = new AgentRegistry(registryPath);
+  const agentManager = new AgentManager({
+    clients: {},
+    registry: agentRegistry,
+  });
+
+  let allowedHosts: string[] | undefined;
+  const agentMcpTransports = new Map<string, StreamableHTTPServerTransport>();
+
+  const createAgentMcpTransport = async (callerAgentId?: string) => {
+    const agentMcpServer = await createAgentMcpServer({
+      agentManager,
+      agentRegistry,
+      callerAgentId,
+    });
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        agentMcpTransports.set(sessionId, transport);
+        log(`Agent MCP session initialized: ${sessionId}`);
+      },
+      onsessionclosed: (sessionId) => {
+        agentMcpTransports.delete(sessionId);
+        log(`Agent MCP session closed: ${sessionId}`);
+      },
+      enableDnsRebindingProtection: true,
+      ...(allowedHosts ? { allowedHosts } : {}),
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        agentMcpTransports.delete(transport.sessionId);
+      }
+    };
+    transport.onerror = (error) => {
+      console.error("[Agent MCP] Transport error:", error);
+    };
+
+    await agentMcpServer.connect(transport);
+    return transport;
+  };
+
+  const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
+    try {
+      const sessionId = req.header("mcp-session-id");
+      let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
+
+      if (!transport) {
+        if (req.method !== "POST") {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Missing or invalid MCP session" },
+            id: null,
+          });
+          return;
+        }
+        if (!isInitializeRequest(req.body)) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Initialization request expected" },
+            id: null,
+          });
+          return;
+        }
+        log("Agent MCP initialize request received");
+        const callerAgentIdRaw = req.query.callerAgentId;
+        const callerAgentId =
+          typeof callerAgentIdRaw === "string"
+            ? callerAgentIdRaw
+            : Array.isArray(callerAgentIdRaw)
+              ? callerAgentIdRaw[0]
+              : undefined;
+        transport = await createAgentMcpTransport(callerAgentId);
+      }
+
+      await transport.handleRequest(req as any, res as any, req.body);
+    } catch (error) {
+      console.error("[Agent MCP] Failed to handle request:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal MCP server error" },
+          id: null,
+        });
+      }
+    }
+  };
+
+  app.post("/mcp/agents", handleAgentMcpRequest);
+  app.get("/mcp/agents", handleAgentMcpRequest);
+  app.delete("/mcp/agents", handleAgentMcpRequest);
+
+  const port = await new Promise<number>((resolve) => {
+    httpServer.listen(0, () => {
+      const address = httpServer.address();
+      resolve(typeof address === "object" && address ? address.port : 0);
+    });
+  });
+
+  allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  const url = `http://127.0.0.1:${port}/mcp/agents`;
+
+  return {
+    url,
+    close: async () => {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      rmSync(registryDir, { recursive: true, force: true });
+    },
+  };
+}
 
 function commandTextFromInput(input: unknown): string | null {
   if (!input || typeof input !== "object") {
@@ -386,7 +518,7 @@ describe("CodexAgentClient (SDK integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const client = new CodexAgentClient();
-      const config: AgentSessionConfig = { provider: "codex", cwd };
+      const config: AgentSessionConfig = { provider: "codex", cwd, modeId: "full-access" };
       let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
       try {
         session = await client.createSession(config);
@@ -698,6 +830,74 @@ describe("CodexAgentClient (SDK integration)", () => {
       }
     },
     180_000
+  );
+
+  test(
+    "sees agent-control MCP tools (list_agents) via codex",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const mcpServer = await startAgentMcpServer();
+      const client = new CodexAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "codex",
+        cwd,
+        modeId: "full-access",
+        extra: { codex: { agentControlMcpUrl: mcpServer.url } },
+      };
+      let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
+      try {
+        session = await client.createSession(config);
+        log(`Agent MCP URL: ${mcpServer.url}`);
+
+        const prompt = [
+          "Use the MCP tool agent_control.list_agents and report the agent IDs you receive.",
+          "If the tool is unavailable, say exactly: MCP tool list_agents unavailable.",
+          "Then stop.",
+        ].join("\n");
+
+        const toolCalls: ToolCallItem[] = [];
+        let finalText = "";
+        const eventLog: string[] = [];
+
+        for await (const event of session.stream(prompt)) {
+          eventLog.push(event.type);
+          if (event.type === "timeline" && event.provider === "codex") {
+            if (event.item.type === "tool_call") {
+              toolCalls.push(event.item);
+            } else if (event.item.type === "assistant_message") {
+              finalText += `${event.item.text}\n`;
+            }
+          }
+
+          if (event.type === "turn_failed") {
+            console.info("[CodexAgentTest] Turn failed:", event.error);
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        const listAgentsCall = toolCalls.find((call) => call.tool === "list_agents");
+        if (!listAgentsCall) {
+          console.info(
+            "[CodexAgentTest] MCP tool calls:",
+            toolCalls.map((call) => `${call.server}.${call.tool}`)
+          );
+          console.info("[CodexAgentTest] Final text:", finalText.trim());
+          console.info("[CodexAgentTest] Event types:", eventLog);
+        }
+
+        expect(listAgentsCall).toBeDefined();
+      } finally {
+        await session?.close();
+        await mcpServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    240_000
   );
 });
 
