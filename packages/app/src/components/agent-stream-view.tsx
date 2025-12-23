@@ -42,6 +42,7 @@ import {
   extractReadEntries,
 } from "@/utils/tool-call-parsers";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
+import { createMarkdownStyles } from "@/styles/markdown-styles";
 
 const MAX_CHAT_WIDTH = 960;
 type PermissionResolvedMessage = Extract<
@@ -594,62 +595,7 @@ function PermissionRequestCard({
   );
 
   const markdownStyles = useMemo(
-    () => ({
-      body: {
-        color: theme.colors.foreground,
-        fontSize: theme.fontSize.base,
-        lineHeight: 22,
-      },
-      text: {
-        color: theme.colors.foreground,
-        fontSize: theme.fontSize.base,
-        lineHeight: 22,
-      },
-      paragraph: {
-        marginBottom: theme.spacing[1],
-      },
-      strong: {
-        fontWeight: theme.fontWeight.semibold,
-      },
-      bullet_list: {
-        marginBottom: theme.spacing[1],
-      },
-      ordered_list: {
-        marginBottom: theme.spacing[1],
-      },
-      list_item: {
-        flexDirection: "row" as const,
-        marginBottom: theme.spacing[1],
-      },
-      code_inline: {
-        fontFamily: "monospace",
-        backgroundColor: theme.colors.card,
-        paddingHorizontal: theme.spacing[1],
-        paddingVertical: theme.spacing[1],
-        borderRadius: theme.borderRadius.sm,
-      },
-      code_block: {
-        fontFamily: "monospace",
-        backgroundColor: theme.colors.card,
-        padding: theme.spacing[2],
-        borderRadius: theme.borderRadius.md,
-      },
-      fence: {
-        fontFamily: "monospace",
-        backgroundColor: theme.colors.card,
-        padding: theme.spacing[2],
-        borderRadius: theme.borderRadius.md,
-      },
-      blockquote: {
-        borderLeftWidth: theme.borderWidth[1],
-        borderLeftColor: theme.colors.border,
-        paddingLeft: theme.spacing[3],
-        marginBottom: theme.spacing[2],
-      },
-      blockquote_text: {
-        color: theme.colors.mutedForeground,
-      },
-    }),
+    () => createMarkdownStyles(theme),
     [theme]
   );
 
