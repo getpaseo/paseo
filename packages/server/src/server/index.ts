@@ -215,7 +215,8 @@ async function main() {
         const callerAgentId =
           typeof callerAgentIdRaw === "string"
             ? callerAgentIdRaw
-            : Array.isArray(callerAgentIdRaw)
+            : Array.isArray(callerAgentIdRaw) &&
+                typeof callerAgentIdRaw[0] === "string"
               ? callerAgentIdRaw[0]
               : undefined;
         transport = await createAgentMcpTransport(callerAgentId);
