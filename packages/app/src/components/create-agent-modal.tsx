@@ -470,6 +470,7 @@ function AgentFlowModal({
     mode: false,
     model: false,
     workingDir: false,
+    serverId: false,
   });
   const prevVisibilityRef = useRef(isVisible);
   const dictationRequestIdRef = useRef<string | null>(null);
@@ -730,6 +731,7 @@ function AgentFlowModal({
           provider?: AgentProvider;
           mode?: string;
           model?: string;
+          serverId?: string;
         };
         if (
           parsed.provider &&
@@ -755,6 +757,12 @@ function AgentFlowModal({
           !userEditedPreferencesRef.current.model
         ) {
           setSelectedModel(parsed.model);
+        }
+        if (
+          typeof parsed.serverId === "string" &&
+          !userEditedPreferencesRef.current.serverId
+        ) {
+          setSelectedServerId(parsed.serverId);
         }
       } catch (error) {
         console.error(
@@ -786,6 +794,7 @@ function AgentFlowModal({
             provider: selectedProvider,
             mode: selectedMode,
             model: selectedModel,
+            serverId: selectedServerId,
           })
         );
       } catch (error) {
@@ -796,7 +805,7 @@ function AgentFlowModal({
       }
     };
     void persist();
-  }, [selectedMode, selectedProvider, workingDir]);
+  }, [selectedMode, selectedProvider, workingDir, selectedModel, selectedServerId]);
 
   const providerFilterOptions = useMemo(
     () => [
@@ -1250,6 +1259,7 @@ function AgentFlowModal({
   }, [router, selectedDaemonId]);
 
   const handleSelectServer = useCallback((serverId: string) => {
+    userEditedPreferencesRef.current.serverId = true;
     setSelectedServerId(serverId);
   }, []);
 

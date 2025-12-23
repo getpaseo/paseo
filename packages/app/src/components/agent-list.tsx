@@ -1,10 +1,8 @@
-import { View, Text, Pressable, SectionList, Modal, RefreshControl, type SectionListRenderItem } from "react-native";
+import { View, Text, Pressable, FlatList, Modal, RefreshControl, type ListRenderItem } from "react-native";
 import { useCallback, useState, useMemo } from "react";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Check } from "lucide-react-native";
 import { formatTimeAgo } from "@/utils/time";
-import { getAgentStatusColor, getAgentStatusLabel } from "@/utils/agent-status";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
@@ -16,37 +14,18 @@ interface AgentListProps {
   onRefresh?: () => void;
 }
 
-interface AgentSection {
-  title: string;
-  data: AggregatedAgent[];
-}
-
 export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentListProps) {
   const { theme } = useUnistyles();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
-  // Group agents by attention status
-  const sections = useMemo<AgentSection[]>(() => {
-    const requiresAttention: AggregatedAgent[] = [];
-    const normal: AggregatedAgent[] = [];
-
-    for (const agent of agents) {
-      if (agent.requiresAttention) {
-        requiresAttention.push(agent);
-      } else {
-        normal.push(agent);
-      }
-    }
-
-    const result: AgentSection[] = [];
-    if (requiresAttention.length > 0) {
-      result.push({ title: "Requires Attention", data: requiresAttention });
-    }
-    if (normal.length > 0) {
-      result.push({ title: "All Agents", data: normal });
-    }
-
-    return result;
+  // Sort agents with requires attention at the top
+  const sortedAgents = useMemo(() => {
+    return [...agents].sort((a, b) => {
+      // Requires attention first
+      if (a.requiresAttention && !b.requiresAttention) return -1;
+      if (!a.requiresAttention && b.requiresAttention) return 1;
+      return 0;
+    });
   }, [agents]);
 
   // Get the methods for the specific server
@@ -103,30 +82,11 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
-  const handleClearAllAttention = useCallback((agentsInSection: AggregatedAgent[]) => {
-    // Group agents by serverId for batch clearing
-    const agentsByServer = new Map<string, string[]>();
-    for (const agent of agentsInSection) {
-      const agentIds = agentsByServer.get(agent.serverId) || [];
-      agentIds.push(agent.id);
-      agentsByServer.set(agent.serverId, agentIds);
-    }
-
-    // Send one batch request per server
-    for (const [serverId, agentIds] of agentsByServer) {
-      const session = useSessionStore.getState().sessions[serverId];
-      if (session?.ws) {
-        session.ws.clearAgentAttention(agentIds);
-      }
-    }
-  }, []);
-
-  const renderAgentItem = useCallback<SectionListRenderItem<AggregatedAgent, AgentSection>>(
+  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
     ({ item: agent }) => {
-      const statusColor = getAgentStatusColor(agent.status);
-      const statusLabel = getAgentStatusLabel(agent.status);
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
       const providerLabel = getAgentProviderDefinition(agent.provider).label;
+      const isRunning = agent.status === "running";
 
       return (
         <Pressable
@@ -172,14 +132,22 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
                   </Text>
                 </View>
 
-                <View style={styles.statusBadge}>
-                  <View
-                    style={[styles.statusDot, { backgroundColor: statusColor }]}
-                  />
-                  <Text style={[styles.statusText, { color: statusColor }]}>
-                    {statusLabel}
-                  </Text>
-                </View>
+                {agent.requiresAttention && (
+                  <View style={[styles.attentionBadge, { backgroundColor: theme.colors.primary }]}>
+                    <Text style={[styles.attentionText, { color: theme.colors.primaryForeground }]}>
+                      Needs attention
+                    </Text>
+                  </View>
+                )}
+
+                {isRunning && (
+                  <View style={styles.statusBadge}>
+                    <View style={[styles.statusDot, { backgroundColor: "#3b82f6" }]} />
+                    <Text style={[styles.statusText, { color: "#3b82f6" }]}>
+                      Running
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <Text style={styles.timeAgo}>
@@ -190,7 +158,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
         </Pressable>
       );
     },
-    [handleAgentLongPress, handleAgentPress, theme.colors.muted, theme.colors.mutedForeground]
+    [handleAgentLongPress, handleAgentPress, theme.colors.muted, theme.colors.mutedForeground, theme.colors.primary, theme.colors.primaryForeground]
   );
 
   const keyExtractor = useCallback(
@@ -198,38 +166,16 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
     []
   );
 
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: AgentSection }) => (
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{section.title}</Text>
-        {section.title === "Requires Attention" && (
-          <Pressable
-            style={({ pressed }) => [
-              styles.clearAllButton,
-              pressed && styles.clearAllButtonPressed,
-            ]}
-            onPress={() => handleClearAllAttention(section.data)}
-          >
-            <Check size={16} color={theme.colors.mutedForeground} />
-          </Pressable>
-        )}
-      </View>
-    ),
-    [handleClearAllAttention, theme.colors.mutedForeground]
-  );
-
   return (
     <>
-      <SectionList
-        sections={sections}
+      <FlatList
+        data={sortedAgents}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
         renderItem={renderAgentItem}
-        renderSectionHeader={renderSectionHeader}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        stickySectionHeadersEnabled={false}
         refreshControl={
           onRefresh ? (
             <RefreshControl
@@ -295,28 +241,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[4],
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-  },
-  sectionTitle: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.mutedForeground,
-    textTransform: "uppercase",
-  },
-  clearAllButton: {
-    padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-  },
-  clearAllButtonPressed: {
-    opacity: 0.5,
-    backgroundColor: theme.colors.muted,
   },
   agentItem: {
     paddingVertical: theme.spacing[4],
@@ -389,6 +313,15 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
   },
   statusText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  attentionBadge: {
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 2,
+  },
+  attentionText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },

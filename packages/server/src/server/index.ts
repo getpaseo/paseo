@@ -28,17 +28,34 @@ const BASIC_AUTH_USERS = { mo: "bo" } as const;
 function createServer() {
   const app = express();
 
+  const [agentMcpUser, agentMcpPassword] =
+    Object.entries(BASIC_AUTH_USERS)[0] ?? [];
+  const agentMcpBearerToken =
+    agentMcpUser && agentMcpPassword
+      ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
+      : undefined;
+
   // Serve static files from public directory (no auth required for APK downloads)
   app.use("/public", express.static("public"));
 
   // Basic authentication (skip for /public routes)
-  app.use(
-    basicAuth({
-      users: BASIC_AUTH_USERS,
-      challenge: true,
-      realm: "Voice Assistant",
-    })
-  );
+  const basicAuthMiddleware = basicAuth({
+    users: BASIC_AUTH_USERS,
+    challenge: true,
+    realm: "Voice Assistant",
+  });
+  app.use((req, res, next) => {
+    if (agentMcpBearerToken && req.path.startsWith("/mcp/agents")) {
+      const authHeader = req.header("authorization") ?? "";
+      if (authHeader.startsWith("Bearer ")) {
+        const token = authHeader.slice("Bearer ".length).trim();
+        if (token === agentMcpBearerToken) {
+          return next();
+        }
+      }
+    }
+    return basicAuthMiddleware(req, res, next);
+  });
 
   // Middleware
   app.use(express.json());
@@ -155,6 +172,15 @@ async function main() {
     req,
     res
   ) => {
+    if (process.env.MCP_DEBUG === "1") {
+      console.log("[Agent MCP] request", {
+        method: req.method,
+        url: req.originalUrl,
+        sessionId: req.header("mcp-session-id"),
+        authorization: req.header("authorization"),
+        body: req.body,
+      });
+    }
     try {
       const sessionId = req.header("mcp-session-id");
       let transport = sessionId
