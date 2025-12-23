@@ -458,12 +458,6 @@ function AgentFlowModal({
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
   const shouldSyncBaseBranchRef = useRef(true);
-  const [connectionStatus, setConnectionStatus] = useState(() =>
-    effectiveWs.getConnectionState
-      ? effectiveWs.getConnectionState()
-      : { isConnected: effectiveWs.isConnected, isConnecting: effectiveWs.isConnecting }
-  );
-  const [dictationSuccessToastAt, setDictationSuccessToastAt] = useState<number | null>(null);
   const promptInputRef = useRef<
     TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
   >(null);
@@ -537,7 +531,6 @@ function AgentFlowModal({
     maxRetryAttempts: dictationMaxRetryAttempts,
     retryInfo: dictationRetryInfo,
     failedRecording: dictationFailedRecording,
-    lastOutcome: dictationLastOutcome,
     startDictation,
     cancelDictation,
     confirmDictation,
@@ -560,35 +553,6 @@ function AgentFlowModal({
   useEffect(() => {
     dictationRequestIdRef.current = dictationPendingRequestId;
   }, [dictationPendingRequestId]);
-
-  useEffect(() => {
-    if (!effectiveWs.subscribeConnectionStatus) {
-      return;
-    }
-    return effectiveWs.subscribeConnectionStatus((status) => {
-      setConnectionStatus(status);
-    });
-  }, [effectiveWs]);
-
-  useEffect(() => {
-    if (dictationLastOutcome?.type === "success") {
-      setDictationSuccessToastAt(dictationLastOutcome.timestamp);
-    }
-  }, [dictationLastOutcome]);
-
-  useEffect(() => {
-    if (dictationSuccessToastAt === null) {
-      return;
-    }
-    const timeout = setTimeout(() => {
-      setDictationSuccessToastAt(null);
-    }, 4000);
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [dictationSuccessToastAt]);
-
-  const dictationSuccessToastVisible = dictationSuccessToastAt !== null;
 
   const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
   const hasPendingDictation = dictationPendingRequestId !== null;
@@ -1228,31 +1192,6 @@ function AgentFlowModal({
   }, [discardFailedDictation]);
 
   const promptDictationToast = useMemo<DictationToastConfig | null>(() => {
-    if (!connectionStatus.isConnected) {
-      return {
-        variant: "warning",
-        title: "Offline",
-        subtitle: "Waiting for connection…",
-      };
-    }
-
-    if (dictationStatus === "recording") {
-      return {
-        variant: "info",
-        title: "Recording prompt…",
-        subtitle: "Release to insert transcription",
-      };
-    }
-
-    if (dictationStatus === "uploading") {
-      const attemptLabel = `Attempt ${Math.max(1, dictationRetryAttempt || 1)}/${dictationMaxRetryAttempts}`;
-      return {
-        variant: "info",
-        title: "Transcribing prompt…",
-        meta: attemptLabel,
-      };
-    }
-
     if (dictationStatus === "retrying") {
       const attempt = dictationRetryInfo?.attempt ?? Math.max(1, dictationRetryAttempt || 1);
       const maxAttempts = dictationRetryInfo?.maxAttempts ?? dictationMaxRetryAttempts;
@@ -1279,23 +1218,13 @@ function AgentFlowModal({
       };
     }
 
-    if (dictationSuccessToastVisible) {
-      return {
-        variant: "success",
-        title: "Transcribed",
-        subtitle: "Inserted into prompt",
-      };
-    }
-
     return null;
   }, [
-    connectionStatus.isConnected,
     dictationError,
     dictationMaxRetryAttempts,
     dictationRetryAttempt,
     dictationRetryInfo,
     dictationStatus,
-    dictationSuccessToastVisible,
     handlePromptDictationDiscard,
     handlePromptDictationRetry,
   ]);

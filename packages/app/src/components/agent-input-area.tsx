@@ -144,7 +144,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
   const [connectionStatus, setConnectionStatus] = useState(() =>
     wsOrInert.getConnectionState ? wsOrInert.getConnectionState() : { isConnected: wsOrInert.isConnected, isConnecting: wsOrInert.isConnecting }
   );
-  const [lastSuccessToastAt, setLastSuccessToastAt] = useState<number | null>(null);
   
   const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
   const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
@@ -228,7 +227,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     retryAttempt: dictationRetryAttempt,
     maxRetryAttempts: dictationMaxRetryAttempts,
     retryInfo: dictationRetryInfo,
-    lastOutcome: dictationLastOutcome,
     startDictation,
     cancelDictation,
     confirmDictation,
@@ -260,26 +258,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     });
   }, [wsOrInert]);
 
-  useEffect(() => {
-    if (dictationLastOutcome?.type === "success") {
-      setLastSuccessToastAt(dictationLastOutcome.timestamp);
-    }
-  }, [dictationLastOutcome]);
-
-  useEffect(() => {
-    if (lastSuccessToastAt === null) {
-      return;
-    }
-    const timeout = setTimeout(() => {
-      setLastSuccessToastAt(null);
-    }, 4000);
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [lastSuccessToastAt]);
-
-  const successToastVisible = lastSuccessToastAt !== null;
-
   const handleRetryFailedRecording = useCallback(() => {
     void retryFailedDictation();
   }, [retryFailedDictation]);
@@ -295,31 +273,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       wsIsConnecting: wsOrInert.isConnecting,
       hasWs: !!ws,
     });
-
-    if (!connectionStatus.isConnected) {
-      return {
-        variant: "warning",
-        title: "Offline",
-        subtitle: "Waiting for connection…",
-      };
-    }
-
-    if (dictationStatus === "recording") {
-      return {
-        variant: "info",
-        title: "Recording voice note…",
-        subtitle: "Release to transcribe",
-      };
-    }
-
-    if (dictationStatus === "uploading") {
-      const attemptLabel = `Attempt ${Math.max(1, dictationRetryAttempt || 1)}/${dictationMaxRetryAttempts}`;
-      return {
-        variant: "info",
-        title: "Transcribing…",
-        meta: attemptLabel,
-      };
-    }
 
     if (dictationStatus === "retrying") {
       const attempt = dictationRetryInfo?.attempt ?? Math.max(1, dictationRetryAttempt || 1);
@@ -347,17 +300,8 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
       };
     }
 
-    if (successToastVisible) {
-      return {
-        variant: "success",
-        title: "Transcribed",
-        subtitle: "Added to chat",
-      };
-    }
-
     return null;
   }, [
-    connectionStatus.isConnected,
     dictationError,
     dictationMaxRetryAttempts,
     dictationRetryAttempt,
@@ -365,7 +309,6 @@ export function AgentInputArea({ agentId, serverId }: AgentInputAreaProps) {
     dictationStatus,
     handleDiscardFailedRecording,
     handleRetryFailedRecording,
-    successToastVisible,
   ]);
 
   useEffect(() => {
