@@ -250,7 +250,7 @@ function AgentFlowModal({
   const isImportFlow = flow === "import";
   const isCreateFlow = !isImportFlow;
 
-  const { recentPaths, addRecentPath } = useRecentPaths();
+  const { addRecentPath } = useRecentPaths();
   const { connectionStates } = useDaemonConnections();
   const daemonEntries = useMemo(() => Array.from(connectionStates.values()), [connectionStates]);
   const initialServerId = useMemo(() => {
@@ -351,6 +351,18 @@ function AgentFlowModal({
   const agents = session?.agents;
   const providerModels = session?.providerModels;
   const requestProviderModels = session?.requestProviderModels;
+  const agentWorkingDirSuggestions = useMemo(() => {
+    if (!selectedServerId || !agents) {
+      return [];
+    }
+    const uniquePaths = new Set<string>();
+    agents.forEach((agent) => {
+      if (agent.cwd) {
+        uniquePaths.add(agent.cwd);
+      }
+    });
+    return Array.from(uniquePaths);
+  }, [agents, selectedServerId]);
   const gitRepoInfoRequest = useDaemonRequest<
     { cwd: string },
     RepoInfoState,
@@ -2167,7 +2179,7 @@ function AgentFlowModal({
                     onOpen={() => openDropdownSheet("workingDir")}
                     onClose={closeDropdown}
                     disabled={isLoading}
-                    recentPaths={recentPaths}
+                    suggestedPaths={agentWorkingDirSuggestions}
                     onSelectPath={handleUserWorkingDirChange}
                   />
 
@@ -2755,7 +2767,7 @@ interface WorkingDirectoryDropdownProps {
   onOpen: () => void;
   onClose: () => void;
   disabled: boolean;
-  recentPaths: string[];
+  suggestedPaths: string[];
   onSelectPath: (value: string) => void;
 }
 
@@ -2766,7 +2778,7 @@ function WorkingDirectoryDropdown({
   onOpen,
   onClose,
   disabled,
-  recentPaths,
+  suggestedPaths,
   onSelectPath,
 }: WorkingDirectoryDropdownProps): ReactElement {
   const inputRef = useRef<TextInput | null>(null);
@@ -2782,14 +2794,14 @@ function WorkingDirectoryDropdown({
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredPaths = useMemo(() => {
     if (!normalizedSearch) {
-      return recentPaths;
+      return suggestedPaths;
     }
-    return recentPaths.filter((path) =>
+    return suggestedPaths.filter((path) =>
       path.toLowerCase().includes(normalizedSearch)
     );
-  }, [recentPaths, normalizedSearch]);
+  }, [suggestedPaths, normalizedSearch]);
 
-  const hasRecentPaths = recentPaths.length > 0;
+  const hasSuggestedPaths = suggestedPaths.length > 0;
   const hasMatches = filteredPaths.length > 0;
   const sanitizedSearchValue = searchQuery.trim();
   const showCustomOption = sanitizedSearchValue.length > 0;
@@ -2812,9 +2824,9 @@ function WorkingDirectoryDropdown({
         disabled={disabled}
         errorMessage={errorMessage || undefined}
         helperText={
-          hasRecentPaths
-            ? "Search saved directories or paste a new path."
-            : "No saved directories yet - search to add one."
+          hasSuggestedPaths
+            ? "Search directories from existing agents or paste a new path."
+            : "No agent directories yet - search to add one."
         }
       />
       <DropdownSheet title="Working Directory" visible={isOpen} onClose={onClose}>
@@ -2828,9 +2840,9 @@ function WorkingDirectoryDropdown({
           autoCapitalize="none"
           autoCorrect={false}
         />
-        {!hasRecentPaths && !showCustomOption ? (
+        {!hasSuggestedPaths && !showCustomOption ? (
           <Text style={styles.helperText}>
-            We will remember the directories you use most often.
+            We'll suggest directories from agents on this host once they exist.
           </Text>
         ) : null}
         {showCustomOption ? (
@@ -2869,9 +2881,9 @@ function WorkingDirectoryDropdown({
               );
             })}
           </View>
-        ) : hasRecentPaths ? (
+        ) : hasSuggestedPaths ? (
           <Text style={styles.helperText}>
-            No recent paths match your search.
+            No agent directories match your search.
           </Text>
         ) : null}
       </DropdownSheet>
