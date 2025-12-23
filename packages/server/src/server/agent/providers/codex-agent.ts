@@ -39,11 +39,13 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 type CodexAgentConfig = AgentSessionConfig & { provider: "codex" };
 
 type CodexExtraConfig = {
   agentControlMcpUrl?: string;
+  developerInstructions?: string;
 };
 
 type CodexWrapperInfo = {
@@ -282,7 +284,8 @@ function resolveAgentControlMcpUrl(config: CodexAgentConfig): string | null {
 
 async function createCodexWrapperScript(
   realCodexPath: string,
-  mcpUrl: string
+  mcpUrl: string,
+  developerInstructions: string
 ): Promise<CodexWrapperInfo> {
   const templatePath = await resolveCodexWrapperTemplatePath();
   const template = await fs.readFile(templatePath, "utf8");
@@ -290,7 +293,11 @@ async function createCodexWrapperScript(
   const wrapperPath = path.join(dir, "codex-wrapper");
   const content = template
     .replace("__REAL_CODEX__", escapeBashValue(realCodexPath))
-    .replace("__MCP_URL__", escapeBashValue(mcpUrl));
+    .replace("__MCP_URL__", escapeBashValue(mcpUrl))
+    .replace(
+      "__DEV_INSTRUCTIONS__",
+      escapeBashTomlValue(encodeTomlBasicString(developerInstructions))
+    );
   await fs.writeFile(wrapperPath, content, { mode: 0o700 });
   await fs.chmod(wrapperPath, 0o700);
   return { path: wrapperPath, dir };
@@ -325,11 +332,35 @@ function appendCallerAgentId(url: string, agentId: string): string {
   }
 }
 
-function escapeBashValue(value: string): string {
+function resolveDeveloperInstructions(config: CodexAgentConfig): string | null {
+  const extras = config.extra?.codex as CodexExtraConfig | undefined;
+  const override =
+    extras && typeof extras === "object"
+      ? extras.developerInstructions
+      : undefined;
+  if (typeof override === "string" && override.trim().length > 0) {
+    return override.trim();
+  }
+  const defaultInstructions = getOrchestratorModeInstructions().trim();
+  return defaultInstructions.length > 0 ? defaultInstructions : null;
+}
+
+function encodeTomlBasicString(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
-    .replace(/\$/g, "\\$");
+    .replace(/\r?\n/g, "\\n");
+}
+
+function escapeBashValue(value: string): string {
+  return value
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`");
+}
+
+function escapeBashTomlValue(value: string): string {
+  return value.replace(/\$/g, "\\$").replace(/`/g, "\\`");
 }
 
 export class CodexAgentClient implements AgentClient {
@@ -433,14 +464,19 @@ export class CodexAgentClient implements AgentClient {
     config: CodexAgentConfig
   ): Promise<CodexSessionBootstrap> {
     const mcpUrl = resolveAgentControlMcpUrl(config);
-    if (!mcpUrl || !this.baseCodexPath) {
-      if (mcpUrl && !this.baseCodexPath) {
+    const developerInstructions = resolveDeveloperInstructions(config);
+    if ((!mcpUrl && !developerInstructions) || !this.baseCodexPath) {
+      if ((mcpUrl || developerInstructions) && !this.baseCodexPath) {
         console.warn("[Codex] MCP wrapper skipped (no codex binary path available)");
       }
       return { codex: new Codex(this.baseOptions) };
     }
 
-    const wrapper = await createCodexWrapperScript(this.baseCodexPath, mcpUrl);
+    const wrapper = await createCodexWrapperScript(
+      this.baseCodexPath,
+      mcpUrl ?? "",
+      developerInstructions ?? ""
+    );
     const env = {
       ...process.env,
       ...(this.baseOptions.env ?? {}),
