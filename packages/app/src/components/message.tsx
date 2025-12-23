@@ -24,6 +24,7 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
+import { createMarkdownStyles, createCompactMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
@@ -161,27 +162,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.bold,
   },
-  // Markdown styles
-  markdownBody: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: 24,
-  },
-  markdownText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: 22,
-  },
-  markdownParagraph: {
-    marginTop: 0,
-    marginBottom: theme.spacing[2],
-  },
-  markdownStrong: {
-    fontWeight: theme.fontWeight.bold,
-  },
-  markdownEm: {
-    fontStyle: "italic" as const,
-  },
+  // Used in custom markdownRules for inline code styling
   markdownCodeInline: {
     backgroundColor: theme.colors.secondary,
     color: theme.colors.secondaryForeground,
@@ -191,47 +172,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontFamily: "monospace",
     fontSize: 13,
   },
-  markdownCodeBlock: {
-    backgroundColor: theme.colors.secondary,
-    color: theme.colors.secondaryForeground,
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    fontFamily: "monospace",
-    fontSize: 13,
-  },
-  markdownFence: {
-    backgroundColor: theme.colors.secondary,
-    borderColor: theme.colors.border,
-    color: theme.colors.secondaryForeground,
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    marginVertical: theme.spacing[2],
-    fontFamily: "monospace",
-    fontSize: 13,
-  },
-  markdownLink: {
-    color: theme.colors.primary,
-    textDecorationLine: "underline" as const,
-  },
-  markdownList: {
-    marginBottom: theme.spacing[2],
-  },
-  markdownListItem: {
-    marginBottom: theme.spacing[1],
-  },
-  markdownBlockquote: {
-    backgroundColor: theme.colors.secondary,
-    borderLeftWidth: 4,
-    borderLeftColor: theme.colors.primary,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    marginVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.sm,
-  },
-  markdownBlockquoteText: {
-    color: theme.colors.foreground,
-    fontStyle: "italic" as const,
-  },
+  // Used in custom markdownRules for path chip styling
   pathChip: {
     backgroundColor: theme.colors.secondary,
     borderRadius: theme.borderRadius.full,
@@ -391,95 +332,75 @@ export const AssistantMessage = memo(function AssistantMessage({
   const lastPathRef = useRef<string | null>(null);
 
   const markdownStyles = useMemo(
-    () => ({
-      body: {
-        color: theme.colors.foreground,
-        fontSize: theme.fontSize.base,
-        lineHeight: 24,
-      },
-      text: {
-        color: theme.colors.foreground,
-      },
-      paragraph: {
-        marginTop: 0,
-        marginBottom: theme.spacing[2],
-      },
-      strong: {
-        fontWeight: theme.fontWeight.bold,
-      },
-      em: {
-        fontStyle: "italic" as const,
-      },
-      code_inline: {
-        backgroundColor: theme.colors.secondary,
-        color: theme.colors.secondaryForeground,
-        paddingHorizontal: theme.spacing[2],
-        paddingVertical: 2,
-        borderRadius: theme.borderRadius.sm,
-        fontFamily: "monospace",
-        fontSize: 13,
-      },
-      code_block: {
-        backgroundColor: theme.colors.secondary,
-        color: theme.colors.secondaryForeground,
-        padding: theme.spacing[3],
-        borderRadius: theme.borderRadius.md,
-        fontFamily: "monospace",
-        fontSize: 13,
-      },
-      fence: {
-        backgroundColor: theme.colors.secondary,
-        borderColor: theme.colors.border,
-        color: theme.colors.secondaryForeground,
-        padding: theme.spacing[3],
-        borderRadius: theme.borderRadius.md,
-        marginVertical: theme.spacing[2],
-        fontFamily: "monospace",
-        fontSize: 13,
-      },
-      link: {
-        color: theme.colors.primary,
-        textDecorationLine: "underline" as const,
-      },
-      bullet_list: {
-        marginBottom: theme.spacing[2],
-      },
-      ordered_list: {
-        marginBottom: theme.spacing[2],
-      },
-      list_item: {
-        marginBottom: theme.spacing[1],
-      },
-      blockquote: {
-        backgroundColor: theme.colors.secondary,
-        borderLeftWidth: 4,
-        borderLeftColor: theme.colors.primary,
-        paddingHorizontal: theme.spacing[3],
-        paddingVertical: theme.spacing[2],
-        marginVertical: theme.spacing[2],
-        borderRadius: theme.borderRadius.sm,
-      },
-      blockquote_text: {
-        color: theme.colors.foreground,
-        fontStyle: "italic" as const,
-      },
-    }),
+    () => createMarkdownStyles(theme),
     [theme]
   );
 
   const markdownRules = useMemo(() => {
-    if (!onInlinePathPress) {
-      return undefined;
-    }
-
     return {
-      code_inline: (node: any) => {
+      text: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+          {node.content}
+        </Text>
+      ),
+      textgroup: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+          {children}
+        </Text>
+      ),
+      code_block: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+          {node.content}
+        </Text>
+      ),
+      fence: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+          {node.content}
+        </Text>
+      ),
+      code_inline: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        _styles: any,
+        inheritedStyles: any = {}
+      ) => {
         const content = node.content ?? "";
-        const parsed = parseInlinePathToken(content, lastPathRef);
+        const parsed = onInlinePathPress
+          ? parseInlinePathToken(content, lastPathRef)
+          : null;
 
         if (!parsed) {
           return (
-            <Text key={node.key} style={assistantMessageStylesheet.markdownCodeInline}>
+            <Text
+              key={node.key}
+              style={[inheritedStyles, assistantMessageStylesheet.markdownCodeInline]}
+              selectable
+            >
               {content}
             </Text>
           );
@@ -489,6 +410,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <Text
             key={node.key}
             onPress={() => parsed && onInlinePathPress?.(parsed)}
+            selectable={false}
             style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
           >
             {content}
@@ -1020,42 +942,7 @@ export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtM
   const [isExpanded, setIsExpanded] = useState(false);
   const markdownContent = useMemo(() => message?.trim() ?? "", [message]);
   const markdownStyles = useMemo(
-    () => ({
-      body: {
-        color: theme.colors.foreground,
-        fontSize: theme.fontSize.sm,
-        lineHeight: 20,
-      },
-      text: {
-        color: theme.colors.foreground,
-      },
-      paragraph: {
-        marginBottom: theme.spacing[2],
-      },
-      strong: {
-        fontWeight: theme.fontWeight.semibold,
-      },
-      em: {
-        fontStyle: "italic" as const,
-      },
-      code_inline: {
-        backgroundColor: theme.colors.secondary,
-        color: theme.colors.secondaryForeground,
-        paddingHorizontal: theme.spacing[1],
-        paddingVertical: 2,
-        borderRadius: theme.borderRadius.sm,
-        fontFamily: "monospace",
-        fontSize: theme.fontSize.xs,
-      },
-      code_block: {
-        backgroundColor: theme.colors.secondary,
-        color: theme.colors.secondaryForeground,
-        padding: theme.spacing[3],
-        borderRadius: theme.borderRadius.md,
-        fontFamily: "monospace",
-        fontSize: theme.fontSize.sm,
-      },
-    }),
+    () => createCompactMarkdownStyles(theme),
     [theme]
   );
 
@@ -1063,12 +950,76 @@ export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtM
     setIsExpanded((prev) => !prev);
   }, []);
 
+  const markdownRules = useMemo(() => {
+    return {
+      text: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+          {node.content}
+        </Text>
+      ),
+      textgroup: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+          {children}
+        </Text>
+      ),
+      code_block: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+          {node.content}
+        </Text>
+      ),
+      fence: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+          {node.content}
+        </Text>
+      ),
+      code_inline: (
+        node: any,
+        _children: ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_inline]} selectable>
+          {node.content}
+        </Text>
+      ),
+    };
+  }, []);
+
   const renderDetails = useCallback(() => {
     if (!markdownContent) {
       return <Text style={agentThoughtStylesheet.emptyText}>No captured thinking</Text>;
     }
-    return <Markdown style={markdownStyles}>{markdownContent}</Markdown>;
-  }, [markdownContent, markdownStyles]);
+    return (
+      <Markdown style={markdownStyles} rules={markdownRules}>
+        {markdownContent}
+      </Markdown>
+    );
+  }, [markdownContent, markdownRules, markdownStyles]);
 
   return (
     <ExpandableBadge

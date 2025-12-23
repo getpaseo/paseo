@@ -1139,6 +1139,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     minHeight: FOOTER_HEIGHT,
     alignItems: "center",
     width: "100%",
+    overflow: "hidden",
   },
   inputAreaContent: {
     width: "100%",
