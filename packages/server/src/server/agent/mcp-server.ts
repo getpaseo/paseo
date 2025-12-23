@@ -33,6 +33,10 @@ export interface AgentMcpServerOptions {
    * When set, create_agent will auto-inject this as parentAgentId.
    */
   callerAgentId?: string;
+  /**
+   * Agent-control MCP URL to inject for Codex agents spawned via MCP.
+   */
+  agentControlMcpUrl?: string;
 }
 
 const AgentProviderEnum = z.enum(
@@ -171,7 +175,8 @@ async function serializeSnapshotWithMetadata(
 export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
-  const { agentManager, agentRegistry, callerAgentId } = options;
+  const { agentManager, agentRegistry, callerAgentId, agentControlMcpUrl } =
+    options;
   const waitTracker = new WaitForAgentTracker();
 
   const server = new McpServer({
@@ -274,12 +279,17 @@ export async function createAgentMcpServer(
       const normalizedTitle = title?.trim() ?? null;
       // Use explicit parentAgentId if provided, otherwise default to caller agent ID
       const resolvedParentAgentId = parentAgentId ?? callerAgentId;
+      const codexExtra =
+        provider === "codex" && agentControlMcpUrl
+          ? { codex: { agentControlMcpUrl } }
+          : undefined;
       const snapshot = await agentManager.createAgent({
         provider,
         cwd: resolvedCwd,
         modeId: initialMode,
         title: normalizedTitle ?? undefined,
         parentAgentId: resolvedParentAgentId,
+        extra: codexExtra,
       });
 
       if (initialPrompt) {

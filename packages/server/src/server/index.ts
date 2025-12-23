@@ -123,6 +123,7 @@ async function main() {
       agentManager,
       agentRegistry,
       callerAgentId,
+      agentControlMcpUrl: agentMcpUrl,
     });
 
     const transport = new StreamableHTTPServerTransport({
