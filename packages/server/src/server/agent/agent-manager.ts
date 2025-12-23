@@ -18,6 +18,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
+  AgentControlMcpConfig,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
@@ -54,6 +55,7 @@ export type AgentManagerOptions = {
   maxTimelineItems?: number;
   idFactory?: () => string;
   registry?: AgentRegistry;
+  agentControlMcp?: AgentControlMcpConfig;
 };
 
 export type WaitForAgentOptions = {
@@ -178,12 +180,14 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentRegistry;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  private readonly agentControlMcp?: AgentControlMcpConfig;
 
   constructor(options?: AgentManagerOptions) {
     this.maxTimelineItems =
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.agentControlMcp = options?.agentControlMcp;
     if (options?.clients) {
       for (const [provider, client] of Object.entries(options.clients)) {
         if (client) {
@@ -980,6 +984,10 @@ export class AgentManager {
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
       normalized.model = trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    if (!normalized.agentControlMcp && this.agentControlMcp) {
+      normalized.agentControlMcp = this.agentControlMcp;
     }
 
     return normalized;

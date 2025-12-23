@@ -44,7 +44,6 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 type CodexAgentConfig = AgentSessionConfig & { provider: "codex" };
 
 type CodexExtraConfig = {
-  agentControlMcpUrl?: string;
   developerInstructions?: string;
 };
 
@@ -269,11 +268,7 @@ function detectSystemCodexPath(): string | undefined {
 }
 
 function resolveAgentControlMcpUrl(config: CodexAgentConfig): string | null {
-  const extras = config.extra?.codex as CodexExtraConfig | undefined;
-  if (!extras || typeof extras !== "object") {
-    return null;
-  }
-  const baseUrl = extras.agentControlMcpUrl;
+  const baseUrl = config.agentControlMcp?.url;
   if (!baseUrl || typeof baseUrl !== "string") {
     return null;
   }

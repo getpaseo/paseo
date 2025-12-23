@@ -131,6 +131,11 @@ export type AgentRuntimeInfo = {
   extra?: Record<string, unknown>;
 };
 
+export type AgentControlMcpConfig = {
+  url: string;
+  headers?: Record<string, string>;
+};
+
 export type ListPersistedAgentsOptions = {
   limit?: number;
 };
@@ -156,6 +161,7 @@ export type AgentSessionConfig = {
   networkAccess?: boolean;
   webSearch?: boolean;
   reasoningEffort?: string;
+  agentControlMcp?: AgentControlMcpConfig;
   extra?: {
     codex?: Record<string, unknown>;
     claude?: Partial<ClaudeAgentOptions>;

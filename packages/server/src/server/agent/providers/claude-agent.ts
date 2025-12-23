@@ -30,6 +30,7 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
   AgentRunResult,
+  AgentControlMcpConfig,
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
@@ -83,20 +84,13 @@ type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
 
-type AgentControlMcpConfig = {
-  url: string;
-  headers?: Record<string, string>;
-};
-
 type ClaudeAgentClientOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
-  agentControlMcp?: AgentControlMcpConfig;
 };
 
 type ClaudeAgentSessionOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   handle?: AgentPersistenceHandle;
-  agentControlMcp?: AgentControlMcpConfig;
 };
 
 const DEFAULT_AGENT_CONTROL_MCP: AgentControlMcpConfig = {
@@ -185,18 +179,15 @@ export class ClaudeAgentClient implements AgentClient {
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
-  private readonly agentControlMcp?: AgentControlMcpConfig;
 
   constructor(options?: ClaudeAgentClientOptions) {
     this.defaults = options?.defaults;
-    this.agentControlMcp = options?.agentControlMcp;
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
-      agentControlMcp: this.agentControlMcp,
     });
   }
 
@@ -213,7 +204,6 @@ export class ClaudeAgentClient implements AgentClient {
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
-      agentControlMcp: this.agentControlMcp,
       handle,
     });
   }
@@ -254,7 +244,6 @@ class ClaudeAgentSession implements AgentSession {
 
   private readonly config: ClaudeAgentConfig;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
-  private readonly agentControlMcp?: AgentControlMcpConfig;
   private query: Query | null = null;
   private input: Pushable<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
@@ -283,7 +272,6 @@ class ClaudeAgentSession implements AgentSession {
   ) {
     this.config = config;
     this.defaults = options?.defaults;
-    this.agentControlMcp = options?.agentControlMcp;
     const handle = options?.handle;
     this.claudeSessionId = handle?.sessionId ?? handle?.nativeHandle ?? null;
     this.pendingLocalId = this.claudeSessionId ?? `claude-${randomUUID()}`;
@@ -575,7 +563,8 @@ class ClaudeAgentSession implements AgentSession {
     };
 
     // Always include the agent-control MCP server so agents can launch other agents
-    const agentControlConfig = this.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
+    const agentControlConfig =
+      this.config.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
     const agentControlUrl = this.managedAgentId
       ? appendCallerAgentId(agentControlConfig.url, this.managedAgentId)
       : agentControlConfig.url;

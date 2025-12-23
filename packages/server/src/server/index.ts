@@ -93,17 +93,16 @@ async function main() {
   const agentRegistry = new AgentRegistry();
   const agentManager = new AgentManager({
     clients: {
-      claude: new ClaudeAgentClient({
-        agentControlMcp: {
-          url: agentMcpUrl,
-          ...(agentMcpAuthHeader
-            ? { headers: { Authorization: agentMcpAuthHeader } }
-            : {}),
-        },
-      }),
+      claude: new ClaudeAgentClient(),
       codex: new CodexAgentClient(),
     },
     registry: agentRegistry,
+    agentControlMcp: {
+      url: agentMcpUrl,
+      ...(agentMcpAuthHeader
+        ? { headers: { Authorization: agentMcpAuthHeader } }
+        : {}),
+    },
   });
 
   attachAgentRegistryPersistence(agentManager, agentRegistry);
@@ -123,7 +122,6 @@ async function main() {
       agentManager,
       agentRegistry,
       callerAgentId,
-      agentControlMcpUrl: agentMcpUrl,
     });
 
     const transport = new StreamableHTTPServerTransport({

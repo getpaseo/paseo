@@ -71,6 +71,12 @@ const AgentSessionConfigSchema = z.object({
   networkAccess: z.boolean().optional(),
   webSearch: z.boolean().optional(),
   reasoningEffort: z.string().optional(),
+  agentControlMcp: z
+    .object({
+      url: z.string(),
+      headers: z.record(z.string()).optional(),
+    })
+    .optional(),
   extra: z
     .object({
       codex: z.record(z.unknown()).optional(),

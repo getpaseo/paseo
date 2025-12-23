@@ -843,7 +843,7 @@ describe("CodexAgentClient (SDK integration)", () => {
         provider: "codex",
         cwd,
         modeId: "full-access",
-        extra: { codex: { agentControlMcpUrl: mcpServer.url } },
+        agentControlMcp: { url: mcpServer.url },
       };
       let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
       try {
