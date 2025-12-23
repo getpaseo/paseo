@@ -181,10 +181,15 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   // This prevents infinite loops caused by useShallow not doing deep equality on object arrays
   const childAgents = useMemo(() => {
     if (!resolvedAgentId || !allAgents) return [];
-    const children: Array<{ id: string; title: string | null; createdAt: Date }> = [];
+    const children: Array<{
+      id: string;
+      title: string | null;
+      createdAt: Date;
+      status: Agent["status"];
+    }> = [];
     for (const [id, a] of allAgents) {
       if (a.parentAgentId === resolvedAgentId) {
-        children.push({ id, title: a.title, createdAt: a.createdAt });
+        children.push({ id, title: a.title, createdAt: a.createdAt, status: a.status });
       }
     }
     children.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -664,7 +669,12 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                         >
                           {child.title || "Untitled Agent"}
                         </Text>
-                        <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                        <View style={styles.menuSubAgentMeta}>
+                          {child.status === "running" ? (
+                            <View style={styles.menuSubAgentDot} />
+                          ) : null}
+                          <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                        </View>
                       </Pressable>
                     ))}
                   </ScrollView>
@@ -959,5 +969,16 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     flex: 1,
     marginRight: theme.spacing[2],
+  },
+  menuSubAgentMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  menuSubAgentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "#3b82f6",
   },
 }));
