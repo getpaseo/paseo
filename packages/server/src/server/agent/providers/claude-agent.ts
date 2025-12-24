@@ -30,7 +30,6 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
   AgentRunResult,
-  AgentControlMcpConfig,
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
@@ -40,7 +39,6 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { resolvePaseoPort } from "../../config.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
@@ -91,13 +89,6 @@ type ClaudeAgentClientOptions = {
 type ClaudeAgentSessionOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   handle?: AgentPersistenceHandle;
-};
-
-const DEFAULT_AGENT_CONTROL_MCP: AgentControlMcpConfig = {
-  url: `http://127.0.0.1:${resolvePaseoPort()}/mcp/agents`,
-  headers: {
-    Authorization: "Basic bW86Ym8=",
-  },
 };
 
 function appendCallerAgentId(url: string, agentId: string): string {
@@ -563,8 +554,10 @@ class ClaudeAgentSession implements AgentSession {
     };
 
     // Always include the agent-control MCP server so agents can launch other agents
-    const agentControlConfig =
-      this.config.agentControlMcp ?? DEFAULT_AGENT_CONTROL_MCP;
+    if (!this.config.agentControlMcp) {
+      throw new Error("agentControlMcp is required for ClaudeAgentSession");
+    }
+    const agentControlConfig = this.config.agentControlMcp;
     const agentControlUrl = this.managedAgentId
       ? appendCallerAgentId(agentControlConfig.url, this.managedAgentId)
       : agentControlConfig.url;
