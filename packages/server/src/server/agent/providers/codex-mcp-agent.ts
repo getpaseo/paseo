@@ -605,19 +605,24 @@ class CodexMcpAgentSession implements AgentSession {
 
   describePersistence(): AgentPersistenceHandle | null {
     if (this.persistence) {
+      const conversationId = this.conversationId ?? this.sessionId ?? undefined;
+      if (conversationId && this.persistence.metadata && typeof this.persistence.metadata === "object") {
+        (this.persistence.metadata as Record<string, unknown>).conversationId = conversationId;
+      }
       return this.persistence;
     }
     if (!this.sessionId) {
       return null;
     }
     const { model: _ignoredModel, ...restConfig } = this.config;
+    const conversationId = this.conversationId ?? this.sessionId ?? undefined;
     this.persistence = {
       provider: "codex-mcp" as AgentPersistenceHandle["provider"],
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
         ...restConfig,
-        conversationId: this.conversationId ?? undefined,
+        conversationId,
       },
     };
     return this.persistence;

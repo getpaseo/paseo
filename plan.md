@@ -124,16 +124,19 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP should emit error timeline items for failed turns.
   - **Done (2025-12-24 19:42)**: Emitted error timeline item on `turn.failed` when no prior error was recorded.
 
-- [ ] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
+- [x] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
+  - **Done (2025-12-24 19:44)**: Ensured persistence metadata always includes a conversationId, falling back to the session id when needed.
 
 - [ ] **Investigate**: Elicitation was fixed in Codex 0.71.0 - why isn't it working for us?
 
+  - Clone https://github.com/openai/codex to investigate the actual implementation
   - Web search found: Issue #6992 - Codex auto-declined elicitation requests, fixed in 0.71.0
   - We're on 0.77.0 so elicitation SHOULD work now
   - The bug was in `codex-rs/rmcp-client/src/logging_client_handler.rs`
+  - Look at how the MCP server sends ElicitRequest - what triggers it?
+  - Check the fix commit for issue #6992
   - Verify we're actually receiving ElicitRequest but maybe handling it wrong
-  - Check GitHub issue #6992 for exact fix details
-  - Maybe happy-cli works because it's on a newer version?
+  - Add debug logging to confirm what MCP messages we receive
 
 - [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
 
