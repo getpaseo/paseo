@@ -62,7 +62,8 @@ function expandPath(path: string): string {
 async function waitForAgentWithTimeout(
   agentManager: AgentManager,
   agentId: string,
-  existingSignal?: AbortSignal
+  existingSignal?: AbortSignal,
+  options?: { waitForActive?: boolean }
 ): Promise<WaitForAgentResult> {
   const timeoutSignal = AbortSignal.timeout(AGENT_WAIT_TIMEOUT_MS);
   const abortController = new AbortController();
@@ -99,6 +100,7 @@ async function waitForAgentWithTimeout(
   try {
     const result = await agentManager.waitForAgentEvent(agentId, {
       signal: abortController.signal,
+      waitForActive: options?.waitForActive,
     });
     return result;
   } catch (error) {
@@ -297,7 +299,9 @@ export async function createAgentMcpServer(
 
           // If not running in background, wait for completion
           if (!background) {
-            const result = await waitForAgentWithTimeout(agentManager, snapshot.id);
+            const result = await waitForAgentWithTimeout(agentManager, snapshot.id, undefined, {
+              waitForActive: true,
+            });
 
             const responseData = {
               agentId: snapshot.id,
@@ -509,7 +513,9 @@ export async function createAgentMcpServer(
 
       // If not running in background, wait for completion
       if (!background) {
-        const result = await waitForAgentWithTimeout(agentManager, agentId);
+        const result = await waitForAgentWithTimeout(agentManager, agentId, undefined, {
+          waitForActive: true,
+        });
 
         const responseData = {
           success: true,
