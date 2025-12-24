@@ -121,7 +121,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
   - **Done (2025-12-24 19:40)**: Normalized thread event types and added data fallback so item events map to timeline entries.
 
-- [ ] **Fix**: Codex MCP should emit error timeline items for failed turns.
+- [x] **Fix**: Codex MCP should emit error timeline items for failed turns.
+  - **Done (2025-12-24 19:42)**: Emitted error timeline item on `turn.failed` when no prior error was recorded.
 
 - [ ] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
 

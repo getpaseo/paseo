@@ -1216,6 +1216,14 @@ class CodexMcpAgentSession implements AgentSession {
           (event as { error?: { message?: string } }).error ??
           ((data as { error?: { message?: string } } | null)?.error ?? null);
         const error = errorRecord?.message ?? "Codex MCP turn failed";
+        if (!this.turnState?.sawError) {
+          this.emitEvent({
+            type: "timeline",
+            provider: "codex-mcp",
+            item: { type: "error", message: error },
+          });
+          this.turnState && (this.turnState.sawError = true);
+        }
         this.emitEvent({ type: "turn_failed", provider: "codex-mcp", error });
         break;
       }
