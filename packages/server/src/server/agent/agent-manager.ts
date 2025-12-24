@@ -60,6 +60,7 @@ export type AgentManagerOptions = {
 
 export type WaitForAgentOptions = {
   signal?: AbortSignal;
+  waitForActive?: boolean;
 };
 
 export type WaitForAgentResult = {
@@ -611,9 +612,12 @@ export class AgentManager {
       };
     }
 
-    if (!isAgentBusy(snapshot.lifecycle)) {
+    const initialStatus = snapshot.lifecycle;
+    const initialBusy = isAgentBusy(initialStatus);
+    const waitForActive = options?.waitForActive ?? false;
+    if (!waitForActive && !initialBusy) {
       return {
-        status: snapshot.lifecycle,
+        status: initialStatus,
         permission: null,
         lastMessage: this.getLastAssistantMessage(agentId)
       };
@@ -632,7 +636,8 @@ export class AgentManager {
         return;
       }
 
-      let currentStatus: AgentLifecycleStatus = snapshot.lifecycle;
+      let currentStatus: AgentLifecycleStatus = initialStatus;
+      let hasStarted = initialBusy;
 
       // Bug #3 Fix: Declare unsubscribe and abortHandler upfront so cleanup can reference them
       let unsubscribe: (() => void) | null = null;
@@ -691,7 +696,11 @@ export class AgentManager {
               finish(pending);
               return;
             }
-            if (!isAgentBusy(event.agent.lifecycle)) {
+            if (isAgentBusy(event.agent.lifecycle)) {
+              hasStarted = true;
+              return;
+            }
+            if (!waitForActive || hasStarted) {
               finish(null);
             }
           }
