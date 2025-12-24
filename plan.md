@@ -408,10 +408,11 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Align with `REPORT-codex-mcp-tool-call-coverage.md`.
   - **Done (2025-12-24 23:50)**: WHAT: normalized apply_patch change payloads, cached per-call patch metadata, and emitted file_change outputs with path/kind plus before/after/patch content in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:150`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:459`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1335`, and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1593`. RESULT: patch_apply tool_call timeline output now includes file metadata and change content needed for before/after validation. EVIDENCE: Not run (not requested).
 
-- [ ] **Fix**: Codex MCP should emit read_file tool_call timeline items with input/output content.
+- [x] **Fix**: Codex MCP should emit read_file tool_call timeline items with input/output content.
 
   - Map Codex MCP read_file events into timeline items (tool name, file path, content snippet).
   - Ensure the E2E coverage test can find `tool: "read_file"` with content.
+  - **Done (2025-12-24 23:52)**: WHAT: normalized top-level `read_file`/`file_read` events into thread items and mapped read file tool calls with path/content input/output in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1139` and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1618`. RESULT: read_file tool calls now emit timeline items with tool name, file path input, and content output for Codex MCP. EVIDENCE: Not run (not requested).
 
 - [ ] **Fix**: Codex MCP should emit external MCP tool calls (mcp_tool_call) with input/output in timeline items.
 

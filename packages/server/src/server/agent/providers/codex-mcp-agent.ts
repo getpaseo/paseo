@@ -1138,6 +1138,8 @@ class CodexMcpAgentSession implements AgentSession {
 
     const isTopLevelItemEvent =
       type === "file_change" ||
+      type === "read_file" ||
+      type === "file_read" ||
       type === "mcp_tool_call" ||
       type === "web_search" ||
       type === "todo_list";
@@ -1611,6 +1613,42 @@ class CodexMcpAgentSession implements AgentSession {
           ),
           kind: "edit",
           output: { files },
+        });
+      }
+      case "read_file":
+      case "file_read": {
+        const inputValue = (item as { input?: unknown }).input;
+        const outputValue = (item as { output?: unknown }).output;
+        const input =
+          inputValue && typeof inputValue === "object"
+            ? (inputValue as Record<string, unknown>)
+            : undefined;
+        const output =
+          outputValue && typeof outputValue === "object"
+            ? (outputValue as Record<string, unknown>)
+            : undefined;
+        const path =
+          asString(input?.path) ??
+          asString(input?.file_path) ??
+          asString(input?.filePath) ??
+          asString(item.path) ??
+          asString(item.file_path) ??
+          asString(item.filePath);
+        const content =
+          typeof outputValue === "string"
+            ? outputValue
+            : asString(output?.content) ??
+              asString(item.content) ??
+              asString(item.text);
+        return createToolCallTimelineItem({
+          server: "file_read",
+          tool: "read_file",
+          status: (item as { status?: string }).status ?? "completed",
+          callId,
+          displayName: path ? `Read ${path}` : "Read file",
+          kind: "read",
+          input: input ?? (path ? { path } : undefined),
+          output: content ?? output ?? outputValue,
         });
       }
       case "mcp_tool_call":
