@@ -98,7 +98,7 @@ const MODE_PRESETS: Record<
     sandbox: "read-only",
   },
   auto: {
-    approvalPolicy: "on-request",
+    approvalPolicy: "untrusted",
     sandbox: "workspace-write",
   },
   "full-access": {
@@ -559,7 +559,6 @@ class CodexMcpAgentSession implements AgentSession {
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);
-
     const status = response.behavior === "allow" ? "granted" : "denied";
     this.emitEvent({
       type: "timeline",
