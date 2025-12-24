@@ -59,11 +59,19 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - The reference supports permissions - copy the working approach.
   - **Done (2025-12-24 18:53)**: Matched happy-cli elicitation flow by avoiding duplicate permission requests when exec events pre-seed pending entries and aligned permission tool naming with CodexBash.
 
-- [ ] **Fix**: Use valid model instead of gpt-4.1.
+- [ ] **Fix**: Test `approval-policy=untrusted` instead of `on-request`.
+
+  - Happy CLI uses `"untrusted"` for default mode, voice-dev uses `"on-request"`.
+  - `"on-request"` may not trigger MCP elicitation.
+  - Change MODE_PRESETS["auto"] to use `"untrusted"` and test if real elicitation works.
+  - If it works, remove the synthetic permission gating workaround.
+
+- [x] **Fix**: Use valid model instead of gpt-4.1.
 
   - gpt-4.1 does not exist and is rejected by Codex CLI.
   - Check what models are actually available (run `codex --help` or check docs).
   - Update tests and provider to use a valid default model.
+  - **Done (2025-12-24 18:58)**: Updated Codex MCP default model to gpt-5.1-codex and switched runtime info test to use the valid model id.
 
 - [ ] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
 

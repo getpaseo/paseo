@@ -87,6 +87,7 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+const DEFAULT_CODEX_MODEL_ID = "gpt-5.1-codex";
 
 const MODE_PRESETS: Record<
   string,
@@ -221,7 +222,7 @@ function buildCodexMcpConfig(
   return {
     prompt,
     cwd: config.cwd,
-    model: config.model,
+    model: config.model ?? DEFAULT_CODEX_MODEL_ID,
     "approval-policy": approvalPolicy,
     sandbox,
     config: extra,
@@ -716,7 +717,7 @@ class CodexMcpAgentSession implements AgentSession {
 
     this.updateIdentifiersFromResponse(response);
     if (this.modelRejected && !this.runtimeModel) {
-      this.runtimeModel = "default";
+      this.runtimeModel = DEFAULT_CODEX_MODEL_ID;
     }
 
     if (!turnState.sawAssistant) {
