@@ -374,7 +374,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Permission abort/interrupt → session handles gracefully
   - Ensure test structure allows easy comparison between providers
 
-- [ ] **Audit**: Feature parity checklist for Codex MCP provider vs Claude provider.
+- [x] **Audit**: Feature parity checklist for Codex MCP provider vs Claude provider.
 
   - Document all capabilities the Claude provider supports
   - Verify Codex MCP provider supports each one or document gaps
@@ -383,7 +383,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Session persistence/resume
     - Abort/interrupt handling
     - Runtime info reporting
-    - Mode switching
+  - Mode switching
+  - **Done (2025-12-24 23:35)**: WHAT: authored parity audit in `REPORT-codex-mcp-claude-parity.md:1` covering capabilities, gaps, and evidence lines; updated `plan.md:200` status. RESULT: Codex MCP vs Claude feature parity checklist documented with concrete gaps (modes, persistence, MCP servers, permissions). EVIDENCE: `REPORT-codex-mcp-claude-parity.md` contents summarizing code references.
 
 - [ ] **Test (E2E)**: Comprehensive tool call coverage for Codex MCP provider.
 
