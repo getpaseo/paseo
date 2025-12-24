@@ -1733,15 +1733,44 @@ class CodexMcpAgentSession implements AgentSession {
         });
       }
       case "web_search":
+      {
+        const inputValue = (item as { input?: unknown }).input;
+        const outputValue = (item as { output?: unknown }).output;
+        const input =
+          inputValue && typeof inputValue === "object"
+            ? (inputValue as Record<string, unknown>)
+            : undefined;
+        const output =
+          outputValue && typeof outputValue === "object"
+            ? (outputValue as Record<string, unknown>)
+            : undefined;
+        const query =
+          asString(item.query) ??
+          asString(input?.query) ??
+          asString((item as { search_query?: unknown }).search_query) ??
+          asString((item as { searchQuery?: unknown }).searchQuery);
+        const results =
+          outputValue ??
+          (item as { results?: unknown }).results ??
+          (item as { search_results?: unknown }).search_results ??
+          (item as { searchResults?: unknown }).searchResults ??
+          (item as { items?: unknown }).items ??
+          (item as { documents?: unknown }).documents ??
+          (item as { data?: unknown }).data ??
+          (item as { content?: unknown }).content ??
+          (item as { response?: unknown }).response ??
+          (item as { result?: unknown }).result;
         return createToolCallTimelineItem({
           server: "web_search",
           tool: "web_search",
           status: (item as { status?: string }).status ?? "completed",
           callId,
-          displayName: item.query ? `Web search: ${item.query}` : "Web search",
+          displayName: query ? `Web search: ${query}` : "Web search",
           kind: "search",
-          input: { query: item.query },
+          input: input ?? (query ? { query } : undefined),
+          output: results ?? output,
         });
+      }
       case "todo_list":
         return { type: "todo", items: item.items as any };
       case "error":
