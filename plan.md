@@ -518,11 +518,18 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   - **Done (2025-12-25 00:34)**: WHAT: replaced Codex MCP event parsing with Zod-normalized schemas, strict thread/item handling, and typed permission/config parsing in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:856`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:904`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1951`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2447`; removed dynamic import/cast helpers and added Zod-based parsing utilities in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:98`, `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:131`, `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:233`; added provider_event to stream event type in `packages/server/src/server/agent/agent-sdk-types.ts:77`. RESULT: Codex MCP provider/test utilities no longer use `as` casts, `Record<string, unknown>`, or `??` fallbacks; events are validated via Zod at the boundary with typed handling. EVIDENCE: `rg -n "as |Record<string, unknown>|\\?\\?" packages/server/src/server/agent/providers/codex-mcp-agent.ts packages/server/src/server/agent/providers/codex-mcp-agent.test.ts` (no matches).
 
-- [ ] **Review**: Verify CRITICAL REFACTOR removed all flagged issues.
+- [x] **Review**: Verify CRITICAL REFACTOR removed all flagged issues.
 
   - Check `codex-mcp-agent.ts`, `codex-mcp-agent.test.ts`, and related files for:
     - `as` casts (outside Zod parse outputs)
     - `Record<string, unknown>` or ad‑hoc casts
-    - `??` fallbacks on required fields
-    - multi‑key guessing for the same field
+  - `??` fallbacks on required fields
+  - multi‑key guessing for the same field
   - If any remain, add a follow‑up fix task immediately after this review.
+  - **Done (2025-12-25 00:37)**: WHAT: documented remaining multi-key normalization and lingering Record types in `REPORT-codex-mcp-refactor-review.md:1` and marked review complete in `plan.md:521`. RESULT: review confirms no `as`/`??`/Record usage in Codex MCP provider/test files but identifies remaining multi-key normalization and related Record types in `agent-sdk-types.ts`. EVIDENCE: `rg -n "\\bas\\b|Record<string, unknown>|\\?\\?" packages/server/src/server/agent/providers/codex-mcp-agent.ts packages/server/src/server/agent/providers/codex-mcp-agent.test.ts packages/server/src/server/agent/agent-sdk-types.ts` and report contents.
+
+- [ ] **Fix**: Eliminate remaining multi-key normalization in Codex MCP schemas.
+
+  - Replace `firstString`-based normalization with explicit Zod discriminated unions per event variant (single canonical key per variant) and fail fast on unknown shapes.
+  - Remove multi-key permission/call-id normalization by defining canonical permission event schemas and updating tests/emitters accordingly.
+  - Re-evaluate `Record<string, unknown>` usage in `agent-sdk-types.ts` and replace with explicit types where possible.
