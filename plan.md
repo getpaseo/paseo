@@ -93,7 +93,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Do NOT give up. Do NOT add workarounds. Find the real difference.
   - **Done (2025-12-24 19:24)**: Compared happy-cli MCP setup with codex-mcp-agent (constructor args, capabilities, transport/env, tool args); logged raw MCP traffic via a debug client against codex-cli 0.77.0 for untrusted/on-request and saw no `elicitation/create` requests or `exec_approval_request` events, only exec_command events and internal approval-policy messages; confirms Codex MCP server is not emitting elicitation in this version despite approval policy settings.
 
-- [ ] **Review**: Flag ALL workarounds/hacks in `codex-mcp-agent.ts` - they are NOT acceptable.
+- [x] **Review**: Flag ALL workarounds/hacks in `codex-mcp-agent.ts` - they are NOT acceptable.
 
   - Read the entire file and list every workaround, fallback, or synthetic behavior.
   - Known workarounds to remove:
@@ -104,6 +104,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - `modelRejected` fallback logic
   - For each: explain what real fix is needed instead.
   - These hacks hide bugs. The provider should work correctly or fail clearly.
+  - **Done (2025-12-24 19:25)**: Reviewed codex-mcp-agent.ts and cataloged all workaround/fallback logic with required real fixes.
 
 - [ ] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
 
