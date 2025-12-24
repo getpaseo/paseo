@@ -271,7 +271,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP should emit error timeline items for failed turns (currently none).
   - **Done (2025-12-24 20:41)**: Tracked error timeline emission separately so failed turns always emit an error item before `turn_failed`.
 
-- [ ] **Fix**: Codex MCP persistence/resume should include conversation_id metadata (resume error).
+- [x] **Fix**: Codex MCP persistence/resume should include conversation_id metadata (resume error).
+  - **Done (2025-12-24 20:58)**: Included conversation_id metadata, kept conversation ids stable on resume, and added a history-based replay fallback when Codex reply cannot find the conversation.
 
 - [ ] **Fix**: Codex MCP permission request flow still missing in read-only/deny/abort tests (permission request null).
 
