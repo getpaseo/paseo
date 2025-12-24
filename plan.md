@@ -49,26 +49,26 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Handle Codex CLI model availability mismatch (gpt-4.1 rejected for ChatGPT accounts) in Codex MCP tests/provider.
   - **Done (2025-12-24 18:40)**: Added model-rejection fallback for ChatGPT accounts, track runtime model from responses, and default to a placeholder when a configured model is rejected.
 
-- [ ] **Fix**: Investigate Codex MCP permission elicitation behavior for `approval-policy=on-request` and `untrusted` (no permission_requested events).
+- [x] **Fix**: Investigate Codex MCP permission elicitation behavior for `approval-policy=on-request` and `untrusted` (no permission_requested events).
+  - **Done (2025-12-24 19:16)**: Added permission gating fallback for exec approval events, queued command events until approval, and flush/dropped queued events on resolution.
 
-- [ ] **Fix**: Resolve Codex MCP provider typecheck errors (`AgentPermissionResponse.message` usage, unused locals).
+- [ ] **Fix**: Compare permission elicitation with happy-cli reference implementation.
 
-- [ ] **Refactor**: Reduce casting/`unknown` usage in Codex MCP provider per type/quality report.
+  - Read `/Users/moboudra/dev/voice-dev/.tmp/happy-cli/src/codex/` to understand how elicitation works there.
+  - Identify what's different in `codex-mcp-agent.ts` vs the reference.
+  - The reference supports permissions - copy the working approach.
 
-- [ ] **Review**: Check implementation + edge cases.
+- [ ] **Fix**: Use valid model instead of gpt-4.1.
 
-  - If issues: add fix tasks + re-review.
+  - gpt-4.1 does not exist and is rejected by Codex CLI.
+  - Check what models are actually available (run `codex --help` or check docs).
+  - Update tests and provider to use a valid default model.
 
-- [ ] **Review**: Strong type/quality review of provider + tests.
+- [ ] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
 
-  - Identify type safety issues, missing error handling, and brittle assumptions.
-  - Add fix tasks and re-review.
+  - Run `npm run typecheck --workspace=@paseo/server`.
+  - Fix `AgentPermissionResponse.message` and unused locals.
 
-- [ ] **Test (E2E)**: Final verification (full scenario matrix).
+- [ ] **Test (E2E)**: Run tests and verify fixes work.
 
-  - read-only + on-request
-  - read-only + deny
-  - workspace-write + untrusted
-  - full-access
-
-- [ ] **Plan**: Re-audit and add any follow-up tasks.
+- [ ] **Plan**: Re-audit based on test results.
