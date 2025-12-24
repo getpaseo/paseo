@@ -27,7 +27,17 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - If passes: add next audit/review task.
   - **Done (2025-12-24 18:14)**: Ran Vitest E2E suite (`agent-mcp.e2e.test.ts`, `model-catalog.e2e.test.ts`); all tests passed.
 
-- [ ] **Review**: Audit E2E coverage and environment requirements for Codex MCP provider.
+- [x] **Review**: Audit E2E coverage and environment requirements for Codex MCP provider.
+
+  - **Done (2025-12-24 18:18)**: Audited Codex MCP E2E coverage and env requirements; identified missing thread/item event mapping coverage, permission abort path coverage, and codex CLI env docs.
+
+- [ ] **Test (E2E)**: Add coverage for thread/item events and non-command tool-call mapping (file_change, mcp_tool_call, web_search, todo_list).
+
+- [ ] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
+
+- [ ] **Docs**: Document Codex MCP E2E environment requirements (codex CLI version/availability, credentials, CODEX_HOME/CODEX_SESSION_DIR isolation).
+
+- [ ] **Review**: Re-audit Codex MCP E2E coverage and environment requirements after follow-ups.
 
 - [ ] **Review**: Check implementation + edge cases.
 
