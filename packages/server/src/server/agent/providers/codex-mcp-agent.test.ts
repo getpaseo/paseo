@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 
 import type {
+  AgentClient,
+  AgentPermissionRequest,
+  AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
@@ -34,45 +37,11 @@ function useTempCodexSessionDir(): () => void {
 }
 
 async function loadCodexMcpAgentClient(): Promise<{
-  new (): {
-    createSession: (config: AgentSessionConfig) => Promise<{
-      run: (prompt: string) => Promise<{ finalText: string }>;
-      stream: (prompt: string) => AsyncGenerator<AgentStreamEvent>;
-      streamHistory: () => AsyncGenerator<AgentStreamEvent>;
-      describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
-      close: () => Promise<void>;
-    }>;
-    resumeSession: (
-      handle: { sessionId: string; metadata?: Record<string, unknown> },
-      overrides?: Partial<AgentSessionConfig>
-    ) => Promise<{
-      run: (prompt: string) => Promise<{ finalText: string }>;
-      streamHistory: () => AsyncGenerator<AgentStreamEvent>;
-      describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
-      close: () => Promise<void>;
-    }>;
-  };
+  new (): AgentClient;
 }> {
   try {
     return (await import("./codex-mcp-agent.js")) as {
-      CodexMcpAgentClient: new () => {
-        createSession: (config: AgentSessionConfig) => Promise<{
-          run: (prompt: string) => Promise<{ finalText: string }>;
-          stream: (prompt: string) => AsyncGenerator<AgentStreamEvent>;
-          streamHistory: () => AsyncGenerator<AgentStreamEvent>;
-          describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
-          close: () => Promise<void>;
-        }>;
-        resumeSession: (
-          handle: { sessionId: string; metadata?: Record<string, unknown> },
-          overrides?: Partial<AgentSessionConfig>
-        ) => Promise<{
-          run: (prompt: string) => Promise<{ finalText: string }>;
-          streamHistory: () => AsyncGenerator<AgentStreamEvent>;
-          describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
-          close: () => Promise<void>;
-        }>;
-      };
+      CodexMcpAgentClient: new () => AgentClient;
     };
   } catch (error) {
     throw new Error(
@@ -105,7 +74,61 @@ function extractExitCode(output: unknown): number | undefined {
   return undefined;
 }
 
+function commandTextFromInput(input: unknown): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const command = (input as { command?: unknown }).command;
+  if (typeof command === "string" && command.length > 0) {
+    return command;
+  }
+  if (Array.isArray(command)) {
+    const tokens = command.filter((value): value is string => typeof value === "string");
+    if (tokens.length > 0) {
+      return tokens.join(" ");
+    }
+  }
+  return null;
+}
+
+function isSleepCommandToolCall(item: ToolCallItem): boolean {
+  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
+  if (display.includes("sleep 60")) {
+    return true;
+  }
+  const inputText = commandTextFromInput(item.input)?.toLowerCase() ?? "";
+  return inputText.includes("sleep 60");
+}
+
 describe("CodexMcpAgentClient (MCP integration)", () => {
+  test(
+    "responds with text",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+
+      try {
+        session = await client.createSession(config);
+        const response = await session.run("Reply READY and stop.");
+        expect(response.finalText.toLowerCase()).toContain("ready");
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
   test(
     "maps MCP stream events into timeline items with stable call ids",
     async () => {
@@ -119,8 +142,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         modeId: "full-access",
       } as AgentSessionConfig;
 
-      let session: Awaited<ReturnType<typeof client.createSession>> | null =
-        null;
+      let session: AgentSession | null = null;
       const toolCalls: ToolCallItem[] = [];
       const rawCommandEvents: unknown[] = [];
       let sawAssistant = false;
@@ -214,8 +236,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         modeId: "full-access",
       } as AgentSessionConfig;
 
-      let session: Awaited<ReturnType<typeof client.createSession>> | null =
-        null;
+      let session: AgentSession | null = null;
       let sawErrorTimeline = false;
       const errorEvents: AgentStreamEvent[] = [];
 
@@ -266,10 +287,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         modeId: "full-access",
       } as AgentSessionConfig;
 
-      let session: Awaited<ReturnType<typeof client.createSession>> | null =
-        null;
-      let resumed: Awaited<ReturnType<typeof client.resumeSession>> | null =
-        null;
+      let session: AgentSession | null = null;
+      let resumed: AgentSession | null = null;
       const token = `ALPHA-${randomUUID()}`;
 
       try {
@@ -332,5 +351,266 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       }
     },
     180_000
+  );
+
+  test(
+    "reports runtime info with provider, session, model, and mode",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        model: "gpt-4.1",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+
+      try {
+        session = await client.createSession(config);
+        const result = await session.run("Reply READY and stop.");
+        expect(result.finalText.toLowerCase()).toContain("ready");
+
+        const info = await session.getRuntimeInfo();
+        expect(info.provider).toBe("codex-mcp");
+        expect(typeof info.sessionId).toBe("string");
+        expect((info.sessionId ?? "").length).toBeGreaterThan(0);
+        expect(info.modeId).toBe("full-access");
+        expect(typeof info.model).toBe("string");
+        expect((info.model ?? "").length).toBeGreaterThan(0);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "requests permission and resolves approval when allowed",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        approvalPolicy: "on-request",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let captured: AgentPermissionRequest | null = null;
+      let sawPermissionResolved = false;
+      const timelineItems: AgentTimelineItem[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "Request approval to run the command `pwd`.",
+          "After approval, run it and reply DONE.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            expect(session.getPendingPermissions().length).toBeGreaterThan(0);
+            await session.respondToPermission(captured.id, { behavior: "allow" });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "allow"
+          ) {
+            sawPermissionResolved = true;
+          }
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            timelineItems.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect(captured).not.toBeNull();
+        expect(sawPermissionResolved).toBe(true);
+        expect(session.getPendingPermissions()).toHaveLength(0);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "granted"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) => item.type === "tool_call" && item.server === "command"
+          )
+        ).toBe(true);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "denies permission requests and reports resolution",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        approvalPolicy: "on-request",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let captured: AgentPermissionRequest | null = null;
+      let sawPermissionDenied = false;
+      const timelineItems: AgentTimelineItem[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "Request approval to run the command `pwd`.",
+          "If approval is denied, acknowledge and stop.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            await session.respondToPermission(captured.id, {
+              behavior: "deny",
+              message: "Not allowed.",
+            });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "deny"
+          ) {
+            sawPermissionDenied = true;
+          }
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            timelineItems.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect(captured).not.toBeNull();
+        expect(sawPermissionDenied).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "denied"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) => item.type === "tool_call" && item.server === "command"
+          )
+        ).toBe(false);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "interrupts a long-running command via abort",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        approvalPolicy: "on-request",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let runStartedAt: number | null = null;
+      let durationMs = 0;
+      let sawSleepCommand = false;
+      let interruptIssued = false;
+
+      try {
+        session = await client.createSession(config);
+        const prompt = [
+          "Run the exact shell command `sleep 60` using your shell tool.",
+          "Do not run any additional commands or send a response until that command finishes.",
+        ].join(" ");
+
+        runStartedAt = Date.now();
+        const stream = session.stream(prompt);
+
+        for await (const event of stream) {
+          if (event.type === "permission_requested" && session) {
+            await session.respondToPermission(event.request.id, { behavior: "allow" });
+          }
+
+          if (
+            event.type === "timeline" &&
+            providerFromEvent(event) === "codex-mcp" &&
+            event.item.type === "tool_call" &&
+            event.item.server === "command" &&
+            isSleepCommandToolCall(event.item)
+          ) {
+            sawSleepCommand = true;
+            if (!interruptIssued) {
+              interruptIssued = true;
+              await session.interrupt();
+            }
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        if (runStartedAt === null) {
+          throw new Error("Codex MCP run never started");
+        }
+        durationMs = Date.now() - runStartedAt;
+      } finally {
+        if (durationMs === 0 && runStartedAt !== null) {
+          durationMs = Date.now() - runStartedAt;
+        }
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+
+      expect(sawSleepCommand).toBe(true);
+      expect(interruptIssued).toBe(true);
+      expect(durationMs).toBeGreaterThan(0);
+      expect(durationMs).toBeLessThan(60_000);
+    },
+    90_000
   );
 });
