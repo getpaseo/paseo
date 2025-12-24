@@ -12,13 +12,14 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Ensure it fails before implementation.
   - **Done (2025-12-24 17:57)**: Expanded Codex MCP e2e tests to cover basic response, permissions allow/deny, and abort flow; updated typings and helpers.
 
-- [ ] **Implement**: `codex-mcp-agent.ts` provider so tests pass.
+- [x] **Implement**: `codex-mcp-agent.ts` provider so tests pass.
 
   - MCP stdio client + session lifecycle.
   - `codex` / `codex-reply` calls.
   - `codex/event` mapping to AgentStreamEvent.
   - Elicitation → permission requests + responses.
   - Abort/close handling.
+  - **Done (2025-12-24 18:12)**: Added Codex MCP provider with stdio client, event mapping, permissions, persistence, and abort handling.
 
 - [ ] **Test (E2E)**: Run tests and add follow-up tasks based on results.
 

@@ -26,7 +26,7 @@ export async function fetchProviderModelCatalog(
   if (provider === "claude") {
     return fetchClaudeModelCatalog(options);
   }
-  if (provider === "codex") {
+  if (provider === "codex" || provider === "codex-mcp") {
     return fetchCodexModelCatalog();
   }
   throw new Error(`Unsupported provider '${provider}'`);

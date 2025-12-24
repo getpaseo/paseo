@@ -68,6 +68,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: "auto",
     modes: CODEX_MODES,
   },
+  {
+    id: "codex-mcp",
+    label: "Codex MCP",
+    description:
+      "Codex workspace agent via MCP with streaming events and permission elicitation",
+    defaultModeId: "auto",
+    modes: CODEX_MODES,
+  },
 ];
 
 export function getAgentProviderDefinition(provider: AgentProvider): AgentProviderDefinition {
