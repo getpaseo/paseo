@@ -40,10 +40,11 @@ Reference implementation: `/Users/moboudra/dev/voice-dev/.tmp/happy-cli` (see `s
     - Elicitation appears to be exec-only; verify if patch/file change approvals surface separately.
   - **Done (2025-12-24 17:18)**: Added MCP behavior matrix/mapping, provider selection notes, and new E2E test tasks for event mapping, persistence, and runtime info.
 
-- [ ] **Test (E2E)**: MCP event payload mapping parity.
+- [x] **Test (E2E)**: MCP event payload mapping parity.
 
   - Assert `codex/event` stream maps to assistant/reasoning/tool_call/error timeline items with stable call ids.
   - Capture raw event shape for command output/exit code to decide mapping fallback.
+  - **Done (2025-12-24 17:27)**: Added MCP event mapping parity tests; vitest run fails because `codex-mcp-agent.ts` is not implemented yet.
 
 - [ ] **Test (E2E)**: MCP persistence + resume semantics.
 
