@@ -16,7 +16,7 @@ Reference implementation: `/Users/moboudra/dev/voice-dev/.tmp/happy-cli` (see `s
 
 ## Tasks
 
-- [⏳] **Plan**: MCP provider behavior matrix and interface mapping.
+- [x] **Plan**: MCP provider behavior matrix and interface mapping.
 
   - Enumerate required behaviors: start session, continue session, stream events, permission request/response, abort, close.
   - Map each to MCP primitives: `codex` tool, `codex-reply` tool, `codex/event` notifications, elicitation handler.
@@ -24,6 +24,35 @@ Reference implementation: `/Users/moboudra/dev/voice-dev/.tmp/happy-cli` (see `s
   - Define provider id (`codex-mcp`) and how it will be chosen vs existing `codex` provider.
   - Identify gaps vs `codex-agent.ts` (timeline event types, runtime model info, persistence handles).
   - Insert test tasks immediately after this task.
+  - Behavior matrix (Agent API → MCP):
+    - `createSession` → `codex` tool call (args: `prompt`, `approval-policy`, `base-instructions`, `config`, `cwd`, `include-plan-tool`, `model`, `profile`, `sandbox`).
+    - `stream` → `codex/event` notifications; map to `AgentStreamEvent` + timeline items (agent_message → assistant_message, reasoning → reasoning, command_execution/file_change/mcp_tool_call/web_search → tool_call, todo_list → todo, error → error).
+    - `continueSession` → `codex-reply` tool call (args: `sessionId`, `conversationId`, `prompt`).
+    - `respondToPermission` → MCP elicitation response; `ElicitRequestSchema` inputs become `permission_requested` + timeline tool_call (server=permission).
+    - `interrupt` → abort active tool call via `AbortController` (capture per turn).
+    - `close` → close MCP transport + clear pending permissions/events.
+  - Provider surface: `packages/server/src/server/agent/providers/codex-mcp-agent.ts` exporting `CodexMcpAgentClient` + `CodexMcpAgentSession`.
+  - Provider selection: add `codex-mcp` to `AgentProvider` union and `AGENT_PROVIDER_DEFINITIONS`; keep `codex` default and select via `AgentSessionConfig.provider`.
+  - Gaps vs `codex-agent.ts`:
+    - MCP event payload shape/fields (command outputs, status, call ids) need validation vs SDK `ThreadEvent`.
+    - Runtime model + mode may only appear in events/response; no rollout files for fallback.
+    - Persistence handle should include `sessionId` + `conversationId` (no `codexRolloutPath`/`codexSessionDir`).
+    - Elicitation appears to be exec-only; verify if patch/file change approvals surface separately.
+  - **Done (2025-12-24 17:18)**: Added MCP behavior matrix/mapping, provider selection notes, and new E2E test tasks for event mapping, persistence, and runtime info.
+
+- [ ] **Test (E2E)**: MCP event payload mapping parity.
+
+  - Assert `codex/event` stream maps to assistant/reasoning/tool_call/error timeline items with stable call ids.
+  - Capture raw event shape for command output/exit code to decide mapping fallback.
+
+- [ ] **Test (E2E)**: MCP persistence + resume semantics.
+
+  - Ensure `describePersistence()` includes sessionId + conversationId and resume uses `codex-reply`.
+  - Validate history/timeline hydration on resumed session.
+
+- [ ] **Test (E2E)**: MCP runtime info reporting.
+
+  - Ensure `getRuntimeInfo()` reports provider, sessionId, model (event/response fallback), and modeId.
 
 - [ ] **Plan**: E2E test plan (no mocks).
 
