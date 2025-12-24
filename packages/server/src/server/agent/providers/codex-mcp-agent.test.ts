@@ -605,6 +605,67 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
   );
 
   test(
+    "requires permission before commands in read-only (untrusted) mode",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "read-only",
+        approvalPolicy: "untrusted",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let captured: AgentPermissionRequest | null = null;
+      const timelineItems: AgentTimelineItem[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "Request approval to run the command `pwd`.",
+          "After approval, run it and reply DONE.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            await session.respondToPermission(captured.id, { behavior: "allow" });
+          }
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            timelineItems.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        const permissionRequestIndex = timelineItems.findIndex(
+          (item) =>
+            item.type === "tool_call" &&
+            item.server === "permission" &&
+            item.status === "requested"
+        );
+        const commandIndex = timelineItems.findIndex(
+          (item) => item.type === "tool_call" && item.server === "command"
+        );
+
+        expect(captured).not.toBeNull();
+        expect(permissionRequestIndex).toBeGreaterThanOrEqual(0);
+        expect(commandIndex).toBeGreaterThan(permissionRequestIndex);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
     "denies permission requests and reports resolution",
     async () => {
       const cwd = tmpCwd();
@@ -670,6 +731,92 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             (item) => item.type === "tool_call" && item.server === "command"
           )
         ).toBe(false);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "aborts when permission responses request an interrupt",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        approvalPolicy: "on-request",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let captured: AgentPermissionRequest | null = null;
+      let sawPermissionResolved = false;
+      let sawTurnFailed = false;
+      let failureMessage: string | null = null;
+      const timelineItems: AgentTimelineItem[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "Request approval to run the command `pwd`.",
+          "If approval is denied, stop immediately.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            await session.respondToPermission(captured.id, {
+              behavior: "deny",
+              message: "Stop now.",
+              interrupt: true,
+            });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "deny" &&
+            event.resolution.interrupt
+          ) {
+            sawPermissionResolved = true;
+          }
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            timelineItems.push(event.item);
+          }
+          if (event.type === "turn_failed") {
+            sawTurnFailed = true;
+            failureMessage = event.error;
+            break;
+          }
+          if (event.type === "turn_completed") {
+            break;
+          }
+        }
+
+        expect(captured).not.toBeNull();
+        expect(sawPermissionResolved).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "denied"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) => item.type === "tool_call" && item.server === "command"
+          )
+        ).toBe(false);
+        expect(sawTurnFailed).toBe(true);
+        expect(failureMessage ?? "").toMatch(/aborted|interrupted/i);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });

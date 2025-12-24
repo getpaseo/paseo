@@ -32,17 +32,27 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - **Done (2025-12-24 18:18)**: Audited Codex MCP E2E coverage and env requirements; identified missing thread/item event mapping coverage, permission abort path coverage, and codex CLI env docs.
 
 - [x] **Test (E2E)**: Add coverage for thread/item events and non-command tool-call mapping (file_change, mcp_tool_call, web_search, todo_list).
+
   - **Done (2025-12-24 18:24)**: Added Codex MCP E2E coverage for thread/item mapping and non-command tool calls. Tests failed locally due to Codex CLI/model/permission behavior mismatches (see test output).
 
-- [ ] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
+- [x] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
+  - **Done (2025-12-24 18:30)**: Added Codex MCP E2E tests for read-only/untrusted permission gating and interrupt-based permission abort handling; Vitest failed locally due to missing tool version for `vitest` in `.tool-versions`.
 
-- [ ] **Docs**: Document Codex MCP E2E environment requirements (codex CLI version/availability, credentials, CODEX_HOME/CODEX_SESSION_DIR isolation).
+- [ ] **Test / Review (E2E + Typecheck)**: Document Codex CLI/model/permission mismatches and run typecheck.
 
-- [ ] **Review**: Re-audit Codex MCP E2E coverage and environment requirements after follow-ups.
+  - Capture exact failing scenarios, including CLI flags, sandbox/approval policy, and observed vs expected behavior.
+  - Review code, really bad typing and code is generally hortible quality, write a report for follow up tasks, reduce casting to a minimum, strongly typing everywhere
+  - Paste key error output snippets and summarize root causes.
+  - Run server typecheck and record failures; add fix tasks for each category.
 
 - [ ] **Review**: Check implementation + edge cases.
 
   - If issues: add fix tasks + re-review.
+
+- [ ] **Review**: Strong type/quality review of provider + tests.
+
+  - Identify type safety issues, missing error handling, and brittle assumptions.
+  - Add fix tasks and re-review.
 
 - [ ] **Test (E2E)**: Final verification (full scenario matrix).
 
