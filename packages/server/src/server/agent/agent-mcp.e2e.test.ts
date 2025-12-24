@@ -1,4 +1,3 @@
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -6,15 +5,20 @@ import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 type McpToolResult = {
   structuredContent?: Record<string, unknown>;
-  content?: Array<{ structuredContent?: Record<string, unknown> } | Record<string, unknown>>;
+  content?: Array<
+    { structuredContent?: Record<string, unknown> } | Record<string, unknown>
+  >;
 };
 
 type McpClient = {
-  callTool: (input: { name: string; args?: Record<string, unknown> }) => Promise<unknown>;
+  callTool: (input: {
+    name: string;
+    args?: Record<string, unknown>;
+  }) => Promise<unknown>;
   close: () => Promise<void>;
 };
 
@@ -22,23 +26,13 @@ type PermissionPayload = {
   id: string;
 };
 
-async function getAvailablePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Failed to acquire port")));
-        return;
-      }
-      server.close(() => resolve(address.port));
-    });
-  });
-}
-
-function getStructuredContent(result: McpToolResult): Record<string, unknown> | null {
-  if (result.structuredContent && typeof result.structuredContent === "object") {
+function getStructuredContent(
+  result: McpToolResult
+): Record<string, unknown> | null {
+  if (
+    result.structuredContent &&
+    typeof result.structuredContent === "object"
+  ) {
     return result.structuredContent;
   }
   const content = result.content?.[0];
@@ -51,7 +45,10 @@ function getStructuredContent(result: McpToolResult): Record<string, unknown> | 
   return null;
 }
 
-async function waitForFile(filePath: string, timeoutMs = 30000): Promise<string> {
+async function waitForFile(
+  filePath: string,
+  timeoutMs = 30000
+): Promise<string> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
@@ -85,170 +82,109 @@ async function waitForAgentCompletion(
   }
 }
 
-const hasClaudeCredentials = Boolean(
-  process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
-);
-
 describe("agent MCP end-to-end", () => {
-  const runTest = hasClaudeCredentials ? test : test.skip;
-  runTest(
-    "creates a Claude agent and writes a file",
-    async () => {
-      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
-      const port = await getAvailablePort();
-      const basicUsers = { test: "pass" };
-      const [agentMcpUser, agentMcpPassword] =
-        Object.entries(basicUsers)[0] ?? [];
-      const agentMcpAuthHeader =
-        agentMcpUser && agentMcpPassword
-          ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
-          : undefined;
-      const agentMcpBearerToken =
-        agentMcpUser && agentMcpPassword
-          ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
-          : undefined;
+  test("creates a Claude agent and writes a file", async () => {
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const daemonHandle = await createTestPaseoDaemon();
 
-      const daemonConfig: PaseoDaemonConfig = {
-        port,
-        paseoHome,
-        agentMcpRoute: "/mcp/agents",
-        agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
-        auth: {
-          basicUsers,
-          agentMcpAuthHeader,
-          agentMcpBearerToken,
-          realm: "Voice Assistant",
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${daemonHandle.port}/mcp/agents`),
+      daemonHandle.agentMcpAuthHeader
+        ? {
+            requestInit: {
+              headers: { Authorization: daemonHandle.agentMcpAuthHeader },
+            },
+          }
+        : undefined
+    );
+    const client = (await experimental_createMCPClient({
+      transport,
+    })) as McpClient;
+
+    let agentId: string | null = null;
+
+    try {
+      const result = (await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "MCP e2e codex smoke",
+          agentType: "codex",
+          initialMode: "read-only",
+          background: false,
         },
-        staticDir,
-        mcpDebug: false,
-        agentClients: {},
-        agentRegistryPath: path.join(paseoHome, "agents.json"),
-        agentControlMcp: {
-          url: `http://127.0.0.1:${port}/mcp/agents`,
-          ...(agentMcpAuthHeader
-            ? { headers: { Authorization: agentMcpAuthHeader } }
-            : {}),
+      })) as McpToolResult;
+
+      const payload = getStructuredContent(result);
+      expect(payload).toBeTruthy();
+      agentId = payload?.agentId as string | null;
+      expect(agentId).toBeTruthy();
+
+      const prompt = [
+        'Run this command exactly: ["bash", "-lc", "echo ok > mcp-smoke.txt"].',
+        "After the command runs, reply with done and stop.",
+      ].join("\n");
+
+      const promptResult = (await client.callTool({
+        name: "send_agent_prompt",
+        args: {
+          agentId,
+          prompt,
+            sessionMode: "read-only",
+          background: false,
         },
-      };
-
-      const previousCodexSessionDir = process.env.CODEX_SESSION_DIR;
-      const previousCodexHome = process.env.CODEX_HOME;
-      const codexSessionDir = await mkdtemp(
-        path.join(os.tmpdir(), "codex-session-")
-      );
-      const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-home-"));
-      process.env.CODEX_SESSION_DIR = codexSessionDir;
-      process.env.CODEX_HOME = codexHome;
-
-      const daemon = await createPaseoDaemon(daemonConfig);
-      await new Promise<void>((resolve) => {
-        daemon.httpServer.listen(port, () => resolve());
-      });
-
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${port}/mcp/agents`),
-        agentMcpAuthHeader
-          ? { requestInit: { headers: { Authorization: agentMcpAuthHeader } } }
-          : undefined
-      );
-      const client = (await experimental_createMCPClient({
-        transport,
-      })) as McpClient;
-
-      let agentId: string | null = null;
-
-      try {
-        const result = (await client.callTool({
-          name: "create_agent",
-          args: {
-            cwd: agentCwd,
-            title: "MCP e2e smoke",
-            agentType: "claude",
-            initialMode: "default",
-            background: false,
-          },
+      })) as McpToolResult;
+      const promptPayload = getStructuredContent(promptResult);
+      const permission = promptPayload?.permission as PermissionPayload | null;
+      if (!permission?.id) {
+        const activityResult = (await client.callTool({
+          name: "get_agent_activity",
+          args: { agentId, limit: 10 },
         })) as McpToolResult;
-
-        const payload = getStructuredContent(result);
-        expect(payload).toBeTruthy();
-        agentId = payload?.agentId as string | null;
-        expect(agentId).toBeTruthy();
-
-        const prompt = [
-          "You must call the tool named shell.",
-          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok > mcp-smoke.txt\"].",
-          "After the tool runs, reply with done and stop.",
-        ].join("\n");
-
-        await client.callTool({
-          name: "send_agent_prompt",
-          args: {
-            agentId,
-            prompt,
-            sessionMode: "default",
-            background: true,
-          },
-        });
-
-        const waitResult = (await client.callTool({
-          name: "wait_for_agent",
-          args: { agentId },
-        })) as McpToolResult;
-        const waitPayload = getStructuredContent(waitResult);
-        const permission = waitPayload?.permission as PermissionPayload | null;
-        expect(permission?.id).toBeTruthy();
-        await client.callTool({
-          name: "respond_to_permission",
-          args: {
-            agentId,
-            requestId: permission!.id,
-            response: { behavior: "allow" },
-          },
-        });
-        await waitForAgentCompletion(client, agentId);
-
-        const filePath = path.join(agentCwd, "mcp-smoke.txt");
-        let contents: string;
-        try {
-          contents = await waitForFile(filePath);
-        } catch (error) {
-          const activityResult = (await client.callTool({
-            name: "get_agent_activity",
-            args: { agentId, limit: 25 },
-          })) as McpToolResult;
-          const activityPayload = getStructuredContent(activityResult);
-          const activitySummary = activityPayload?.content;
-          const details = activitySummary
-            ? `Agent activity:\n${activitySummary}`
-            : "Agent activity unavailable";
-          throw new Error(`${(error as Error).message}\n${details}`);
-        }
-        expect(contents.trim()).toBe("ok");
-      } finally {
-        if (agentId) {
-          await client.callTool({ name: "kill_agent", args: { agentId } });
-        }
-        await client.close();
-        await daemon.close().catch(() => undefined);
-        if (previousCodexSessionDir === undefined) {
-          delete process.env.CODEX_SESSION_DIR;
-        } else {
-          process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
-        }
-        if (previousCodexHome === undefined) {
-          delete process.env.CODEX_HOME;
-        } else {
-          process.env.CODEX_HOME = previousCodexHome;
-        }
-        await rm(paseoHome, { recursive: true, force: true });
-        await rm(staticDir, { recursive: true, force: true });
-        await rm(agentCwd, { recursive: true, force: true });
-        await rm(codexSessionDir, { recursive: true, force: true });
-        await rm(codexHome, { recursive: true, force: true });
+        console.log(
+          "[agent-mcp.e2e] send_agent_prompt payload:",
+          promptPayload
+        );
+        console.log(
+          "[agent-mcp.e2e] get_agent_activity payload:",
+          getStructuredContent(activityResult)
+        );
       }
-    },
-    180_000
-  );
+      expect(permission?.id).toBeTruthy();
+      await client.callTool({
+        name: "respond_to_permission",
+        args: {
+          agentId,
+          requestId: permission!.id,
+          response: { behavior: "allow" },
+        },
+      });
+      await waitForAgentCompletion(client, agentId);
+
+      const filePath = path.join(agentCwd, "mcp-smoke.txt");
+      let contents: string;
+      try {
+        contents = await waitForFile(filePath);
+      } catch (error) {
+        const activityResult = (await client.callTool({
+          name: "get_agent_activity",
+          args: { agentId, limit: 25 },
+        })) as McpToolResult;
+        const activityPayload = getStructuredContent(activityResult);
+        const activitySummary = activityPayload?.content;
+        const details = activitySummary
+          ? `Agent activity:\n${activitySummary}`
+          : "Agent activity unavailable";
+        throw new Error(`${(error as Error).message}\n${details}`);
+      }
+      expect(contents.trim()).toBe("ok");
+    } finally {
+      if (agentId) {
+        await client.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client.close();
+      await daemonHandle.close();
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 180_000);
 });
