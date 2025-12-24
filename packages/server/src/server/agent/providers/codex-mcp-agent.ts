@@ -93,11 +93,11 @@ const MODE_PRESETS: Record<
   { approvalPolicy: string; sandbox: string }
 > = {
   "read-only": {
-    approvalPolicy: "untrusted",
+    approvalPolicy: "on-request",
     sandbox: "read-only",
   },
   auto: {
-    approvalPolicy: "untrusted",
+    approvalPolicy: "on-request",
     sandbox: "workspace-write",
   },
   "full-access": {
@@ -510,6 +510,19 @@ class CodexMcpAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     this.currentAbortController?.abort();
+    if (
+      this.eventQueue &&
+      this.turnState &&
+      !this.turnState.completed &&
+      !this.turnState.failed
+    ) {
+      this.emitEvent({
+        type: "turn_failed",
+        provider: "codex-mcp",
+        error: "Codex MCP turn interrupted",
+      });
+      this.eventQueue.end();
+    }
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
