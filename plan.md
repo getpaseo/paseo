@@ -386,7 +386,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Mode switching
   - **Done (2025-12-24 23:35)**: WHAT: authored parity audit in `REPORT-codex-mcp-claude-parity.md:1` covering capabilities, gaps, and evidence lines; updated `plan.md:200` status. RESULT: Codex MCP vs Claude feature parity checklist documented with concrete gaps (modes, persistence, MCP servers, permissions). EVIDENCE: `REPORT-codex-mcp-claude-parity.md` contents summarizing code references.
 
-- [ ] **Test (E2E)**: Comprehensive tool call coverage for Codex MCP provider.
+- [x] **Test (E2E)**: Comprehensive tool call coverage for Codex MCP provider.
 
   - All tool call types must be tested and emit proper timeline events:
     - **Command runs**: `shell_command` / `exec_command` → exit code, stdout, stderr
@@ -400,6 +400,25 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Tool `input` and `output` are captured
     - `callId` is consistent across events
     - Permission flow triggers when expected (for unsafe operations)
+  - **Done (2025-12-24 23:44)**: WHAT: added tool-call coverage helpers and E2E test in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:153` and `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:430`, plus documented failures in `REPORT-codex-mcp-tool-call-coverage.md:1`. RESULT: test fails because file_change outputs omit file metadata and no read_file/mcp_tool_call/web_search timeline items or outputs are captured. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "captures tool call inputs/outputs"` (fails with missing file_change output at `codex-mcp-agent.test.ts:532`, missing read_file at `codex-mcp-agent.test.ts:535`, missing mcp tool call at `codex-mcp-agent.test.ts:542`, missing web_search at `codex-mcp-agent.test.ts:549`).
+
+- [ ] **Fix**: Codex MCP apply_patch tool_call output should include file metadata (path/kind) and before/after content.
+
+  - Ensure `patch_apply_end` timeline output includes file path info and the patch content needed for before/after validation.
+  - Align with `REPORT-codex-mcp-tool-call-coverage.md`.
+
+- [ ] **Fix**: Codex MCP should emit read_file tool_call timeline items with input/output content.
+
+  - Map Codex MCP read_file events into timeline items (tool name, file path, content snippet).
+  - Ensure the E2E coverage test can find `tool: "read_file"` with content.
+
+- [ ] **Fix**: Codex MCP should emit external MCP tool calls (mcp_tool_call) with input/output in timeline items.
+
+  - Ensure MCP server tool calls surface `server`, `tool`, `input`, and `output` fields.
+
+- [ ] **Fix**: Codex MCP web_search timeline items should include query input and results output.
+
+  - Ensure web_search tool calls emit a timeline item with query and results.
 
 - [ ] **CRITICAL REFACTOR**: Eliminate ALL type casting and defensive coding in Codex MCP provider.
 
