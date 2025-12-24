@@ -265,7 +265,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP command output should include exit codes for command tool calls (missing in timeline mapping).
   - **Done (2025-12-24 20:33)**: Normalized exit code parsing so numeric strings are captured in timeline output.
 
-- [ ] **Fix**: Codex MCP thread/item event mapping for file_change, mcp_tool_call, web_search, and todo_list still failing.
+- [x] **Fix**: Codex MCP thread/item event mapping for file_change, mcp_tool_call, web_search, and todo_list still failing.
+  - **Done (2025-12-24 20:38)**: Normalized MCP provider event payloads to surface item events and thread/item types consistently for timeline mapping.
 
 - [ ] **Fix**: Codex MCP should emit error timeline items for failed turns (currently none).
 
@@ -287,9 +288,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Interrupt completes in < 1 second
     - No zombie processes left running
     - Session state is clean (can start new session)
-  - Test BOTH:
-    - Codex MCP provider interruption
-    - Codex SDK provider interruption (if applicable)
+  - Test Codex MCP provider interruption only (SDK is deprecated)
   - This is critical for user experience - users expect immediate response to cancel
 
 - [ ] **Test (E2E)**: Permission flow parity - test both Codex MCP and Claude providers.

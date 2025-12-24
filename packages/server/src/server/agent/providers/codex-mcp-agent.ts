@@ -910,12 +910,6 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private handleMcpEvent(event: unknown): void {
-    this.emitEvent({
-      type: "provider_event",
-      provider: "codex-mcp",
-      raw: event,
-    });
-
     if (!event || typeof event !== "object") {
       return;
     }
@@ -933,8 +927,19 @@ class CodexMcpAgentSession implements AgentSession {
       return;
     }
 
+    const normalizedType = normalizeThreadEventType(type);
+    const providerRaw =
+      normalizedType !== type ? { ...eventRecord, type: normalizedType } : eventRecord;
+
+    this.emitEvent({
+      type: "provider_event",
+      provider: "codex-mcp",
+      raw: providerRaw,
+    });
+
+    type = normalizedType;
     if (type.includes(".") || type.startsWith("turn.") || type.startsWith("thread.") || type.startsWith("item.")) {
-      this.handleThreadEvent(eventRecord);
+      this.handleThreadEvent(providerRaw);
       return;
     }
 
