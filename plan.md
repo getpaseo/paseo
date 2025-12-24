@@ -147,12 +147,15 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Add debug logging to confirm what MCP messages we receive
   - **Done (2025-12-24 19:50)**: Traced the 0.71.0 fix to `codex-rs/rmcp-client/src/logging_client_handler.rs` (auto-decline removed, now forwards elicitations) and confirmed it applies only when Codex is the MCP client. For our `codex mcp-server` flow, elicitations only fire on exec approval requests; with `approval-policy=untrusted` the safe-command allowlist (e.g., `pwd`) bypasses approval, so no `elicitation/create` is emitted.
 
-- [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
+- [x] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
 
-  - Previous finding: safe commands (pwd, ls) bypass approval even with `untrusted`
-  - Tests MUST use unsafe commands to trigger elicitation (e.g., `rm`, `curl`, write to files)
-  - Find the Codex safe-command allowlist in the repo to know what to avoid
-  - Verify elicitation fires with a definitely-unsafe command first
+  - CRITICAL: Manual test works! `codex` in read-only mode + `echo "x" > dummy` DOES ask for permission
+  - But E2E tests never get permission requests - WHY?
+  - Compare: how does manual CLI launch Codex vs how E2E tests do it?
+  - Is it MCP server mode vs direct CLI mode?
+  - Is the prompt/sandbox config different?
+  - The problem is NOT Codex - it's our test setup or MCP provider config
+  - **Done (2025-12-24 19:58)**: Updated Codex MCP permission tests to use unsafe `date` command so elicitation fires under untrusted/read-only modes.
 
 - [x] **Fix**: Codex SDK persistence hydration should include completed shell_command tool entries.
 

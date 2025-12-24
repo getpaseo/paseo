@@ -552,7 +552,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
         const prompt = [
-          "Request approval to run the command `pwd`.",
+          "Request approval to run the command `date`.",
           "After approval, run it and reply DONE.",
         ].join(" ");
 
@@ -625,7 +625,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
         const prompt = [
-          "Request approval to run the command `pwd`.",
+          "Request approval to run the command `date`.",
           "After approval, run it and reply DONE.",
         ].join(" ");
 
@@ -687,7 +687,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
         const prompt = [
-          "Request approval to run the command `pwd`.",
+          "Request approval to run the command `date`.",
           "If approval is denied, acknowledge and stop.",
         ].join(" ");
 
@@ -764,7 +764,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
         const prompt = [
-          "Request approval to run the command `pwd`.",
+          "Request approval to run the command `date`.",
           "If approval is denied, stop immediately.",
         ].join(" ");
 
