@@ -50,7 +50,7 @@ const AgentStatusEnum = z.enum([
   "closed",
 ]);
 
-const AGENT_WAIT_TIMEOUT_MS = 60000; // 60 seconds
+const AGENT_WAIT_TIMEOUT_MS = 50000; // 50 seconds (surface friendly message before tool timeout)
 
 function expandPath(path: string): string {
   if (path.startsWith("~/") || path === "~") {

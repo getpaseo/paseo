@@ -4,7 +4,6 @@ import path from "node:path";
 import { z } from "zod";
 
 import { AgentStatusSchema } from "../messages.js";
-import { resolvePaseoHome } from "../config.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -68,8 +67,8 @@ export class AgentRegistry {
   private loaded = false;
   private filePath: string;
 
-  constructor(filePath?: string) {
-    this.filePath = filePath ?? path.join(resolvePaseoHome(), "agents.json");
+  constructor(filePath: string) {
+    this.filePath = filePath;
   }
 
   async load(): Promise<StoredAgentRecord[]> {
