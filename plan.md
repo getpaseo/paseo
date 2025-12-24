@@ -52,11 +52,12 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Investigate Codex MCP permission elicitation behavior for `approval-policy=on-request` and `untrusted` (no permission_requested events).
   - **Done (2025-12-24 19:16)**: Added permission gating fallback for exec approval events, queued command events until approval, and flush/dropped queued events on resolution.
 
-- [ ] **Fix**: Compare permission elicitation with happy-cli reference implementation.
+- [x] **Fix**: Compare permission elicitation with happy-cli reference implementation.
 
   - Read `/Users/moboudra/dev/voice-dev/.tmp/happy-cli/src/codex/` to understand how elicitation works there.
   - Identify what's different in `codex-mcp-agent.ts` vs the reference.
   - The reference supports permissions - copy the working approach.
+  - **Done (2025-12-24 18:53)**: Matched happy-cli elicitation flow by avoiding duplicate permission requests when exec events pre-seed pending entries and aligned permission tool naming with CodexBash.
 
 - [ ] **Fix**: Use valid model instead of gpt-4.1.
 

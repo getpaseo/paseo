@@ -362,13 +362,18 @@ class CodexMcpAgentSession implements AgentSession {
       }
 
       const response = await new Promise<ElicitResponse>((resolve, reject) => {
+        const hasPending =
+          this.pendingPermissions.has(permission.id) ||
+          this.pendingPermissionHandlers.has(permission.id);
         this.pendingPermissions.set(permission.id, permission);
         this.pendingPermissionHandlers.set(permission.id, {
           request: permission,
           resolve,
           reject,
         });
-        this.emitPermissionRequested(permission);
+        if (!hasPending) {
+          this.emitPermissionRequested(permission);
+        }
       });
 
       return response;
@@ -1351,7 +1356,7 @@ class CodexMcpAgentSession implements AgentSession {
     return {
       id: requestId,
       provider: "codex-mcp" as AgentPermissionRequest["provider"],
-      name: "exec_command",
+      name: "CodexBash",
       kind: "tool",
       title: commandText ? `Run command: ${commandText}` : "Run shell command",
       description: message,
