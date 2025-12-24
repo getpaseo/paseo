@@ -262,7 +262,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex SDK persisted shell_command hydration still missing completed status.
   - **Done (2025-12-24 20:31)**: Mapped shell_command custom_tool_call entries to command tool calls and normalized output/status during rollout hydration.
 
-- [ ] **Fix**: Codex MCP command output should include exit codes for command tool calls (missing in timeline mapping).
+- [x] **Fix**: Codex MCP command output should include exit codes for command tool calls (missing in timeline mapping).
+  - **Done (2025-12-24 20:33)**: Normalized exit code parsing so numeric strings are captured in timeline output.
 
 - [ ] **Fix**: Codex MCP thread/item event mapping for file_change, mcp_tool_call, web_search, and todo_list still failing.
 
@@ -273,6 +274,23 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [ ] **Fix**: Codex MCP permission request flow still missing in read-only/deny/abort tests (permission request null).
 
 - [ ] **Fix**: Investigate `agent-mcp.e2e.test.ts` hang (Claude agent flow) and add timeout/skip conditions as needed.
+
+- [ ] **Test (E2E) CRITICAL**: Interruption/abort latency for Codex MCP provider.
+
+  - **Requirement**: Interrupting a long-running operation must stop within 1 second
+  - Test setup:
+    - Ask Codex to run a long command (e.g., `sleep 300`, `for i in {1..1000000}; do echo $i; done`, or similar)
+    - Wait for the command to start executing (tool_call event received)
+    - Call `session.interrupt()` or equivalent abort signal
+    - Measure time from interrupt call to session fully stopped
+  - Pass criteria:
+    - Interrupt completes in < 1 second
+    - No zombie processes left running
+    - Session state is clean (can start new session)
+  - Test BOTH:
+    - Codex MCP provider interruption
+    - Codex SDK provider interruption (if applicable)
+  - This is critical for user experience - users expect immediate response to cancel
 
 - [ ] **Test (E2E)**: Permission flow parity - test both Codex MCP and Claude providers.
 

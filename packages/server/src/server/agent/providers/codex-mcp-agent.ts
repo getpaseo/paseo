@@ -139,6 +139,22 @@ function normalizeThreadEventType(type: string): string {
   return type;
 }
 
+function normalizeExitCode(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length) {
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
 function buildCommandDisplayName(command?: unknown): string {
   if (typeof command === "string") {
     const trimmed = command.trim();
@@ -994,7 +1010,7 @@ class CodexMcpAgentSession implements AgentSession {
         const cwd = (event as { cwd?: string }).cwd;
         const exitCodeRaw = (event as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
           (event as { exitCode?: unknown }).exitCode;
-        const exitCode = typeof exitCodeRaw === "number" ? exitCodeRaw : undefined;
+        const exitCode = normalizeExitCode(exitCodeRaw);
         const output = (event as { output?: unknown; stdout?: unknown }).output ??
           (event as { stdout?: unknown }).stdout ??
           (event as { stderr?: unknown }).stderr;
@@ -1155,7 +1171,7 @@ class CodexMcpAgentSession implements AgentSession {
           });
         }
         if (item.type === "command_execution") {
-          const exitCode = item.exit_code ?? item.exitCode;
+          const exitCode = normalizeExitCode(item.exit_code ?? item.exitCode);
           if (typeof exitCode === "number" && exitCode !== 0) {
             this.turnState && (this.turnState.sawError = true);
             this.emitEvent({
@@ -1200,8 +1216,10 @@ class CodexMcpAgentSession implements AgentSession {
         return { type: "user_message", text: item.text as string };
       case "command_execution": {
         const aggregatedOutput = (item as { aggregated_output?: unknown }).aggregated_output;
-        const exitCode = (item as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
-          (item as { exitCode?: unknown }).exitCode;
+        const exitCode = normalizeExitCode(
+          (item as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
+            (item as { exitCode?: unknown }).exitCode
+        );
         const cwd = (item as { cwd?: string }).cwd;
         const commandValue = item.command;
         const command =
