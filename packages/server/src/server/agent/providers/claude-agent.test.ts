@@ -11,7 +11,13 @@ import {
   isAgentToolCallItem,
 } from "../../../../../app/src/types/stream.js";
 import type { AgentStreamEventPayload } from "../../messages.js";
-import type { AgentProvider, AgentSessionConfig, AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
+import type {
+  AgentProvider,
+  AgentPermissionRequest,
+  AgentSessionConfig,
+  AgentStreamEvent,
+  AgentTimelineItem,
+} from "../agent-sdk-types.js";
 
 const claudeIntegrationEnabled =
   process.env.RUN_CLAUDE_AGENT_TESTS === "1" || Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
@@ -70,6 +76,15 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   }
   const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
   return inputCommand.includes("sleep 60");
+}
+
+function isPermissionCommandToolCall(item: ToolCallItem): boolean {
+  if (item.server === "permission") {
+    return false;
+  }
+  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
+  const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
+  return display.includes("permission.txt") || inputCommand.includes("permission.txt");
 }
 
 describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
@@ -292,6 +307,236 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
 
       await session.close();
       rmSync(cwd, { recursive: true, force: true });
+    },
+    180_000
+  );
+
+  test(
+    "permission flow parity - allows command after approval",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        modeId: "default",
+        extra: { claude: { maxThinkingTokens: 1024 } },
+      };
+      const session = await client.createSession(config);
+      const filePath = path.join(cwd, "permission.txt");
+
+      let captured: AgentPermissionRequest | null = null;
+      let sawResolvedAllow = false;
+      const timeline: AgentTimelineItem[] = [];
+
+      try {
+        const prompt = [
+          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
+          "After approval, run it and reply DONE.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            expect(session.getPendingPermissions().length).toBeGreaterThan(0);
+            await session.respondToPermission(captured.id, { behavior: "allow" });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "allow"
+          ) {
+            sawResolvedAllow = true;
+          }
+          if (event.type === "timeline") {
+            timeline.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      expect(captured).not.toBeNull();
+      expect(sawResolvedAllow).toBe(true);
+      expect(session.getPendingPermissions()).toHaveLength(0);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            item.server === "permission" &&
+            item.status === "granted"
+        )
+      ).toBe(true);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            isPermissionCommandToolCall(item) &&
+            item.status === "completed"
+        )
+      ).toBe(true);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath, "utf8")).toContain("ok");
+    },
+    180_000
+  );
+
+  test(
+    "permission flow parity - denies command execution",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        modeId: "default",
+        extra: { claude: { maxThinkingTokens: 1024 } },
+      };
+      const session = await client.createSession(config);
+      const filePath = path.join(cwd, "permission.txt");
+
+      let captured: AgentPermissionRequest | null = null;
+      let sawResolvedDeny = false;
+      const timeline: AgentTimelineItem[] = [];
+
+      try {
+        const prompt = [
+          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
+          "If approval is denied, reply DENIED and stop.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            await session.respondToPermission(captured.id, {
+              behavior: "deny",
+              message: "Not allowed.",
+            });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "deny"
+          ) {
+            sawResolvedDeny = true;
+          }
+          if (event.type === "timeline") {
+            timeline.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      expect(captured).not.toBeNull();
+      expect(sawResolvedDeny).toBe(true);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            item.server === "permission" &&
+            item.status === "denied"
+        )
+      ).toBe(true);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            isPermissionCommandToolCall(item) &&
+            item.status === "completed"
+        )
+      ).toBe(false);
+      expect(existsSync(filePath)).toBe(false);
+    },
+    180_000
+  );
+
+  test(
+    "permission flow parity - aborts on interrupt response",
+    async () => {
+      const cwd = tmpCwd();
+      const client = new ClaudeAgentClient();
+      const config: AgentSessionConfig = {
+        provider: "claude",
+        cwd,
+        modeId: "default",
+        extra: { claude: { maxThinkingTokens: 1024 } },
+      };
+      const session = await client.createSession(config);
+      const filePath = path.join(cwd, "permission.txt");
+
+      let captured: AgentPermissionRequest | null = null;
+      let sawResolvedInterrupt = false;
+      let sawTerminalEvent = false;
+      const timeline: AgentTimelineItem[] = [];
+
+      try {
+        const prompt = [
+          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
+          "If approval is denied, stop immediately.",
+        ].join(" ");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !captured) {
+            captured = event.request;
+            await session.respondToPermission(captured.id, {
+              behavior: "deny",
+              message: "Stop now.",
+              interrupt: true,
+            });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            captured &&
+            event.requestId === captured.id &&
+            event.resolution.behavior === "deny" &&
+            event.resolution.interrupt
+          ) {
+            sawResolvedInterrupt = true;
+          }
+          if (event.type === "timeline") {
+            timeline.push(event.item);
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            sawTerminalEvent = true;
+            break;
+          }
+        }
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+
+      expect(captured).not.toBeNull();
+      expect(sawResolvedInterrupt).toBe(true);
+      expect(sawTerminalEvent).toBe(true);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            item.server === "permission" &&
+            item.status === "denied"
+        )
+      ).toBe(true);
+      expect(
+        timeline.some(
+          (item) =>
+            item.type === "tool_call" &&
+            isPermissionCommandToolCall(item) &&
+            item.status === "completed"
+        )
+      ).toBe(false);
+      expect(existsSync(filePath)).toBe(false);
     },
     180_000
   );
