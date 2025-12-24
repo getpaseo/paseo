@@ -175,4 +175,29 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Decide: keep MCP for tools, or drop it and use SDK only?
   - **Done (2025-12-24 20:04)**: Concluded MCP provider is only necessary for external MCP tool integration; for permissions and core workflows, SDK provider is simpler and already supports approvals. Recommend dropping/parking MCP unless external MCP tool usage is a requirement.
 
-- [ ] **Plan**: Re-audit based on test results.
+- [ ] **CRITICAL FINDING**: `codex exec` (SDK) is non-interactive - cannot prompt!
+
+  - Ran `scripts/codex-sdk-permission-test.mjs` with workspace-write + untrusted
+  - NO approval events fire - commands just run or refuse
+  - `codex exec --experimental-json` mode is NON-INTERACTIVE by design
+  - It either refuses ("approvals are disabled") or runs in sandbox
+  - The interactive `codex` CLI is what prompts - but SDK uses `codex exec`
+  - This explains why SDK never emits `exec_approval_request` events
+  - MCP server (`codex mcp-server`) may work differently via MCP elicitation
+  - The SDK provider CANNOT support interactive approvals by design
+
+- [x] **Plan**: Re-audit based on test results.
+
+  - **Done (2025-12-24 20:06)**: Reviewed latest E2E failures/hang; added fix tasks for Codex SDK hydration and Codex MCP abort hang, plus a retest task.
+
+- [ ] **Fix**: Codex SDK persistence hydration should emit completed shell_command tool entries.
+
+  - Capture the failing rollout entry and ensure hydrated tool calls include completed status + exit code metadata.
+
+- [ ] **Fix**: Codex MCP E2E hang in long-running command abort test.
+
+  - Add deterministic abort/timeout handling and ensure the session closes even if the sleep tool call is never surfaced.
+
+- [ ] **Test (E2E)**: Rerun server vitest after fixes.
+
+  - If failures: add follow-up fix tasks immediately after this item.
