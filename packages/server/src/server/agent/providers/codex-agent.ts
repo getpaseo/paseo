@@ -1660,23 +1660,39 @@ function finalizeRolloutFunctionCall(
     return;
   }
   const result = parseJsonOrObject<CommandExecutionResult>(payload.output);
-  const exitCode = result?.metadata?.exit_code;
+  const parsedOutput =
+    typeof payload.output === "string"
+      ? parseCommandOutputText(payload.output)
+      : null;
+  const exitCode = result?.metadata?.exit_code ?? parsedOutput?.exitCode;
   const status =
     exitCode === undefined || exitCode === 0 ? "completed" : "failed";
+  const stdout =
+    result?.stdout ??
+    (typeof result?.output === "string" ? result.output : undefined) ??
+    parsedOutput?.stdout;
+  const metadata =
+    result?.metadata ??
+    (typeof exitCode === "number" ? { exit_code: exitCode } : undefined);
 
   // Build structured command output
-  const output = result?.stdout
-    ? {
-        type: "command" as const,
-        command: command.command,
-        output: result.stdout,
-        exitCode,
-        cwd: command.cwd,
-        metadata:
-          result?.metadata ??
-          (typeof exitCode === "number" ? { exit_code: exitCode } : undefined),
-      }
-    : result;
+  let output: unknown;
+  if (stdout !== undefined) {
+    output = {
+      type: "command" as const,
+      command: command.command,
+      output: stdout,
+      exitCode,
+      cwd: command.cwd,
+      metadata,
+    };
+  } else if (result && typeof result === "object") {
+    output = { ...result, metadata: metadata ?? result.metadata };
+  } else if (metadata) {
+    output = { metadata };
+  } else {
+    output = result;
+  }
 
   events.push({
     type: "timeline",
@@ -2114,6 +2130,32 @@ function parseJsonOrObject<T = unknown>(value: unknown): T | null {
     return value as T;
   }
   return null;
+}
+
+function parseCommandOutputText(
+  output: string
+): { exitCode?: number; stdout?: string } | null {
+  if (!output.trim()) {
+    return null;
+  }
+
+  const exitCodeMatch = output.match(/Exit code:\s*(\d+)/i);
+  const exitCode =
+    exitCodeMatch && exitCodeMatch[1]
+      ? Number.parseInt(exitCodeMatch[1], 10)
+      : undefined;
+
+  const outputMatch = output.match(/\nOutput:\s*\n([\s\S]*)$/);
+  const stdout = outputMatch ? outputMatch[1].replace(/\s+$/, "") : undefined;
+
+  if (exitCode === undefined && stdout === undefined) {
+    return null;
+  }
+
+  return {
+    exitCode: Number.isNaN(exitCode as number) ? undefined : exitCode,
+    stdout,
+  };
 }
 
 function formatCommand(args: unknown): string | null {
