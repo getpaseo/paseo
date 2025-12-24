@@ -21,10 +21,13 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Abort/close handling.
   - **Done (2025-12-24 18:12)**: Added Codex MCP provider with stdio client, event mapping, permissions, persistence, and abort handling.
 
-- [ ] **Test (E2E)**: Run tests and add follow-up tasks based on results.
+- [x] **Test (E2E)**: Run tests and add follow-up tasks based on results.
 
   - If failures: add fix tasks immediately after this task.
   - If passes: add next audit/review task.
+  - **Done (2025-12-24 18:14)**: Ran Vitest E2E suite (`agent-mcp.e2e.test.ts`, `model-catalog.e2e.test.ts`); all tests passed.
+
+- [ ] **Review**: Audit E2E coverage and environment requirements for Codex MCP provider.
 
 - [ ] **Review**: Check implementation + edge cases.
 
