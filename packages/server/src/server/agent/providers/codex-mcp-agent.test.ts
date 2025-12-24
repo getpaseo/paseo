@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -150,6 +150,35 @@ function commandTextFromInput(input: unknown): string | null {
   return null;
 }
 
+function commandOutputText(output: unknown): string | null {
+  if (typeof output === "string") {
+    return output;
+  }
+  if (!output || typeof output !== "object") {
+    return null;
+  }
+  const record = output as Record<string, unknown>;
+  const outputText = record.output;
+  if (typeof outputText === "string") {
+    return outputText;
+  }
+  if (typeof record.stdout === "string") {
+    return record.stdout;
+  }
+  if (typeof record.stderr === "string") {
+    return record.stderr;
+  }
+  return null;
+}
+
+function stringifyUnknown(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function isSleepCommandToolCall(item: ToolCallItem): boolean {
   const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
   if (display.includes("sleep 60")) {
@@ -258,9 +287,13 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           expect((toolCall.callId ?? "").trim().length).toBeGreaterThan(0);
         }
 
-        const commandToolCall = toolCalls.find(
-          (item) => item.server === "command"
-        );
+        const commandToolCall = toolCalls
+          .slice()
+          .reverse()
+          .find(
+            (item) =>
+              item.server === "command" && item.status !== "running"
+          );
         expect(commandToolCall).toBeTruthy();
 
         const exitCode = extractExitCode(commandToolCall?.output);
@@ -391,6 +424,168 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       }
     },
     180_000
+  );
+
+  test(
+    "captures tool call inputs/outputs for commands, file changes, file reads, MCP tools, and web search",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const mcpServerScript = writeTestMcpServerScript(cwd);
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "auto",
+        approvalPolicy: "on-request",
+        networkAccess: true,
+        extra: {
+          codex: {
+            mcp_servers: {
+              test: {
+                command: process.execPath,
+                args: [mcpServerScript],
+              },
+            },
+          },
+        },
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let permissionRequest: AgentPermissionRequest | null = null;
+      let permissionResolved = false;
+      const toolCalls: ToolCallItem[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "1. Run the command `bash -lc \"printf 'stdout-marker'\"` using your shell tool.",
+          "2. Run the command `bash -lc \"printf 'stderr-marker' 1>&2\"` using your shell tool.",
+          "3. Use apply_patch (not the shell) to create a new file named tool-create.txt containing only the line 'alpha'.",
+          "4. Use apply_patch (not the shell) to edit tool-create.txt, replacing 'alpha' with 'beta'.",
+          "5. Use the read_file tool (not the shell) to read tool-create.txt.",
+          "6. Call the MCP tool test.echo with input {\"text\":\"mcp-ok\"}.",
+          "7. Use the web_search tool to search for \"OpenAI Codex MCP\".",
+          "8. Request approval to run the command `printf \"permit\" > tool-permission.txt`, then run it.",
+          "9. After all tools finish, reply DONE and stop.",
+        ].join("\n");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "permission_requested" && !permissionRequest) {
+            permissionRequest = event.request;
+            await session.respondToPermission(permissionRequest.id, { behavior: "allow" });
+          }
+          if (
+            event.type === "permission_resolved" &&
+            permissionRequest &&
+            event.requestId === permissionRequest.id &&
+            event.resolution.behavior === "allow"
+          ) {
+            permissionResolved = true;
+          }
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            if (event.item.type === "tool_call" && event.item.server !== "permission") {
+              toolCalls.push(event.item);
+            }
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect.soft(permissionRequest).not.toBeNull();
+        expect.soft(permissionResolved).toBe(true);
+
+        const commandCalls = toolCalls.filter(
+          (item) => item.server === "command" && item.status === "completed"
+        );
+        expect.soft(commandCalls.length).toBeGreaterThanOrEqual(2);
+
+        const stdoutCall = commandCalls.find((item) =>
+          (commandOutputText(item.output) ?? "").includes("stdout-marker")
+        );
+        const stderrCall = commandCalls.find((item) =>
+          (commandOutputText(item.output) ?? "").includes("stderr-marker")
+        );
+        expect.soft(stdoutCall).toBeTruthy();
+        expect.soft(stderrCall).toBeTruthy();
+        expect.soft(extractExitCode(stdoutCall?.output)).toBe(0);
+        expect.soft(extractExitCode(stderrCall?.output)).toBe(0);
+
+        const fileChangeCalls = toolCalls.filter(
+          (item) => item.server === "file_change" && item.tool === "apply_patch"
+        );
+        expect.soft(fileChangeCalls.length).toBeGreaterThanOrEqual(2);
+        expect.soft(
+          fileChangeCalls.some((item) => stringifyUnknown(item.input).includes("tool-create.txt"))
+        ).toBe(true);
+        expect.soft(
+          fileChangeCalls.some((item) => stringifyUnknown(item.input).includes("alpha"))
+        ).toBe(true);
+        expect.soft(
+          fileChangeCalls.some((item) => stringifyUnknown(item.input).includes("beta"))
+        ).toBe(true);
+        expect.soft(
+          fileChangeCalls.some((item) => stringifyUnknown(item.output).includes("tool-create.txt"))
+        ).toBe(true);
+
+        const readCall = toolCalls.find((item) => item.tool === "read_file");
+        expect.soft(readCall).toBeTruthy();
+        expect.soft(stringifyUnknown(readCall?.input)).toContain("tool-create.txt");
+        expect.soft(stringifyUnknown(readCall?.output)).toContain("beta");
+
+        const mcpCall = toolCalls.find(
+          (item) => item.server === "test" && item.tool === "echo"
+        );
+        expect.soft(mcpCall).toBeTruthy();
+        expect.soft(stringifyUnknown(mcpCall?.input)).toContain("mcp-ok");
+        expect.soft(stringifyUnknown(mcpCall?.output)).toContain("mcp-ok");
+
+        const webSearchCall = toolCalls.find(
+          (item) => item.server === "web_search" && item.tool === "web_search"
+        );
+        expect.soft(webSearchCall).toBeTruthy();
+        expect.soft(stringifyUnknown(webSearchCall?.input)).toContain("OpenAI Codex MCP");
+        expect.soft(webSearchCall?.output).toBeTruthy();
+
+        const callIdStatuses = new Map<string, Set<string>>();
+        for (const toolCall of toolCalls) {
+          if (!toolCall.callId) {
+            continue;
+          }
+          if (!callIdStatuses.has(toolCall.callId)) {
+            callIdStatuses.set(toolCall.callId, new Set());
+          }
+          if (typeof toolCall.status === "string") {
+            callIdStatuses.get(toolCall.callId)!.add(toolCall.status);
+          }
+        }
+        const commandCallIds = toolCalls
+          .filter((item) => item.server === "command" && item.callId)
+          .map((item) => item.callId as string);
+        const fileChangeCallIds = toolCalls
+          .filter((item) => item.server === "file_change" && item.callId)
+          .map((item) => item.callId as string);
+
+        const hasCommandLifecycle = commandCallIds.some((callId) => {
+          const statuses = callIdStatuses.get(callId);
+          return statuses?.has("running") && statuses?.has("completed");
+        });
+        const hasFileChangeLifecycle = fileChangeCallIds.some((callId) => {
+          const statuses = callIdStatuses.get(callId);
+          return statuses?.has("running") && statuses?.has("completed");
+        });
+        expect.soft(hasCommandLifecycle).toBe(true);
+        expect.soft(hasFileChangeLifecycle).toBe(true);
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    240_000
   );
 
   test(
@@ -569,9 +764,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const config = {
         provider: "codex-mcp",
         cwd,
-        modeId: "read-only",
+        modeId: "auto",
         approvalPolicy: "on-request",
       } as AgentSessionConfig;
+      const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
       let captured: AgentPermissionRequest | null = null;
@@ -624,6 +820,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             (item) => item.type === "tool_call" && item.server === "command"
           )
         ).toBe(true);
+        expect(existsSync(filePath)).toBe(true);
+        expect(readFileSync(filePath, "utf8")).toContain("ok");
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -700,9 +898,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const config = {
         provider: "codex-mcp",
         cwd,
-        modeId: "read-only",
+        modeId: "auto",
         approvalPolicy: "on-request",
       } as AgentSessionConfig;
+      const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
       let captured: AgentPermissionRequest | null = null;
@@ -751,6 +950,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
               item.status === "denied"
           )
         ).toBe(true);
+        expect(existsSync(filePath)).toBe(false);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -770,9 +970,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const config = {
         provider: "codex-mcp",
         cwd,
-        modeId: "read-only",
+        modeId: "auto",
         approvalPolicy: "on-request",
       } as AgentSessionConfig;
+      const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
       let captured: AgentPermissionRequest | null = null;
@@ -832,6 +1033,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         ).toBe(true);
         expect(sawTurnFailed).toBe(true);
         expect(failureMessage ?? "").toMatch(/aborted|interrupted/i);
+        expect(existsSync(filePath)).toBe(false);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -860,7 +1062,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       let durationMs = 0;
       let sawSleepCommand = false;
       let interruptIssued = false;
-      let interruptTimer: ReturnType<typeof setTimeout> | null = null;
 
       try {
         session = await client.createSession(config);
@@ -871,12 +1072,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         runStartedAt = Date.now();
         const stream = session.stream(prompt);
-        interruptTimer = setTimeout(() => {
-          if (!interruptIssued) {
-            interruptIssued = true;
-            void session?.interrupt();
-          }
-        }, 10_000);
 
         for await (const event of stream) {
           if (event.type === "permission_requested" && session) {
@@ -893,10 +1088,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             sawSleepCommand = true;
             if (!interruptIssued) {
               interruptIssued = true;
-              if (interruptTimer) {
-                clearTimeout(interruptTimer);
-                interruptTimer = null;
-              }
               await session.interrupt();
             }
           }
@@ -913,10 +1104,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       } finally {
         if (durationMs === 0 && runStartedAt !== null) {
           durationMs = Date.now() - runStartedAt;
-        }
-        if (interruptTimer) {
-          clearTimeout(interruptTimer);
-          interruptTimer = null;
         }
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -950,9 +1137,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       let sawCommand = false;
       let interruptAt: number | null = null;
       let stoppedAt: number | null = null;
-      let interruptReason: "tool-call" | "timeout" | null = null;
       const marker = `codex-mcp-abort-${randomUUID()}`;
-      let interruptTimer: ReturnType<typeof setTimeout> | null = null;
 
       try {
         session = await client.createSession(config);
@@ -962,13 +1147,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         ].join(" ");
 
         const stream = session.stream(prompt);
-        interruptTimer = setTimeout(() => {
-          if (!interruptAt) {
-            interruptReason = "timeout";
-            interruptAt = Date.now();
-            void session?.interrupt();
-          }
-        }, 15_000);
 
         for await (const event of stream) {
           if (event.type === "permission_requested" && session) {
@@ -985,12 +1163,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             if (commandText.includes(marker)) {
               sawCommand = true;
               if (!interruptAt) {
-                interruptReason = "tool-call";
                 interruptAt = Date.now();
-                if (interruptTimer) {
-                  clearTimeout(interruptTimer);
-                  interruptTimer = null;
-                }
                 await session.interrupt();
               }
             }
@@ -1011,7 +1184,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         const latencyMs = stoppedAt - interruptAt;
         expect(sawCommand).toBe(true);
-        expect(interruptReason).toBe("tool-call");
         expect(latencyMs).toBeGreaterThanOrEqual(0);
         expect(latencyMs).toBeLessThan(1_000);
 
@@ -1025,9 +1197,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         const followup = await followupSession.run("Reply OK and stop.");
         expect(followup.finalText.toLowerCase()).toContain("ok");
       } finally {
-        if (interruptTimer) {
-          clearTimeout(interruptTimer);
-        }
         await session?.close();
         await followupSession?.close();
         rmSync(cwd, { recursive: true, force: true });
