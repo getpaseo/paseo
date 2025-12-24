@@ -165,7 +165,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   - **Done (2025-12-24 20:02)**: Ran `npm run test --workspace=@paseo/server`; `codex-agent.test.ts` failure in persisted shell_command hydration (expected undefined to be truthy) and `codex-mcp-agent.test.ts` hung after 6/11 tests, interrupted.
 
-- [ ] **Decision**: Evaluate if MCP provider is even necessary.
+- [x] **Decision**: Evaluate if MCP provider is even necessary.
 
   - The SDK provider (`codex-agent.ts`) ALREADY handles permissions via undocumented `exec_approval_request` and `apply_patch_approval_request` events - no MCP needed for permissions
   - MCP elicitation is broken for safe commands (pwd, ls bypass approval)
@@ -173,5 +173,6 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - MCP only adds value for external MCP tool integration, NOT permissions
   - If we don't need MCP tools, the SDK provider is simpler and already works
   - Decide: keep MCP for tools, or drop it and use SDK only?
+  - **Done (2025-12-24 20:04)**: Concluded MCP provider is only necessary for external MCP tool integration; for permissions and core workflows, SDK provider is simpler and already supports approvals. Recommend dropping/parking MCP unless external MCP tool usage is a requirement.
 
 - [ ] **Plan**: Re-audit based on test results.
