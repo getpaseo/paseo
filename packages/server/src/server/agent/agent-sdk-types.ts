@@ -2,6 +2,8 @@ import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-s
 
 export type AgentProvider = "codex" | "codex-mcp" | "claude";
 
+export type AgentMetadata = { [key: string]: unknown };
+
 export type AgentMode = {
   id: string;
   label: string;
@@ -14,7 +16,7 @@ export type AgentModelDefinition = {
   label: string;
   description?: string;
   isDefault?: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: AgentMetadata;
 };
 
 export type AgentCapabilityFlags = {
@@ -31,7 +33,7 @@ export type AgentPersistenceHandle = {
   sessionId: string;
   /** Provider specific handle (Codex thread id, Claude resume token, etc). */
   nativeHandle?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: AgentMetadata;
 };
 
 export type AgentPromptInput = string | { type: "text"; text: string }[];
@@ -91,7 +93,7 @@ export type AgentStreamEvent =
 
 export type AgentPermissionRequestKind = "tool" | "plan" | "mode" | "other";
 
-export type AgentPermissionUpdate = Record<string, unknown>;
+export type AgentPermissionUpdate = AgentMetadata;
 
 export type AgentPermissionRequest = {
   id: string;
@@ -100,15 +102,15 @@ export type AgentPermissionRequest = {
   kind: AgentPermissionRequestKind;
   title?: string;
   description?: string;
-  input?: Record<string, unknown>;
+  input?: AgentMetadata;
   suggestions?: AgentPermissionUpdate[];
-  metadata?: Record<string, unknown>;
+  metadata?: AgentMetadata;
 };
 
 export type AgentPermissionResponse =
   | {
       behavior: "allow";
-      updatedInput?: Record<string, unknown>;
+      updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
     }
   | {
@@ -129,7 +131,7 @@ export type AgentRuntimeInfo = {
   sessionId: string | null;
   model?: string | null;
   modeId?: string | null;
-  extra?: Record<string, unknown>;
+  extra?: AgentMetadata;
 };
 
 export type AgentControlMcpConfig = {
@@ -164,10 +166,10 @@ export type AgentSessionConfig = {
   reasoningEffort?: string;
   agentControlMcp?: AgentControlMcpConfig;
   extra?: {
-    codex?: Record<string, unknown>;
+    codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
   };
-  mcpServers?: Record<string, unknown>;
+  mcpServers?: AgentMetadata;
   parentAgentId?: string;
 };
 
