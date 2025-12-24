@@ -1055,20 +1055,29 @@ class CodexMcpAgentSession implements AgentSession {
         const exitCodeRaw = (event as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
           (event as { exitCode?: unknown }).exitCode;
         const exitCode = typeof exitCodeRaw === "number" ? exitCodeRaw : undefined;
-        const output = (event as { output?: string; stdout?: string }).output ??
-          (event as { stdout?: string }).stdout ??
-          (event as { stderr?: string }).stderr ??
-          "";
-        const structuredOutput =
+        const output = (event as { output?: unknown; stdout?: unknown }).output ??
+          (event as { stdout?: unknown }).stdout ??
+          (event as { stderr?: unknown }).stderr;
+        const outputRecord =
+          output && typeof output === "object" ? (output as Record<string, unknown>) : undefined;
+        const outputText =
           typeof output === "string"
+            ? output
+            : typeof outputRecord?.stdout === "string"
+              ? outputRecord.stdout
+              : typeof outputRecord?.stderr === "string"
+                ? outputRecord.stderr
+                : undefined;
+        const structuredOutput =
+          outputText !== undefined || typeof exitCode === "number"
             ? {
                 type: "command" as const,
                 command: extractCommandText(command) ?? "command",
-                output,
+                output: outputText ?? "",
                 exitCode,
                 cwd,
               }
-            : undefined;
+            : outputRecord;
         const emitEvent = () => {
           if (typeof exitCode === "number" && exitCode !== 0) {
             this.turnState && (this.turnState.sawError = true);
@@ -1249,12 +1258,13 @@ class CodexMcpAgentSession implements AgentSession {
               ? (commandValue as string[]).join(" ")
               : "command";
 
+        const outputText = typeof aggregatedOutput === "string" ? aggregatedOutput : undefined;
         const structuredOutput =
-          typeof aggregatedOutput === "string"
+          outputText !== undefined || typeof exitCode === "number"
             ? {
                 type: "command" as const,
                 command,
-                output: aggregatedOutput,
+                output: outputText ?? "",
                 exitCode: typeof exitCode === "number" ? exitCode : undefined,
                 cwd,
               }
