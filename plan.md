@@ -106,10 +106,11 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - These hacks hide bugs. The provider should work correctly or fail clearly.
   - **Done (2025-12-24 19:25)**: Reviewed codex-mcp-agent.ts and cataloged all workaround/fallback logic with required real fixes.
 
-- [ ] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
+- [x] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
 
   - Run `npm run typecheck --workspace=@paseo/server`.
   - Fix `AgentPermissionResponse.message` and unused locals.
+  - **Done (2025-12-24 19:27)**: Removed unused locals, avoided invalid permission message access, and reran server typecheck.
 
 - [ ] **Test (E2E)**: Run tests and verify fixes work.
 

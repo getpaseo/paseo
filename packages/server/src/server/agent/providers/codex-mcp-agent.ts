@@ -304,7 +304,6 @@ class CodexMcpAgentSession implements AgentSession {
   private sessionId: string | null = null;
   private conversationId: string | null = null;
   private runtimeModel: string | null = null;
-  private modelRejected = false;
   private pendingLocalId: string | null = null;
   private persistence: AgentPersistenceHandle | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
@@ -589,7 +588,8 @@ class CodexMcpAgentSession implements AgentSession {
         : response.interrupt
           ? "abort"
           : "denied";
-    pending.resolve({ decision, reason: response.message });
+    const reason = response.behavior === "deny" ? response.message : undefined;
+    pending.resolve({ decision, reason });
     this.flushQueuedToolEvents(requestId, response.behavior === "allow");
   }
 
@@ -679,7 +679,6 @@ class CodexMcpAgentSession implements AgentSession {
         } catch (error) {
           if (config.model && isUnsupportedChatGptModelError(error)) {
             const { model: _ignoredModel, ...fallback } = config;
-            this.modelRejected = true;
             this.runtimeModel = null;
             this.config.model = undefined;
             response = await attempt(fallback);
@@ -703,7 +702,6 @@ class CodexMcpAgentSession implements AgentSession {
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       if (signal.aborted) {
         this.emitEvent({
           type: "turn_failed",
