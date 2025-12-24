@@ -184,11 +184,12 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Capture the failing rollout entry and ensure hydrated tool calls include completed status + exit code metadata.
   - **Done (2025-12-24 20:12)**: Parsed rollout command output strings to extract exit codes/stdout and attach metadata to hydrated shell tool results.
 
-- [ ] **Fix**: Codex MCP E2E hang in long-running command abort test.
+- [x] **Fix**: Codex MCP E2E hang in long-running command abort test.
 
   - Add deterministic abort/timeout handling and ensure the session closes even if the sleep tool call is never surfaced.
+  - **Done (2025-12-24 20:17)**: Added interrupt timeout in abort test and force-end turn on session interrupt to avoid hanging streams.
 
-- [ ] **CRITICAL FINDING (VERIFIED IN SOURCE)**: `codex exec` IGNORES approval events!
+- [x] **CRITICAL FINDING (VERIFIED IN SOURCE)**: `codex exec` IGNORES approval events!
 
   - In `codex-rs/exec/src/event_processor_with_human_output.rs:568`:
     - `ExecApprovalRequest` and `ApplyPatchApprovalRequest` are in ignore match arm `=> {}`
@@ -197,6 +198,60 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - MCP server DOES handle them → sends `ElicitRequest` (see `exec_approval.rs:107`)
   - CONCLUSION: MCP provider is the ONLY path to real permissions, not SDK
   - The agent's earlier conclusion to "park MCP" was WRONG
+  - **Done (2025-12-24)**: Verified in source code.
+
+- [x] **ELICITATION FIX VERIFIED**: `approval-policy: "on-request"` WORKS!
+
+  - **Root Cause**: `untrusted` does NOT trigger elicitation. `on-request` DOES.
+  - **Verified with debug script**: `scripts/codex-mcp-elicitation-test.ts`
+  - **Key findings**:
+    1. `approval-policy: "untrusted"` → command runs/refuses silently, NO elicitation
+    2. `approval-policy: "on-request"` → triggers `elicitation/create` request
+    3. Response format must be `{ decision: "approved" }` (lowercase)
+       - NOT `{ action: "accept" }` (wrong)
+       - NOT `{ decision: "Approved" }` (wrong case)
+    4. Valid decisions: `approved`, `denied`, `abort`, `approved_for_session`
+  - **Working test script** (`scripts/codex-mcp-elicitation-test.ts`):
+    ```typescript
+    import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+    import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+    import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+
+    const transport = new StdioClientTransport({
+      command: "codex",
+      args: ["mcp-server"],
+      env: { ...process.env },
+    });
+
+    const client = new Client(
+      { name: "elicitation-test", version: "1.0.0" },
+      { capabilities: { elicitation: {} } }
+    );
+
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      console.log("ELICITATION REQUEST:", JSON.stringify(request, null, 2));
+      return { decision: "approved" };  // lowercase!
+    });
+
+    await client.connect(transport);
+    const result = await client.callTool({
+      name: "codex",
+      arguments: {
+        prompt: 'Run: curl -s https://httpbin.org/get',
+        sandbox: "workspace-write",
+        "approval-policy": "on-request",  // KEY: must be on-request, NOT untrusted
+      },
+    });
+    ```
+  - **Done (2025-12-24)**: Verified via debug script.
+
+- [ ] **Fix**: Update MODE_PRESETS to use `on-request` instead of `untrusted`.
+
+  - Change `codex-mcp-agent.ts` MODE_PRESETS:
+    - `read-only`: `approvalPolicy: "on-request"` (was `untrusted`)
+    - `auto`: `approvalPolicy: "on-request"` (was `untrusted`)
+  - Ensure elicitation handler returns `{ decision: "approved" | "denied" | ... }` format
+  - Remove any workarounds that were compensating for missing elicitation
 
 - [ ] **Test (E2E)**: Rerun server vitest after fixes.
 

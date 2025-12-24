@@ -844,6 +844,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       let durationMs = 0;
       let sawSleepCommand = false;
       let interruptIssued = false;
+      let interruptTimer: ReturnType<typeof setTimeout> | null = null;
 
       try {
         session = await client.createSession(config);
@@ -854,6 +855,12 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         runStartedAt = Date.now();
         const stream = session.stream(prompt);
+        interruptTimer = setTimeout(() => {
+          if (!interruptIssued) {
+            interruptIssued = true;
+            void session?.interrupt();
+          }
+        }, 10_000);
 
         for await (const event of stream) {
           if (event.type === "permission_requested" && session) {
@@ -870,6 +877,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             sawSleepCommand = true;
             if (!interruptIssued) {
               interruptIssued = true;
+              if (interruptTimer) {
+                clearTimeout(interruptTimer);
+                interruptTimer = null;
+              }
               await session.interrupt();
             }
           }
@@ -886,6 +897,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       } finally {
         if (durationMs === 0 && runStartedAt !== null) {
           durationMs = Date.now() - runStartedAt;
+        }
+        if (interruptTimer) {
+          clearTimeout(interruptTimer);
+          interruptTimer = null;
         }
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
