@@ -1591,17 +1591,9 @@ function handleRolloutFunctionCall(
   }
 
   if (SHELL_FUNCTION_NAMES.has(name)) {
-    const args = parseJsonOrObject<Record<string, unknown>>(payload.arguments);
-    const command = formatCommand(args);
-    const cwd =
-      args &&
-      typeof args === "object" &&
-      typeof (args as { workdir?: unknown }).workdir === "string"
-        ? ((args as { workdir?: unknown }).workdir as string)
-        : undefined;
+    const { command, cwd } = buildCommandContext(payload.arguments);
     if (typeof payload.call_id === "string") {
-      const commandValue = command ?? "Command";
-      commandCalls.set(payload.call_id, { command: commandValue, cwd });
+      commandCalls.set(payload.call_id, { command, cwd });
       events.push({
         type: "timeline",
         provider: "codex",
@@ -1612,7 +1604,7 @@ function handleRolloutFunctionCall(
           callId: payload.call_id,
           displayName: buildCommandDisplayName(command),
           kind: "execute",
-          input: { command: commandValue, cwd },
+          input: { command, cwd },
         }),
       });
     }
@@ -1659,40 +1651,7 @@ function finalizeRolloutFunctionCall(
   if (!command) {
     return;
   }
-  const result = parseJsonOrObject<CommandExecutionResult>(payload.output);
-  const parsedOutput =
-    typeof payload.output === "string"
-      ? parseCommandOutputText(payload.output)
-      : null;
-  const exitCode = result?.metadata?.exit_code ?? parsedOutput?.exitCode;
-  const status =
-    exitCode === undefined || exitCode === 0 ? "completed" : "failed";
-  const stdout =
-    result?.stdout ??
-    (typeof result?.output === "string" ? result.output : undefined) ??
-    parsedOutput?.stdout;
-  const metadata =
-    result?.metadata ??
-    (typeof exitCode === "number" ? { exit_code: exitCode } : undefined);
-
-  // Build structured command output
-  let output: unknown;
-  if (stdout !== undefined) {
-    output = {
-      type: "command" as const,
-      command: command.command,
-      output: stdout,
-      exitCode,
-      cwd: command.cwd,
-      metadata,
-    };
-  } else if (result && typeof result === "object") {
-    output = { ...result, metadata: metadata ?? result.metadata };
-  } else if (metadata) {
-    output = { metadata };
-  } else {
-    output = result;
-  }
+  const { status, output } = buildCommandOutput(command, payload.output);
 
   events.push({
     type: "timeline",
@@ -1745,6 +1704,27 @@ function handleRolloutCustomToolCall(
         }),
       });
     }
+    return;
+  }
+
+  if (payload?.name && SHELL_FUNCTION_NAMES.has(payload.name)) {
+    const commandContext = buildCommandContext(payload.input);
+    const { status, output } = buildCommandOutput(commandContext, payload.output);
+    events.push({
+      type: "timeline",
+      provider: "codex",
+      item: createToolCallTimelineItem({
+        server: "command",
+        tool: "shell",
+        status: payload.status ?? status,
+        callId:
+          typeof payload.call_id === "string" ? payload.call_id : undefined,
+        displayName: buildCommandDisplayName(commandContext.command),
+        kind: "execute",
+        input: { command: commandContext.command, cwd: commandContext.cwd },
+        output,
+      }),
+    });
     return;
   }
 
@@ -1810,6 +1790,7 @@ type RolloutCustomToolCallPayload = {
   type: "custom_tool_call";
   name?: string;
   status?: string;
+  call_id?: string;
   input?: string | Record<string, unknown>;
   output?: unknown;
 };
@@ -2156,6 +2137,64 @@ function parseCommandOutputText(
     exitCode: Number.isNaN(exitCode as number) ? undefined : exitCode,
     stdout,
   };
+}
+
+function buildCommandContext(input: unknown): { command: string; cwd?: string } {
+  const args = parseJsonOrObject<Record<string, unknown>>(input);
+  const commandFromArgs = formatCommand(args);
+  let command = commandFromArgs;
+  if (!command && typeof input === "string") {
+    const trimmed = input.trim();
+    if (trimmed && !trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      command = trimmed;
+    }
+  }
+  const cwd =
+    args &&
+    typeof args === "object" &&
+    typeof (args as { workdir?: unknown }).workdir === "string"
+      ? ((args as { workdir?: unknown }).workdir as string)
+      : undefined;
+  return { command: command ?? "Command", cwd };
+}
+
+function buildCommandOutput(
+  command: { command: string; cwd?: string },
+  rawOutput: unknown
+): { status: "completed" | "failed"; output: unknown } {
+  const result = parseJsonOrObject<CommandExecutionResult>(rawOutput);
+  const parsedOutput =
+    typeof rawOutput === "string" ? parseCommandOutputText(rawOutput) : null;
+  const exitCode = result?.metadata?.exit_code ?? parsedOutput?.exitCode;
+  const status =
+    exitCode === undefined || exitCode === 0 ? "completed" : "failed";
+  const stdout =
+    result?.stdout ??
+    (typeof result?.output === "string" ? result.output : undefined) ??
+    parsedOutput?.stdout;
+  const metadata =
+    result?.metadata ??
+    (typeof exitCode === "number" ? { exit_code: exitCode } : undefined);
+
+  let output: unknown;
+  if (stdout !== undefined) {
+    output = {
+      type: "command" as const,
+      command: command.command,
+      output: stdout,
+      exitCode,
+      cwd: command.cwd,
+      metadata,
+    };
+  } else if (result && typeof result === "object") {
+    output = { ...result, metadata: metadata ?? result.metadata };
+  } else if (metadata) {
+    output = { metadata };
+  } else {
+    output = result;
+  }
+
+  return { status, output };
 }
 
 function formatCommand(args: unknown): string | null {

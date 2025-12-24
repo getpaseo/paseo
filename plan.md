@@ -259,7 +259,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - If failures: add follow-up fix tasks immediately after this item.
   - **Done (2025-12-24 20:25)**: Ran `npm run test --workspace=@paseo/server`; failures in Codex SDK persisted shell_command hydration and multiple Codex MCP mapping/persistence/permission checks; `agent-mcp.e2e.test.ts` hung and was interrupted.
 
-- [ ] **Fix**: Codex SDK persisted shell_command hydration still missing completed status.
+- [x] **Fix**: Codex SDK persisted shell_command hydration still missing completed status.
+  - **Done (2025-12-24 20:31)**: Mapped shell_command custom_tool_call entries to command tool calls and normalized output/status during rollout hydration.
 
 - [ ] **Fix**: Codex MCP command output should include exit codes for command tool calls (missing in timeline mapping).
 
