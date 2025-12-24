@@ -254,9 +254,24 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Remove any workarounds that were compensating for missing elicitation
   - **Done (2025-12-24 20:20)**: Removed synthetic permission gating/exec approval workarounds now that on-request elicitation is the default.
 
-- [ ] **Test (E2E)**: Rerun server vitest after fixes.
+- [x] **Test (E2E)**: Rerun server vitest after fixes.
 
   - If failures: add follow-up fix tasks immediately after this item.
+  - **Done (2025-12-24 20:25)**: Ran `npm run test --workspace=@paseo/server`; failures in Codex SDK persisted shell_command hydration and multiple Codex MCP mapping/persistence/permission checks; `agent-mcp.e2e.test.ts` hung and was interrupted.
+
+- [ ] **Fix**: Codex SDK persisted shell_command hydration still missing completed status.
+
+- [ ] **Fix**: Codex MCP command output should include exit codes for command tool calls (missing in timeline mapping).
+
+- [ ] **Fix**: Codex MCP thread/item event mapping for file_change, mcp_tool_call, web_search, and todo_list still failing.
+
+- [ ] **Fix**: Codex MCP should emit error timeline items for failed turns (currently none).
+
+- [ ] **Fix**: Codex MCP persistence/resume should include conversation_id metadata (resume error).
+
+- [ ] **Fix**: Codex MCP permission request flow still missing in read-only/deny/abort tests (permission request null).
+
+- [ ] **Fix**: Investigate `agent-mcp.e2e.test.ts` hang (Claude agent flow) and add timeout/skip conditions as needed.
 
 - [ ] **Test (E2E)**: Permission flow parity - test both Codex MCP and Claude providers.
 
