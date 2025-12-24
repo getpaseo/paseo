@@ -280,7 +280,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Investigate `agent-mcp.e2e.test.ts` hang (Claude agent flow) and add timeout/skip conditions as needed.
   - **Done (2025-12-24 21:17)**: Added explicit Claude e2e opt-in gating plus timeouts around MCP tool calls, agent completion polling, and cleanup to avoid hanging the suite.
 
-- [ ] **Test (E2E) CRITICAL**: Interruption/abort latency for Codex MCP provider.
+- [x] **Test (E2E) CRITICAL**: Interruption/abort latency for Codex MCP provider.
 
   - **Requirement**: Interrupting a long-running operation must stop within 1 second
   - Test setup:
@@ -294,6 +294,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Session state is clean (can start new session)
   - Test Codex MCP provider interruption only (SDK is deprecated)
   - This is critical for user experience - users expect immediate response to cancel
+  - **Done (2025-12-24 21:21)**: Added an abort-latency E2E test that interrupts a long-running command, asserts <1s stop time, checks for stray processes, and confirms a clean follow-up session; ran the targeted test.
 
 - [ ] **Test (E2E)**: Permission flow parity - test both Codex MCP and Claude providers.
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -34,6 +35,35 @@ function useTempCodexSessionDir(): () => void {
       process.env.CODEX_HOME = prevHome;
     }
   };
+}
+
+function listProcesses(): string[] {
+  try {
+    const output = execFileSync("ps", ["-ax", "-o", "pid=,command="], {
+      encoding: "utf8",
+    });
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function isProcessRunning(marker: string): boolean {
+  return listProcesses().some((line) => line.includes(marker));
+}
+
+async function waitForProcessExit(marker: string, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!isProcessRunning(marker)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isProcessRunning(marker);
 }
 
 function writeTestMcpServerScript(cwd: string): string {
@@ -899,5 +929,111 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       expect(durationMs).toBeLessThan(60_000);
     },
     90_000
+  );
+
+  test(
+    "interrupts long-running commands within 1s and leaves a clean session",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        approvalPolicy: "on-request",
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      let followupSession: AgentSession | null = null;
+      let sawCommand = false;
+      let interruptAt: number | null = null;
+      let stoppedAt: number | null = null;
+      let interruptReason: "tool-call" | "timeout" | null = null;
+      const marker = `codex-mcp-abort-${randomUUID()}`;
+      let interruptTimer: ReturnType<typeof setTimeout> | null = null;
+
+      try {
+        session = await client.createSession(config);
+        const prompt = [
+          `Run the exact shell command \`python3 -c "import time; time.sleep(300)" ${marker}\` using your shell tool.`,
+          "Do not run any additional commands or send a response until that command finishes.",
+        ].join(" ");
+
+        const stream = session.stream(prompt);
+        interruptTimer = setTimeout(() => {
+          if (!interruptAt) {
+            interruptReason = "timeout";
+            interruptAt = Date.now();
+            void session?.interrupt();
+          }
+        }, 15_000);
+
+        for await (const event of stream) {
+          if (event.type === "permission_requested" && session) {
+            await session.respondToPermission(event.request.id, { behavior: "allow" });
+          }
+
+          if (
+            event.type === "timeline" &&
+            providerFromEvent(event) === "codex-mcp" &&
+            event.item.type === "tool_call" &&
+            event.item.server === "command"
+          ) {
+            const commandText = commandTextFromInput(event.item.input) ?? "";
+            if (commandText.includes(marker)) {
+              sawCommand = true;
+              if (!interruptAt) {
+                interruptReason = "tool-call";
+                interruptAt = Date.now();
+                if (interruptTimer) {
+                  clearTimeout(interruptTimer);
+                  interruptTimer = null;
+                }
+                await session.interrupt();
+              }
+            }
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            stoppedAt = Date.now();
+            break;
+          }
+        }
+
+        if (!interruptAt) {
+          throw new Error("Did not issue interrupt for long-running command");
+        }
+        if (!stoppedAt) {
+          stoppedAt = Date.now();
+        }
+
+        const latencyMs = stoppedAt - interruptAt;
+        expect(sawCommand).toBe(true);
+        expect(interruptReason).toBe("tool-call");
+        expect(latencyMs).toBeGreaterThanOrEqual(0);
+        expect(latencyMs).toBeLessThan(1_000);
+
+        const exited = await waitForProcessExit(marker, 1_000);
+        expect(exited).toBe(true);
+
+        await session.close();
+        session = null;
+
+        followupSession = await client.createSession(config);
+        const followup = await followupSession.run("Reply OK and stop.");
+        expect(followup.finalText.toLowerCase()).toContain("ok");
+      } finally {
+        if (interruptTimer) {
+          clearTimeout(interruptTimer);
+        }
+        await session?.close();
+        await followupSession?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
   );
 });
