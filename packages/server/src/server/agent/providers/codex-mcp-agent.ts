@@ -319,7 +319,6 @@ class CodexMcpAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private pendingPermissionHandlers = new Map<string, PendingPermission>();
-  private pendingToolEvents = new Map<string, Array<() => void>>();
   private resolvedPermissionRequests = new Set<string>();
   private eventQueue: Pushable<AgentStreamEvent | ProviderEvent> | null = null;
   private currentAbortController: AbortController | null = null;
@@ -613,7 +612,6 @@ class CodexMcpAgentSession implements AgentSession {
           : "denied";
     const reason = response.behavior === "deny" ? response.message : undefined;
     pending.resolve({ decision, reason });
-    this.flushQueuedToolEvents(requestId, response.behavior === "allow");
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -647,7 +645,6 @@ class CodexMcpAgentSession implements AgentSession {
     }
     this.pendingPermissionHandlers.clear();
     this.pendingPermissions.clear();
-    this.pendingToolEvents.clear();
     this.resolvedPermissionRequests.clear();
     this.eventQueue?.end();
     this.eventQueue = null;
@@ -809,97 +806,6 @@ class CodexMcpAgentSession implements AgentSession {
       provider: "codex-mcp",
       request,
     });
-  }
-
-  private getEffectiveApprovalPolicy(): string {
-    const modeId = this.currentMode ?? this.config.modeId ?? DEFAULT_CODEX_MODE_ID;
-    const preset = MODE_PRESETS[modeId] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
-    return this.config.approvalPolicy ?? preset.approvalPolicy;
-  }
-
-  private shouldGatePermissions(): boolean {
-    const approvalPolicy = this.getEffectiveApprovalPolicy();
-    return approvalPolicy === "on-request" || approvalPolicy === "untrusted";
-  }
-
-  private queuePermissionGatedEvent(
-    callId: string | undefined,
-    event: Record<string, unknown>,
-    emitEvent: () => void
-  ): boolean {
-    if (!this.shouldGatePermissions()) {
-      return false;
-    }
-    if (!callId) {
-      return false;
-    }
-    const requestId = `permission-${callId}`;
-    if (this.resolvedPermissionRequests.has(requestId)) {
-      return false;
-    }
-    if (!this.pendingPermissions.has(requestId) && !this.pendingPermissionHandlers.has(requestId)) {
-      const permission = this.buildPermissionRequest(event);
-      if (!permission) {
-        return false;
-      }
-      this.pendingPermissions.set(permission.id, permission);
-      this.pendingPermissionHandlers.set(permission.id, {
-        request: permission,
-        resolve: () => {},
-        reject: () => {},
-      });
-      this.emitPermissionRequested(permission);
-    }
-    this.queueToolEvent(requestId, emitEvent);
-    return true;
-  }
-
-  private ensurePermissionRequestFromEvent(event: Record<string, unknown>): void {
-    const callId = normalizeCallId(event.call_id as string | undefined);
-    if (!callId) {
-      return;
-    }
-    const requestId = `permission-${callId}`;
-    if (this.resolvedPermissionRequests.has(requestId)) {
-      return;
-    }
-    if (this.pendingPermissions.has(requestId) || this.pendingPermissionHandlers.has(requestId)) {
-      return;
-    }
-    const permission = this.buildPermissionRequest(event);
-    if (!permission) {
-      return;
-    }
-    this.pendingPermissions.set(permission.id, permission);
-    this.pendingPermissionHandlers.set(permission.id, {
-      request: permission,
-      resolve: () => {},
-      reject: () => {},
-    });
-    this.emitPermissionRequested(permission);
-  }
-
-  private queueToolEvent(requestId: string, emitEvent: () => void): void {
-    const queued = this.pendingToolEvents.get(requestId);
-    if (queued) {
-      queued.push(emitEvent);
-      return;
-    }
-    this.pendingToolEvents.set(requestId, [emitEvent]);
-  }
-
-  private flushQueuedToolEvents(requestId: string, allow: boolean): void {
-    const queued = this.pendingToolEvents.get(requestId);
-    if (!queued) {
-      return;
-    }
-    this.pendingToolEvents.delete(requestId);
-    if (!allow) {
-      return;
-    }
-    for (const emitEvent of queued) {
-      emitEvent();
-    }
   }
 
   private recordHistory(item: AgentTimelineItem): void {
@@ -1079,9 +985,6 @@ class CodexMcpAgentSession implements AgentSession {
             }),
           });
         };
-        if (this.queuePermissionGatedEvent(callId, event as Record<string, unknown>, emitEvent)) {
-          break;
-        }
         emitEvent();
         break;
       }
@@ -1141,16 +1044,7 @@ class CodexMcpAgentSession implements AgentSession {
             });
           }
         };
-        if (this.queuePermissionGatedEvent(callId, event as Record<string, unknown>, emitEvent)) {
-          break;
-        }
         emitEvent();
-        break;
-      }
-      case "exec_approval_request": {
-        if (this.shouldGatePermissions()) {
-          this.ensurePermissionRequestFromEvent(event as Record<string, unknown>);
-        }
         break;
       }
       case "patch_apply_begin": {

@@ -245,14 +245,51 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     ```
   - **Done (2025-12-24)**: Verified via debug script.
 
-- [ ] **Fix**: Update MODE_PRESETS to use `on-request` instead of `untrusted`.
+- [x] **Fix**: Update MODE_PRESETS to use `on-request` instead of `untrusted`.
 
   - Change `codex-mcp-agent.ts` MODE_PRESETS:
     - `read-only`: `approvalPolicy: "on-request"` (was `untrusted`)
     - `auto`: `approvalPolicy: "on-request"` (was `untrusted`)
   - Ensure elicitation handler returns `{ decision: "approved" | "denied" | ... }` format
   - Remove any workarounds that were compensating for missing elicitation
+  - **Done (2025-12-24 20:20)**: Removed synthetic permission gating/exec approval workarounds now that on-request elicitation is the default.
 
 - [ ] **Test (E2E)**: Rerun server vitest after fixes.
 
   - If failures: add follow-up fix tasks immediately after this item.
+
+- [ ] **Test (E2E)**: Permission flow parity - test both Codex MCP and Claude providers.
+
+  - Create/update E2E tests that verify permissions work for BOTH providers
+  - Test cases for each provider:
+    - Permission requested event fires when tool needs approval
+    - Permission granted → tool executes
+    - Permission denied → tool blocked
+    - Permission abort/interrupt → session handles gracefully
+  - Ensure test structure allows easy comparison between providers
+
+- [ ] **Audit**: Feature parity checklist for Codex MCP provider vs Claude provider.
+
+  - Document all capabilities the Claude provider supports
+  - Verify Codex MCP provider supports each one or document gaps
+  - Key areas to check:
+    - Streaming events (reasoning, text, tool calls)
+    - Session persistence/resume
+    - Abort/interrupt handling
+    - Runtime info reporting
+    - Mode switching
+
+- [ ] **Test (E2E)**: Comprehensive tool call coverage for Codex MCP provider.
+
+  - All tool call types must be tested and emit proper timeline events:
+    - **Command runs**: `shell_command` / `exec_command` → exit code, stdout, stderr
+    - **File edits**: `apply_patch` / file modifications → before/after content
+    - **File creations**: new file writes → file path, content
+    - **MCP tool calls**: external MCP server tools → tool name, input, output
+    - **Web search**: if supported → query, results
+    - **File reads**: read operations → file path, content snippet
+  - Each test should verify:
+    - Timeline item is emitted with correct `type` and `status`
+    - Tool `input` and `output` are captured
+    - `callId` is consistent across events
+    - Permission flow triggers when expected (for unsafe operations)
