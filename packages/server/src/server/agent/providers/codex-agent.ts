@@ -1591,7 +1591,7 @@ function handleRolloutFunctionCall(
   }
 
   if (SHELL_FUNCTION_NAMES.has(name)) {
-    const args = safeJsonParse<Record<string, unknown>>(payload.arguments);
+    const args = parseJsonOrObject<Record<string, unknown>>(payload.arguments);
     const command = formatCommand(args);
     const cwd =
       args &&
@@ -1599,8 +1599,9 @@ function handleRolloutFunctionCall(
       typeof (args as { workdir?: unknown }).workdir === "string"
         ? ((args as { workdir?: unknown }).workdir as string)
         : undefined;
-    if (command && typeof payload.call_id === "string") {
-      commandCalls.set(payload.call_id, { command, cwd });
+    if (typeof payload.call_id === "string") {
+      const commandValue = command ?? "Command";
+      commandCalls.set(payload.call_id, { command: commandValue, cwd });
       events.push({
         type: "timeline",
         provider: "codex",
@@ -1611,7 +1612,7 @@ function handleRolloutFunctionCall(
           callId: payload.call_id,
           displayName: buildCommandDisplayName(command),
           kind: "execute",
-          input: { command, cwd },
+          input: { command: commandValue, cwd },
         }),
       });
     }
@@ -1658,7 +1659,7 @@ function finalizeRolloutFunctionCall(
   if (!command) {
     return;
   }
-  const result = safeJsonParse<CommandExecutionResult>(payload.output);
+  const result = parseJsonOrObject<CommandExecutionResult>(payload.output);
   const exitCode = result?.metadata?.exit_code;
   const status =
     exitCode === undefined || exitCode === 0 ? "completed" : "failed";
@@ -1671,6 +1672,9 @@ function finalizeRolloutFunctionCall(
         output: result.stdout,
         exitCode,
         cwd: command.cwd,
+        metadata:
+          result?.metadata ??
+          (typeof exitCode === "number" ? { exit_code: exitCode } : undefined),
       }
     : result;
 
@@ -2100,6 +2104,16 @@ function safeJsonParse<T = unknown>(value: unknown): T | null {
   } catch {
     return null;
   }
+}
+
+function parseJsonOrObject<T = unknown>(value: unknown): T | null {
+  if (typeof value === "string") {
+    return safeJsonParse<T>(value);
+  }
+  if (value && typeof value === "object") {
+    return value as T;
+  }
+  return null;
 }
 
 function formatCommand(args: unknown): string | null {

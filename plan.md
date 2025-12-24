@@ -36,6 +36,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - **Done (2025-12-24 18:24)**: Added Codex MCP E2E coverage for thread/item mapping and non-command tool calls. Tests failed locally due to Codex CLI/model/permission behavior mismatches (see test output).
 
 - [x] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
+
   - **Done (2025-12-24 18:30)**: Added Codex MCP E2E tests for read-only/untrusted permission gating and interrupt-based permission abort handling; Vitest failed locally due to missing tool version for `vitest` in `.tool-versions`.
 
 - [x] **Test / Review (E2E + Typecheck)**: Document Codex CLI/model/permission mismatches and run typecheck.
@@ -47,9 +48,11 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - **Done (2025-12-24 18:35)**: Documented Codex CLI model/permission mismatches in `CODEX_MCP_MISMATCH_REPORT.md`; ran focused Vitest tests (runtime info + permission gating) and captured failures; ran server typecheck and recorded TS2339/TS6133 failures in `codex-mcp-agent.ts`.
 
 - [x] **Fix**: Handle Codex CLI model availability mismatch (gpt-4.1 rejected for ChatGPT accounts) in Codex MCP tests/provider.
+
   - **Done (2025-12-24 18:40)**: Added model-rejection fallback for ChatGPT accounts, track runtime model from responses, and default to a placeholder when a configured model is rejected.
 
 - [x] **Fix**: Investigate Codex MCP permission elicitation behavior for `approval-policy=on-request` and `untrusted` (no permission_requested events).
+
   - **Done (2025-12-24 19:16)**: Added permission gating fallback for exec approval events, queued command events until approval, and flush/dropped queued events on resolution.
 
 - [x] **Fix**: Compare permission elicitation with happy-cli reference implementation.
@@ -113,18 +116,23 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - **Done (2025-12-24 19:27)**: Removed unused locals, avoided invalid permission message access, and reran server typecheck.
 
 - [x] **Test (E2E)**: Run tests and verify fixes work.
+
   - **Done (2025-12-24 19:32)**: Ran `npm run test --workspace=@paseo/server`; 9 failures (1 in `codex-agent.test.ts` missing persisted shell_command entry, 8 in `codex-mcp-agent.test.ts` for exit code, thread/item events, error timeline, persistence metadata, and permission requests).
 
 - [x] **Fix**: Codex MCP command output should include exit codes for command tool calls.
+
   - **Done (2025-12-24 19:36)**: Ensured command tool outputs include exit codes even when output text is missing.
 
 - [x] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
+
   - **Done (2025-12-24 19:40)**: Normalized thread event types and added data fallback so item events map to timeline entries.
 
 - [x] **Fix**: Codex MCP should emit error timeline items for failed turns.
+
   - **Done (2025-12-24 19:42)**: Emitted error timeline item on `turn.failed` when no prior error was recorded.
 
 - [x] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
+
   - **Done (2025-12-24 19:44)**: Ensured persistence metadata always includes a conversationId, falling back to the session id when needed.
 
 - [x] **Investigate**: Elicitation was fixed in Codex 0.71.0 - why isn't it working for us?
@@ -141,8 +149,24 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 - [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
 
-- [ ] **Fix**: Codex SDK persistence hydration should include completed shell_command tool entries.
+  - Previous finding: safe commands (pwd, ls) bypass approval even with `untrusted`
+  - Tests MUST use unsafe commands to trigger elicitation (e.g., `rm`, `curl`, write to files)
+  - Find the Codex safe-command allowlist in the repo to know what to avoid
+  - Verify elicitation fires with a definitely-unsafe command first
+
+- [x] **Fix**: Codex SDK persistence hydration should include completed shell_command tool entries.
+
+  - **Done (2025-12-24 19:56)**: Parse rollout shell command args/outputs when they are objects and preserve metadata on hydrated command results.
 
 - [ ] **Test (E2E)**: Rerun server vitest after fixes.
+
+- [ ] **Decision**: Evaluate if MCP provider is even necessary.
+
+  - The SDK provider (`codex-agent.ts`) ALREADY handles permissions via undocumented `exec_approval_request` and `apply_patch_approval_request` events - no MCP needed for permissions
+  - MCP elicitation is broken for safe commands (pwd, ls bypass approval)
+  - Both providers need workarounds for permissions
+  - MCP only adds value for external MCP tool integration, NOT permissions
+  - If we don't need MCP tools, the SDK provider is simpler and already works
+  - Decide: keep MCP for tools, or drop it and use SDK only?
 
 - [ ] **Plan**: Re-audit based on test results.
