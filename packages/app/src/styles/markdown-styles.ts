@@ -215,13 +215,13 @@ export function createMarkdownStyles(theme: Theme) {
 
     bullet_list: {
       marginVertical: theme.spacing[2],
-      paddingLeft: theme.spacing[1],
+      paddingLeft: 0,
       width: "100%" as const,
     },
 
     ordered_list: {
       marginVertical: theme.spacing[2],
-      paddingLeft: theme.spacing[1],
+      paddingLeft: 0,
       width: "100%" as const,
     },
 
@@ -229,36 +229,33 @@ export function createMarkdownStyles(theme: Theme) {
       marginBottom: theme.spacing[1],
       flexDirection: "row" as const,
       alignItems: "flex-start" as const,
-      width: "100%" as const,
       flexShrink: 1,
     },
 
     bullet_list_content: {
       flex: 1,
       flexShrink: 1,
-      flexWrap: "wrap" as const,
     },
 
     ordered_list_content: {
       flex: 1,
       flexShrink: 1,
-      flexWrap: "wrap" as const,
     },
 
     bullet_list_icon: {
       color: theme.colors.mutedForeground,
-      marginRight: theme.spacing[2],
+      marginRight: 4,
       fontSize: theme.fontSize.base,
       lineHeight: 22,
     },
 
     ordered_list_icon: {
       color: theme.colors.mutedForeground,
-      marginRight: theme.spacing[2],
+      marginRight: 4,
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.semibold,
       lineHeight: 22,
-      minWidth: 20,
+      minWidth: 12,
     },
 
     // =========================================================================

@@ -599,6 +599,111 @@ function PermissionRequestCard({
     [theme]
   );
 
+  const markdownRules = useMemo(() => {
+    return {
+      text: (
+        node: any,
+        _children: React.ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+          {node.content}
+        </Text>
+      ),
+      textgroup: (
+        node: any,
+        children: React.ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+          {children}
+        </Text>
+      ),
+      code_block: (
+        node: any,
+        _children: React.ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+          {node.content}
+        </Text>
+      ),
+      fence: (
+        node: any,
+        _children: React.ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+          {node.content}
+        </Text>
+      ),
+      code_inline: (
+        node: any,
+        _children: React.ReactNode[],
+        _parent: any,
+        styles: any,
+        inheritedStyles: any = {}
+      ) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_inline]} selectable>
+          {node.content}
+        </Text>
+      ),
+      bullet_list: (
+        node: any,
+        children: React.ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.bullet_list}>
+          {children}
+        </View>
+      ),
+      ordered_list: (
+        node: any,
+        children: React.ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.ordered_list}>
+          {children}
+        </View>
+      ),
+      list_item: (
+        node: any,
+        children: React.ReactNode[],
+        parent: any,
+        styles: any
+      ) => {
+        const isOrdered = parent?.type === "ordered_list";
+        const index = parent?.children?.indexOf(node) ?? 0;
+        const bullet = isOrdered ? `${index + 1}.` : "•";
+        const iconStyle = isOrdered
+          ? styles.ordered_list_icon
+          : styles.bullet_list_icon;
+        const contentStyle = isOrdered
+          ? styles.ordered_list_content
+          : styles.bullet_list_content;
+
+        return (
+          <View key={node.key} style={[styles.list_item, { flexShrink: 0 }]}>
+            <Text style={iconStyle}>{bullet}</Text>
+            <Text style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]} selectable>
+              {children}
+            </Text>
+          </View>
+        );
+      },
+    };
+  }, []);
+
   const permissionResponse = useDaemonRequest<
     { agentId: string; requestId: string; response: AgentPermissionResponse },
     { agentId: string; requestId: string },
@@ -675,7 +780,7 @@ function PermissionRequestCard({
               },
             ]}
           >
-            <Markdown style={markdownStyles}>{planMarkdown}</Markdown>
+            <Markdown style={markdownStyles} rules={markdownRules}>{planMarkdown}</Markdown>
           </View>
         </View>
       ) : null}
@@ -986,6 +1091,8 @@ const permissionStyles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
+    flexShrink: 1,
+    minWidth: 0,
   },
   metadataRow: {
     marginBottom: theme.spacing[2],

@@ -234,6 +234,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.background,
     padding: theme.spacing[2],
     gap: theme.spacing[2],
+    flexShrink: 1,
+    minWidth: 0,
   },
 }));
 
@@ -415,6 +417,51 @@ export const AssistantMessage = memo(function AssistantMessage({
           >
             {content}
           </Text>
+        );
+      },
+      bullet_list: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.bullet_list}>
+          {children}
+        </View>
+      ),
+      ordered_list: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.ordered_list}>
+          {children}
+        </View>
+      ),
+      list_item: (
+        node: any,
+        children: ReactNode[],
+        parent: any,
+        styles: any
+      ) => {
+        const isOrdered = parent?.type === "ordered_list";
+        const index = parent?.children?.indexOf(node) ?? 0;
+        const bullet = isOrdered ? `${index + 1}.` : "•";
+        const iconStyle = isOrdered
+          ? styles.ordered_list_icon
+          : styles.bullet_list_icon;
+        const contentStyle = isOrdered
+          ? styles.ordered_list_content
+          : styles.bullet_list_content;
+
+        return (
+          <View key={node.key} style={styles.list_item}>
+            <Text style={iconStyle}>{bullet}</Text>
+            <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>
+              {children}
+            </View>
+          </View>
         );
       },
     };
@@ -1007,6 +1054,51 @@ export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtM
           {node.content}
         </Text>
       ),
+      bullet_list: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.bullet_list}>
+          {children}
+        </View>
+      ),
+      ordered_list: (
+        node: any,
+        children: ReactNode[],
+        _parent: any,
+        styles: any
+      ) => (
+        <View key={node.key} style={styles.ordered_list}>
+          {children}
+        </View>
+      ),
+      list_item: (
+        node: any,
+        children: ReactNode[],
+        parent: any,
+        styles: any
+      ) => {
+        const isOrdered = parent?.type === "ordered_list";
+        const index = parent?.children?.indexOf(node) ?? 0;
+        const bullet = isOrdered ? `${index + 1}.` : "•";
+        const iconStyle = isOrdered
+          ? styles.ordered_list_icon
+          : styles.bullet_list_icon;
+        const contentStyle = isOrdered
+          ? styles.ordered_list_content
+          : styles.bullet_list_content;
+
+        return (
+          <View key={node.key} style={styles.list_item}>
+            <Text style={iconStyle}>{bullet}</Text>
+            <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>
+              {children}
+            </View>
+          </View>
+        );
+      },
     };
   }, []);
 
