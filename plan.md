@@ -38,12 +38,21 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
   - **Done (2025-12-24 18:30)**: Added Codex MCP E2E tests for read-only/untrusted permission gating and interrupt-based permission abort handling; Vitest failed locally due to missing tool version for `vitest` in `.tool-versions`.
 
-- [ ] **Test / Review (E2E + Typecheck)**: Document Codex CLI/model/permission mismatches and run typecheck.
+- [x] **Test / Review (E2E + Typecheck)**: Document Codex CLI/model/permission mismatches and run typecheck.
 
   - Capture exact failing scenarios, including CLI flags, sandbox/approval policy, and observed vs expected behavior.
   - Review code, really bad typing and code is generally hortible quality, write a report for follow up tasks, reduce casting to a minimum, strongly typing everywhere
   - Paste key error output snippets and summarize root causes.
   - Run server typecheck and record failures; add fix tasks for each category.
+  - **Done (2025-12-24 18:35)**: Documented Codex CLI model/permission mismatches in `CODEX_MCP_MISMATCH_REPORT.md`; ran focused Vitest tests (runtime info + permission gating) and captured failures; ran server typecheck and recorded TS2339/TS6133 failures in `codex-mcp-agent.ts`.
+
+- [ ] **Fix**: Handle Codex CLI model availability mismatch (gpt-4.1 rejected for ChatGPT accounts) in Codex MCP tests/provider.
+
+- [ ] **Fix**: Investigate Codex MCP permission elicitation behavior for `approval-policy=on-request` and `untrusted` (no permission_requested events).
+
+- [ ] **Fix**: Resolve Codex MCP provider typecheck errors (`AgentPermissionResponse.message` usage, unused locals).
+
+- [ ] **Refactor**: Reduce casting/`unknown` usage in Codex MCP provider per type/quality report.
 
 - [ ] **Review**: Check implementation + edge cases.
 
