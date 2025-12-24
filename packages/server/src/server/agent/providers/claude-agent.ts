@@ -529,6 +529,7 @@ class ClaudeAgentSession implements AgentSession {
     const options = this.buildOptions();
     this.input = input;
     this.query = query({ prompt: input, options });
+    await this.query.setPermissionMode(this.currentMode);
     return this.query;
   }
 
@@ -546,7 +547,7 @@ class ClaudeAgentSession implements AgentSession {
         preset: "claude_code",
         append: getOrchestratorModeInstructions(),
       },
-      settingSources: ["project", "user"],
+      settingSources: ["user", "project"],
       stderr: (data: string) => {
         console.error("[ClaudeAgentSDK]", data.trim());
       },

@@ -1,7 +1,19 @@
-import { describe, expect, test, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { createServer as createHTTPServer } from "http";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import express from "express";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
 import {
@@ -18,16 +30,20 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentRegistry } from "../agent-registry.js";
+import { createAgentMcpServer } from "../mcp-server.js";
 
-const claudeIntegrationEnabled =
-  process.env.RUN_CLAUDE_AGENT_TESTS === "1" || Boolean(process.env.ANTHROPIC_API_KEY?.trim()?.length);
-const describeClaudeIntegration = claudeIntegrationEnabled ? describe : describe.skip;
-
-if (!claudeIntegrationEnabled) {
-  console.warn(
-    "Skipping ClaudeAgentClient integration tests. Set RUN_CLAUDE_AGENT_TESTS=1 and provide ANTHROPIC_API_KEY to enable them."
-  );
-}
+const hasClaudeCredentials = Boolean(
+  process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY?.trim()?.length
+);
+const requireClaudeCredentials = () => {
+  if (!hasClaudeCredentials) {
+    throw new Error(
+      "Claude credentials missing. Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to run ClaudeAgentClient integration tests."
+    );
+  }
+};
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
@@ -36,6 +52,35 @@ function tmpCwd(): string {
   } catch {
     return dir;
   }
+}
+
+function useTempClaudeConfigDir(): () => void {
+  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const configDir = mkdtempSync(path.join(os.tmpdir(), "claude-config-"));
+  const settings = {
+    permissions: {
+      allow: [],
+      deny: [],
+      ask: ["Bash(rm:*)"],
+      additionalDirectories: [],
+    },
+    sandbox: {
+      enabled: true,
+      autoAllowBashIfSandboxed: false,
+    },
+  };
+  const settingsText = `${JSON.stringify(settings, null, 2)}\n`;
+  writeFileSync(path.join(configDir, "settings.json"), settingsText, "utf8");
+  writeFileSync(path.join(configDir, "settings.local.json"), settingsText, "utf8");
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  return () => {
+    if (previousConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+    }
+    rmSync(configDir, { recursive: true, force: true });
+  };
 }
 
 async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["createSession"]>>, event: AgentStreamEvent) {
@@ -87,17 +132,169 @@ function isPermissionCommandToolCall(item: ToolCallItem): boolean {
   return display.includes("permission.txt") || inputCommand.includes("permission.txt");
 }
 
-describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
+type AgentMcpServerHandle = {
+  url: string;
+  close: () => Promise<void>;
+};
+
+async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
+  const app = express();
+  app.use(express.json());
+  const httpServer = createHTTPServer(app);
+
+  const registryDir = mkdtempSync(path.join(os.tmpdir(), "agent-mcp-registry-"));
+  const registryPath = path.join(registryDir, "agents.json");
+  const agentRegistry = new AgentRegistry(registryPath);
+  const agentManager = new AgentManager({
+    clients: {},
+    registry: agentRegistry,
+  });
+
+  let allowedHosts: string[] | undefined;
+  const agentMcpTransports = new Map<string, StreamableHTTPServerTransport>();
+
+  const createAgentMcpTransport = async (callerAgentId?: string) => {
+    const agentMcpServer = await createAgentMcpServer({
+      agentManager,
+      agentRegistry,
+      callerAgentId,
+    });
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        agentMcpTransports.set(sessionId, transport);
+      },
+      onsessionclosed: (sessionId) => {
+        agentMcpTransports.delete(sessionId);
+      },
+      enableDnsRebindingProtection: true,
+      ...(allowedHosts ? { allowedHosts } : {}),
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        agentMcpTransports.delete(transport.sessionId);
+      }
+    };
+    transport.onerror = (error) => {
+      console.error("[Agent MCP] Transport error:", error);
+    };
+
+    await agentMcpServer.connect(transport);
+    return transport;
+  };
+
+  const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
+    try {
+      const sessionId = req.header("mcp-session-id");
+      let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
+
+      if (!transport) {
+        if (req.method !== "POST") {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Missing or invalid MCP session" },
+            id: null,
+          });
+          return;
+        }
+        if (!isInitializeRequest(req.body)) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Initialization request expected" },
+            id: null,
+          });
+          return;
+        }
+        const callerAgentIdRaw = req.query.callerAgentId;
+        const callerAgentId =
+          typeof callerAgentIdRaw === "string"
+            ? callerAgentIdRaw
+            : Array.isArray(callerAgentIdRaw)
+              ? callerAgentIdRaw[0]
+              : undefined;
+        transport = await createAgentMcpTransport(callerAgentId);
+      }
+
+      await transport.handleRequest(req as any, res as any, req.body);
+    } catch (error) {
+      console.error("[Agent MCP] Failed to handle request:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal MCP server error" },
+          id: null,
+        });
+      }
+    }
+  };
+
+  app.post("/mcp/agents", handleAgentMcpRequest);
+  app.get("/mcp/agents", handleAgentMcpRequest);
+  app.delete("/mcp/agents", handleAgentMcpRequest);
+
+  const port = await new Promise<number>((resolve) => {
+    httpServer.listen(0, () => {
+      const address = httpServer.address();
+      resolve(typeof address === "object" && address ? address.port : 0);
+    });
+  });
+
+  allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  const url = `http://127.0.0.1:${port}/mcp/agents`;
+
+  return {
+    url,
+    close: async () => {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      rmSync(registryDir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("ClaudeAgentClient (SDK integration)", () => {
+  let agentMcpServer: AgentMcpServerHandle;
+  let restoreClaudeConfigDir: (() => void) | null = null;
+  const buildConfig = (
+    cwd: string,
+    options?: { maxThinkingTokens?: number; modeId?: string }
+  ): AgentSessionConfig => ({
+    provider: "claude",
+    cwd,
+    modeId: options?.modeId,
+    agentControlMcp: { url: agentMcpServer.url },
+    extra: {
+      claude: {
+        sandbox: { enabled: true, autoAllowBashIfSandboxed: false },
+        ...(typeof options?.maxThinkingTokens === "number"
+          ? { maxThinkingTokens: options.maxThinkingTokens }
+          : {}),
+      },
+    },
+  });
+
+  beforeAll(() => {
+    requireClaudeCredentials();
+  });
+  beforeAll(() => {
+    restoreClaudeConfigDir = useTempClaudeConfigDir();
+  });
+  beforeAll(async () => {
+    agentMcpServer = await startAgentMcpServer();
+  });
+  afterAll(async () => {
+    await agentMcpServer?.close();
+  });
+  afterAll(() => {
+    restoreClaudeConfigDir?.();
+  });
   test(
     "responds with text",
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
       const marker = "CLAUDE_ACK_TOKEN";
@@ -118,11 +315,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
       const events = session.stream(
@@ -154,11 +347,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
       const updates: StreamHydrationUpdate[] = [];
 
@@ -192,11 +381,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
       let pendingDisplay: string | null = null;
@@ -233,11 +418,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
       const events = session.stream(
@@ -316,72 +497,70 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        modeId: "default",
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
+      writeFileSync(filePath, "ok", "utf8");
 
       let captured: AgentPermissionRequest | null = null;
       let sawResolvedAllow = false;
       const timeline: AgentTimelineItem[] = [];
-
-      try {
-        const prompt = [
-          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
-          "After approval, run it and reply DONE.",
-        ].join(" ");
-
-        for await (const event of session.stream(prompt)) {
-          if (event.type === "permission_requested" && !captured) {
-            captured = event.request;
-            expect(session.getPendingPermissions().length).toBeGreaterThan(0);
-            await session.respondToPermission(captured.id, { behavior: "allow" });
-          }
-          if (
-            event.type === "permission_resolved" &&
-            captured &&
-            event.requestId === captured.id &&
-            event.resolution.behavior === "allow"
-          ) {
-            sawResolvedAllow = true;
-          }
-          if (event.type === "timeline") {
-            timeline.push(event.item);
-          }
-          if (event.type === "turn_completed" || event.type === "turn_failed") {
-            break;
-          }
-        }
-      } finally {
+      const cleanup = async () => {
         await session.close();
         rmSync(cwd, { recursive: true, force: true });
-      }
+      };
 
-      expect(captured).not.toBeNull();
-      expect(sawResolvedAllow).toBe(true);
-      expect(session.getPendingPermissions()).toHaveLength(0);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            item.server === "permission" &&
-            item.status === "granted"
-        )
-      ).toBe(true);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            isPermissionCommandToolCall(item) &&
-            item.status === "completed"
-        )
-      ).toBe(true);
-      expect(existsSync(filePath)).toBe(true);
-      expect(readFileSync(filePath, "utf8")).toContain("ok");
+      const prompt = [
+        "You must call the Bash command tool with the exact command `rm -f permission.txt`.",
+        "After approval, run it and reply DONE.",
+        "Do not respond before the command finishes.",
+      ].join(" ");
+
+      for await (const event of session.stream(prompt)) {
+        if (event.type === "permission_requested" && !captured) {
+          captured = event.request;
+          expect(session.getPendingPermissions().length).toBeGreaterThan(0);
+          await session.respondToPermission(captured.id, { behavior: "allow" });
+        }
+        if (
+          event.type === "permission_resolved" &&
+          captured &&
+          event.requestId === captured.id &&
+          event.resolution.behavior === "allow"
+        ) {
+          sawResolvedAllow = true;
+        }
+        if (event.type === "timeline") {
+          timeline.push(event.item);
+        }
+        if (event.type === "turn_completed" || event.type === "turn_failed") {
+          break;
+        }
+      }
+      try {
+        expect(captured).not.toBeNull();
+        expect(sawResolvedAllow).toBe(true);
+        expect(session.getPendingPermissions()).toHaveLength(0);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "granted"
+          )
+        ).toBe(true);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              isPermissionCommandToolCall(item) &&
+              item.status === "completed"
+          )
+        ).toBe(true);
+        expect(existsSync(filePath)).toBe(false);
+      } finally {
+        await cleanup();
+      }
     },
     180_000
   );
@@ -391,72 +570,71 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        modeId: "default",
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
+      writeFileSync(filePath, "ok", "utf8");
 
       let captured: AgentPermissionRequest | null = null;
       let sawResolvedDeny = false;
       const timeline: AgentTimelineItem[] = [];
-
-      try {
-        const prompt = [
-          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
-          "If approval is denied, reply DENIED and stop.",
-        ].join(" ");
-
-        for await (const event of session.stream(prompt)) {
-          if (event.type === "permission_requested" && !captured) {
-            captured = event.request;
-            await session.respondToPermission(captured.id, {
-              behavior: "deny",
-              message: "Not allowed.",
-            });
-          }
-          if (
-            event.type === "permission_resolved" &&
-            captured &&
-            event.requestId === captured.id &&
-            event.resolution.behavior === "deny"
-          ) {
-            sawResolvedDeny = true;
-          }
-          if (event.type === "timeline") {
-            timeline.push(event.item);
-          }
-          if (event.type === "turn_completed" || event.type === "turn_failed") {
-            break;
-          }
-        }
-      } finally {
+      const cleanup = async () => {
         await session.close();
         rmSync(cwd, { recursive: true, force: true });
-      }
+      };
 
-      expect(captured).not.toBeNull();
-      expect(sawResolvedDeny).toBe(true);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            item.server === "permission" &&
-            item.status === "denied"
-        )
-      ).toBe(true);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            isPermissionCommandToolCall(item) &&
-            item.status === "completed"
-        )
-      ).toBe(false);
-      expect(existsSync(filePath)).toBe(false);
+      const prompt = [
+        "You must call the Bash command tool with the exact command `rm -f permission.txt`.",
+        "If approval is denied, reply DENIED and stop.",
+        "Do not respond before the command finishes or the denial is confirmed.",
+      ].join(" ");
+
+      for await (const event of session.stream(prompt)) {
+        if (event.type === "permission_requested" && !captured) {
+          captured = event.request;
+          await session.respondToPermission(captured.id, {
+            behavior: "deny",
+            message: "Not allowed.",
+          });
+        }
+        if (
+          event.type === "permission_resolved" &&
+          captured &&
+          event.requestId === captured.id &&
+          event.resolution.behavior === "deny"
+        ) {
+          sawResolvedDeny = true;
+        }
+        if (event.type === "timeline") {
+          timeline.push(event.item);
+        }
+        if (event.type === "turn_completed" || event.type === "turn_failed") {
+          break;
+        }
+      }
+      try {
+        expect(captured).not.toBeNull();
+        expect(sawResolvedDeny).toBe(true);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "denied"
+          )
+        ).toBe(true);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              isPermissionCommandToolCall(item) &&
+              item.status === "completed"
+          )
+        ).toBe(false);
+        expect(existsSync(filePath)).toBe(true);
+      } finally {
+        await cleanup();
+      }
     },
     180_000
   );
@@ -466,77 +644,76 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        modeId: "default",
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
+      writeFileSync(filePath, "ok", "utf8");
 
       let captured: AgentPermissionRequest | null = null;
       let sawResolvedInterrupt = false;
       let sawTerminalEvent = false;
       const timeline: AgentTimelineItem[] = [];
-
-      try {
-        const prompt = [
-          "Request approval to run the command `printf \"ok\" > permission.txt` using Bash.",
-          "If approval is denied, stop immediately.",
-        ].join(" ");
-
-        for await (const event of session.stream(prompt)) {
-          if (event.type === "permission_requested" && !captured) {
-            captured = event.request;
-            await session.respondToPermission(captured.id, {
-              behavior: "deny",
-              message: "Stop now.",
-              interrupt: true,
-            });
-          }
-          if (
-            event.type === "permission_resolved" &&
-            captured &&
-            event.requestId === captured.id &&
-            event.resolution.behavior === "deny" &&
-            event.resolution.interrupt
-          ) {
-            sawResolvedInterrupt = true;
-          }
-          if (event.type === "timeline") {
-            timeline.push(event.item);
-          }
-          if (event.type === "turn_completed" || event.type === "turn_failed") {
-            sawTerminalEvent = true;
-            break;
-          }
-        }
-      } finally {
+      const cleanup = async () => {
         await session.close();
         rmSync(cwd, { recursive: true, force: true });
-      }
+      };
 
-      expect(captured).not.toBeNull();
-      expect(sawResolvedInterrupt).toBe(true);
-      expect(sawTerminalEvent).toBe(true);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            item.server === "permission" &&
-            item.status === "denied"
-        )
-      ).toBe(true);
-      expect(
-        timeline.some(
-          (item) =>
-            item.type === "tool_call" &&
-            isPermissionCommandToolCall(item) &&
-            item.status === "completed"
-        )
-      ).toBe(false);
-      expect(existsSync(filePath)).toBe(false);
+      const prompt = [
+        "You must call the Bash command tool with the exact command `rm -f permission.txt`.",
+        "If approval is denied, stop immediately.",
+        "Do not respond before the command finishes or the denial is confirmed.",
+      ].join(" ");
+
+      for await (const event of session.stream(prompt)) {
+        if (event.type === "permission_requested" && !captured) {
+          captured = event.request;
+          await session.respondToPermission(captured.id, {
+            behavior: "deny",
+            message: "Stop now.",
+            interrupt: true,
+          });
+        }
+        if (
+          event.type === "permission_resolved" &&
+          captured &&
+          event.requestId === captured.id &&
+          event.resolution.behavior === "deny" &&
+          event.resolution.interrupt
+        ) {
+          sawResolvedInterrupt = true;
+        }
+        if (event.type === "timeline") {
+          timeline.push(event.item);
+        }
+        if (event.type === "turn_completed" || event.type === "turn_failed") {
+          sawTerminalEvent = true;
+          break;
+        }
+      }
+      try {
+        expect(captured).not.toBeNull();
+        expect(sawResolvedInterrupt).toBe(true);
+        expect(sawTerminalEvent).toBe(true);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "permission" &&
+              item.status === "denied"
+          )
+        ).toBe(true);
+        expect(
+          timeline.some(
+            (item) =>
+              item.type === "tool_call" &&
+              isPermissionCommandToolCall(item) &&
+              item.status === "completed"
+          )
+        ).toBe(false);
+        expect(existsSync(filePath)).toBe(true);
+      } finally {
+        await cleanup();
+      }
     },
     180_000
   );
@@ -546,11 +723,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
       let runStartedAt: number | null = null;
       let durationMs = 0;
@@ -608,11 +781,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
       const first = await session.run("Respond only with the word alpha.");
@@ -634,11 +803,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
       const first = await session.run("Say READY and then stop.");
@@ -666,11 +831,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
       const modes = await session.getAvailableModes();
@@ -695,11 +856,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 2048 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
       await session.setMode("plan");
 
@@ -741,11 +898,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 4096 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 4096 });
       const session = await client.createSession(config);
       const prompt = [
         "You are verifying the hydrate regression test.",
@@ -876,11 +1029,7 @@ describeClaudeIntegration("ClaudeAgentClient (SDK integration)", () => {
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
-      const config: AgentSessionConfig = {
-        provider: "claude",
-        cwd,
-        extra: { claude: { maxThinkingTokens: 1024 } },
-      };
+      const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
 
       const promptMarker = `HYDRATED_USER_${Date.now().toString(36)}`;
       const prompt = `Reply with the exact text ${promptMarker} and then stop.`;

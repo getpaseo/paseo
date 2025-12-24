@@ -615,7 +615,16 @@ export class AgentManager {
     const initialStatus = snapshot.lifecycle;
     const initialBusy = isAgentBusy(initialStatus);
     const waitForActive = options?.waitForActive ?? false;
+    const hasPendingRun =
+      "pendingRun" in snapshot && Boolean(snapshot.pendingRun);
     if (!waitForActive && !initialBusy) {
+      return {
+        status: initialStatus,
+        permission: null,
+        lastMessage: this.getLastAssistantMessage(agentId)
+      };
+    }
+    if (waitForActive && !initialBusy && !hasPendingRun) {
       return {
         status: initialStatus,
         permission: null,
@@ -637,7 +646,7 @@ export class AgentManager {
       }
 
       let currentStatus: AgentLifecycleStatus = initialStatus;
-      let hasStarted = initialBusy;
+      let hasStarted = initialBusy || hasPendingRun;
 
       // Bug #3 Fix: Declare unsubscribe and abortHandler upfront so cleanup can reference them
       let unsubscribe: (() => void) | null = null;
@@ -688,7 +697,6 @@ export class AgentManager {
       // This prevents race condition if callback fires synchronously with replayState: true
       unsubscribe = this.subscribe(
         (event) => {
-          // Bug #2 Fix: Only handle agent_state events, remove redundant agent_stream handling
           if (event.type === "agent_state") {
             currentStatus = event.agent.lifecycle;
             const pending = this.peekPendingPermission(event.agent);
@@ -701,6 +709,25 @@ export class AgentManager {
               return;
             }
             if (!waitForActive || hasStarted) {
+              finish(null);
+            }
+            return;
+          }
+
+          if (event.type === "agent_stream") {
+            if (event.event.type === "permission_requested") {
+              finish(event.event.request);
+              return;
+            }
+            if (event.event.type === "turn_failed") {
+              currentStatus = "error";
+              hasStarted = true;
+              finish(null);
+              return;
+            }
+            if (event.event.type === "turn_completed") {
+              currentStatus = "idle";
+              hasStarted = true;
               finish(null);
             }
           }

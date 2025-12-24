@@ -6,6 +6,7 @@ import { ensureValidJson } from "../json-utils.js";
 import type {
   AgentPromptInput,
   AgentProvider,
+  AgentPermissionRequest,
 } from "./agent-sdk-types.js";
 import type {
   AgentManager,
@@ -50,80 +51,11 @@ const AgentStatusEnum = z.enum([
   "closed",
 ]);
 
-const AGENT_WAIT_TIMEOUT_MS = 50000; // 50 seconds (surface friendly message before tool timeout)
-
 function expandPath(path: string): string {
   if (path.startsWith("~/") || path === "~") {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
-}
-
-async function waitForAgentWithTimeout(
-  agentManager: AgentManager,
-  agentId: string,
-  existingSignal?: AbortSignal,
-  options?: { waitForActive?: boolean }
-): Promise<WaitForAgentResult> {
-  const timeoutSignal = AbortSignal.timeout(AGENT_WAIT_TIMEOUT_MS);
-  const abortController = new AbortController();
-
-  const forwardExistingAbort = () => {
-    if (!abortController.signal.aborted) {
-      const reason = existingSignal?.reason ?? new Error("External abort");
-      abortController.abort(reason);
-    }
-  };
-
-  const forwardTimeout = () => {
-    if (!abortController.signal.aborted) {
-      abortController.abort(new Error("wait timeout"));
-    }
-  };
-
-  if (existingSignal) {
-    if (existingSignal.aborted) {
-      forwardExistingAbort();
-    } else {
-      existingSignal.addEventListener("abort", forwardExistingAbort, {
-        once: true,
-      });
-    }
-  }
-
-  if (timeoutSignal.aborted) {
-    forwardTimeout();
-  } else {
-    timeoutSignal.addEventListener("abort", forwardTimeout, { once: true });
-  }
-
-  try {
-    const result = await agentManager.waitForAgentEvent(agentId, {
-      signal: abortController.signal,
-      waitForActive: options?.waitForActive,
-    });
-    return result;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === "wait timeout"
-    ) {
-      const snapshot = agentManager.getAgent(agentId);
-      return {
-        status: snapshot?.lifecycle ?? "idle",
-        permission: null,
-        lastMessage: "Awaiting the agent timed out, await again",
-      };
-    }
-    throw error;
-  } finally {
-    if (existingSignal && !existingSignal.aborted) {
-      existingSignal.removeEventListener("abort", forwardExistingAbort);
-    }
-    if (!timeoutSignal.aborted) {
-      timeoutSignal.removeEventListener("abort", forwardTimeout);
-    }
-  }
 }
 
 function startAgentRun(
@@ -144,6 +76,31 @@ function startAgentRun(
       );
     }
   })();
+}
+
+function sanitizePermissionRequest(
+  permission: AgentPermissionRequest | null | undefined
+): AgentPermissionRequest | null {
+  if (!permission) {
+    return null;
+  }
+  const sanitized: AgentPermissionRequest = { ...permission };
+  if (sanitized.title === undefined) {
+    delete sanitized.title;
+  }
+  if (sanitized.description === undefined) {
+    delete sanitized.description;
+  }
+  if (sanitized.input === undefined) {
+    delete sanitized.input;
+  }
+  if (sanitized.suggestions === undefined) {
+    delete sanitized.suggestions;
+  }
+  if (sanitized.metadata === undefined) {
+    delete sanitized.metadata;
+  }
+  return sanitized;
 }
 
 async function resolveAgentTitle(
@@ -299,7 +256,7 @@ export async function createAgentMcpServer(
 
           // If not running in background, wait for completion
           if (!background) {
-            const result = await waitForAgentWithTimeout(agentManager, snapshot.id, undefined, {
+            const result = await agentManager.waitForAgentEvent(snapshot.id, {
               waitForActive: true,
             });
 
@@ -311,7 +268,7 @@ export async function createAgentMcpServer(
               currentModeId: snapshot.currentModeId,
               availableModes: snapshot.availableModes,
               lastMessage: result.lastMessage,
-              permission: result.permission,
+              permission: sanitizePermissionRequest(result.permission),
             };
             const validJson = ensureValidJson(responseData);
 
@@ -399,22 +356,6 @@ export async function createAgentMcpServer(
         }
       }
 
-      const timeoutSignal = AbortSignal.timeout(AGENT_WAIT_TIMEOUT_MS);
-      const forwardTimeout = () => {
-        if (!abortController.signal.aborted) {
-          abortController.abort(new Error("wait timeout"));
-        }
-      };
-
-      if (timeoutSignal.aborted) {
-        forwardTimeout();
-      } else {
-        timeoutSignal.addEventListener("abort", forwardTimeout, { once: true });
-        cleanupFns.push(() =>
-          timeoutSignal.removeEventListener("abort", forwardTimeout)
-        );
-      }
-
       const unregister = waitTracker.register(agentId, (reason) => {
         if (!abortController.signal.aborted) {
           abortController.abort(new Error(reason ?? "wait_for_agent cancelled"));
@@ -431,7 +372,7 @@ export async function createAgentMcpServer(
         const validJson = ensureValidJson({
           agentId,
           status: result.status,
-          permission: result.permission,
+          permission: sanitizePermissionRequest(result.permission),
           lastMessage: result.lastMessage,
         });
 
@@ -440,26 +381,6 @@ export async function createAgentMcpServer(
           structuredContent: validJson,
         };
         return response;
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message === "wait timeout"
-        ) {
-          const snapshot = agentManager.getAgent(agentId);
-          const validJson = ensureValidJson({
-            agentId,
-            status: snapshot?.lifecycle ?? "idle",
-            permission: null,
-            lastMessage: "Awaiting the agent timed out, await again",
-          });
-
-          const response = {
-            content: [],
-            structuredContent: validJson,
-          };
-          return response;
-        }
-        throw error;
       } finally {
         cleanup();
       }
@@ -513,7 +434,7 @@ export async function createAgentMcpServer(
 
       // If not running in background, wait for completion
       if (!background) {
-        const result = await waitForAgentWithTimeout(agentManager, agentId, undefined, {
+        const result = await agentManager.waitForAgentEvent(agentId, {
           waitForActive: true,
         });
 
@@ -521,7 +442,7 @@ export async function createAgentMcpServer(
           success: true,
           status: result.status,
           lastMessage: result.lastMessage,
-          permission: result.permission,
+          permission: sanitizePermissionRequest(result.permission),
         };
         const validJson = ensureValidJson(responseData);
 

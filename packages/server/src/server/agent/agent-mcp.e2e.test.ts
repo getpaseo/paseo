@@ -1,7 +1,8 @@
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -22,9 +23,18 @@ type PermissionPayload = {
   id: string;
 };
 
-const MCP_TOOL_TIMEOUT_MS = 60_000;
-const MCP_CLOSE_TIMEOUT_MS = 10_000;
-const AGENT_COMPLETION_TIMEOUT_MS = 120_000;
+const CLAUDE_SETTINGS = {
+  permissions: {
+    allow: [],
+    deny: [],
+    ask: ["Bash(rm:*)"],
+    additionalDirectories: [],
+  },
+  sandbox: {
+    enabled: true,
+    autoAllowBashIfSandboxed: false,
+  },
+};
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -55,114 +65,36 @@ function getStructuredContent(result: McpToolResult): Record<string, unknown> | 
   return null;
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string
-): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Timed out after ${timeoutMs}ms (${label})`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
-
-async function callToolWithTimeout(
-  client: McpClient,
-  input: { name: string; args?: Record<string, unknown> },
-  label: string,
-  timeoutMs = MCP_TOOL_TIMEOUT_MS
-): Promise<unknown> {
-  return await withTimeout(client.callTool(input), timeoutMs, label);
-}
-
-async function closeWithTimeout(
-  label: string,
-  operation: Promise<void>
-): Promise<void> {
-  try {
-    await withTimeout(operation, MCP_CLOSE_TIMEOUT_MS, label);
-  } catch (error) {
-    console.warn(`[agent-mcp.e2e] ${label} failed:`, error);
-  }
-}
-
-async function waitForFile(filePath: string, timeoutMs = 30000): Promise<string> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return await readFile(filePath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`Timed out waiting for ${filePath}`);
-}
-
 async function waitForAgentCompletion(
   client: McpClient,
-  agentId: string,
-  timeoutMs = AGENT_COMPLETION_TIMEOUT_MS
+  agentId: string
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastStatus: string | null = null;
-  let lastMessage: string | null = null;
-
-  while (Date.now() < deadline) {
-    const waitResult = (await callToolWithTimeout(
-      client,
-      {
-        name: "wait_for_agent",
-        args: { agentId },
-      },
-      "wait_for_agent"
-    )) as McpToolResult;
-    const payload = getStructuredContent(waitResult);
-    const status = payload?.status;
-    lastStatus = typeof status === "string" ? status : lastStatus;
-    lastMessage =
-      typeof payload?.lastMessage === "string" ? payload.lastMessage : lastMessage;
-    if (status && status !== "running" && status !== "initializing") {
-      return;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  const waitResult = (await client.callTool({
+    name: "wait_for_agent",
+    args: { agentId },
+  })) as McpToolResult;
+  const payload = getStructuredContent(waitResult);
+  const status = payload?.status;
+  const lastMessage =
+    typeof payload?.lastMessage === "string" ? payload.lastMessage : null;
+  if (payload?.permission) {
+    throw new Error(
+      `wait_for_agent returned a pending permission instead of completion: ${JSON.stringify(
+        payload.permission
+      )}`
+    );
   }
-
-  throw new Error(
-    `Timed out waiting for agent completion (status=${lastStatus ?? "unknown"}). ${
-      lastMessage ?? "No last message."
-    }`
-  );
-}
-
-const hasClaudeCredentials = Boolean(
-  process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
-);
-const claudeIntegrationEnabled =
-  process.env.RUN_CLAUDE_AGENT_TESTS === "1" && hasClaudeCredentials;
-
-if (!claudeIntegrationEnabled) {
-  console.warn(
-    "Skipping agent MCP Claude e2e. Set RUN_CLAUDE_AGENT_TESTS=1 and provide CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to enable."
-  );
+  if (status === "running" || status === "initializing") {
+    throw new Error(
+      `Agent still running after wait_for_agent (status=${status ?? "unknown"}). ${
+        lastMessage ?? "No last message."
+      }`
+    );
+  }
 }
 
 describe("agent MCP end-to-end", () => {
-  const runTest = claudeIntegrationEnabled ? test : test.skip;
-  runTest(
+  test(
     "creates a Claude agent and writes a file",
     async () => {
       const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
@@ -212,6 +144,12 @@ describe("agent MCP end-to-end", () => {
       const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-home-"));
       process.env.CODEX_SESSION_DIR = codexSessionDir;
       process.env.CODEX_HOME = codexHome;
+      const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const claudeConfigDir = await mkdtemp(path.join(os.tmpdir(), "claude-config-"));
+      const claudeSettingsText = `${JSON.stringify(CLAUDE_SETTINGS, null, 2)}\n`;
+      await writeFile(path.join(claudeConfigDir, "settings.json"), claudeSettingsText, "utf8");
+      await writeFile(path.join(claudeConfigDir, "settings.local.json"), claudeSettingsText, "utf8");
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig);
       await new Promise<void>((resolve) => {
@@ -231,27 +169,25 @@ describe("agent MCP end-to-end", () => {
       let agentId: string | null = null;
 
       try {
+        const filePath = path.join(agentCwd, "mcp-smoke.txt");
+        await writeFile(filePath, "ok", "utf8");
         const initialPrompt = [
-          "You must call the tool named shell.",
-          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok > mcp-smoke.txt\"].",
-          "After the tool runs, reply with done and stop.",
+          "You must call the Bash command tool with the exact command `rm -f mcp-smoke.txt`.",
+          "After approval, run it and reply with done and stop.",
+          "Do not respond before the command finishes.",
         ].join("\n");
 
-        const result = (await callToolWithTimeout(
-          client,
-          {
-            name: "create_agent",
-            args: {
-              cwd: agentCwd,
-              title: "MCP e2e smoke",
-              agentType: "claude",
-              initialMode: "default",
-              initialPrompt,
-              background: false,
-            },
+        const result = (await client.callTool({
+          name: "create_agent",
+          args: {
+            cwd: agentCwd,
+            title: "MCP e2e smoke",
+            agentType: "claude",
+            initialMode: "default",
+            initialPrompt,
+            background: false,
           },
-          "create_agent"
-        )) as McpToolResult;
+        })) as McpToolResult;
 
         const payload = getStructuredContent(result);
         expect(payload).toBeTruthy();
@@ -259,111 +195,77 @@ describe("agent MCP end-to-end", () => {
         expect(agentId).toBeTruthy();
         const createPermission = payload?.permission as PermissionPayload | null;
         expect(createPermission?.id).toBeTruthy();
-        await callToolWithTimeout(
-          client,
-          {
-            name: "respond_to_permission",
-            args: {
-              agentId,
-              requestId: createPermission!.id,
-              response: { behavior: "allow" },
-            },
+        await client.callTool({
+          name: "respond_to_permission",
+          args: {
+            agentId,
+            requestId: createPermission!.id,
+            response: { behavior: "allow" },
           },
-          "respond_to_permission"
-        );
+        });
         await waitForAgentCompletion(client, agentId);
 
-        const filePath = path.join(agentCwd, "mcp-smoke.txt");
-        let contents: string;
-        try {
-          contents = await waitForFile(filePath);
-        } catch (error) {
-          const activityResult = (await callToolWithTimeout(
-            client,
-            {
-              name: "get_agent_activity",
-              args: { agentId, limit: 25 },
-            },
-            "get_agent_activity"
-          )) as McpToolResult;
-          const activityPayload = getStructuredContent(activityResult);
-          const activitySummary = activityPayload?.content;
-          const details = activitySummary
-            ? `Agent activity:\n${activitySummary}`
-            : "Agent activity unavailable";
-          throw new Error(`${(error as Error).message}\n${details}`);
+        if (existsSync(filePath)) {
+          const contents = await readFile(filePath, "utf8");
+          throw new Error(
+            `Expected mcp-smoke.txt to be removed, but it still exists with contents: ${contents}`
+          );
         }
-        expect(contents.trim()).toBe("ok");
 
+        const secondFilePath = path.join(agentCwd, "mcp-smoke-2.txt");
+        await writeFile(secondFilePath, "ok-2", "utf8");
         const prompt = [
-          "You must call the tool named shell.",
-          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok-2 > mcp-smoke-2.txt\"].",
-          "After the tool runs, reply with done and stop.",
+          "You must call the Bash command tool with the exact command `rm -f mcp-smoke-2.txt`.",
+          "After approval, run it and reply with done and stop.",
+          "Do not respond before the command finishes.",
         ].join("\n");
 
-        const promptResult = (await callToolWithTimeout(
-          client,
-          {
-            name: "send_agent_prompt",
-            args: {
-              agentId,
-              prompt,
-              sessionMode: "default",
-              background: false,
-            },
+        const promptResult = (await client.callTool({
+          name: "send_agent_prompt",
+          args: {
+            agentId,
+            prompt,
+            sessionMode: "default",
+            background: false,
           },
-          "send_agent_prompt"
-        )) as McpToolResult;
+        })) as McpToolResult;
 
         const promptPayload = getStructuredContent(promptResult);
         const promptPermission = promptPayload?.permission as PermissionPayload | null;
         expect(promptPermission?.id).toBeTruthy();
 
-        const waitPermissionResult = (await callToolWithTimeout(
-          client,
-          {
-            name: "wait_for_agent",
-            args: { agentId },
-          },
-          "wait_for_agent"
-        )) as McpToolResult;
+        const waitPermissionResult = (await client.callTool({
+          name: "wait_for_agent",
+          args: { agentId },
+        })) as McpToolResult;
         const waitPermissionPayload = getStructuredContent(waitPermissionResult);
         const waitPermission =
           waitPermissionPayload?.permission as PermissionPayload | null;
         expect(waitPermission?.id).toBe(promptPermission?.id);
 
-        await callToolWithTimeout(
-          client,
-          {
-            name: "respond_to_permission",
-            args: {
-              agentId,
-              requestId: promptPermission!.id,
-              response: { behavior: "allow" },
-            },
+        await client.callTool({
+          name: "respond_to_permission",
+          args: {
+            agentId,
+            requestId: promptPermission!.id,
+            response: { behavior: "allow" },
           },
-          "respond_to_permission"
-        );
+        });
 
         await waitForAgentCompletion(client, agentId);
 
-        const secondFilePath = path.join(agentCwd, "mcp-smoke-2.txt");
-        const secondContents = await waitForFile(secondFilePath);
-        expect(secondContents.trim()).toBe("ok-2");
+        if (existsSync(secondFilePath)) {
+          const secondContents = await readFile(secondFilePath, "utf8");
+          throw new Error(
+            `Expected mcp-smoke-2.txt to be removed, but it still exists with contents: ${secondContents}`
+          );
+        }
       } finally {
         if (agentId) {
-          try {
-            await callToolWithTimeout(
-              client,
-              { name: "kill_agent", args: { agentId } },
-              "kill_agent"
-            );
-          } catch (error) {
-            console.warn("[agent-mcp.e2e] kill_agent failed:", error);
-          }
+          await client.callTool({ name: "kill_agent", args: { agentId } });
         }
-        await closeWithTimeout("MCP client close", client.close());
-        await closeWithTimeout("daemon close", daemon.close());
+        await client.close();
+        await daemon.close();
         if (previousCodexSessionDir === undefined) {
           delete process.env.CODEX_SESSION_DIR;
         } else {
@@ -374,11 +276,17 @@ describe("agent MCP end-to-end", () => {
         } else {
           process.env.CODEX_HOME = previousCodexHome;
         }
+        if (previousClaudeConfigDir === undefined) {
+          delete process.env.CLAUDE_CONFIG_DIR;
+        } else {
+          process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+        }
         await rm(paseoHome, { recursive: true, force: true });
         await rm(staticDir, { recursive: true, force: true });
         await rm(agentCwd, { recursive: true, force: true });
         await rm(codexSessionDir, { recursive: true, force: true });
         await rm(codexHome, { recursive: true, force: true });
+        await rm(claudeConfigDir, { recursive: true, force: true });
       }
     },
     180_000
