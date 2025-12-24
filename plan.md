@@ -402,10 +402,11 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     - Permission flow triggers when expected (for unsafe operations)
   - **Done (2025-12-24 23:44)**: WHAT: added tool-call coverage helpers and E2E test in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:153` and `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:430`, plus documented failures in `REPORT-codex-mcp-tool-call-coverage.md:1`. RESULT: test fails because file_change outputs omit file metadata and no read_file/mcp_tool_call/web_search timeline items or outputs are captured. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "captures tool call inputs/outputs"` (fails with missing file_change output at `codex-mcp-agent.test.ts:532`, missing read_file at `codex-mcp-agent.test.ts:535`, missing mcp tool call at `codex-mcp-agent.test.ts:542`, missing web_search at `codex-mcp-agent.test.ts:549`).
 
-- [ ] **Fix**: Codex MCP apply_patch tool_call output should include file metadata (path/kind) and before/after content.
+- [x] **Fix**: Codex MCP apply_patch tool_call output should include file metadata (path/kind) and before/after content.
 
   - Ensure `patch_apply_end` timeline output includes file path info and the patch content needed for before/after validation.
   - Align with `REPORT-codex-mcp-tool-call-coverage.md`.
+  - **Done (2025-12-24 23:50)**: WHAT: normalized apply_patch change payloads, cached per-call patch metadata, and emitted file_change outputs with path/kind plus before/after/patch content in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:150`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:459`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1335`, and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1593`. RESULT: patch_apply tool_call timeline output now includes file metadata and change content needed for before/after validation. EVIDENCE: Not run (not requested).
 
 - [ ] **Fix**: Codex MCP should emit read_file tool_call timeline items with input/output content.
 
