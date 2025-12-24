@@ -112,6 +112,21 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Fix `AgentPermissionResponse.message` and unused locals.
   - **Done (2025-12-24 19:27)**: Removed unused locals, avoided invalid permission message access, and reran server typecheck.
 
-- [ ] **Test (E2E)**: Run tests and verify fixes work.
+- [x] **Test (E2E)**: Run tests and verify fixes work.
+  - **Done (2025-12-24 19:32)**: Ran `npm run test --workspace=@paseo/server`; 9 failures (1 in `codex-agent.test.ts` missing persisted shell_command entry, 8 in `codex-mcp-agent.test.ts` for exit code, thread/item events, error timeline, persistence metadata, and permission requests).
+
+- [ ] **Fix**: Codex MCP command output should include exit codes for command tool calls.
+
+- [ ] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
+
+- [ ] **Fix**: Codex MCP should emit error timeline items for failed turns.
+
+- [ ] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
+
+- [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
+
+- [ ] **Fix**: Codex SDK persistence hydration should include completed shell_command tool entries.
+
+- [ ] **Test (E2E)**: Rerun server vitest after fixes.
 
 - [ ] **Plan**: Re-audit based on test results.
