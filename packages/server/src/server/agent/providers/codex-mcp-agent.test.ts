@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -34,6 +34,35 @@ function useTempCodexSessionDir(): () => void {
       process.env.CODEX_HOME = prevHome;
     }
   };
+}
+
+function writeTestMcpServerScript(cwd: string): string {
+  const scriptPath = path.join(cwd, "mcp-stdio-server.mjs");
+  const script = [
+    "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';",
+    "import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';",
+    "import { z } from 'zod';",
+    "",
+    "const server = new McpServer({ name: 'test', version: '0.0.1' });",
+    "server.registerTool(",
+    "  'echo',",
+    "  {",
+    "    title: 'Echo tool',",
+    "    description: 'Returns the input text',",
+    "    inputSchema: { text: z.string() },",
+    "    outputSchema: { text: z.string() }",
+    "  },",
+    "  async ({ text }) => ({",
+    "    content: [],",
+    "    structuredContent: { text }",
+    "  })",
+    ");",
+    "const transport = new StdioServerTransport();",
+    "await server.connect(transport);",
+    "",
+  ].join("\n");
+  writeFileSync(scriptPath, script, "utf8");
+  return scriptPath;
 }
 
 async function loadCodexMcpAgentClient(): Promise<{
@@ -214,6 +243,117 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             )}`
           );
         }
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "maps thread/item events for file changes, MCP tools, web search, and todo lists",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const mcpServerScript = writeTestMcpServerScript(cwd);
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+        extra: {
+          codex: {
+            mcp_servers: {
+              test: {
+                command: process.execPath,
+                args: [mcpServerScript],
+              },
+            },
+          },
+        },
+      } as AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      const timelineItems: AgentTimelineItem[] = [];
+      const rawItemTypes = new Set<string>();
+      let sawThreadEvent = false;
+      let sawItemEvent = false;
+
+      try {
+        session = await client.createSession(config);
+
+        const prompt = [
+          "Use the web_search tool to search for \"OpenAI\".",
+          "Use the todo_list tool to create a list with exactly two items: alpha, beta.",
+          "Call the MCP tool test.echo with input {\"text\":\"hello\"}.",
+          "Use apply_patch to create a file named mcp-thread.log containing the single line 'ok'.",
+          "After all tools finish, reply DONE and stop.",
+        ].join("\n");
+
+        for await (const event of session.stream(prompt)) {
+          if (event.type === "provider_event" && providerFromEvent(event) === "codex-mcp") {
+            const raw = event.raw as { type?: string; item?: { type?: string } } | undefined;
+            if (raw?.type && typeof raw.type === "string") {
+              if (raw.type.startsWith("thread.") || raw.type.startsWith("turn.")) {
+                sawThreadEvent = true;
+              }
+              if (raw.type.startsWith("item.")) {
+                sawItemEvent = true;
+                if (raw.item?.type) {
+                  rawItemTypes.add(raw.item.type);
+                }
+              }
+            }
+          }
+
+          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+            timelineItems.push(event.item);
+          }
+
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        expect(sawThreadEvent).toBe(true);
+        expect(sawItemEvent).toBe(true);
+        expect(rawItemTypes.has("file_change")).toBe(true);
+        expect(rawItemTypes.has("mcp_tool_call")).toBe(true);
+        expect(rawItemTypes.has("web_search")).toBe(true);
+        expect(rawItemTypes.has("todo_list")).toBe(true);
+
+        expect(
+          timelineItems.some(
+            (item) => item.type === "tool_call" && item.server === "file_change"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "test" &&
+              item.tool === "echo"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "tool_call" &&
+              item.server === "web_search" &&
+              item.tool === "web_search"
+          )
+        ).toBe(true);
+        expect(
+          timelineItems.some(
+            (item) =>
+              item.type === "todo" &&
+              Array.isArray(item.items) &&
+              item.items.length >= 2
+          )
+        ).toBe(true);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });

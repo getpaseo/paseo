@@ -31,7 +31,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   - **Done (2025-12-24 18:18)**: Audited Codex MCP E2E coverage and env requirements; identified missing thread/item event mapping coverage, permission abort path coverage, and codex CLI env docs.
 
-- [ ] **Test (E2E)**: Add coverage for thread/item events and non-command tool-call mapping (file_change, mcp_tool_call, web_search, todo_list).
+- [x] **Test (E2E)**: Add coverage for thread/item events and non-command tool-call mapping (file_change, mcp_tool_call, web_search, todo_list).
+  - **Done (2025-12-24 18:24)**: Added Codex MCP E2E coverage for thread/item mapping and non-command tool calls. Tests failed locally due to Codex CLI/model/permission behavior mismatches (see test output).
 
 - [ ] **Test (E2E)**: Add coverage for permission abort path (respondToPermission interrupt) and clarify read-only/untrusted gating behavior for Codex MCP.
 
