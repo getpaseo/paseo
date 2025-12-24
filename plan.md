@@ -414,9 +414,10 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Ensure the E2E coverage test can find `tool: "read_file"` with content.
   - **Done (2025-12-24 23:52)**: WHAT: normalized top-level `read_file`/`file_read` events into thread items and mapped read file tool calls with path/content input/output in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1139` and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1618`. RESULT: read_file tool calls now emit timeline items with tool name, file path input, and content output for Codex MCP. EVIDENCE: Not run (not requested).
 
-- [ ] **Fix**: Codex MCP should emit external MCP tool calls (mcp_tool_call) with input/output in timeline items.
+- [x] **Fix**: Codex MCP should emit external MCP tool calls (mcp_tool_call) with input/output in timeline items.
 
   - Ensure MCP server tool calls surface `server`, `tool`, `input`, and `output` fields.
+  - **Done (2025-12-25 00:00)**: WHAT: added MCP tool identifier/payload extraction helpers and used them for `mcp_tool_call` timeline mapping in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:224` and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1721`. RESULT: MCP tool call timeline items now normalize server/tool/input/output fields from multiple event shapes. EVIDENCE: Not run (not requested).
 
 - [ ] **Fix**: Codex MCP web_search timeline items should include query input and results output.
 

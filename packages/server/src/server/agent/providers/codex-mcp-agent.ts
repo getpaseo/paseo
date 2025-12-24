@@ -221,6 +221,73 @@ function normalizePatchFilesFromChanges(changes: unknown): PatchFileChange[] {
   return [];
 }
 
+function extractMcpToolIdentifiers(
+  item: Record<string, unknown>
+): { server?: string; tool?: string } {
+  const toolRecord =
+    item.tool && typeof item.tool === "object"
+      ? (item.tool as Record<string, unknown>)
+      : undefined;
+  const serverRecord =
+    item.server && typeof item.server === "object"
+      ? (item.server as Record<string, unknown>)
+      : undefined;
+  const server =
+    asString(item.server) ??
+    asString(serverRecord?.name) ??
+    asString(serverRecord?.id) ??
+    asString(item.server_name) ??
+    asString(item.serverId) ??
+    asString(item.server_id) ??
+    asString(item.mcp_server);
+  const tool =
+    asString(item.tool) ??
+    asString(toolRecord?.name) ??
+    asString(toolRecord?.tool) ??
+    asString(item.tool_name) ??
+    asString(item.toolId) ??
+    asString(item.tool_id) ??
+    asString(item.name);
+  if (!server && tool && tool.includes(".")) {
+    const [serverName, ...toolParts] = tool.split(".");
+    const toolName = toolParts.join(".");
+    return {
+      server: serverName || undefined,
+      tool: toolName || tool,
+    };
+  }
+  return { server: server ?? undefined, tool: tool ?? undefined };
+}
+
+function extractMcpToolPayload(
+  item: Record<string, unknown>
+): { input?: unknown; output?: unknown; status?: string } {
+  const input =
+    item.input ??
+    item.arguments ??
+    item.args ??
+    item.params ??
+    item.request ??
+    (item.tool && typeof item.tool === "object"
+      ? (item.tool as Record<string, unknown>).input
+      : undefined);
+  const output =
+    item.output ??
+    item.result ??
+    item.response ??
+    item.return ??
+    item.returns ??
+    item.result_content ??
+    item.content ??
+    item.structuredContent ??
+    item.structured_content;
+  const status =
+    asString(item.status) ??
+    asString(item.state) ??
+    asString(item.outcome);
+  return { input, output, status };
+}
+
 function normalizePatchFilesFromFiles(files: unknown): PatchFileChange[] {
   if (!Array.isArray(files)) {
     return [];
@@ -1651,17 +1718,20 @@ class CodexMcpAgentSession implements AgentSession {
           output: content ?? output ?? outputValue,
         });
       }
-      case "mcp_tool_call":
+      case "mcp_tool_call": {
+        const { server, tool } = extractMcpToolIdentifiers(item);
+        const { input, output, status } = extractMcpToolPayload(item);
         return createToolCallTimelineItem({
-          server: item.server as string,
-          tool: item.tool as string,
-          status: item.status as string | undefined,
+          server: server ?? "mcp",
+          tool: tool ?? "tool",
+          status: status ?? (item.status as string | undefined),
           callId,
-          displayName: `${item.server}.${item.tool}`,
+          displayName: `${server ?? "mcp"}.${tool ?? "tool"}`,
           kind: "tool",
-          input: item.input,
-          output: item.output,
+          input,
+          output,
         });
+      }
       case "web_search":
         return createToolCallTimelineItem({
           server: "web_search",
