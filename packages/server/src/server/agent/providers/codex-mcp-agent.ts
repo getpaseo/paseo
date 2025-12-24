@@ -87,7 +87,6 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
-const DEFAULT_CODEX_MODEL_ID = "gpt-5.1-codex";
 
 const MODE_PRESETS: Record<
   string,
@@ -219,14 +218,17 @@ function buildCodexMcpConfig(
   const sandbox = config.sandboxMode ?? preset.sandbox;
   const extra = config.extra?.codex ?? undefined;
 
-  return {
+  const configPayload: Record<string, unknown> = {
     prompt,
     cwd: config.cwd,
-    model: config.model ?? DEFAULT_CODEX_MODEL_ID,
     "approval-policy": approvalPolicy,
     sandbox,
     config: extra,
   };
+  if (typeof config.model === "string" && config.model.length > 0) {
+    configPayload.model = config.model;
+  }
+  return configPayload;
 }
 
 function isUnsupportedChatGptModelError(error: unknown): boolean {
@@ -715,10 +717,6 @@ class CodexMcpAgentSession implements AgentSession {
     }
 
     this.updateIdentifiersFromResponse(response);
-    if (this.modelRejected && !this.runtimeModel) {
-      this.runtimeModel = DEFAULT_CODEX_MODEL_ID;
-    }
-
     if (!turnState.sawAssistant) {
       const text = extractTextContent(response);
       if (text) {
