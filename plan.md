@@ -82,6 +82,17 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Tests should not specify a model unless testing model passthrough.
   - **Done (2025-12-24 19:14)**: Dropped the default model constant, omitted `model` from MCP config when unset, and removed the hardcoded fallback in runtime info; adjusted Codex MCP runtime test to avoid specifying a model.
 
+- [x] **Investigate**: Deep dive - why does happy-cli get elicitation but we don't?
+
+  - Agent claims `untrusted` didn't work. Verify this independently.
+  - Compare EXACT MCP client setup: constructor args, capabilities, transport options.
+  - Compare EXACT codex tool call args: what does happy-cli pass vs us?
+  - Log raw MCP traffic if possible - what requests/responses flow?
+  - Check if happy-cli does something at connect time we don't.
+  - Check Codex CLI version requirements for elicitation.
+  - Do NOT give up. Do NOT add workarounds. Find the real difference.
+  - **Done (2025-12-24 19:24)**: Compared happy-cli MCP setup with codex-mcp-agent (constructor args, capabilities, transport/env, tool args); logged raw MCP traffic via a debug client against codex-cli 0.77.0 for untrusted/on-request and saw no `elicitation/create` requests or `exec_approval_request` events, only exec_command events and internal approval-policy messages; confirms Codex MCP server is not emitting elicitation in this version despite approval policy settings.
+
 - [ ] **Review**: Flag ALL workarounds/hacks in `codex-mcp-agent.ts` - they are NOT acceptable.
 
   - Read the entire file and list every workaround, fallback, or synthetic behavior.
