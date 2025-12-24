@@ -66,26 +66,16 @@ async function waitForFile(filePath: string, timeoutMs = 30000): Promise<string>
   throw new Error(`Timed out waiting for ${filePath}`);
 }
 
-async function settleAgentRun(client: McpClient, agentId: string): Promise<void> {
+async function waitForAgentCompletion(
+  client: McpClient,
+  agentId: string
+): Promise<void> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const waitResult = (await client.callTool({
       name: "wait_for_agent",
       args: { agentId },
     })) as McpToolResult;
     const payload = getStructuredContent(waitResult);
-    const permission = payload?.permission as PermissionPayload | null | undefined;
-    if (permission?.id) {
-      await client.callTool({
-        name: "respond_to_permission",
-        args: {
-          agentId,
-          requestId: permission.id,
-          response: { behavior: "allow" },
-        },
-      });
-      continue;
-    }
-
     const status = payload?.status;
     if (status && status !== "running" && status !== "initializing") {
       return;
@@ -98,19 +88,11 @@ async function settleAgentRun(client: McpClient, agentId: string): Promise<void>
 const hasClaudeCredentials = Boolean(
   process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
 );
-const hasCodexCredentials = Boolean(
-  process.env.OPENAI_API_KEY ||
-    process.env.CODEX_API_KEY ||
-    process.env.OPENROUTER_API_KEY
-);
-const hasAgentCredentials = hasClaudeCredentials || hasCodexCredentials;
-const agentType = hasClaudeCredentials ? "claude" : "codex";
-const agentMode = agentType === "claude" ? "bypassPermissions" : "full-access";
 
 describe("agent MCP end-to-end", () => {
-  const runTest = hasAgentCredentials ? test : test.skip;
+  const runTest = hasClaudeCredentials ? test : test.skip;
   runTest(
-    "creates an agent and writes a file",
+    "creates a Claude agent and writes a file",
     async () => {
       const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -183,8 +165,8 @@ describe("agent MCP end-to-end", () => {
           args: {
             cwd: agentCwd,
             title: "MCP e2e smoke",
-            agentType,
-            initialMode: agentMode,
+            agentType: "claude",
+            initialMode: "default",
             background: false,
           },
         })) as McpToolResult;
@@ -195,34 +177,37 @@ describe("agent MCP end-to-end", () => {
         expect(agentId).toBeTruthy();
 
         const prompt = [
-          "Use a shell command to create ./mcp-smoke.txt.",
-          "Write exactly ok (no quotes) into the file.",
-          "Then reply with done and stop.",
+          "You must call the tool named shell.",
+          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok > mcp-smoke.txt\"].",
+          "After the tool runs, reply with done and stop.",
         ].join("\n");
 
-        const promptResult = (await client.callTool({
+        await client.callTool({
           name: "send_agent_prompt",
           args: {
             agentId,
             prompt,
-            sessionMode: agentMode,
-            background: false,
+            sessionMode: "default",
+            background: true,
           },
-        })) as McpToolResult;
+        });
 
-        const promptPayload = getStructuredContent(promptResult);
-        if (promptPayload?.permission) {
-          const permission = promptPayload.permission as PermissionPayload;
-          await client.callTool({
-            name: "respond_to_permission",
-            args: {
-              agentId,
-              requestId: permission.id,
-              response: { behavior: "allow" },
-            },
-          });
-        }
-        await settleAgentRun(client, agentId);
+        const waitResult = (await client.callTool({
+          name: "wait_for_agent",
+          args: { agentId },
+        })) as McpToolResult;
+        const waitPayload = getStructuredContent(waitResult);
+        const permission = waitPayload?.permission as PermissionPayload | null;
+        expect(permission?.id).toBeTruthy();
+        await client.callTool({
+          name: "respond_to_permission",
+          args: {
+            agentId,
+            requestId: permission!.id,
+            response: { behavior: "allow" },
+          },
+        });
+        await waitForAgentCompletion(client, agentId);
 
         const filePath = path.join(agentCwd, "mcp-smoke.txt");
         let contents: string;
