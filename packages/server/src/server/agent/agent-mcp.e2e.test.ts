@@ -160,6 +160,12 @@ describe("agent MCP end-to-end", () => {
       let agentId: string | null = null;
 
       try {
+        const initialPrompt = [
+          "You must call the tool named shell.",
+          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok > mcp-smoke.txt\"].",
+          "After the tool runs, reply with done and stop.",
+        ].join("\n");
+
         const result = (await client.callTool({
           name: "create_agent",
           args: {
@@ -167,6 +173,7 @@ describe("agent MCP end-to-end", () => {
             title: "MCP e2e smoke",
             agentType: "claude",
             initialMode: "default",
+            initialPrompt,
             background: false,
           },
         })) as McpToolResult;
@@ -175,35 +182,13 @@ describe("agent MCP end-to-end", () => {
         expect(payload).toBeTruthy();
         agentId = payload?.agentId as string | null;
         expect(agentId).toBeTruthy();
-
-        const prompt = [
-          "You must call the tool named shell.",
-          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok > mcp-smoke.txt\"].",
-          "After the tool runs, reply with done and stop.",
-        ].join("\n");
-
-        await client.callTool({
-          name: "send_agent_prompt",
-          args: {
-            agentId,
-            prompt,
-            sessionMode: "default",
-            background: true,
-          },
-        });
-
-        const waitResult = (await client.callTool({
-          name: "wait_for_agent",
-          args: { agentId },
-        })) as McpToolResult;
-        const waitPayload = getStructuredContent(waitResult);
-        const permission = waitPayload?.permission as PermissionPayload | null;
-        expect(permission?.id).toBeTruthy();
+        const createPermission = payload?.permission as PermissionPayload | null;
+        expect(createPermission?.id).toBeTruthy();
         await client.callTool({
           name: "respond_to_permission",
           args: {
             agentId,
-            requestId: permission!.id,
+            requestId: createPermission!.id,
             response: { behavior: "allow" },
           },
         });
@@ -226,6 +211,50 @@ describe("agent MCP end-to-end", () => {
           throw new Error(`${(error as Error).message}\n${details}`);
         }
         expect(contents.trim()).toBe("ok");
+
+        const prompt = [
+          "You must call the tool named shell.",
+          "Run this command exactly: [\"bash\", \"-lc\", \"echo ok-2 > mcp-smoke-2.txt\"].",
+          "After the tool runs, reply with done and stop.",
+        ].join("\n");
+
+        const promptResult = (await client.callTool({
+          name: "send_agent_prompt",
+          args: {
+            agentId,
+            prompt,
+            sessionMode: "default",
+            background: false,
+          },
+        })) as McpToolResult;
+
+        const promptPayload = getStructuredContent(promptResult);
+        const promptPermission = promptPayload?.permission as PermissionPayload | null;
+        expect(promptPermission?.id).toBeTruthy();
+
+        const waitPermissionResult = (await client.callTool({
+          name: "wait_for_agent",
+          args: { agentId },
+        })) as McpToolResult;
+        const waitPermissionPayload = getStructuredContent(waitPermissionResult);
+        const waitPermission =
+          waitPermissionPayload?.permission as PermissionPayload | null;
+        expect(waitPermission?.id).toBe(promptPermission?.id);
+
+        await client.callTool({
+          name: "respond_to_permission",
+          args: {
+            agentId,
+            requestId: promptPermission!.id,
+            response: { behavior: "allow" },
+          },
+        });
+
+        await waitForAgentCompletion(client, agentId);
+
+        const secondFilePath = path.join(agentCwd, "mcp-smoke-2.txt");
+        const secondContents = await waitForFile(secondFilePath);
+        expect(secondContents.trim()).toBe("ok-2");
       } finally {
         if (agentId) {
           await client.callTool({ name: "kill_agent", args: { agentId } });
