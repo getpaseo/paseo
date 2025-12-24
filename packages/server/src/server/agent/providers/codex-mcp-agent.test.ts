@@ -4,9 +4,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 
 import type {
-  AgentClient,
   AgentPermissionRequest,
   AgentSession,
   AgentSessionConfig,
@@ -95,85 +95,106 @@ function writeTestMcpServerScript(cwd: string): string {
   return scriptPath;
 }
 
-async function loadCodexMcpAgentClient(): Promise<{
-  new (): AgentClient;
-}> {
+async function loadCodexMcpAgentClient(): Promise<typeof import("./codex-mcp-agent.js")> {
   try {
-    return (await import("./codex-mcp-agent.js")) as {
-      CodexMcpAgentClient: new () => AgentClient;
-    };
+    return await import("./codex-mcp-agent.js");
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to import codex-mcp-agent: ${(error as Error).message}`
+      `Failed to import codex-mcp-agent: ${message}`
     );
   }
 }
 
 function providerFromEvent(event: AgentStreamEvent): string | undefined {
-  return (event as { provider?: string }).provider;
+  return event.provider;
 }
 
-function extractExitCode(output: unknown): number | undefined {
-  if (!output || typeof output !== "object") {
-    return undefined;
-  }
-  const outputRecord = output as Record<string, unknown>;
-  const direct = outputRecord.exitCode ?? outputRecord.exit_code;
-  if (typeof direct === "number") {
-    return direct;
-  }
-  const metadata = outputRecord.metadata;
-  if (metadata && typeof metadata === "object") {
-    const metadataRecord = metadata as Record<string, unknown>;
-    const metaCode = metadataRecord.exit_code ?? metadataRecord.exitCode;
-    if (typeof metaCode === "number") {
-      return metaCode;
+function firstNumber(values: Array<number | undefined>): number | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
     }
   }
   return undefined;
 }
 
-function commandTextFromInput(input: unknown): string | null {
-  if (!input || typeof input !== "object") {
-    return null;
-  }
-  const command = (input as { command?: unknown }).command;
-  if (typeof command === "string" && command.length > 0) {
-    return command;
-  }
-  if (Array.isArray(command)) {
-    const tokens = command.filter((value): value is string => typeof value === "string");
-    if (tokens.length > 0) {
-      return tokens.join(" ");
+function firstString(values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
     }
   }
-  return null;
+  return undefined;
+}
+
+const CommandInputSchema = z.object({
+  command: z.union([z.string().min(1), z.array(z.string().min(1)).nonempty()]),
+});
+
+const ExitCodeOutputSchema = z
+  .object({
+    exitCode: z.number().optional(),
+    exit_code: z.number().optional(),
+    metadata: z.unknown().optional(),
+  })
+  .passthrough();
+
+const ExitCodeMetadataSchema = z
+  .object({
+    exitCode: z.number().optional(),
+    exit_code: z.number().optional(),
+  })
+  .passthrough();
+
+function extractExitCode(output: unknown): number | undefined {
+  const parsed = ExitCodeOutputSchema.safeParse(output);
+  if (!parsed.success) {
+    return undefined;
+  }
+  const direct = firstNumber([parsed.data.exitCode, parsed.data.exit_code]);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const metaParsed = ExitCodeMetadataSchema.safeParse(parsed.data.metadata);
+  if (!metaParsed.success) {
+    return undefined;
+  }
+  return firstNumber([metaParsed.data.exitCode, metaParsed.data.exit_code]);
+}
+
+function commandTextFromInput(input: unknown): string | null {
+  const parsed = CommandInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return null;
+  }
+  const command = parsed.data.command;
+  return typeof command === "string" ? command : command.join(" ");
 }
 
 function commandOutputText(output: unknown): string | null {
   if (typeof output === "string") {
     return output;
   }
-  if (!output || typeof output !== "object") {
+  const record = z
+    .object({
+      output: z.string().optional(),
+      stdout: z.string().optional(),
+      stderr: z.string().optional(),
+    })
+    .passthrough()
+    .safeParse(output);
+  if (!record.success) {
     return null;
   }
-  const record = output as Record<string, unknown>;
-  const outputText = record.output;
-  if (typeof outputText === "string") {
-    return outputText;
-  }
-  if (typeof record.stdout === "string") {
-    return record.stdout;
-  }
-  if (typeof record.stderr === "string") {
-    return record.stderr;
-  }
-  return null;
+  const text = firstString([record.data.output, record.data.stdout, record.data.stderr]);
+  return text ? text : null;
 }
 
 function stringifyUnknown(value: unknown): string {
   try {
-    return JSON.stringify(value) ?? "";
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string" ? serialized : "";
   } catch {
     return "";
   }
@@ -184,8 +205,65 @@ function isSleepCommandToolCall(item: ToolCallItem): boolean {
   if (display.includes("sleep 60")) {
     return true;
   }
-  const inputText = commandTextFromInput(item.input)?.toLowerCase() ?? "";
-  return inputText.includes("sleep 60");
+  const inputText = commandTextFromInput(item.input);
+  if (!inputText) {
+    return false;
+  }
+  return inputText.toLowerCase().includes("sleep 60");
+}
+
+const ProviderEventItemSchema = z
+  .object({
+    item: z
+      .object({
+        type: z.string().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+function getProviderItemType(raw: unknown): string | undefined {
+  const parsed = ProviderEventItemSchema.safeParse(raw);
+  if (!parsed.success) {
+    return undefined;
+  }
+  return parsed.data.item ? parsed.data.item.type : undefined;
+}
+
+const ProviderEventSchema = z
+  .object({
+    type: z.string(),
+    item: z
+      .object({
+        type: z.string().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+function parseProviderEvent(raw: unknown): { type: string; itemType?: string } | null {
+  const parsed = ProviderEventSchema.safeParse(raw);
+  if (!parsed.success) {
+    return null;
+  }
+  return {
+    type: parsed.data.type,
+    itemType: parsed.data.item ? parsed.data.item.type : undefined,
+  };
+}
+
+const MetadataConversationSchema = z
+  .object({
+    conversationId: z.string().optional(),
+  })
+  .passthrough();
+
+function getConversationIdFromMetadata(metadata: unknown): string | undefined {
+  const parsed = MetadataConversationSchema.safeParse(metadata);
+  if (!parsed.success) {
+    return undefined;
+  }
+  return parsed.data.conversationId;
 }
 
 describe("CodexMcpAgentClient (MCP integration)", () => {
@@ -200,7 +278,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
 
@@ -228,7 +306,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       const toolCalls: ToolCallItem[] = [];
@@ -259,11 +337,9 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             }
           }
 
-          const rawEvent = (event as { type?: string; raw?: unknown }).type === "provider_event"
-            ? (event as { raw?: unknown }).raw
-            : null;
-          if (rawEvent && typeof rawEvent === "object") {
-            const itemType = (rawEvent as { item?: { type?: string } }).item?.type;
+          const rawEvent = event.type === "provider_event" ? event.raw : null;
+          if (rawEvent) {
+            const itemType = getProviderItemType(rawEvent);
             if (itemType === "command_execution") {
               rawCommandEvents.push(rawEvent);
             }
@@ -279,12 +355,15 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect(toolCalls.length).toBeGreaterThan(0);
 
         const uniqueIds = new Set(
-          toolCalls.map((item) => (typeof item.callId === "string" ? item.callId : ""))
+          toolCalls
+            .map((item) => (typeof item.callId === "string" ? item.callId : undefined))
+            .filter((callId): callId is string => typeof callId === "string")
         );
         expect(uniqueIds.size).toBeGreaterThan(0);
         for (const toolCall of toolCalls) {
           expect(typeof toolCall.callId).toBe("string");
-          expect((toolCall.callId ?? "").trim().length).toBeGreaterThan(0);
+          const callId = toolCall.callId;
+          expect(typeof callId === "string" && callId.trim().length > 0).toBe(true);
         }
 
         const commandToolCall = toolCalls
@@ -298,9 +377,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         const exitCode = extractExitCode(commandToolCall?.output);
         if (exitCode === undefined) {
+          const rawEvent = rawCommandEvents.length > 0 ? rawCommandEvents[0] : null;
           throw new Error(
             `Missing exit code in command output. Raw events:\n${JSON.stringify(
-              rawCommandEvents[0] ?? null,
+              rawEvent,
               null,
               2
             )}`
@@ -337,7 +417,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             },
           },
         },
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       const timelineItems: AgentTimelineItem[] = [];
@@ -358,15 +438,15 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         for await (const event of session.stream(prompt)) {
           if (event.type === "provider_event" && providerFromEvent(event) === "codex-mcp") {
-            const raw = event.raw as { type?: string; item?: { type?: string } } | undefined;
-            if (raw?.type && typeof raw.type === "string") {
-              if (raw.type.startsWith("thread.") || raw.type.startsWith("turn.")) {
+            const parsed = parseProviderEvent(event.raw);
+            if (parsed) {
+              if (parsed.type.startsWith("thread.") || parsed.type.startsWith("turn.")) {
                 sawThreadEvent = true;
               }
-              if (raw.type.startsWith("item.")) {
+              if (parsed.type.startsWith("item.")) {
                 sawItemEvent = true;
-                if (raw.item?.type) {
-                  rawItemTypes.add(raw.item.type);
+                if (parsed.itemType) {
+                  rawItemTypes.add(parsed.itemType);
                 }
               }
             }
@@ -450,7 +530,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             },
           },
         },
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let permissionRequest: AgentPermissionRequest | null = null;
@@ -504,10 +584,16 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect.soft(commandCalls.length).toBeGreaterThanOrEqual(2);
 
         const stdoutCall = commandCalls.find((item) =>
-          (commandOutputText(item.output) ?? "").includes("stdout-marker")
+          (() => {
+            const output = commandOutputText(item.output);
+            return output ? output.includes("stdout-marker") : false;
+          })()
         );
         const stderrCall = commandCalls.find((item) =>
-          (commandOutputText(item.output) ?? "").includes("stderr-marker")
+          (() => {
+            const output = commandOutputText(item.output);
+            return output ? output.includes("stderr-marker") : false;
+          })()
         );
         expect.soft(stdoutCall).toBeTruthy();
         expect.soft(stderrCall).toBeTruthy();
@@ -563,11 +649,13 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           }
         }
         const commandCallIds = toolCalls
-          .filter((item) => item.server === "command" && item.callId)
-          .map((item) => item.callId as string);
+          .filter((item) => item.server === "command")
+          .map((item) => item.callId)
+          .filter((callId): callId is string => typeof callId === "string");
         const fileChangeCallIds = toolCalls
-          .filter((item) => item.server === "file_change" && item.callId)
-          .map((item) => item.callId as string);
+          .filter((item) => item.server === "file_change")
+          .map((item) => item.callId)
+          .filter((callId): callId is string => typeof callId === "string");
 
         const hasCommandLifecycle = commandCallIds.some((callId) => {
           const statuses = callIdStatuses.get(callId);
@@ -599,7 +687,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let sawErrorTimeline = false;
@@ -650,7 +738,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let resumed: AgentSession | null = null;
@@ -671,11 +759,9 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         }
 
         const conversationId =
-          handle.metadata && typeof handle.metadata === "object"
-            ? (handle.metadata as Record<string, unknown>).conversationId
-            : undefined;
+          handle.metadata ? getConversationIdFromMetadata(handle.metadata) : undefined;
         expect(typeof conversationId).toBe("string");
-        expect((conversationId as string).length).toBeGreaterThan(0);
+        expect(conversationId ? conversationId.length : 0).toBeGreaterThan(0);
 
         await session.close();
         session = null;
@@ -703,8 +789,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         const resumedHandle = resumed.describePersistence();
         const resumedConversationId =
-          resumedHandle?.metadata && typeof resumedHandle.metadata === "object"
-            ? (resumedHandle.metadata as Record<string, unknown>).conversationId
+          resumedHandle?.metadata
+            ? getConversationIdFromMetadata(resumedHandle.metadata)
             : undefined;
         expect(resumedHandle?.sessionId).toBe(handle.sessionId);
         expect(resumedConversationId).toBe(conversationId);
@@ -729,7 +815,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
 
@@ -741,10 +827,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         const info = await session.getRuntimeInfo();
         expect(info.provider).toBe("codex-mcp");
         expect(typeof info.sessionId).toBe("string");
-        expect((info.sessionId ?? "").length).toBeGreaterThan(0);
+        expect(info.sessionId ? info.sessionId.length : 0).toBeGreaterThan(0);
         expect(info.modeId).toBe("full-access");
         expect(typeof info.model).toBe("string");
-        expect((info.model ?? "").length).toBeGreaterThan(0);
+        expect(info.model ? info.model.length : 0).toBeGreaterThan(0);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -766,7 +852,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
       const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
@@ -843,7 +929,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "read-only",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let captured: AgentPermissionRequest | null = null;
@@ -900,7 +986,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
       const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
@@ -972,7 +1058,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
       const filePath = path.join(cwd, "permission.txt");
 
       let session: AgentSession | null = null;
@@ -1032,7 +1118,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           )
         ).toBe(true);
         expect(sawTurnFailed).toBe(true);
-        expect(failureMessage ?? "").toMatch(/aborted|interrupted/i);
+        const message = failureMessage ? failureMessage : "";
+        expect(message).toMatch(/aborted|interrupted/i);
         expect(existsSync(filePath)).toBe(false);
       } finally {
         await session?.close();
@@ -1055,7 +1142,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let runStartedAt: number | null = null;
@@ -1130,7 +1217,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",
-      } as AgentSessionConfig;
+      } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
       let followupSession: AgentSession | null = null;
@@ -1159,8 +1246,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             event.item.type === "tool_call" &&
             event.item.server === "command"
           ) {
-            const commandText = commandTextFromInput(event.item.input) ?? "";
-            if (commandText.includes(marker)) {
+            const commandText = commandTextFromInput(event.item.input);
+            if (commandText && commandText.includes(marker)) {
               sawCommand = true;
               if (!interruptAt) {
                 interruptAt = Date.now();

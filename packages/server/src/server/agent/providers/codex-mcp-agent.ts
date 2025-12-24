@@ -26,12 +26,6 @@ import type {
 
 type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex-mcp" };
 
-type ProviderEvent = {
-  type: "provider_event";
-  provider: string;
-  raw: unknown;
-};
-
 type TurnState = {
   sawAssistant: boolean;
   sawReasoning: boolean;
@@ -63,7 +57,10 @@ type PatchFileChange = {
   patch?: string;
 };
 
+type CodexToolArguments = { [key: string]: unknown };
+
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
+const CODEX_PROVIDER: AgentClient["provider"] = "codex-mcp";
 
 const CODEX_MCP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -130,13 +127,6 @@ function normalizeCallId(value?: string | null): string | undefined {
   return trimmed.length ? trimmed : undefined;
 }
 
-function extractThreadItemCallId(item: Record<string, unknown>): string | undefined {
-  return (
-    normalizeCallId(item.call_id as string | undefined) ??
-    normalizeCallId(item.id as string | undefined)
-  );
-}
-
 function normalizeThreadEventType(type: string): string {
   if (type.startsWith("thread.item.")) {
     return type.slice("thread.".length);
@@ -147,228 +137,1008 @@ function normalizeThreadEventType(type: string): string {
   return type;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function normalizePatchFile(
-  path: string,
-  record: Record<string, unknown>
-): PatchFileChange {
-  const before =
-    asString(record.before) ??
-    asString(record.original) ??
-    asString(record.old) ??
-    asString(record.previous) ??
-    asString(record.from);
-  const after =
-    asString(record.after) ??
-    asString(record.new) ??
-    asString(record.next) ??
-    asString(record.to);
-  const patch =
-    asString(record.patch) ??
-    asString(record.diff) ??
-    asString(record.unified_diff) ??
-    asString(record.unifiedDiff);
-  const kind =
-    asString(record.kind) ??
-    asString(record.type) ??
-    asString(record.action) ??
-    asString(record.change_type) ??
-    (before === undefined && after !== undefined
-      ? "create"
-      : before !== undefined && after === undefined
-        ? "delete"
-        : before !== undefined || after !== undefined || patch !== undefined
-          ? "edit"
-          : undefined);
-  return { path, kind, before, after, patch };
-}
-
-function normalizePatchFilesFromChanges(changes: unknown): PatchFileChange[] {
-  if (!changes) {
-    return [];
-  }
-  if (Array.isArray(changes)) {
-    return changes.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return [];
-      }
-      const record = entry as Record<string, unknown>;
-      const path = asString(record.path);
-      if (!path) {
-        return [];
-      }
-      return [normalizePatchFile(path, record)];
-    });
-  }
-  if (typeof changes === "object") {
-    const record = changes as Record<string, unknown>;
-    return Object.entries(record).flatMap(([path, value]) => {
-      if (!path) {
-        return [];
-      }
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        return [normalizePatchFile(path, value as Record<string, unknown>)];
-      }
-      if (typeof value === "string") {
-        return [{ path, kind: "edit", patch: value }];
-      }
-      return [{ path, kind: "edit" }];
-    });
-  }
-  return [];
-}
-
-function extractMcpToolIdentifiers(
-  item: Record<string, unknown>
-): { server?: string; tool?: string } {
-  const toolRecord =
-    item.tool && typeof item.tool === "object"
-      ? (item.tool as Record<string, unknown>)
-      : undefined;
-  const serverRecord =
-    item.server && typeof item.server === "object"
-      ? (item.server as Record<string, unknown>)
-      : undefined;
-  const server =
-    asString(item.server) ??
-    asString(serverRecord?.name) ??
-    asString(serverRecord?.id) ??
-    asString(item.server_name) ??
-    asString(item.serverId) ??
-    asString(item.server_id) ??
-    asString(item.mcp_server);
-  const tool =
-    asString(item.tool) ??
-    asString(toolRecord?.name) ??
-    asString(toolRecord?.tool) ??
-    asString(item.tool_name) ??
-    asString(item.toolId) ??
-    asString(item.tool_id) ??
-    asString(item.name);
-  if (!server && tool && tool.includes(".")) {
-    const [serverName, ...toolParts] = tool.split(".");
-    const toolName = toolParts.join(".");
-    return {
-      server: serverName || undefined,
-      tool: toolName || tool,
-    };
-  }
-  return { server: server ?? undefined, tool: tool ?? undefined };
-}
-
-function extractMcpToolPayload(
-  item: Record<string, unknown>
-): { input?: unknown; output?: unknown; status?: string } {
-  const input =
-    item.input ??
-    item.arguments ??
-    item.args ??
-    item.params ??
-    item.request ??
-    (item.tool && typeof item.tool === "object"
-      ? (item.tool as Record<string, unknown>).input
-      : undefined);
-  const output =
-    item.output ??
-    item.result ??
-    item.response ??
-    item.return ??
-    item.returns ??
-    item.result_content ??
-    item.content ??
-    item.structuredContent ??
-    item.structured_content;
-  const status =
-    asString(item.status) ??
-    asString(item.state) ??
-    asString(item.outcome);
-  return { input, output, status };
-}
-
-function normalizePatchFilesFromFiles(files: unknown): PatchFileChange[] {
-  if (!Array.isArray(files)) {
-    return [];
-  }
-  return files.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return [];
-    }
-    const record = entry as Record<string, unknown>;
-    const path = asString(record.path);
-    if (!path) {
-      return [];
-    }
-    const kind =
-      asString(record.kind) ??
-      asString(record.type) ??
-      asString(record.action);
-    return [{ path, kind }];
-  });
-}
-
-function normalizeExitCode(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed.length) {
-      const parsed = Number(trimmed);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
+function firstDefined<T>(values: Array<T | undefined>): T | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
     }
   }
   return undefined;
 }
 
-function buildCommandDisplayName(command?: unknown): string {
-  if (typeof command === "string") {
-    const trimmed = command.trim();
-    if (trimmed.length) {
-      return trimmed;
+function firstString(values: Array<string | undefined>): string | undefined {
+  return firstDefined(values);
+}
+
+const CommandSchema = z.union([
+  z.string().min(1),
+  z.array(z.string().min(1)).nonempty(),
+]);
+
+type Command = z.infer<typeof CommandSchema>;
+
+const ExitCodeSchema = z
+  .union([z.number(), z.string().regex(/^-?\d+$/)])
+  .transform((value) => (typeof value === "string" ? Number(value) : value));
+
+const PatchChangeDetailsSchema = z
+  .object({
+    before: z.string().optional(),
+    original: z.string().optional(),
+    old: z.string().optional(),
+    previous: z.string().optional(),
+    from: z.string().optional(),
+    after: z.string().optional(),
+    new: z.string().optional(),
+    next: z.string().optional(),
+    to: z.string().optional(),
+    patch: z.string().optional(),
+    diff: z.string().optional(),
+    unified_diff: z.string().optional(),
+    unifiedDiff: z.string().optional(),
+    kind: z.string().optional(),
+    type: z.string().optional(),
+    action: z.string().optional(),
+    change_type: z.string().optional(),
+  })
+  .passthrough();
+
+type PatchChangeDetails = z.infer<typeof PatchChangeDetailsSchema>;
+
+const PatchChangeEntrySchema = PatchChangeDetailsSchema.extend({
+  path: z.string().min(1),
+});
+
+const PatchChangesSchema = z.union([
+  z.array(PatchChangeEntrySchema),
+  z.record(z.union([z.string(), PatchChangeDetailsSchema])),
+]);
+
+const PatchFileEntrySchema = z
+  .object({
+    path: z.string().min(1),
+    kind: z.string().optional(),
+    type: z.string().optional(),
+    action: z.string().optional(),
+  })
+  .passthrough();
+
+const McpToolObjectSchema = z
+  .object({
+    name: z.string().optional(),
+    tool: z.string().optional(),
+    input: z.unknown().optional(),
+  })
+  .passthrough();
+
+const McpServerObjectSchema = z
+  .object({
+    name: z.string().optional(),
+    id: z.string().optional(),
+  })
+  .passthrough();
+
+const ReadFileInputSchema = z
+  .object({
+    path: z.string().optional(),
+    file_path: z.string().optional(),
+    filePath: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    path: firstString([data.path, data.file_path, data.filePath]),
+  }));
+
+const ReadFileOutputSchema = z
+  .object({
+    content: z.string().optional(),
+  })
+  .passthrough();
+
+const WebSearchInputSchema = z
+  .object({
+    query: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    query: data.query,
+  }));
+
+const TextContentItemSchema = z.object({
+  type: z.literal("text"),
+  text: z.string(),
+});
+
+const ResponseBaseSchema = z
+  .object({
+    sessionId: z.string().optional(),
+    session_id: z.string().optional(),
+    conversationId: z.string().optional(),
+    conversation_id: z.string().optional(),
+    thread_id: z.string().optional(),
+    model: z.string().optional(),
+    meta: z.unknown().optional(),
+    content: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const SessionIdentifiersSchema = z
+  .object({
+    sessionId: z.string().optional(),
+    session_id: z.string().optional(),
+    conversationId: z.string().optional(),
+    conversation_id: z.string().optional(),
+    thread_id: z.string().optional(),
+    model: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    sessionId: firstString([data.sessionId, data.session_id]),
+    conversationId: firstString([
+      data.conversationId,
+      data.conversation_id,
+      data.thread_id,
+    ]),
+    model: data.model,
+  }));
+
+type SessionIdentifiers = z.infer<typeof SessionIdentifiersSchema>;
+
+const RawMcpEventSchema = z
+  .object({
+    type: z.string(),
+    data: z.unknown().optional(),
+    item: z.unknown().optional(),
+  })
+  .passthrough();
+
+type RawMcpEvent = z.infer<typeof RawMcpEventSchema>;
+
+const RawEventDataSchema = z
+  .object({
+    type: z.string(),
+  })
+  .passthrough();
+
+const UsageSchema = z
+  .object({
+    input_tokens: z.number().optional(),
+    cached_input_tokens: z.number().optional(),
+    output_tokens: z.number().optional(),
+    total_cost_usd: z.number().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    inputTokens: data.input_tokens,
+    cachedInputTokens: data.cached_input_tokens,
+    outputTokens: data.output_tokens,
+    totalCostUsd: data.total_cost_usd,
+  }));
+
+const ThreadItemCallIdSchema = z
+  .object({
+    call_id: z.string().optional(),
+    id: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    callId: normalizeCallId(firstString([data.call_id, data.id])),
+  }));
+
+const CommandOutputObjectSchema = z
+  .object({
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+    exit_code: ExitCodeSchema.optional(),
+    exitCode: ExitCodeSchema.optional(),
+    success: z.boolean().optional(),
+  })
+  .passthrough();
+
+const ExecCommandBeginEventSchema = z
+  .object({
+    type: z.literal("exec_command_begin"),
+    call_id: z.string().min(1),
+    command: CommandSchema,
+    cwd: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: normalizeCallId(data.call_id),
+    command: data.command,
+    cwd: data.cwd,
+  }));
+
+const ExecCommandEndEventSchema = z
+  .object({
+    type: z.literal("exec_command_end"),
+    call_id: z.string().min(1),
+    command: CommandSchema,
+    cwd: z.string().optional(),
+    exit_code: ExitCodeSchema.optional(),
+    exitCode: ExitCodeSchema.optional(),
+    output: z.union([z.string(), CommandOutputObjectSchema]).optional(),
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+    status: z.string().optional(),
+    success: z.boolean().optional(),
+    error: z.unknown().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: normalizeCallId(data.call_id),
+    command: data.command,
+    cwd: data.cwd,
+    exitCode: firstDefined([data.exit_code, data.exitCode]),
+    output: data.output,
+    stdout: data.stdout,
+    stderr: data.stderr,
+    status: data.status,
+    success: data.success,
+    error: data.error,
+  }));
+
+const PatchApplyBeginEventSchema = z
+  .object({
+    type: z.literal("patch_apply_begin"),
+    call_id: z.string().min(1),
+    changes: PatchChangesSchema,
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: normalizeCallId(data.call_id),
+    changes: data.changes,
+  }));
+
+const PatchApplyEndEventSchema = z
+  .object({
+    type: z.literal("patch_apply_end"),
+    call_id: z.string().min(1),
+    success: z.boolean().optional(),
+    changes: PatchChangesSchema.optional(),
+    files: z.array(PatchFileEntrySchema).optional(),
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: normalizeCallId(data.call_id),
+    success: data.success,
+    changes: data.changes,
+    files: data.files,
+    stdout: data.stdout,
+    stderr: data.stderr,
+  }));
+
+const AgentMessageEventSchema = z
+  .object({
+    type: z.literal("agent_message"),
+    message: z.string().optional(),
+    text: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = firstString([data.message, data.text]);
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent_message missing text",
+      });
+      return z.NEVER;
+    }
+    return { type: data.type, text };
+  });
+
+const AgentReasoningEventSchema = z
+  .object({
+    type: z.literal("agent_reasoning"),
+    text: z.string().optional(),
+    delta: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = firstString([data.text, data.delta]);
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent_reasoning missing text",
+      });
+      return z.NEVER;
+    }
+    return { type: data.type, text };
+  });
+
+const AgentReasoningDeltaEventSchema = z
+  .object({
+    type: z.literal("agent_reasoning_delta"),
+    text: z.string().optional(),
+    delta: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = firstString([data.text, data.delta]);
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent_reasoning_delta missing text",
+      });
+      return z.NEVER;
+    }
+    return { type: data.type, text };
+  });
+
+const TaskStartedEventSchema = z.object({
+  type: z.literal("task_started"),
+});
+
+const TaskCompleteEventSchema = z.object({
+  type: z.literal("task_complete"),
+});
+
+const TurnAbortedEventSchema = z.object({
+  type: z.literal("turn_aborted"),
+});
+
+const ThreadStartedEventSchema = z
+  .object({
+    type: z.literal("thread.started"),
+    thread_id: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    threadId: data.thread_id,
+  }));
+
+const TurnStartedEventSchema = z.object({
+  type: z.literal("turn.started"),
+});
+
+const TurnCompletedEventSchema = z
+  .object({
+    type: z.literal("turn.completed"),
+    usage: z.unknown().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    if (data.usage === undefined) {
+      return { type: data.type, usage: undefined };
+    }
+    const parsed = UsageSchema.safeParse(data.usage);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "turn.completed usage invalid",
+      });
+      return z.NEVER;
+    }
+    return { type: data.type, usage: parsed.data };
+  });
+
+const TurnFailedEventSchema = z
+  .object({
+    type: z.literal("turn.failed"),
+    error: z.object({ message: z.string().min(1) }),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    error: data.error.message,
+  }));
+
+const ThreadItemMessageSchema = z
+  .object({
+    type: z.literal("agent_message"),
+    text: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    text: data.text,
+  }));
+
+const ThreadItemReasoningSchema = z
+  .object({
+    type: z.literal("reasoning"),
+    text: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    text: data.text,
+  }));
+
+const ThreadItemUserMessageSchema = z
+  .object({
+    type: z.literal("user_message"),
+    text: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    text: data.text,
+  }));
+
+const CommandExecutionItemSchema = ThreadItemCallIdSchema.and(
+  z
+    .object({
+      type: z.literal("command_execution"),
+      command: CommandSchema,
+      status: z.string().optional(),
+      success: z.boolean().optional(),
+      error: z.unknown().optional(),
+      exit_code: ExitCodeSchema.optional(),
+      exitCode: ExitCodeSchema.optional(),
+      aggregated_output: z.string().optional(),
+      cwd: z.string().optional(),
+    })
+    .passthrough()
+).transform((data) => ({
+  type: data.type,
+  callId: data.callId,
+  command: data.command,
+  status: data.status,
+  success: data.success,
+  error: data.error,
+  exitCode: firstDefined([data.exit_code, data.exitCode]),
+  aggregatedOutput: data.aggregated_output,
+  cwd: data.cwd,
+}));
+
+const FileChangeItemSchema = ThreadItemCallIdSchema.and(
+  z
+    .object({
+      type: z.literal("file_change"),
+      changes: PatchChangesSchema.optional(),
+    })
+    .passthrough()
+).transform((data) => ({
+  type: data.type,
+  callId: data.callId,
+  changes: data.changes,
+}));
+
+const ReadFileItemSchema = ThreadItemCallIdSchema.and(
+  z
+    .object({
+      type: z.union([z.literal("read_file"), z.literal("file_read")]),
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
+      path: z.string().optional(),
+      file_path: z.string().optional(),
+      filePath: z.string().optional(),
+      content: z.string().optional(),
+      text: z.string().optional(),
+      status: z.string().optional(),
+    })
+    .passthrough()
+).transform((data, ctx) => {
+  const inputParsed = ReadFileInputSchema.safeParse(data.input);
+  const input = inputParsed.success ? inputParsed.data : undefined;
+  const outputParsed = ReadFileOutputSchema.safeParse(data.output);
+  const output = outputParsed.success ? outputParsed.data : undefined;
+  const path = firstString([
+    input?.path,
+    data.path,
+    data.file_path,
+    data.filePath,
+  ]);
+  if (!path) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "read_file missing path",
+    });
+    return z.NEVER;
+  }
+  const content = firstString([
+    typeof data.output === "string" ? data.output : undefined,
+    output?.content,
+    data.content,
+    data.text,
+  ]);
+  return {
+    type: data.type,
+    callId: data.callId,
+    status: data.status,
+    path,
+    input,
+    output: data.output,
+    content,
+  };
+});
+
+const McpToolCallItemSchema = ThreadItemCallIdSchema.and(
+  z
+    .object({
+      type: z.literal("mcp_tool_call"),
+      server: z.union([z.string(), McpServerObjectSchema]).optional(),
+      server_name: z.string().optional(),
+      serverId: z.string().optional(),
+      server_id: z.string().optional(),
+      mcp_server: z.string().optional(),
+      tool: z.union([z.string(), McpToolObjectSchema]).optional(),
+      tool_name: z.string().optional(),
+      toolId: z.string().optional(),
+      tool_id: z.string().optional(),
+      name: z.string().optional(),
+      input: z.unknown().optional(),
+      arguments: z.unknown().optional(),
+      args: z.unknown().optional(),
+      params: z.unknown().optional(),
+      request: z.unknown().optional(),
+      output: z.unknown().optional(),
+      result: z.unknown().optional(),
+      response: z.unknown().optional(),
+      return: z.unknown().optional(),
+      returns: z.unknown().optional(),
+      result_content: z.unknown().optional(),
+      content: z.unknown().optional(),
+      structuredContent: z.unknown().optional(),
+      structured_content: z.unknown().optional(),
+      status: z.string().optional(),
+      state: z.string().optional(),
+      outcome: z.string().optional(),
+    })
+    .passthrough()
+).transform((data, ctx) => {
+  const serverObject =
+    typeof data.server === "object" && data.server !== null
+      ? McpServerObjectSchema.safeParse(data.server).success
+        ? McpServerObjectSchema.parse(data.server)
+        : undefined
+      : undefined;
+  const toolObject =
+    typeof data.tool === "object" && data.tool !== null
+      ? McpToolObjectSchema.safeParse(data.tool).success
+        ? McpToolObjectSchema.parse(data.tool)
+        : undefined
+      : undefined;
+  const server = firstString([
+    typeof data.server === "string" ? data.server : undefined,
+    serverObject?.name,
+    serverObject?.id,
+    data.server_name,
+    data.serverId,
+    data.server_id,
+    data.mcp_server,
+  ]);
+  let tool = firstString([
+    typeof data.tool === "string" ? data.tool : undefined,
+    toolObject?.name,
+    toolObject?.tool,
+    data.tool_name,
+    data.toolId,
+    data.tool_id,
+    data.name,
+  ]);
+  let resolvedServer = server;
+  if (!resolvedServer && tool && tool.includes(".")) {
+    const [serverName, ...toolParts] = tool.split(".");
+    if (serverName.length > 0) {
+      resolvedServer = serverName;
+    }
+    const toolName = toolParts.join(".");
+    tool = toolName.length > 0 ? toolName : tool;
+  }
+  if (!resolvedServer || !tool) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "mcp_tool_call missing server or tool",
+    });
+    return z.NEVER;
+  }
+  const input = firstDefined([
+    data.input,
+    data.arguments,
+    data.args,
+    data.params,
+    data.request,
+    toolObject?.input,
+  ]);
+  const output = firstDefined([
+    data.output,
+    data.result,
+    data.response,
+    data.return,
+    data.returns,
+    data.result_content,
+    data.content,
+    data.structuredContent,
+    data.structured_content,
+  ]);
+  const status = firstString([data.status, data.state, data.outcome]);
+  return {
+    type: data.type,
+    callId: data.callId,
+    server: resolvedServer,
+    tool,
+    status,
+    input,
+    output,
+  };
+});
+
+const WebSearchItemSchema = ThreadItemCallIdSchema.and(
+  z
+    .object({
+      type: z.literal("web_search"),
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
+      query: z.string().optional(),
+      search_query: z.string().optional(),
+      searchQuery: z.string().optional(),
+      results: z.unknown().optional(),
+      search_results: z.unknown().optional(),
+      searchResults: z.unknown().optional(),
+      items: z.unknown().optional(),
+      documents: z.unknown().optional(),
+      data: z.unknown().optional(),
+      content: z.unknown().optional(),
+      response: z.unknown().optional(),
+      result: z.unknown().optional(),
+      status: z.string().optional(),
+    })
+    .passthrough()
+).transform((data, ctx) => {
+  const input =
+    typeof data.input === "object" && data.input !== null
+      ? WebSearchInputSchema.safeParse(data.input).success
+        ? WebSearchInputSchema.parse(data.input)
+        : undefined
+      : undefined;
+  const query = firstString([
+    data.query,
+    input?.query,
+    data.search_query,
+    data.searchQuery,
+  ]);
+  if (!query) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "web_search missing query",
+    });
+    return z.NEVER;
+  }
+  const results = firstDefined([
+    data.output,
+    data.results,
+    data.search_results,
+    data.searchResults,
+    data.items,
+    data.documents,
+    data.data,
+    data.content,
+    data.response,
+    data.result,
+  ]);
+  return {
+    type: data.type,
+    callId: data.callId,
+    query,
+    status: data.status,
+    input: data.input,
+    output: data.output,
+    results,
+  };
+});
+
+const TodoListItemSchema = z
+  .object({
+    type: z.literal("todo_list"),
+    items: z.array(
+      z.object({
+        text: z.string().min(1),
+        completed: z.boolean(),
+      })
+    ),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    items: data.items,
+  }));
+
+const ErrorItemSchema = z
+  .object({
+    type: z.literal("error"),
+    message: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    message: data.message,
+  }));
+
+const ThreadItemSchema = z.union([
+  ThreadItemMessageSchema,
+  ThreadItemReasoningSchema,
+  ThreadItemUserMessageSchema,
+  CommandExecutionItemSchema,
+  FileChangeItemSchema,
+  ReadFileItemSchema,
+  McpToolCallItemSchema,
+  WebSearchItemSchema,
+  TodoListItemSchema,
+  ErrorItemSchema,
+]);
+
+type ThreadItem = z.infer<typeof ThreadItemSchema>;
+
+const ThreadItemEventSchema = z
+  .object({
+    type: z.union([
+      z.literal("item.started"),
+      z.literal("item.updated"),
+      z.literal("item.completed"),
+    ]),
+    item: z.unknown(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const parsed = ThreadItemSchema.safeParse(data.item);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Invalid thread item",
+      });
+      return z.NEVER;
+    }
+    return { type: data.type, item: parsed.data };
+  });
+
+const ErrorEventSchema = z
+  .object({
+    type: z.literal("error"),
+    message: z.string().min(1),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    message: data.message,
+  }));
+
+const CodexEventSchema = z.union([
+  AgentMessageEventSchema,
+  AgentReasoningEventSchema,
+  AgentReasoningDeltaEventSchema,
+  TaskStartedEventSchema,
+  TaskCompleteEventSchema,
+  TurnAbortedEventSchema,
+  ExecCommandBeginEventSchema,
+  ExecCommandEndEventSchema,
+  PatchApplyBeginEventSchema,
+  PatchApplyEndEventSchema,
+  ThreadStartedEventSchema,
+  TurnStartedEventSchema,
+  TurnCompletedEventSchema,
+  TurnFailedEventSchema,
+  ThreadItemEventSchema,
+  ErrorEventSchema,
+]);
+
+type CodexEvent = z.infer<typeof CodexEventSchema>;
+type ThreadEvent = Extract<
+  CodexEvent,
+  {
+    type:
+      | "thread.started"
+      | "turn.started"
+      | "turn.completed"
+      | "turn.failed"
+      | "item.started"
+      | "item.updated"
+      | "item.completed"
+      | "error";
+  }
+>;
+
+const PermissionParamsSchema = z
+  .object({
+    codex_call_id: z.string().optional(),
+    codex_mcp_tool_call_id: z.string().optional(),
+    codex_event_id: z.string().optional(),
+    call_id: z.string().optional(),
+    codex_command: CommandSchema.optional(),
+    command: CommandSchema.optional(),
+    codex_cwd: z.string().optional(),
+    cwd: z.string().optional(),
+    message: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const callIdValue = firstString([
+      data.codex_call_id,
+      data.codex_mcp_tool_call_id,
+      data.codex_event_id,
+      data.call_id,
+    ]);
+    const callId = normalizeCallId(callIdValue);
+    if (!callId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "permission request missing call_id",
+      });
+      return z.NEVER;
+    }
+    let command = data.codex_command;
+    if (command === undefined) {
+      command = data.command;
+    }
+    if (!command) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "permission request missing command",
+      });
+      return z.NEVER;
+    }
+    let cwd = data.codex_cwd;
+    if (cwd === undefined) {
+      cwd = data.cwd;
+    }
+    return {
+      callId,
+      command,
+      cwd,
+      message: data.message,
+      raw: data,
+    };
+  });
+
+type PermissionParams = z.infer<typeof PermissionParamsSchema>;
+
+const AgentSessionConfigSchema = z
+  .object({
+    provider: z.string(),
+    cwd: z.string(),
+    modeId: z.string().optional(),
+    model: z.string().optional(),
+    title: z.string().nullable().optional(),
+    approvalPolicy: z.string().optional(),
+    sandboxMode: z.string().optional(),
+    networkAccess: z.boolean().optional(),
+    webSearch: z.boolean().optional(),
+    reasoningEffort: z.string().optional(),
+    agentControlMcp: z.unknown().optional(),
+    extra: z
+      .object({
+        codex: z.unknown().optional(),
+        claude: z.unknown().optional(),
+      })
+      .optional(),
+    mcpServers: z.unknown().optional(),
+    parentAgentId: z.string().optional(),
+  })
+  .passthrough();
+
+type StoredSessionConfig = z.infer<typeof AgentSessionConfigSchema>;
+
+function normalizePatchChange(path: string, details: PatchChangeDetails): PatchFileChange {
+  const before = firstString([
+    details.before,
+    details.original,
+    details.old,
+    details.previous,
+    details.from,
+  ]);
+  const after = firstString([
+    details.after,
+    details.new,
+    details.next,
+    details.to,
+  ]);
+  const patch = firstString([
+    details.patch,
+    details.diff,
+    details.unified_diff,
+    details.unifiedDiff,
+  ]);
+  let kind = firstString([
+    details.kind,
+    details.type,
+    details.action,
+    details.change_type,
+  ]);
+  if (!kind) {
+    if (before === undefined && after !== undefined) {
+      kind = "create";
+    } else if (before !== undefined && after === undefined) {
+      kind = "delete";
+    } else if (before !== undefined || after !== undefined || patch !== undefined) {
+      kind = "edit";
     }
   }
-  if (Array.isArray(command)) {
-    const tokens = command.filter((entry): entry is string => typeof entry === "string");
-    if (tokens.length > 0) {
-      return tokens.join(" ");
-    }
+  return { path, kind, before, after, patch };
+}
+
+function parsePatchChanges(changes: unknown): PatchFileChange[] {
+  const parsed = PatchChangesSchema.parse(changes);
+  if (Array.isArray(parsed)) {
+    return parsed.map((entry) => normalizePatchChange(entry.path, entry));
   }
-  return "Command";
+  return Object.entries(parsed).map(([path, value]) => {
+    if (typeof value === "string") {
+      return { path, kind: "edit", patch: value };
+    }
+    return normalizePatchChange(path, value);
+  });
+}
+
+function parsePatchFiles(files: unknown): PatchFileChange[] {
+  if (files === undefined) {
+    return [];
+  }
+  const parsed = z.array(PatchFileEntrySchema).parse(files);
+  return parsed.map((entry) => ({
+    path: entry.path,
+    kind: firstString([entry.kind, entry.type, entry.action]),
+  }));
+}
+
+function normalizeCommand(command: Command): string {
+  return typeof command === "string" ? command : command.join(" ");
 }
 
 function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
-  if (!files.length) {
-    return "File change";
-  }
   if (files.length === 1) {
-    return `${files[0].kind ?? "edit"}: ${files[0].path}`;
+    return `${files[0].kind}: ${files[0].path}`;
   }
   return `${files.length} file changes`;
 }
 
 function extractTextContent(response: unknown): string | null {
-  if (!response || typeof response !== "object") {
+  const parsed = ResponseBaseSchema.parse(response);
+  const content = parsed.content;
+  if (!content) {
     return null;
   }
-  const content = (response as { content?: unknown }).content;
-  if (!Array.isArray(content)) {
-    return null;
+  const parts: string[] = [];
+  for (const item of content) {
+    const textParsed = TextContentItemSchema.safeParse(item);
+    if (textParsed.success) {
+      parts.push(textParsed.data.text);
+    }
   }
-  const parts = content
-    .filter((item) => item && typeof item === "object")
-    .map((item) => (item as { type?: string; text?: string }).type === "text"
-      ? (item as { text?: string }).text
-      : null)
-    .filter((text): text is string => typeof text === "string" && text.length > 0);
-  if (!parts.length) {
+  if (parts.length === 0) {
     return null;
   }
   return parts.join("\n");
+}
+
+function normalizeEvent(raw: unknown): CodexEvent {
+  const base = RawMcpEventSchema.parse(raw);
+  const dataParse = RawEventDataSchema.safeParse(base.data);
+  let eventType = base.type;
+  let eventRecord: RawMcpEvent = base;
+  if ((eventType === "event" || eventType.length === 0) && dataParse.success) {
+    eventType = dataParse.data.type;
+    eventRecord = { ...base, ...dataParse.data, type: eventType };
+  }
+  const normalizedType = normalizeThreadEventType(eventType);
+  if (normalizedType !== eventType) {
+    eventRecord = { ...eventRecord, type: normalizedType };
+  }
+  const isTopLevelItemEvent = z
+    .union([
+      z.literal("file_change"),
+      z.literal("read_file"),
+      z.literal("file_read"),
+      z.literal("mcp_tool_call"),
+      z.literal("web_search"),
+      z.literal("todo_list"),
+    ])
+    .safeParse(normalizedType).success;
+  if (isTopLevelItemEvent && !("item" in eventRecord)) {
+    const itemRecord = { ...eventRecord, type: normalizedType };
+    eventRecord = {
+      type: "item.completed",
+      item: itemRecord,
+    };
+  }
+  return CodexEventSchema.parse(eventRecord);
 }
 
 function toPromptText(prompt: AgentPromptInput): string {
@@ -408,13 +1178,27 @@ function buildCodexMcpConfig(
   config: AgentSessionConfig,
   prompt: string,
   modeId: string
-): Record<string, unknown> {
-  const preset = MODE_PRESETS[modeId] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
-  const approvalPolicy = config.approvalPolicy ?? preset.approvalPolicy;
-  const sandbox = config.sandboxMode ?? preset.sandbox;
-  const extra = config.extra?.codex ?? undefined;
+): {
+  prompt: string;
+  cwd?: string;
+  "approval-policy": string;
+  sandbox: string;
+  config?: unknown;
+  model?: string;
+} {
+  const preset =
+    MODE_PRESETS[modeId] !== undefined
+      ? MODE_PRESETS[modeId]
+      : MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+  const approvalPolicy =
+    config.approvalPolicy !== undefined
+      ? config.approvalPolicy
+      : preset.approvalPolicy;
+  const sandbox =
+    config.sandboxMode !== undefined ? config.sandboxMode : preset.sandbox;
+  const extra = config.extra ? config.extra.codex : undefined;
 
-  const configPayload: Record<string, unknown> = {
+  const configPayload = {
     prompt,
     cwd: config.cwd,
     "approval-policy": approvalPolicy,
@@ -442,19 +1226,6 @@ function isMissingConversationIdResponse(response: unknown): boolean {
   return !!text && text.includes("Session not found for conversation_id");
 }
 
-function extractCommandText(command?: unknown): string | null {
-  if (typeof command === "string") {
-    return command;
-  }
-  if (Array.isArray(command)) {
-    const tokens = command.filter((value): value is string => typeof value === "string");
-    if (tokens.length > 0) {
-      return tokens.join(" ");
-    }
-  }
-  return null;
-}
-
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
   private resolvers: ((value: IteratorResult<T>) => void)[] = [];
@@ -476,21 +1247,21 @@ class Pushable<T> implements AsyncIterable<T> {
     this.closed = true;
     while (this.resolvers.length > 0) {
       const resolve = this.resolvers.shift()!;
-      resolve({ value: undefined as any, done: true });
+      resolve({ value: undefined, done: true });
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<T> {
+  [Symbol.asyncIterator](): AsyncIterator<T, void> {
     return {
-      next: (): Promise<IteratorResult<T>> => {
+      next: (): Promise<IteratorResult<T, void>> => {
         if (this.queue.length > 0) {
           const value = this.queue.shift()!;
           return Promise.resolve({ value, done: false });
         }
         if (this.closed) {
-          return Promise.resolve({ value: undefined as any, done: true });
+          return Promise.resolve({ value: undefined, done: true });
         }
-        return new Promise<IteratorResult<T>>((resolve) => {
+        return new Promise<IteratorResult<T, void>>((resolve) => {
           this.resolvers.push(resolve);
         });
       },
@@ -499,7 +1270,7 @@ class Pushable<T> implements AsyncIterable<T> {
 }
 
 class CodexMcpAgentSession implements AgentSession {
-  readonly provider = "codex-mcp" as AgentClient["provider"];
+  readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_MCP_CAPABILITIES;
 
   private readonly client: Client;
@@ -516,7 +1287,7 @@ class CodexMcpAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private pendingPermissionHandlers = new Map<string, PendingPermission>();
   private resolvedPermissionRequests = new Set<string>();
-  private eventQueue: Pushable<AgentStreamEvent | ProviderEvent> | null = null;
+  private eventQueue: Pushable<AgentStreamEvent> | null = null;
   private currentAbortController: AbortController | null = null;
   private lockConversationId = false;
   private historyPending = false;
@@ -527,17 +1298,17 @@ class CodexMcpAgentSession implements AgentSession {
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
-    this.currentMode = config.modeId ?? DEFAULT_CODEX_MODE_ID;
+    this.currentMode =
+      config.modeId !== undefined ? config.modeId : DEFAULT_CODEX_MODE_ID;
     this.pendingLocalId = `codex-mcp-${randomUUID()}`;
 
     if (resumeHandle) {
       this.sessionId = resumeHandle.sessionId;
       const metadata = resumeHandle.metadata;
-      if (metadata && typeof metadata === "object") {
-        const record = metadata as Record<string, unknown>;
-        const conversationId = record.conversationId ?? record.conversation_id;
-        if (typeof conversationId === "string") {
-          this.conversationId = conversationId;
+      if (metadata) {
+        const parsed = SessionIdentifiersSchema.parse(metadata);
+        if (parsed.conversationId) {
+          this.conversationId = parsed.conversationId;
           this.lockConversationId = true;
         }
       }
@@ -567,45 +1338,35 @@ class CodexMcpAgentSession implements AgentSession {
 
     this.client.setRequestHandler(ElicitRequestSchema, async (request) => {
       const permission = this.buildPermissionRequest(request.params);
-      if (!permission) {
-        return { decision: "denied" as const };
-      }
-
-      const response = await new Promise<ElicitResponse>((resolve, reject) => {
-        const hasPending =
-          this.pendingPermissions.has(permission.id) ||
-          this.pendingPermissionHandlers.has(permission.id);
-        this.pendingPermissions.set(permission.id, permission);
-        this.pendingPermissionHandlers.set(permission.id, {
-          request: permission,
-          resolve,
-          reject,
-        });
-        if (!hasPending) {
-          this.emitPermissionRequested(permission);
-        }
-      });
-
-      return response;
+      return this.handlePermissionRequest(permission);
     });
   }
 
   get id(): string | null {
-    return this.sessionId ?? this.pendingLocalId;
+    if (this.sessionId) {
+      return this.sessionId;
+    }
+    if (this.pendingLocalId) {
+      return this.pendingLocalId;
+    }
+    return null;
   }
 
   async connect(): Promise<void> {
     if (this.connected) return;
 
     const mcpCommand = getCodexMcpCommand();
+    const env: Record<string, string> = {};
+    for (const key of Object.keys(process.env)) {
+      const value = process.env[key];
+      if (typeof value === "string") {
+        env[key] = value;
+      }
+    }
     this.transport = new StdioClientTransport({
       command: "codex",
       args: [mcpCommand],
-      env: Object.keys(process.env).reduce((acc, key) => {
-        const value = process.env[key];
-        if (typeof value === "string") acc[key] = value;
-        return acc;
-      }, {} as Record<string, string>),
+      env,
     });
 
     await this.client.connect(this.transport);
@@ -631,15 +1392,22 @@ class CodexMcpAgentSession implements AgentSession {
       }
     }
 
+    const resolvedSessionId = this.sessionId
+      ? this.sessionId
+      : this.pendingLocalId;
+    const resolvedModel = this.runtimeModel
+      ? this.runtimeModel
+      : this.config.model;
+
     this.cachedRuntimeInfo = {
-      provider: "codex-mcp" as AgentRuntimeInfo["provider"],
-      sessionId: this.sessionId ?? this.pendingLocalId ?? null,
-      model: this.runtimeModel ?? this.config.model ?? null,
-      modeId: this.currentMode ?? null,
+      provider: CODEX_PROVIDER,
+      sessionId: resolvedSessionId ? resolvedSessionId : null,
+      model: resolvedModel ? resolvedModel : null,
+      modeId: this.currentMode ? this.currentMode : null,
     };
 
     return {
-      sessionId: this.sessionId ?? this.pendingLocalId ?? "",
+      sessionId: resolvedSessionId ? resolvedSessionId : "",
       finalText,
       usage,
       timeline,
@@ -651,7 +1419,7 @@ class CodexMcpAgentSession implements AgentSession {
     options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
     await this.connect();
-    const queue = new Pushable<AgentStreamEvent | ProviderEvent>();
+    const queue = new Pushable<AgentStreamEvent>();
     this.eventQueue = queue;
     this.turnState = {
       sawAssistant: false,
@@ -689,7 +1457,7 @@ class CodexMcpAgentSession implements AgentSession {
 
     try {
       for await (const event of queue) {
-        yield event as AgentStreamEvent;
+        yield event;
         if (event.type === "turn_completed" || event.type === "turn_failed") {
           break;
         }
@@ -734,7 +1502,7 @@ class CodexMcpAgentSession implements AgentSession {
     for (const item of history) {
       yield {
         type: "timeline",
-        provider: "codex-mcp" as AgentStreamEvent["provider"],
+        provider: CODEX_PROVIDER,
         item,
       };
     }
@@ -744,11 +1512,17 @@ class CodexMcpAgentSession implements AgentSession {
     if (this.cachedRuntimeInfo) {
       return { ...this.cachedRuntimeInfo };
     }
+    const resolvedSessionId = this.sessionId
+      ? this.sessionId
+      : this.pendingLocalId;
+    const resolvedModel = this.runtimeModel
+      ? this.runtimeModel
+      : this.config.model;
     const info: AgentRuntimeInfo = {
-      provider: "codex-mcp" as AgentRuntimeInfo["provider"],
-      sessionId: this.sessionId ?? this.pendingLocalId ?? null,
-      model: this.runtimeModel ?? this.config.model ?? null,
-      modeId: this.currentMode ?? null,
+      provider: CODEX_PROVIDER,
+      sessionId: resolvedSessionId ? resolvedSessionId : null,
+      model: resolvedModel ? resolvedModel : null,
+      modeId: this.currentMode ? this.currentMode : null,
     };
     this.cachedRuntimeInfo = info;
     return { ...info };
@@ -759,7 +1533,7 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   async getCurrentMode(): Promise<string | null> {
-    return this.currentMode ?? null;
+    return this.currentMode ? this.currentMode : null;
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -791,7 +1565,7 @@ class CodexMcpAgentSession implements AgentSession {
         tool: pending.request.name,
         status,
         callId: pending.request.id,
-        displayName: pending.request.title ?? pending.request.name,
+        displayName: pending.request.title ? pending.request.title : pending.request.name,
         kind: "permission",
         input: pending.request.input,
       }),
@@ -814,6 +1588,27 @@ class CodexMcpAgentSession implements AgentSession {
     pending.resolve({ decision, reason });
   }
 
+  private async handlePermissionRequest(
+    permission: AgentPermissionRequest
+  ): Promise<ElicitResponse> {
+    const response = await new Promise<ElicitResponse>((resolve, reject) => {
+      const hasPending =
+        this.pendingPermissions.has(permission.id) ||
+        this.pendingPermissionHandlers.has(permission.id);
+      this.pendingPermissions.set(permission.id, permission);
+      this.pendingPermissionHandlers.set(permission.id, {
+        request: permission,
+        resolve,
+        reject,
+      });
+      if (!hasPending) {
+        this.emitPermissionRequested(permission);
+      }
+    });
+
+    return response;
+  }
+
   describePersistence(): AgentPersistenceHandle | null {
     if (this.persistence) {
       this.updatePersistenceConversationId();
@@ -823,9 +1618,11 @@ class CodexMcpAgentSession implements AgentSession {
       return null;
     }
     const { model: _ignoredModel, ...restConfig } = this.config;
-    const conversationId = this.conversationId ?? this.sessionId ?? undefined;
+    const conversationId = this.conversationId
+      ? this.conversationId
+      : this.sessionId;
     this.persistence = {
-      provider: "codex-mcp" as AgentPersistenceHandle["provider"],
+      provider: CODEX_PROVIDER,
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
@@ -839,11 +1636,11 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private updatePersistenceConversationId(): void {
-    const conversationId = this.conversationId ?? this.sessionId ?? undefined;
-    if (!conversationId || !this.persistence?.metadata || typeof this.persistence.metadata !== "object") {
+    const conversationId = this.conversationId ? this.conversationId : this.sessionId;
+    if (!conversationId || !this.persistence?.metadata) {
       return;
     }
-    const metadata = this.persistence.metadata as Record<string, unknown>;
+    const metadata = this.persistence.metadata;
     metadata.conversationId = conversationId;
     metadata.conversation_id = conversationId;
   }
@@ -859,7 +1656,7 @@ class CodexMcpAgentSession implements AgentSession {
     this.eventQueue = null;
 
     if (!this.connected) return;
-    const pid = this.transport?.pid ?? null;
+    const pid = this.transport?.pid ? this.transport.pid : null;
     let closed = false;
     try {
       await this.client.close();
@@ -904,7 +1701,7 @@ class CodexMcpAgentSession implements AgentSession {
     try {
       if (!this.sessionId) {
         const config = buildCodexMcpConfig(this.config, prompt, this.currentMode);
-        const attempt = async (arguments_: Record<string, unknown>) =>
+        const attempt = async (arguments_: CodexToolArguments) =>
           this.client.callTool(
             { name: "codex", arguments: arguments_ },
             undefined,
@@ -923,7 +1720,9 @@ class CodexMcpAgentSession implements AgentSession {
           }
         }
       } else {
-        const conversationId = this.conversationId ?? this.sessionId;
+        const conversationId = this.conversationId
+          ? this.conversationId
+          : this.sessionId;
         try {
           response = await this.client.callTool(
             {
@@ -940,7 +1739,7 @@ class CodexMcpAgentSession implements AgentSession {
           if (isMissingConversationIdResponse(response)) {
             const replayPrompt = this.buildResumePrompt(prompt);
             const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
-            const attempt = async (arguments_: Record<string, unknown>) =>
+            const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
                 undefined,
@@ -963,7 +1762,7 @@ class CodexMcpAgentSession implements AgentSession {
           if (isMissingConversationIdError(error)) {
             const replayPrompt = this.buildResumePrompt(prompt);
             const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
-            const attempt = async (arguments_: Record<string, unknown>) =>
+            const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
                 undefined,
@@ -1032,7 +1831,7 @@ class CodexMcpAgentSession implements AgentSession {
     this.eventQueue?.end();
   }
 
-  private emitEvent(event: AgentStreamEvent | ProviderEvent): void {
+  private emitEvent(event: AgentStreamEvent): void {
     if (event.type === "timeline") {
       this.recordHistory(event.item);
       if (event.item.type === "assistant_message") {
@@ -1066,7 +1865,7 @@ class CodexMcpAgentSession implements AgentSession {
         tool: request.name,
         status: "requested",
         callId: request.id,
-        displayName: request.title ?? request.name,
+        displayName: request.title ? request.title : request.name,
         kind: "permission",
         input: request.input,
       }),
@@ -1080,7 +1879,7 @@ class CodexMcpAgentSession implements AgentSession {
 
   private recordHistory(item: AgentTimelineItem): void {
     if (this.sessionId) {
-      const history = SESSION_HISTORY.get(this.sessionId) ?? [];
+      const history = SESSION_HISTORY.get(this.sessionId) || [];
       history.push(item);
       SESSION_HISTORY.set(this.sessionId, history);
       return;
@@ -1092,325 +1891,249 @@ class CodexMcpAgentSession implements AgentSession {
     if (!this.sessionId || this.pendingHistory.length === 0) {
       return;
     }
-    const history = SESSION_HISTORY.get(this.sessionId) ?? [];
+    const history = SESSION_HISTORY.get(this.sessionId) || [];
     history.push(...this.pendingHistory);
     SESSION_HISTORY.set(this.sessionId, history);
     this.pendingHistory = [];
   }
 
-  private updateIdentifiersFromResponse(response: unknown): void {
-    const record = response && typeof response === "object" ? (response as Record<string, unknown>) : null;
-    if (!record) return;
-    const meta = record.meta && typeof record.meta === "object" ? (record.meta as Record<string, unknown>) : null;
-    const sessionId = meta?.sessionId ?? record.sessionId;
-    const conversationId =
-      meta?.conversationId ??
-      meta?.conversation_id ??
-      meta?.thread_id ??
-      record.conversationId ??
-      record.conversation_id ??
-      record.thread_id;
-    const model = meta?.model ?? record.model;
-    if (!this.sessionId && typeof sessionId === "string") {
-      this.sessionId = sessionId;
+  private applySessionIdentifiers(identifiers: SessionIdentifiers): void {
+    if (!this.sessionId && identifiers.sessionId) {
+      this.sessionId = identifiers.sessionId;
       this.flushPendingHistory();
     }
-    if (typeof conversationId === "string" && conversationId.length > 0) {
-      if ((!this.lockConversationId || !this.conversationId) && this.conversationId !== conversationId) {
-        this.conversationId = conversationId;
+    if (identifiers.conversationId && identifiers.conversationId.length > 0) {
+      const shouldUpdate =
+        !this.lockConversationId ||
+        !this.conversationId ||
+        this.conversationId !== identifiers.conversationId;
+      if (shouldUpdate) {
+        this.conversationId = identifiers.conversationId;
         this.updatePersistenceConversationId();
       }
     }
-    if (typeof model === "string" && model.length > 0) {
-      this.runtimeModel = model;
+    if (identifiers.model && identifiers.model.length > 0) {
+      this.runtimeModel = identifiers.model;
     }
+  }
 
-    const content = record.content;
-    if (Array.isArray(content)) {
+  private updateIdentifiersFromResponse(response: unknown): void {
+    const parsedResponse = ResponseBaseSchema.parse(response);
+    this.applySessionIdentifiers(SessionIdentifiersSchema.parse(parsedResponse));
+    if (parsedResponse.meta !== undefined) {
+      const metaParsed = SessionIdentifiersSchema.safeParse(parsedResponse.meta);
+      if (metaParsed.success) {
+        this.applySessionIdentifiers(metaParsed.data);
+      }
+    }
+    const content = parsedResponse.content;
+    if (content) {
       for (const item of content) {
-        if (!item || typeof item !== "object") continue;
-        const sessionCandidate = (item as Record<string, unknown>).sessionId;
-        const conversationCandidate =
-          (item as Record<string, unknown>).conversationId ??
-          (item as Record<string, unknown>).conversation_id ??
-          (item as Record<string, unknown>).thread_id;
-        if (!this.sessionId && typeof sessionCandidate === "string") {
-          this.sessionId = sessionCandidate;
-          this.flushPendingHistory();
-        }
-        if (typeof conversationCandidate === "string" && conversationCandidate.length > 0) {
-          if (
-            (!this.lockConversationId || !this.conversationId) &&
-            this.conversationId !== conversationCandidate
-          ) {
-            this.conversationId = conversationCandidate;
-            this.updatePersistenceConversationId();
-          }
-        }
-        const modelCandidate = (item as Record<string, unknown>).model;
-        if (typeof modelCandidate === "string" && modelCandidate.length > 0) {
-          this.runtimeModel = modelCandidate;
+        const itemParsed = SessionIdentifiersSchema.safeParse(item);
+        if (itemParsed.success) {
+          this.applySessionIdentifiers(itemParsed.data);
         }
       }
     }
   }
 
   private updateIdentifiersFromEvent(event: unknown): void {
-    if (!event || typeof event !== "object") {
-      return;
-    }
-    const candidates = [event];
-    if ((event as { data?: unknown }).data && typeof (event as { data?: unknown }).data === "object") {
-      candidates.push((event as { data?: unknown }).data as Record<string, unknown>);
-    }
-    for (const candidate of candidates) {
-      const record = candidate as Record<string, unknown>;
-      const sessionId = record.session_id ?? record.sessionId;
-      const conversationId =
-        record.conversation_id ?? record.conversationId ?? record.thread_id;
-      const model = record.model;
-      if (!this.sessionId && typeof sessionId === "string") {
-        this.sessionId = sessionId;
-        this.flushPendingHistory();
-      }
-      if (typeof conversationId === "string" && conversationId.length > 0) {
-        if ((!this.lockConversationId || !this.conversationId) && this.conversationId !== conversationId) {
-          this.conversationId = conversationId;
-          this.updatePersistenceConversationId();
-        }
-      }
-      if (typeof model === "string" && model.length > 0) {
-        this.runtimeModel = model;
+    const base = RawMcpEventSchema.parse(event);
+    this.applySessionIdentifiers(SessionIdentifiersSchema.parse(base));
+    if (base.data !== undefined) {
+      const parsed = SessionIdentifiersSchema.safeParse(base.data);
+      if (parsed.success) {
+        this.applySessionIdentifiers(parsed.data);
       }
     }
   }
 
   private handleMcpEvent(event: unknown): void {
-    if (!event || typeof event !== "object") {
-      return;
-    }
-    const record = event as Record<string, unknown>;
-    const data = record.data && typeof record.data === "object" ? (record.data as Record<string, unknown>) : null;
-    const recordType = record.type;
-    const dataType = data?.type;
-    let type = typeof recordType === "string" ? recordType : undefined;
-    let eventRecord: Record<string, unknown> = record;
-    if ((!type || type === "event") && typeof dataType === "string") {
-      type = dataType;
-      eventRecord = { ...record, ...data, type };
-    }
-    if (!type) {
-      return;
-    }
-
-    const isTopLevelItemEvent =
-      type === "file_change" ||
-      type === "read_file" ||
-      type === "file_read" ||
-      type === "mcp_tool_call" ||
-      type === "web_search" ||
-      type === "todo_list";
-    if (isTopLevelItemEvent && !("item" in eventRecord)) {
-      const itemRecord = { ...eventRecord, type };
-      eventRecord = {
-        type: "item.completed",
-        item: itemRecord,
-      };
-      type = "item.completed";
-    }
-
-    const normalizedType = normalizeThreadEventType(type);
-    const providerRaw =
-      normalizedType !== type ? { ...eventRecord, type: normalizedType } : eventRecord;
-
+    const parsedEvent = normalizeEvent(event);
     this.emitEvent({
       type: "provider_event",
-      provider: "codex-mcp",
-      raw: providerRaw,
+      provider: CODEX_PROVIDER,
+      raw: parsedEvent,
     });
 
-    type = normalizedType;
-    if (type.includes(".") || type.startsWith("turn.") || type.startsWith("thread.") || type.startsWith("item.")) {
-      this.handleThreadEvent(providerRaw);
-      return;
-    }
-
-    switch (type) {
-      case "agent_message": {
-        const text = (event as { message?: string; text?: string }).message ??
-          (event as { text?: string }).text ??
-          "";
-        if (text) {
-          this.emitEvent({
-            type: "timeline",
-            provider: "codex-mcp",
-            item: { type: "assistant_message", text },
-          });
-        }
-        break;
-      }
+    switch (parsedEvent.type) {
+      case "thread.started":
+      case "turn.started":
+      case "turn.completed":
+      case "turn.failed":
+      case "item.started":
+      case "item.updated":
+      case "item.completed":
+      case "error":
+        this.handleThreadEvent(parsedEvent);
+        return;
+      case "agent_message":
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: { type: "assistant_message", text: parsedEvent.text },
+        });
+        return;
       case "agent_reasoning":
-      case "agent_reasoning_delta": {
-        const text = (event as { text?: string; delta?: string }).text ??
-          (event as { delta?: string }).delta ??
-          "";
-        if (text) {
-          this.emitEvent({
-            type: "timeline",
-            provider: "codex-mcp",
-            item: { type: "reasoning", text },
-          });
-        }
-        break;
-      }
-      case "task_started": {
-        this.emitEvent({ type: "turn_started", provider: "codex-mcp" });
-        break;
-      }
-      case "task_complete": {
-        this.emitEvent({ type: "turn_completed", provider: "codex-mcp" });
-        break;
-      }
-      case "turn_aborted": {
+      case "agent_reasoning_delta":
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: { type: "reasoning", text: parsedEvent.text },
+        });
+        return;
+      case "task_started":
+        this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+        return;
+      case "task_complete":
+        this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER });
+        return;
+      case "turn_aborted":
         this.emitEvent({
           type: "turn_failed",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
           error: "Codex MCP turn aborted",
         });
-        break;
-      }
+        return;
       case "exec_command_begin": {
-        const callId = normalizeCallId((event as { call_id?: string }).call_id);
-        const command = (event as { command?: unknown }).command;
-        const cwd = (event as { cwd?: string }).cwd;
-        const emitEvent = () => {
-          this.emitEvent({
-            type: "timeline",
-            provider: "codex-mcp",
-            item: createToolCallTimelineItem({
-              server: "command",
-              tool: "shell",
-              status: "running",
-              callId,
-              displayName: buildCommandDisplayName(command),
-              kind: "execute",
-              input: { command, cwd },
-            }),
-          });
-        };
-        emitEvent();
-        break;
+        const callId = parsedEvent.callId;
+        if (!callId) {
+          throw new Error("exec_command_begin missing call_id");
+        }
+        const commandText = normalizeCommand(parsedEvent.command);
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: createToolCallTimelineItem({
+            server: "command",
+            tool: "shell",
+            status: "running",
+            callId,
+            displayName: commandText,
+            kind: "execute",
+            input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+          }),
+        });
+        return;
       }
       case "exec_command_end": {
-        const callId = normalizeCallId((event as { call_id?: string }).call_id);
-        const command = (event as { command?: unknown }).command;
-        const cwd = (event as { cwd?: string }).cwd;
-        const exitCodeRaw = (event as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
-          (event as { exitCode?: unknown }).exitCode;
-        const exitCode = normalizeExitCode(exitCodeRaw);
-        const output = (event as { output?: unknown; stdout?: unknown }).output ??
-          (event as { stdout?: unknown }).stdout ??
-          (event as { stderr?: unknown }).stderr;
+        const callId = parsedEvent.callId;
+        if (!callId) {
+          throw new Error("exec_command_end missing call_id");
+        }
+        const commandText = normalizeCommand(parsedEvent.command);
         const outputRecord =
-          output && typeof output === "object" ? (output as Record<string, unknown>) : undefined;
-        const statusValue = (event as { status?: unknown }).status;
-        const status = typeof statusValue === "string" ? statusValue : undefined;
-        const successValue =
-          (event as { success?: unknown }).success ?? outputRecord?.success;
-        const success =
-          typeof successValue === "boolean" ? successValue : undefined;
-        const errorValue = (event as { error?: unknown }).error;
-        const hasError = Boolean(errorValue);
-        const outputExitCode = normalizeExitCode(
-          outputRecord?.exit_code ?? outputRecord?.exitCode
-        );
-        const resolvedExitCode =
-          exitCode ??
-          outputExitCode ??
-          (success === true
-            ? 0
-            : success === false
-              ? 1
-              : status === "failed"
-                ? 1
-                : status === "completed"
-                  ? 0
-                  : undefined);
-        const outputText =
-          typeof output === "string"
-            ? output
-            : typeof outputRecord?.stdout === "string"
-              ? outputRecord.stdout
-              : typeof outputRecord?.stderr === "string"
-                ? outputRecord.stderr
-                : undefined;
-        const structuredOutput =
-          outputText !== undefined || typeof resolvedExitCode === "number"
-            ? {
-                type: "command" as const,
-                command: extractCommandText(command) ?? "command",
-                output: outputText ?? "",
-                exitCode: resolvedExitCode,
-                cwd,
-              }
-            : outputRecord;
-        const emitEvent = () => {
-          const failed =
-            success === false ||
-            status === "failed" ||
-            hasError ||
-            (typeof resolvedExitCode === "number" && resolvedExitCode !== 0);
-          if (failed) {
-            this.turnState && (this.turnState.sawError = true);
+          typeof parsedEvent.output === "object" &&
+          parsedEvent.output !== null
+            ? parsedEvent.output
+            : undefined;
+        const outputExitCode = outputRecord
+          ? firstDefined([outputRecord.exit_code, outputRecord.exitCode])
+          : undefined;
+        let resolvedExitCode = parsedEvent.exitCode;
+        if (resolvedExitCode === undefined && outputExitCode !== undefined) {
+          resolvedExitCode = outputExitCode;
+        }
+        if (resolvedExitCode === undefined) {
+          if (parsedEvent.success === true) {
+            resolvedExitCode = 0;
+          } else if (parsedEvent.success === false) {
+            resolvedExitCode = 1;
+          } else if (parsedEvent.status === "failed") {
+            resolvedExitCode = 1;
+          } else if (parsedEvent.status === "completed") {
+            resolvedExitCode = 0;
           }
-          this.emitEvent({
-            type: "timeline",
-            provider: "codex-mcp",
-            item: createToolCallTimelineItem({
-              server: "command",
-              tool: "shell",
-              status: failed ? "failed" : "completed",
-              callId,
-              displayName: buildCommandDisplayName(command),
-              kind: "execute",
-              input: { command, cwd },
-              output: structuredOutput,
-            }),
-          });
-          if (failed) {
-            this.emitEvent({
-              type: "timeline",
-              provider: "codex-mcp",
-              item: {
-                type: "error",
-                message: `Command failed with exit code ${resolvedExitCode ?? "unknown"}`,
-              },
-            });
+        }
+        let outputText: string | undefined;
+        if (typeof parsedEvent.output === "string") {
+          outputText = parsedEvent.output;
+        } else if (outputRecord) {
+          if (typeof outputRecord.stdout === "string") {
+            outputText = outputRecord.stdout;
+          } else if (typeof outputRecord.stderr === "string") {
+            outputText = outputRecord.stderr;
           }
-        };
-        emitEvent();
-        break;
-      }
-      case "patch_apply_begin": {
-        const callId = normalizeCallId((event as { call_id?: string }).call_id);
-        const changes = (event as { changes?: unknown }).changes;
-        const normalizedChanges = normalizePatchFilesFromChanges(changes);
-        const files =
-          normalizedChanges.length > 0
-            ? normalizedChanges.map((change) => ({
-                path: change.path,
-                kind: change.kind ?? "edit",
-              }))
-            : Object.keys((changes as Record<string, unknown>) ?? {}).map((file) => ({
-                path: file,
-                kind: "edit",
-              }));
-        if (callId) {
-          this.pendingPatchChanges.set(callId, normalizedChanges);
+        }
+        if (outputText === undefined) {
+          if (typeof parsedEvent.stdout === "string") {
+            outputText = parsedEvent.stdout;
+          } else if (typeof parsedEvent.stderr === "string") {
+            outputText = parsedEvent.stderr;
+          }
+        }
+        let structuredOutput: unknown = outputRecord;
+        if (outputText !== undefined || resolvedExitCode !== undefined) {
+          const commandOutput: {
+            type: "command";
+            command: string;
+            output?: string;
+            exitCode?: number;
+            cwd?: string;
+          } = {
+            type: "command",
+            command: commandText,
+            cwd: parsedEvent.cwd,
+          };
+          if (outputText !== undefined) {
+            commandOutput.output = outputText;
+          }
+          if (resolvedExitCode !== undefined) {
+            commandOutput.exitCode = resolvedExitCode;
+          }
+          structuredOutput = commandOutput;
+        }
+        const failed =
+          parsedEvent.success === false ||
+          parsedEvent.status === "failed" ||
+          parsedEvent.error !== undefined ||
+          (resolvedExitCode !== undefined && resolvedExitCode !== 0);
+        if (failed) {
+          this.turnState && (this.turnState.sawError = true);
         }
         this.emitEvent({
           type: "timeline",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
+          item: createToolCallTimelineItem({
+            server: "command",
+            tool: "shell",
+            status: failed ? "failed" : "completed",
+            callId,
+            displayName: commandText,
+            kind: "execute",
+            input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+            output: structuredOutput,
+          }),
+        });
+        if (failed) {
+          const errorMessage =
+            resolvedExitCode !== undefined
+              ? `Command failed with exit code ${resolvedExitCode}`
+              : "Command failed";
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: { type: "error", message: errorMessage },
+          });
+        }
+        return;
+      }
+      case "patch_apply_begin": {
+        const callId = parsedEvent.callId;
+        if (!callId) {
+          throw new Error("patch_apply_begin missing call_id");
+        }
+        const normalizedChanges = parsePatchChanges(parsedEvent.changes);
+        const files = normalizedChanges.map((change) => {
+          if (!change.kind) {
+            throw new Error(`patch_apply_begin missing kind for ${change.path}`);
+          }
+          return { path: change.path, kind: change.kind };
+        });
+        this.pendingPatchChanges.set(callId, normalizedChanges);
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
           item: createToolCallTimelineItem({
             server: "file_change",
             tool: "apply_patch",
@@ -1418,380 +2141,291 @@ class CodexMcpAgentSession implements AgentSession {
             callId,
             displayName: buildFileChangeSummary(files),
             kind: "edit",
-            input: { changes, files },
+            input: { changes: parsedEvent.changes, files },
           }),
         });
-        break;
+        return;
       }
       case "patch_apply_end": {
-        const callId = normalizeCallId((event as { call_id?: string }).call_id);
-        const success = (event as { success?: boolean }).success ?? true;
-        const endChanges = normalizePatchFilesFromChanges(
-          (event as { changes?: unknown }).changes
-        );
-        const fileRecords = normalizePatchFilesFromFiles(
-          (event as { files?: unknown }).files
-        );
-        const pendingChanges = callId ? this.pendingPatchChanges.get(callId) : undefined;
+        const callId = parsedEvent.callId;
+        if (!callId) {
+          throw new Error("patch_apply_end missing call_id");
+        }
+        if (parsedEvent.success === undefined) {
+          throw new Error("patch_apply_end missing success");
+        }
+        const endChanges = parsedEvent.changes
+          ? parsePatchChanges(parsedEvent.changes)
+          : [];
+        const fileRecords = parsedEvent.files
+          ? parsePatchFiles(parsedEvent.files)
+          : [];
+        const pendingChanges = this.pendingPatchChanges.get(callId);
         const files =
           pendingChanges && pendingChanges.length > 0
             ? pendingChanges
             : endChanges.length > 0
               ? endChanges
               : fileRecords;
-        if (callId) {
-          this.pendingPatchChanges.delete(callId);
+        this.pendingPatchChanges.delete(callId);
+        const output: {
+          files: PatchFileChange[];
+          stdout?: string;
+          stderr?: string;
+          success: boolean;
+        } = {
+          files,
+          success: parsedEvent.success,
+        };
+        if (parsedEvent.stdout !== undefined) {
+          output.stdout = parsedEvent.stdout;
         }
-        const stdout = (event as { stdout?: unknown }).stdout;
-        const stderr = (event as { stderr?: unknown }).stderr;
-        const output: Record<string, unknown> = { files };
-        if (typeof stdout === "string") {
-          output.stdout = stdout;
+        if (parsedEvent.stderr !== undefined) {
+          output.stderr = parsedEvent.stderr;
         }
-        if (typeof stderr === "string") {
-          output.stderr = stderr;
-        }
-        output.success = success;
+        const summaryFiles = files.map((file) => {
+          if (!file.kind) {
+            throw new Error(`patch_apply_end missing kind for ${file.path}`);
+          }
+          return { path: file.path, kind: file.kind };
+        });
         this.emitEvent({
           type: "timeline",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
           item: createToolCallTimelineItem({
             server: "file_change",
             tool: "apply_patch",
-            status: success ? "completed" : "failed",
+            status: parsedEvent.success ? "completed" : "failed",
             callId,
-            displayName: buildFileChangeSummary(
-              files.map((file) => ({
-                path: file.path,
-                kind: file.kind ?? "edit",
-              }))
-            ),
+            displayName: buildFileChangeSummary(summaryFiles),
             kind: "edit",
             output,
           }),
         });
-        if (!success) {
+        if (!parsedEvent.success) {
           this.turnState && (this.turnState.sawError = true);
         }
-        break;
+        return;
       }
-      default:
-        break;
     }
   }
 
-  private handleThreadEvent(event: Record<string, unknown>): void {
-    const rawType = event.type as string;
-    const type = normalizeThreadEventType(rawType);
-    const data =
-      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : null;
-    switch (type) {
+  private handleThreadEvent(event: ThreadEvent): void {
+    switch (event.type) {
       case "thread.started": {
-        const threadId =
-          (event.thread_id as string | undefined) ?? (data?.thread_id as string | undefined);
-        if (threadId) {
-          this.sessionId = threadId;
-          this.flushPendingHistory();
-        }
+        this.sessionId = event.threadId;
+        this.flushPendingHistory();
+        const sessionId = this.sessionId
+          ? this.sessionId
+          : this.pendingLocalId
+            ? this.pendingLocalId
+            : "";
         this.emitEvent({
           type: "thread_started",
-          provider: "codex-mcp",
-          sessionId: threadId ?? this.pendingLocalId ?? "",
+          provider: CODEX_PROVIDER,
+          sessionId,
         });
-        break;
+        return;
       }
       case "turn.started":
-        this.emitEvent({ type: "turn_started", provider: "codex-mcp" });
-        break;
+        this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+        return;
       case "turn.completed": {
-        const usage = this.convertUsage(
-          (event as { usage?: unknown }).usage ?? (data as { usage?: unknown } | null)?.usage
-        );
-        this.emitEvent({ type: "turn_completed", provider: "codex-mcp", usage });
-        break;
+        const usage: AgentUsage | undefined = event.usage;
+        this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage });
+        return;
       }
       case "turn.failed": {
-        const errorRecord =
-          (event as { error?: { message?: string } }).error ??
-          ((data as { error?: { message?: string } } | null)?.error ?? null);
-        const error = errorRecord?.message ?? "Codex MCP turn failed";
         if (!this.turnState?.sawErrorTimeline) {
           this.emitEvent({
             type: "timeline",
-            provider: "codex-mcp",
-            item: { type: "error", message: error },
+            provider: CODEX_PROVIDER,
+            item: { type: "error", message: event.error },
           });
         }
-        this.emitEvent({ type: "turn_failed", provider: "codex-mcp", error });
-        break;
+        this.emitEvent({
+          type: "turn_failed",
+          provider: CODEX_PROVIDER,
+          error: event.error,
+        });
+        return;
       }
       case "item.started":
       case "item.updated":
       case "item.completed": {
-        const item =
-          (event.item as Record<string, unknown> | undefined) ??
-          (data?.item as Record<string, unknown> | undefined);
-        if (!item) break;
-        const timelineItem = this.threadItemToTimeline(item);
+        const timelineItem = this.threadItemToTimeline(event.item);
         if (timelineItem) {
           this.emitEvent({
             type: "timeline",
-            provider: "codex-mcp",
+            provider: CODEX_PROVIDER,
             item: timelineItem,
           });
         }
-        if (item.type === "command_execution") {
-          const statusValue = item.status;
-          const status = typeof statusValue === "string" ? statusValue : undefined;
-          const successValue = (item as { success?: unknown }).success;
-          const success =
-            typeof successValue === "boolean" ? successValue : undefined;
-          const hasError = Boolean(item.error);
-          const exitCode =
-            normalizeExitCode(item.exit_code ?? item.exitCode) ??
-            (success === true
-              ? 0
-              : success === false
-                ? 1
-                : status === "failed"
-                  ? 1
-                  : status === "completed"
-                    ? 0
-                    : undefined);
-          if (
-            typeof exitCode === "number"
-              ? exitCode !== 0
-              : success === false || status === "failed" || hasError
-          ) {
+        if (event.item.type === "command_execution") {
+          let resolvedExitCode = event.item.exitCode;
+          if (resolvedExitCode === undefined) {
+            if (event.item.success === true) {
+              resolvedExitCode = 0;
+            } else if (event.item.success === false) {
+              resolvedExitCode = 1;
+            } else if (event.item.status === "failed") {
+              resolvedExitCode = 1;
+            } else if (event.item.status === "completed") {
+              resolvedExitCode = 0;
+            }
+          }
+          const hasError =
+            event.item.success === false ||
+            event.item.status === "failed" ||
+            event.item.error !== undefined ||
+            (resolvedExitCode !== undefined && resolvedExitCode !== 0);
+          if (hasError) {
             this.turnState && (this.turnState.sawError = true);
+            const errorMessage =
+              resolvedExitCode !== undefined
+                ? `Command failed with exit code ${resolvedExitCode}`
+                : "Command failed";
             this.emitEvent({
               type: "timeline",
-              provider: "codex-mcp",
-              item: { type: "error", message: `Command failed with exit code ${exitCode}` },
+              provider: CODEX_PROVIDER,
+              item: { type: "error", message: errorMessage },
             });
           }
         }
-        break;
+        return;
       }
-      case "error": {
-        const message =
-          (event.message as string | undefined) ??
-          (data?.message as string | undefined) ??
-          "Codex MCP stream error";
+      case "error":
         this.emitEvent({
           type: "timeline",
-          provider: "codex-mcp",
-          item: { type: "error", message },
+          provider: CODEX_PROVIDER,
+          item: { type: "error", message: event.message },
         });
         this.emitEvent({
           type: "turn_failed",
-          provider: "codex-mcp",
-          error: message,
+          provider: CODEX_PROVIDER,
+          error: event.message,
         });
-        break;
-      }
-      default:
-        break;
+        return;
     }
   }
 
-  private threadItemToTimeline(item: Record<string, unknown>): AgentTimelineItem | null {
-    const callId = extractThreadItemCallId(item);
+  private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
     switch (item.type) {
       case "agent_message":
-        return { type: "assistant_message", text: item.text as string };
+        return { type: "assistant_message", text: item.text };
       case "reasoning":
-        return { type: "reasoning", text: item.text as string };
+        return { type: "reasoning", text: item.text };
       case "user_message":
-        return { type: "user_message", text: item.text as string };
+        return { type: "user_message", text: item.text };
       case "command_execution": {
-        const aggregatedOutput = (item as { aggregated_output?: unknown }).aggregated_output;
-        const exitCode = normalizeExitCode(
-          (item as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
-            (item as { exitCode?: unknown }).exitCode
-        );
-        const statusValue = item.status;
-        const status = typeof statusValue === "string" ? statusValue : undefined;
-        const successValue = (item as { success?: unknown }).success;
-        const success =
-          typeof successValue === "boolean" ? successValue : undefined;
-        const resolvedExitCode =
-          exitCode ??
-          (success === true
-            ? 0
-            : success === false
-              ? 1
-              : status === "failed"
-                ? 1
-                : status === "completed"
-                  ? 0
-                  : undefined);
-        const cwd = (item as { cwd?: string }).cwd;
-        const commandValue = item.command;
-        const command =
-          typeof commandValue === "string"
-            ? commandValue
-            : Array.isArray(commandValue)
-              ? (commandValue as string[]).join(" ")
-              : "command";
-
-        const outputText = typeof aggregatedOutput === "string" ? aggregatedOutput : undefined;
-        const structuredOutput =
-          outputText !== undefined || typeof resolvedExitCode === "number"
-            ? {
-                type: "command" as const,
-                command,
-                output: outputText ?? "",
-                exitCode: typeof resolvedExitCode === "number" ? resolvedExitCode : undefined,
-                cwd,
-              }
-            : undefined;
-
+        const command = normalizeCommand(item.command);
+        let resolvedExitCode = item.exitCode;
+        if (resolvedExitCode === undefined) {
+          if (item.success === true) {
+            resolvedExitCode = 0;
+          } else if (item.success === false) {
+            resolvedExitCode = 1;
+          } else if (item.status === "failed") {
+            resolvedExitCode = 1;
+          } else if (item.status === "completed") {
+            resolvedExitCode = 0;
+          }
+        }
+        const commandOutput: {
+          type: "command";
+          command: string;
+          output?: string;
+          exitCode?: number;
+          cwd?: string;
+        } = {
+          type: "command",
+          command,
+          cwd: item.cwd,
+        };
+        if (item.aggregatedOutput !== undefined) {
+          commandOutput.output = item.aggregatedOutput;
+        }
+        if (resolvedExitCode !== undefined) {
+          commandOutput.exitCode = resolvedExitCode;
+        }
         return createToolCallTimelineItem({
           server: "command",
           tool: "shell",
-          status: item.status as string | undefined,
-          callId,
-          displayName: buildCommandDisplayName(item.command),
+          status: item.status,
+          callId: item.callId,
+          displayName: command,
           kind: "execute",
-          input: { command: item.command, cwd },
-          output: structuredOutput,
+          input: { command: item.command, cwd: item.cwd },
+          output: commandOutput,
           error: item.error,
         });
       }
       case "file_change": {
-        const normalizedChanges = normalizePatchFilesFromChanges(item.changes);
-        const files =
-          normalizedChanges.length > 0
-            ? normalizedChanges
-            : ((item.changes as Array<{ path: string; kind: string }> | undefined) ?? []).map(
-                (change) => ({
-                  path: change.path,
-                  kind: change.kind,
-                })
-              );
+        const changes = item.changes ? parsePatchChanges(item.changes) : [];
+        const summaryFiles = changes.map((change) => {
+          if (!change.kind) {
+            throw new Error(`file_change missing kind for ${change.path}`);
+          }
+          return { path: change.path, kind: change.kind };
+        });
         return createToolCallTimelineItem({
           server: "file_change",
           tool: "apply_patch",
           status: "completed",
-          callId,
-          displayName: buildFileChangeSummary(
-            files.map((file) => ({ path: file.path, kind: file.kind ?? "edit" }))
-          ),
+          callId: item.callId,
+          displayName: buildFileChangeSummary(summaryFiles),
           kind: "edit",
-          output: { files },
+          output: { files: changes },
         });
       }
       case "read_file":
       case "file_read": {
-        const inputValue = (item as { input?: unknown }).input;
-        const outputValue = (item as { output?: unknown }).output;
-        const input =
-          inputValue && typeof inputValue === "object"
-            ? (inputValue as Record<string, unknown>)
-            : undefined;
+        const displayName = `Read ${item.path}`;
         const output =
-          outputValue && typeof outputValue === "object"
-            ? (outputValue as Record<string, unknown>)
-            : undefined;
-        const path =
-          asString(input?.path) ??
-          asString(input?.file_path) ??
-          asString(input?.filePath) ??
-          asString(item.path) ??
-          asString(item.file_path) ??
-          asString(item.filePath);
-        const content =
-          typeof outputValue === "string"
-            ? outputValue
-            : asString(output?.content) ??
-              asString(item.content) ??
-              asString(item.text);
+          item.content !== undefined ? item.content : item.output;
         return createToolCallTimelineItem({
           server: "file_read",
           tool: "read_file",
-          status: (item as { status?: string }).status ?? "completed",
-          callId,
-          displayName: path ? `Read ${path}` : "Read file",
+          status: item.status,
+          callId: item.callId,
+          displayName,
           kind: "read",
-          input: input ?? (path ? { path } : undefined),
-          output: content ?? output ?? outputValue,
-        });
-      }
-      case "mcp_tool_call": {
-        const { server, tool } = extractMcpToolIdentifiers(item);
-        const { input, output, status } = extractMcpToolPayload(item);
-        return createToolCallTimelineItem({
-          server: server ?? "mcp",
-          tool: tool ?? "tool",
-          status: status ?? (item.status as string | undefined),
-          callId,
-          displayName: `${server ?? "mcp"}.${tool ?? "tool"}`,
-          kind: "tool",
-          input,
+          input: item.input ? item.input : { path: item.path },
           output,
         });
       }
-      case "web_search":
-      {
-        const inputValue = (item as { input?: unknown }).input;
-        const outputValue = (item as { output?: unknown }).output;
-        const input =
-          inputValue && typeof inputValue === "object"
-            ? (inputValue as Record<string, unknown>)
-            : undefined;
+      case "mcp_tool_call": {
+        return createToolCallTimelineItem({
+          server: item.server,
+          tool: item.tool,
+          status: item.status,
+          callId: item.callId,
+          displayName: `${item.server}.${item.tool}`,
+          kind: "tool",
+          input: item.input,
+          output: item.output,
+        });
+      }
+      case "web_search": {
+        const displayName = `Web search: ${item.query}`;
         const output =
-          outputValue && typeof outputValue === "object"
-            ? (outputValue as Record<string, unknown>)
-            : undefined;
-        const query =
-          asString(item.query) ??
-          asString(input?.query) ??
-          asString((item as { search_query?: unknown }).search_query) ??
-          asString((item as { searchQuery?: unknown }).searchQuery);
-        const results =
-          outputValue ??
-          (item as { results?: unknown }).results ??
-          (item as { search_results?: unknown }).search_results ??
-          (item as { searchResults?: unknown }).searchResults ??
-          (item as { items?: unknown }).items ??
-          (item as { documents?: unknown }).documents ??
-          (item as { data?: unknown }).data ??
-          (item as { content?: unknown }).content ??
-          (item as { response?: unknown }).response ??
-          (item as { result?: unknown }).result;
+          item.results !== undefined ? item.results : item.output;
         return createToolCallTimelineItem({
           server: "web_search",
           tool: "web_search",
-          status: (item as { status?: string }).status ?? "completed",
-          callId,
-          displayName: query ? `Web search: ${query}` : "Web search",
+          status: item.status,
+          callId: item.callId,
+          displayName,
           kind: "search",
-          input: input ?? (query ? { query } : undefined),
-          output: results ?? output,
+          input: item.input ? item.input : { query: item.query },
+          output,
         });
       }
       case "todo_list":
-        return { type: "todo", items: item.items as any };
+        return { type: "todo", items: item.items };
       case "error":
-        return { type: "error", message: item.message as string };
-      default:
-        return null;
+        return { type: "error", message: item.message };
     }
-  }
-
-  private convertUsage(usage?: unknown): AgentUsage | undefined {
-    if (!usage || typeof usage !== "object") {
-      return undefined;
-    }
-    const record = usage as Record<string, unknown>;
-    return {
-      inputTokens: typeof record.input_tokens === "number" ? record.input_tokens : undefined,
-      cachedInputTokens:
-        typeof record.cached_input_tokens === "number" ? record.cached_input_tokens : undefined,
-      outputTokens: typeof record.output_tokens === "number" ? record.output_tokens : undefined,
-      totalCostUsd: typeof record.total_cost_usd === "number" ? record.total_cost_usd : undefined,
-    };
   }
 
   private buildResumePrompt(prompt: string): string {
@@ -1810,48 +2444,41 @@ class CodexMcpAgentSession implements AgentSession {
     return ["Previous conversation:", ...historyLines, "", `User: ${prompt}`].join("\n");
   }
 
-  private buildPermissionRequest(params: unknown): AgentPermissionRequest | null {
-    if (!params || typeof params !== "object") {
-      return null;
-    }
-    const record = params as Record<string, unknown>;
-    const callId =
-      (record.codex_call_id as string | undefined) ??
-      (record.codex_mcp_tool_call_id as string | undefined) ??
-      (record.codex_event_id as string | undefined) ??
-      (record.call_id as string | undefined) ??
-      randomUUID();
-    const requestId = `permission-${callId}`;
-    const command = record.codex_command ?? record.command;
-    const cwd = record.codex_cwd ?? record.cwd;
-    const commandText = extractCommandText(command);
-    const message = typeof record.message === "string" ? record.message : undefined;
+  private buildPermissionRequest(params: unknown): AgentPermissionRequest {
+    const parsed: PermissionParams = PermissionParamsSchema.parse(params);
+    const requestId = `permission-${parsed.callId}`;
+    const commandText = normalizeCommand(parsed.command);
+    const title = `Run command: ${commandText}`;
 
     return {
       id: requestId,
-      provider: "codex-mcp" as AgentPermissionRequest["provider"],
+      provider: CODEX_PROVIDER,
       name: "CodexBash",
       kind: "tool",
-      title: commandText ? `Run command: ${commandText}` : "Run shell command",
-      description: message,
+      title,
+      description: parsed.message,
       input: {
-        command,
-        cwd,
+        command: parsed.command,
+        cwd: parsed.cwd,
       },
       metadata: {
-        callId,
-        raw: record,
+        callId: parsed.callId,
+        raw: parsed.raw,
       },
     };
   }
 }
 
 export class CodexMcpAgentClient implements AgentClient {
-  readonly provider = "codex-mcp" as AgentClient["provider"];
+  readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_MCP_CAPABILITIES;
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-    const session = new CodexMcpAgentSession(config as CodexMcpAgentConfig);
+    const sessionConfig: CodexMcpAgentConfig = {
+      ...config,
+      provider: CODEX_PROVIDER,
+    };
+    const session = new CodexMcpAgentSession(sessionConfig);
     await session.connect();
     return session;
   }
@@ -1860,23 +2487,23 @@ export class CodexMcpAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>
   ): Promise<AgentSession> {
-    const metadata = handle.metadata && typeof handle.metadata === "object"
-      ? (handle.metadata as Record<string, unknown>)
-      : {};
-    const storedConfig = metadata as Partial<AgentSessionConfig>;
+    const metadata = handle.metadata ? handle.metadata : {};
+    const parsedMetadata = AgentSessionConfigSchema.parse(metadata);
+    const storedConfig: StoredSessionConfig = parsedMetadata;
     const merged: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,
-      provider: "codex-mcp",
-      cwd:
-        overrides?.cwd ??
-        storedConfig.cwd ??
-        process.cwd(),
+      provider: CODEX_PROVIDER,
+      cwd: overrides && overrides.cwd ? overrides.cwd : storedConfig.cwd,
     };
-    const session = new CodexMcpAgentSession(
-      merged as CodexMcpAgentConfig,
-      handle
-    );
+    if (!merged.cwd) {
+      merged.cwd = process.cwd();
+    }
+    const sessionConfig: CodexMcpAgentConfig = {
+      ...merged,
+      provider: CODEX_PROVIDER,
+    };
+    const session = new CodexMcpAgentSession(sessionConfig, handle);
     await session.connect();
     return session;
   }
