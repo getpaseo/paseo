@@ -59,12 +59,13 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - The reference supports permissions - copy the working approach.
   - **Done (2025-12-24 18:53)**: Matched happy-cli elicitation flow by avoiding duplicate permission requests when exec events pre-seed pending entries and aligned permission tool naming with CodexBash.
 
-- [ ] **Fix**: Test `approval-policy=untrusted` instead of `on-request`.
+- [x] **Fix**: Test `approval-policy=untrusted` instead of `on-request`.
 
   - Happy CLI uses `"untrusted"` for default mode, voice-dev uses `"on-request"`.
   - `"on-request"` may not trigger MCP elicitation.
   - Change MODE_PRESETS["auto"] to use `"untrusted"` and test if real elicitation works.
   - If it works, remove the synthetic permission gating workaround.
+  - **Done (2025-12-24 19:12)**: Switched default auto approval policy to untrusted and updated permission tests; ran `vitest run codex-mcp-agent.test.ts` twice and elicitation still failed (missing permission requests, plus existing timeline/runtime failures), so kept permission gating fallback.
 
 - [x] **Fix**: Use valid model instead of gpt-4.1.
 
@@ -72,6 +73,25 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Check what models are actually available (run `codex --help` or check docs).
   - Update tests and provider to use a valid default model.
   - **Done (2025-12-24 18:58)**: Updated Codex MCP default model to gpt-5.1-codex and switched runtime info test to use the valid model id.
+
+- [ ] **Fix**: Remove hardcoded default model - passthrough user choice.
+
+  - Pass `config.model` if user specifies one.
+  - If user doesn't specify, omit `model` field - let Codex CLI pick its default.
+  - Do NOT hardcode any fallback model in the provider.
+  - Tests should not specify a model unless testing model passthrough.
+
+- [ ] **Review**: Flag ALL workarounds/hacks in `codex-mcp-agent.ts` - they are NOT acceptable.
+
+  - Read the entire file and list every workaround, fallback, or synthetic behavior.
+  - Known workarounds to remove:
+    - `queuePermissionGatedEvent` - synthetic permission gating
+    - `ensurePermissionRequestFromEvent` - creating fake permission requests
+    - `pendingToolEvents` queue - hack to defer events
+    - `exec_approval_request` handler - workaround for missing elicitation
+    - `modelRejected` fallback logic
+  - For each: explain what real fix is needed instead.
+  - These hacks hide bugs. The provider should work correctly or fail clearly.
 
 - [ ] **Fix**: Resolve typecheck errors in `codex-mcp-agent.ts`.
 

@@ -541,7 +541,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-        approvalPolicy: "on-request",
+        approvalPolicy: "untrusted",
       } as AgentSessionConfig;
 
       let session: AgentSession | null = null;
@@ -676,7 +676,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-        approvalPolicy: "on-request",
+        approvalPolicy: "untrusted",
       } as AgentSessionConfig;
 
       let session: AgentSession | null = null;
@@ -751,7 +751,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-        approvalPolicy: "on-request",
+        approvalPolicy: "untrusted",
       } as AgentSessionConfig;
 
       let session: AgentSession | null = null;
@@ -837,7 +837,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-        approvalPolicy: "on-request",
+        approvalPolicy: "untrusted",
       } as AgentSessionConfig;
 
       let session: AgentSession | null = null;
