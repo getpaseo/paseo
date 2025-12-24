@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { createServer as createHTTPServer } from "http";
 import { randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -34,17 +35,6 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentRegistry } from "../agent-registry.js";
 import { createAgentMcpServer } from "../mcp-server.js";
 
-const hasClaudeCredentials = Boolean(
-  process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY?.trim()?.length
-);
-const requireClaudeCredentials = () => {
-  if (!hasClaudeCredentials) {
-    throw new Error(
-      "Claude credentials missing. Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to run ClaudeAgentClient integration tests."
-    );
-  }
-};
-
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
@@ -54,8 +44,18 @@ function tmpCwd(): string {
   }
 }
 
+function copyClaudeCredentials(sourceDir: string, targetDir: string): void {
+  const sourceCredentials = path.join(sourceDir, ".credentials.json");
+  if (!existsSync(sourceCredentials)) {
+    return;
+  }
+  copyFileSync(sourceCredentials, path.join(targetDir, ".credentials.json"));
+}
+
 function useTempClaudeConfigDir(): () => void {
   const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const sourceConfigDir =
+    previousConfigDir ?? path.join(os.homedir(), ".claude");
   const configDir = mkdtempSync(path.join(os.tmpdir(), "claude-config-"));
   const settings = {
     permissions: {
@@ -72,6 +72,7 @@ function useTempClaudeConfigDir(): () => void {
   const settingsText = `${JSON.stringify(settings, null, 2)}\n`;
   writeFileSync(path.join(configDir, "settings.json"), settingsText, "utf8");
   writeFileSync(path.join(configDir, "settings.local.json"), settingsText, "utf8");
+  copyClaudeCredentials(sourceConfigDir, configDir);
   process.env.CLAUDE_CONFIG_DIR = configDir;
   return () => {
     if (previousConfigDir === undefined) {
@@ -274,9 +275,6 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     },
   });
 
-  beforeAll(() => {
-    requireClaudeCredentials();
-  });
   beforeAll(() => {
     restoreClaudeConfigDir = useTempClaudeConfigDir();
   });

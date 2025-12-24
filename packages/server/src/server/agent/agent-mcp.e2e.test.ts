@@ -2,7 +2,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -35,6 +35,14 @@ const CLAUDE_SETTINGS = {
     autoAllowBashIfSandboxed: false,
   },
 };
+
+async function copyClaudeCredentials(sourceDir: string, targetDir: string): Promise<void> {
+  const sourceCredentials = path.join(sourceDir, ".credentials.json");
+  if (!existsSync(sourceCredentials)) {
+    return;
+  }
+  await copyFile(sourceCredentials, path.join(targetDir, ".credentials.json"));
+}
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -145,10 +153,13 @@ describe("agent MCP end-to-end", () => {
       process.env.CODEX_SESSION_DIR = codexSessionDir;
       process.env.CODEX_HOME = codexHome;
       const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const sourceClaudeConfigDir =
+        previousClaudeConfigDir ?? path.join(os.homedir(), ".claude");
       const claudeConfigDir = await mkdtemp(path.join(os.tmpdir(), "claude-config-"));
       const claudeSettingsText = `${JSON.stringify(CLAUDE_SETTINGS, null, 2)}\n`;
       await writeFile(path.join(claudeConfigDir, "settings.json"), claudeSettingsText, "utf8");
       await writeFile(path.join(claudeConfigDir, "settings.local.json"), claudeSettingsText, "utf8");
+      await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
       process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig);

@@ -325,7 +325,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - All tests must run unconditionally and pass
   - **Done (2025-12-24 23:21)**: WHAT: tightened Claude permission parity setup/cleanup and sandbox config in `packages/server/src/server/agent/providers/claude-agent.test.ts:259` and `packages/server/src/server/agent/providers/claude-agent.test.ts:495`, enabled Claude user+project settings in `packages/server/src/server/agent/providers/claude-agent.ts:536`, set CLAUDE test sandbox config in `packages/server/src/server/agent/agent-mcp.e2e.test.ts:26`, restored wait_for_agent completion via stream events in `packages/server/src/server/agent/agent-manager.ts:696`, and sanitized permission payloads for MCP responses in `packages/server/src/server/agent/mcp-server.ts:81` + `packages/server/src/server/agent/mcp-server.ts:263`. RESULT: Claude permission allow/deny/abort flows resolve correctly and MCP agent run completes without timeouts; create_agent no longer fails schema validation. EVIDENCE: `npm run test --workspace=@paseo/server -- claude-agent.test.ts -t "permission flow parity"` (3/3 passed) and `npm run test --workspace=@paseo/server -- agent-mcp.e2e.test.ts` (1/1 passed).
 
-- [ ] **Fix**: Claude credentials work - find REAL reason Claude tests fail.
+- [x] **Fix**: Claude credentials work - find REAL reason Claude tests fail.
 
   - **Context**: You (the agent reading this) ARE Codex. The test runs Codex MCP which launches Claude.
   - "Missing Claude credentials" is FALSE - verified with `scripts/codex-claude-test.ts`:
@@ -337,6 +337,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - So why do the E2E tests claim credentials are missing?
   - Investigate what the Claude E2E tests are ACTUALLY doing differently
   - Run the failing test with debug output and capture exact error
+  - **Done (2025-12-24 23:30)**: WHAT: copied Claude SDK `.credentials.json` into temp config dirs in `packages/server/src/server/agent/providers/claude-agent.test.ts:47` and `packages/server/src/server/agent/agent-mcp.e2e.test.ts:39`, removed the env-only credential gate in `packages/server/src/server/agent/providers/claude-agent.test.ts:55`, and documented the root cause in `REPORT-claude-credentials-failure.md`. RESULT: Claude tests no longer falsely report missing credentials when auth is stored in the default config dir. EVIDENCE: `npm run test --workspace=@paseo/server -- agent-mcp.e2e.test.ts` (1/1 passed) and `npm run test --workspace=@paseo/server -- claude-agent.test.ts -t "responds with text"` (1/1 passed; remaining tests skipped by filter).
 
 - [x] **Test (E2E) CRITICAL**: Interruption/abort latency for Codex MCP provider.
 
