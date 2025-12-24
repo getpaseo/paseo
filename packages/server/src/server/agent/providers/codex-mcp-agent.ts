@@ -36,6 +36,7 @@ type TurnState = {
   sawAssistant: boolean;
   sawReasoning: boolean;
   sawError: boolean;
+  sawErrorTimeline: boolean;
   completed: boolean;
   failed: boolean;
 };
@@ -474,6 +475,7 @@ class CodexMcpAgentSession implements AgentSession {
       sawAssistant: false,
       sawReasoning: false,
       sawError: false,
+      sawErrorTimeline: false,
       completed: false,
       failed: false,
     };
@@ -792,6 +794,12 @@ class CodexMcpAgentSession implements AgentSession {
       }
       if (event.item.type === "reasoning") {
         this.turnState && (this.turnState.sawReasoning = true);
+      }
+      if (event.item.type === "error") {
+        if (this.turnState) {
+          this.turnState.sawError = true;
+          this.turnState.sawErrorTimeline = true;
+        }
       }
     }
     if (event.type === "turn_completed") {
@@ -1149,13 +1157,12 @@ class CodexMcpAgentSession implements AgentSession {
           (event as { error?: { message?: string } }).error ??
           ((data as { error?: { message?: string } } | null)?.error ?? null);
         const error = errorRecord?.message ?? "Codex MCP turn failed";
-        if (!this.turnState?.sawError) {
+        if (!this.turnState?.sawErrorTimeline) {
           this.emitEvent({
             type: "timeline",
             provider: "codex-mcp",
             item: { type: "error", message: error },
           });
-          this.turnState && (this.turnState.sawError = true);
         }
         this.emitEvent({ type: "turn_failed", provider: "codex-mcp", error });
         break;
