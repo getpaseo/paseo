@@ -118,11 +118,21 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP command output should include exit codes for command tool calls.
   - **Done (2025-12-24 19:36)**: Ensured command tool outputs include exit codes even when output text is missing.
 
-- [ ] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
+- [x] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
+  - **Done (2025-12-24 19:40)**: Normalized thread event types and added data fallback so item events map to timeline entries.
 
 - [ ] **Fix**: Codex MCP should emit error timeline items for failed turns.
 
 - [ ] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
+
+- [ ] **Investigate**: Elicitation was fixed in Codex 0.71.0 - why isn't it working for us?
+
+  - Web search found: Issue #6992 - Codex auto-declined elicitation requests, fixed in 0.71.0
+  - We're on 0.77.0 so elicitation SHOULD work now
+  - The bug was in `codex-rs/rmcp-client/src/logging_client_handler.rs`
+  - Verify we're actually receiving ElicitRequest but maybe handling it wrong
+  - Check GitHub issue #6992 for exact fix details
+  - Maybe happy-cli works because it's on a newer version?
 
 - [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
 

@@ -129,6 +129,16 @@ function extractThreadItemCallId(item: Record<string, unknown>): string | undefi
   );
 }
 
+function normalizeThreadEventType(type: string): string {
+  if (type.startsWith("thread.item.")) {
+    return type.slice("thread.".length);
+  }
+  if (type.startsWith("thread.turn.")) {
+    return type.slice("thread.".length);
+  }
+  return type;
+}
+
 function buildCommandDisplayName(command?: unknown): string {
   if (typeof command === "string") {
     const trimmed = command.trim();
@@ -969,13 +979,22 @@ class CodexMcpAgentSession implements AgentSession {
     if (!event || typeof event !== "object") {
       return;
     }
-    const type = (event as { type?: unknown }).type;
-    if (typeof type !== "string") {
+    const record = event as Record<string, unknown>;
+    const data = record.data && typeof record.data === "object" ? (record.data as Record<string, unknown>) : null;
+    const recordType = record.type;
+    const dataType = data?.type;
+    let type = typeof recordType === "string" ? recordType : undefined;
+    let eventRecord: Record<string, unknown> = record;
+    if ((!type || type === "event") && typeof dataType === "string") {
+      type = dataType;
+      eventRecord = { ...record, ...data, type };
+    }
+    if (!type) {
       return;
     }
 
     if (type.includes(".") || type.startsWith("turn.") || type.startsWith("thread.") || type.startsWith("item.")) {
-      this.handleThreadEvent(event as Record<string, unknown>);
+      this.handleThreadEvent(eventRecord);
       return;
     }
 
@@ -1163,10 +1182,14 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private handleThreadEvent(event: Record<string, unknown>): void {
-    const type = event.type as string;
+    const rawType = event.type as string;
+    const type = normalizeThreadEventType(rawType);
+    const data =
+      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : null;
     switch (type) {
       case "thread.started": {
-        const threadId = event.thread_id as string | undefined;
+        const threadId =
+          (event.thread_id as string | undefined) ?? (data?.thread_id as string | undefined);
         if (threadId) {
           this.sessionId = threadId;
           this.flushPendingHistory();
@@ -1182,19 +1205,26 @@ class CodexMcpAgentSession implements AgentSession {
         this.emitEvent({ type: "turn_started", provider: "codex-mcp" });
         break;
       case "turn.completed": {
-        const usage = this.convertUsage((event as { usage?: unknown }).usage);
+        const usage = this.convertUsage(
+          (event as { usage?: unknown }).usage ?? (data as { usage?: unknown } | null)?.usage
+        );
         this.emitEvent({ type: "turn_completed", provider: "codex-mcp", usage });
         break;
       }
       case "turn.failed": {
-        const error = (event as { error?: { message?: string } }).error?.message ?? "Codex MCP turn failed";
+        const errorRecord =
+          (event as { error?: { message?: string } }).error ??
+          ((data as { error?: { message?: string } } | null)?.error ?? null);
+        const error = errorRecord?.message ?? "Codex MCP turn failed";
         this.emitEvent({ type: "turn_failed", provider: "codex-mcp", error });
         break;
       }
       case "item.started":
       case "item.updated":
       case "item.completed": {
-        const item = event.item as Record<string, unknown> | undefined;
+        const item =
+          (event.item as Record<string, unknown> | undefined) ??
+          (data?.item as Record<string, unknown> | undefined);
         if (!item) break;
         const timelineItem = this.threadItemToTimeline(item);
         if (timelineItem) {
@@ -1218,7 +1248,10 @@ class CodexMcpAgentSession implements AgentSession {
         break;
       }
       case "error": {
-        const message = (event.message as string | undefined) ?? "Codex MCP stream error";
+        const message =
+          (event.message as string | undefined) ??
+          (data?.message as string | undefined) ??
+          "Codex MCP stream error";
         this.emitEvent({
           type: "timeline",
           provider: "codex-mcp",
