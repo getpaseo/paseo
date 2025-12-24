@@ -95,16 +95,22 @@ async function settleAgentRun(client: McpClient, agentId: string): Promise<void>
   }
 }
 
+const hasClaudeCredentials = Boolean(
+  process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
+);
 const hasCodexCredentials = Boolean(
   process.env.OPENAI_API_KEY ||
     process.env.CODEX_API_KEY ||
     process.env.OPENROUTER_API_KEY
 );
+const hasAgentCredentials = hasClaudeCredentials || hasCodexCredentials;
+const agentType = hasClaudeCredentials ? "claude" : "codex";
+const agentMode = agentType === "claude" ? "bypassPermissions" : "full-access";
 
 describe("agent MCP end-to-end", () => {
-  const runTest = hasCodexCredentials ? test : test.skip;
+  const runTest = hasAgentCredentials ? test : test.skip;
   runTest(
-    "creates a codex agent and writes a file",
+    "creates an agent and writes a file",
     async () => {
       const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -177,8 +183,8 @@ describe("agent MCP end-to-end", () => {
           args: {
             cwd: agentCwd,
             title: "MCP e2e smoke",
-            agentType: "codex",
-            initialMode: "full-access",
+            agentType,
+            initialMode: agentMode,
             background: false,
           },
         })) as McpToolResult;
@@ -199,7 +205,7 @@ describe("agent MCP end-to-end", () => {
           args: {
             agentId,
             prompt,
-            sessionMode: "full-access",
+            sessionMode: agentMode,
             background: false,
           },
         })) as McpToolResult;
