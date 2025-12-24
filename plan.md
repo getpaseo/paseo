@@ -161,7 +161,9 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   - **Done (2025-12-24 19:56)**: Parse rollout shell command args/outputs when they are objects and preserve metadata on hydrated command results.
 
-- [ ] **Test (E2E)**: Rerun server vitest after fixes.
+- [x] **Test (E2E)**: Rerun server vitest after fixes.
+
+  - **Done (2025-12-24 20:02)**: Ran `npm run test --workspace=@paseo/server`; `codex-agent.test.ts` failure in persisted shell_command hydration (expected undefined to be truthy) and `codex-mcp-agent.test.ts` hung after 6/11 tests, interrupted.
 
 - [ ] **Decision**: Evaluate if MCP provider is even necessary.
 
