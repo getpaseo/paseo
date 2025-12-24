@@ -115,7 +115,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Test (E2E)**: Run tests and verify fixes work.
   - **Done (2025-12-24 19:32)**: Ran `npm run test --workspace=@paseo/server`; 9 failures (1 in `codex-agent.test.ts` missing persisted shell_command entry, 8 in `codex-mcp-agent.test.ts` for exit code, thread/item events, error timeline, persistence metadata, and permission requests).
 
-- [ ] **Fix**: Codex MCP command output should include exit codes for command tool calls.
+- [x] **Fix**: Codex MCP command output should include exit codes for command tool calls.
+  - **Done (2025-12-24 19:36)**: Ensured command tool outputs include exit codes even when output text is missing.
 
 - [ ] **Fix**: Codex MCP thread/item event mapping should capture file_change, mcp_tool_call, web_search, and todo_list.
 
