@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,7 +36,19 @@ function useTempCodexSessionDir(): () => void {
 async function loadCodexMcpAgentClient(): Promise<{
   new (): {
     createSession: (config: AgentSessionConfig) => Promise<{
+      run: (prompt: string) => Promise<{ finalText: string }>;
       stream: (prompt: string) => AsyncGenerator<AgentStreamEvent>;
+      streamHistory: () => AsyncGenerator<AgentStreamEvent>;
+      describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
+      close: () => Promise<void>;
+    }>;
+    resumeSession: (
+      handle: { sessionId: string; metadata?: Record<string, unknown> },
+      overrides?: Partial<AgentSessionConfig>
+    ) => Promise<{
+      run: (prompt: string) => Promise<{ finalText: string }>;
+      streamHistory: () => AsyncGenerator<AgentStreamEvent>;
+      describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
       close: () => Promise<void>;
     }>;
   };
@@ -44,7 +57,19 @@ async function loadCodexMcpAgentClient(): Promise<{
     return (await import("./codex-mcp-agent.js")) as {
       CodexMcpAgentClient: new () => {
         createSession: (config: AgentSessionConfig) => Promise<{
+          run: (prompt: string) => Promise<{ finalText: string }>;
           stream: (prompt: string) => AsyncGenerator<AgentStreamEvent>;
+          streamHistory: () => AsyncGenerator<AgentStreamEvent>;
+          describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
+          close: () => Promise<void>;
+        }>;
+        resumeSession: (
+          handle: { sessionId: string; metadata?: Record<string, unknown> },
+          overrides?: Partial<AgentSessionConfig>
+        ) => Promise<{
+          run: (prompt: string) => Promise<{ finalText: string }>;
+          streamHistory: () => AsyncGenerator<AgentStreamEvent>;
+          describePersistence: () => { sessionId: string; metadata?: Record<string, unknown> } | null;
           close: () => Promise<void>;
         }>;
       };
@@ -221,6 +246,87 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect(errorEvents.length).toBeGreaterThan(0);
       } finally {
         await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
+    "persists session metadata and resumes with history",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex-mcp",
+        cwd,
+        modeId: "full-access",
+      } as AgentSessionConfig;
+
+      let session: Awaited<ReturnType<typeof client.createSession>> | null =
+        null;
+      let resumed: Awaited<ReturnType<typeof client.resumeSession>> | null =
+        null;
+      const token = `ALPHA-${randomUUID()}`;
+
+      try {
+        session = await client.createSession(config);
+
+        const first = await session.run(
+          `Remember the word ${token} and reply with ACK.`
+        );
+        expect(first.finalText.toLowerCase()).toContain("ack");
+
+        const handle = session.describePersistence();
+        expect(handle?.sessionId).toBeTruthy();
+        if (!handle) {
+          throw new Error("Missing persistence handle for Codex MCP session");
+        }
+
+        const conversationId =
+          handle.metadata && typeof handle.metadata === "object"
+            ? (handle.metadata as Record<string, unknown>).conversationId
+            : undefined;
+        expect(typeof conversationId).toBe("string");
+        expect((conversationId as string).length).toBeGreaterThan(0);
+
+        await session.close();
+        session = null;
+
+        resumed = await client.resumeSession(handle);
+        const history: AgentStreamEvent[] = [];
+        for await (const event of resumed.streamHistory()) {
+          history.push(event);
+        }
+
+        expect(
+          history.some(
+            (event) =>
+              event.type === "timeline" &&
+              providerFromEvent(event) === "codex-mcp" &&
+              (event.item.type === "assistant_message" ||
+                event.item.type === "user_message")
+          )
+        ).toBe(true);
+
+        const response = await resumed.run(
+          `Respond with the exact token ${token} and stop.`
+        );
+        expect(response.finalText).toContain(token);
+
+        const resumedHandle = resumed.describePersistence();
+        const resumedConversationId =
+          resumedHandle?.metadata && typeof resumedHandle.metadata === "object"
+            ? (resumedHandle.metadata as Record<string, unknown>).conversationId
+            : undefined;
+        expect(resumedHandle?.sessionId).toBe(handle.sessionId);
+        expect(resumedConversationId).toBe(conversationId);
+      } finally {
+        await session?.close();
+        await resumed?.close();
         rmSync(cwd, { recursive: true, force: true });
         restoreSessionDir();
       }

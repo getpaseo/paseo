@@ -46,10 +46,11 @@ Reference implementation: `/Users/moboudra/dev/voice-dev/.tmp/happy-cli` (see `s
   - Capture raw event shape for command output/exit code to decide mapping fallback.
   - **Done (2025-12-24 17:27)**: Added MCP event mapping parity tests; vitest run fails because `codex-mcp-agent.ts` is not implemented yet.
 
-- [ ] **Test (E2E)**: MCP persistence + resume semantics.
+- [x] **Test (E2E)**: MCP persistence + resume semantics.
 
   - Ensure `describePersistence()` includes sessionId + conversationId and resume uses `codex-reply`.
   - Validate history/timeline hydration on resumed session.
+  - **Done (2025-12-24 17:31)**: Added persistence/resume E2E test and verified vitest fails until codex-mcp-agent is implemented.
 
 - [ ] **Test (E2E)**: MCP runtime info reporting.
 
