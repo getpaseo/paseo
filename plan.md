@@ -277,7 +277,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP permission request flow still missing in read-only/deny/abort tests (permission request null).
   - **Done (2025-12-24 21:12)**: Updated Codex MCP permission tests to use read-only mode with unsafe write commands and relaxed deny/abort expectations to match MCP behavior; reran Vitest but the run hung mid-suite and was interrupted.
 
-- [ ] **Fix**: Investigate `agent-mcp.e2e.test.ts` hang (Claude agent flow) and add timeout/skip conditions as needed.
+- [x] **Fix**: Investigate `agent-mcp.e2e.test.ts` hang (Claude agent flow) and add timeout/skip conditions as needed.
+  - **Done (2025-12-24 21:17)**: Added explicit Claude e2e opt-in gating plus timeouts around MCP tool calls, agent completion polling, and cleanup to avoid hanging the suite.
 
 - [ ] **Test (E2E) CRITICAL**: Interruption/abort latency for Codex MCP provider.
 
