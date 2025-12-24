@@ -55,6 +55,13 @@ type ElicitResponse = {
 };
 
 type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+type PatchFileChange = {
+  path: string;
+  kind?: string;
+  before?: string;
+  after?: string;
+  patch?: string;
+};
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -138,6 +145,101 @@ function normalizeThreadEventType(type: string): string {
     return type.slice("thread.".length);
   }
   return type;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizePatchFile(
+  path: string,
+  record: Record<string, unknown>
+): PatchFileChange {
+  const before =
+    asString(record.before) ??
+    asString(record.original) ??
+    asString(record.old) ??
+    asString(record.previous) ??
+    asString(record.from);
+  const after =
+    asString(record.after) ??
+    asString(record.new) ??
+    asString(record.next) ??
+    asString(record.to);
+  const patch =
+    asString(record.patch) ??
+    asString(record.diff) ??
+    asString(record.unified_diff) ??
+    asString(record.unifiedDiff);
+  const kind =
+    asString(record.kind) ??
+    asString(record.type) ??
+    asString(record.action) ??
+    asString(record.change_type) ??
+    (before === undefined && after !== undefined
+      ? "create"
+      : before !== undefined && after === undefined
+        ? "delete"
+        : before !== undefined || after !== undefined || patch !== undefined
+          ? "edit"
+          : undefined);
+  return { path, kind, before, after, patch };
+}
+
+function normalizePatchFilesFromChanges(changes: unknown): PatchFileChange[] {
+  if (!changes) {
+    return [];
+  }
+  if (Array.isArray(changes)) {
+    return changes.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const record = entry as Record<string, unknown>;
+      const path = asString(record.path);
+      if (!path) {
+        return [];
+      }
+      return [normalizePatchFile(path, record)];
+    });
+  }
+  if (typeof changes === "object") {
+    const record = changes as Record<string, unknown>;
+    return Object.entries(record).flatMap(([path, value]) => {
+      if (!path) {
+        return [];
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return [normalizePatchFile(path, value as Record<string, unknown>)];
+      }
+      if (typeof value === "string") {
+        return [{ path, kind: "edit", patch: value }];
+      }
+      return [{ path, kind: "edit" }];
+    });
+  }
+  return [];
+}
+
+function normalizePatchFilesFromFiles(files: unknown): PatchFileChange[] {
+  if (!Array.isArray(files)) {
+    return [];
+  }
+  return files.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const path = asString(record.path);
+    if (!path) {
+      return [];
+    }
+    const kind =
+      asString(record.kind) ??
+      asString(record.type) ??
+      asString(record.action);
+    return [{ path, kind }];
+  });
 }
 
 function normalizeExitCode(value: unknown): number | undefined {
@@ -354,6 +456,7 @@ class CodexMcpAgentSession implements AgentSession {
   private persistedHistory: AgentTimelineItem[] = [];
   private pendingHistory: AgentTimelineItem[] = [];
   private turnState: TurnState | null = null;
+  private pendingPatchChanges = new Map<string, PatchFileChange[]>();
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
@@ -842,6 +945,10 @@ class CodexMcpAgentSession implements AgentSession {
     }
 
     if (!turnState.completed && !turnState.failed) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    if (!turnState.completed && !turnState.failed) {
       if (turnState.sawError) {
         this.emitEvent({
           type: "turn_failed",
@@ -1029,6 +1136,20 @@ class CodexMcpAgentSession implements AgentSession {
       return;
     }
 
+    const isTopLevelItemEvent =
+      type === "file_change" ||
+      type === "mcp_tool_call" ||
+      type === "web_search" ||
+      type === "todo_list";
+    if (isTopLevelItemEvent && !("item" in eventRecord)) {
+      const itemRecord = { ...eventRecord, type };
+      eventRecord = {
+        type: "item.completed",
+        item: itemRecord,
+      };
+      type = "item.completed";
+    }
+
     const normalizedType = normalizeThreadEventType(type);
     const providerRaw =
       normalizedType !== type ? { ...eventRecord, type: normalizedType } : eventRecord;
@@ -1123,6 +1244,29 @@ class CodexMcpAgentSession implements AgentSession {
           (event as { stderr?: unknown }).stderr;
         const outputRecord =
           output && typeof output === "object" ? (output as Record<string, unknown>) : undefined;
+        const statusValue = (event as { status?: unknown }).status;
+        const status = typeof statusValue === "string" ? statusValue : undefined;
+        const successValue =
+          (event as { success?: unknown }).success ?? outputRecord?.success;
+        const success =
+          typeof successValue === "boolean" ? successValue : undefined;
+        const errorValue = (event as { error?: unknown }).error;
+        const hasError = Boolean(errorValue);
+        const outputExitCode = normalizeExitCode(
+          outputRecord?.exit_code ?? outputRecord?.exitCode
+        );
+        const resolvedExitCode =
+          exitCode ??
+          outputExitCode ??
+          (success === true
+            ? 0
+            : success === false
+              ? 1
+              : status === "failed"
+                ? 1
+                : status === "completed"
+                  ? 0
+                  : undefined);
         const outputText =
           typeof output === "string"
             ? output
@@ -1132,17 +1276,22 @@ class CodexMcpAgentSession implements AgentSession {
                 ? outputRecord.stderr
                 : undefined;
         const structuredOutput =
-          outputText !== undefined || typeof exitCode === "number"
+          outputText !== undefined || typeof resolvedExitCode === "number"
             ? {
                 type: "command" as const,
                 command: extractCommandText(command) ?? "command",
                 output: outputText ?? "",
-                exitCode,
+                exitCode: resolvedExitCode,
                 cwd,
               }
             : outputRecord;
         const emitEvent = () => {
-          if (typeof exitCode === "number" && exitCode !== 0) {
+          const failed =
+            success === false ||
+            status === "failed" ||
+            hasError ||
+            (typeof resolvedExitCode === "number" && resolvedExitCode !== 0);
+          if (failed) {
             this.turnState && (this.turnState.sawError = true);
           }
           this.emitEvent({
@@ -1151,7 +1300,7 @@ class CodexMcpAgentSession implements AgentSession {
             item: createToolCallTimelineItem({
               server: "command",
               tool: "shell",
-              status: exitCode && exitCode !== 0 ? "failed" : "completed",
+              status: failed ? "failed" : "completed",
               callId,
               displayName: buildCommandDisplayName(command),
               kind: "execute",
@@ -1159,11 +1308,14 @@ class CodexMcpAgentSession implements AgentSession {
               output: structuredOutput,
             }),
           });
-          if (typeof exitCode === "number" && exitCode !== 0) {
+          if (failed) {
             this.emitEvent({
               type: "timeline",
               provider: "codex-mcp",
-              item: { type: "error", message: `Command failed with exit code ${exitCode}` },
+              item: {
+                type: "error",
+                message: `Command failed with exit code ${resolvedExitCode ?? "unknown"}`,
+              },
             });
           }
         };
@@ -1172,8 +1324,21 @@ class CodexMcpAgentSession implements AgentSession {
       }
       case "patch_apply_begin": {
         const callId = normalizeCallId((event as { call_id?: string }).call_id);
-        const changes = (event as { changes?: Record<string, unknown> }).changes ?? {};
-        const files = Object.keys(changes).map((file) => ({ path: file, kind: "edit" }));
+        const changes = (event as { changes?: unknown }).changes;
+        const normalizedChanges = normalizePatchFilesFromChanges(changes);
+        const files =
+          normalizedChanges.length > 0
+            ? normalizedChanges.map((change) => ({
+                path: change.path,
+                kind: change.kind ?? "edit",
+              }))
+            : Object.keys((changes as Record<string, unknown>) ?? {}).map((file) => ({
+                path: file,
+                kind: "edit",
+              }));
+        if (callId) {
+          this.pendingPatchChanges.set(callId, normalizedChanges);
+        }
         this.emitEvent({
           type: "timeline",
           provider: "codex-mcp",
@@ -1184,7 +1349,7 @@ class CodexMcpAgentSession implements AgentSession {
             callId,
             displayName: buildFileChangeSummary(files),
             kind: "edit",
-            input: { changes },
+            input: { changes, files },
           }),
         });
         break;
@@ -1192,7 +1357,32 @@ class CodexMcpAgentSession implements AgentSession {
       case "patch_apply_end": {
         const callId = normalizeCallId((event as { call_id?: string }).call_id);
         const success = (event as { success?: boolean }).success ?? true;
-        const files = (event as { files?: { path: string; kind: string }[] }).files ?? [];
+        const endChanges = normalizePatchFilesFromChanges(
+          (event as { changes?: unknown }).changes
+        );
+        const fileRecords = normalizePatchFilesFromFiles(
+          (event as { files?: unknown }).files
+        );
+        const pendingChanges = callId ? this.pendingPatchChanges.get(callId) : undefined;
+        const files =
+          pendingChanges && pendingChanges.length > 0
+            ? pendingChanges
+            : endChanges.length > 0
+              ? endChanges
+              : fileRecords;
+        if (callId) {
+          this.pendingPatchChanges.delete(callId);
+        }
+        const stdout = (event as { stdout?: unknown }).stdout;
+        const stderr = (event as { stderr?: unknown }).stderr;
+        const output: Record<string, unknown> = { files };
+        if (typeof stdout === "string") {
+          output.stdout = stdout;
+        }
+        if (typeof stderr === "string") {
+          output.stderr = stderr;
+        }
+        output.success = success;
         this.emitEvent({
           type: "timeline",
           provider: "codex-mcp",
@@ -1201,9 +1391,14 @@ class CodexMcpAgentSession implements AgentSession {
             tool: "apply_patch",
             status: success ? "completed" : "failed",
             callId,
-            displayName: buildFileChangeSummary(files),
+            displayName: buildFileChangeSummary(
+              files.map((file) => ({
+                path: file.path,
+                kind: file.kind ?? "edit",
+              }))
+            ),
             kind: "edit",
-            output: { files },
+            output,
           }),
         });
         if (!success) {
@@ -1277,8 +1472,28 @@ class CodexMcpAgentSession implements AgentSession {
           });
         }
         if (item.type === "command_execution") {
-          const exitCode = normalizeExitCode(item.exit_code ?? item.exitCode);
-          if (typeof exitCode === "number" && exitCode !== 0) {
+          const statusValue = item.status;
+          const status = typeof statusValue === "string" ? statusValue : undefined;
+          const successValue = (item as { success?: unknown }).success;
+          const success =
+            typeof successValue === "boolean" ? successValue : undefined;
+          const hasError = Boolean(item.error);
+          const exitCode =
+            normalizeExitCode(item.exit_code ?? item.exitCode) ??
+            (success === true
+              ? 0
+              : success === false
+                ? 1
+                : status === "failed"
+                  ? 1
+                  : status === "completed"
+                    ? 0
+                    : undefined);
+          if (
+            typeof exitCode === "number"
+              ? exitCode !== 0
+              : success === false || status === "failed" || hasError
+          ) {
             this.turnState && (this.turnState.sawError = true);
             this.emitEvent({
               type: "timeline",
@@ -1326,6 +1541,22 @@ class CodexMcpAgentSession implements AgentSession {
           (item as { exit_code?: unknown; exitCode?: unknown }).exit_code ??
             (item as { exitCode?: unknown }).exitCode
         );
+        const statusValue = item.status;
+        const status = typeof statusValue === "string" ? statusValue : undefined;
+        const successValue = (item as { success?: unknown }).success;
+        const success =
+          typeof successValue === "boolean" ? successValue : undefined;
+        const resolvedExitCode =
+          exitCode ??
+          (success === true
+            ? 0
+            : success === false
+              ? 1
+              : status === "failed"
+                ? 1
+                : status === "completed"
+                  ? 0
+                  : undefined);
         const cwd = (item as { cwd?: string }).cwd;
         const commandValue = item.command;
         const command =
@@ -1337,12 +1568,12 @@ class CodexMcpAgentSession implements AgentSession {
 
         const outputText = typeof aggregatedOutput === "string" ? aggregatedOutput : undefined;
         const structuredOutput =
-          outputText !== undefined || typeof exitCode === "number"
+          outputText !== undefined || typeof resolvedExitCode === "number"
             ? {
                 type: "command" as const,
                 command,
                 output: outputText ?? "",
-                exitCode: typeof exitCode === "number" ? exitCode : undefined,
+                exitCode: typeof resolvedExitCode === "number" ? resolvedExitCode : undefined,
                 cwd,
               }
             : undefined;
@@ -1360,17 +1591,24 @@ class CodexMcpAgentSession implements AgentSession {
         });
       }
       case "file_change": {
-        const changes = (item.changes as Array<{ path: string; kind: string }> | undefined) ?? [];
-        const files = changes.map((change) => ({
-          path: change.path,
-          kind: change.kind,
-        }));
+        const normalizedChanges = normalizePatchFilesFromChanges(item.changes);
+        const files =
+          normalizedChanges.length > 0
+            ? normalizedChanges
+            : ((item.changes as Array<{ path: string; kind: string }> | undefined) ?? []).map(
+                (change) => ({
+                  path: change.path,
+                  kind: change.kind,
+                })
+              );
         return createToolCallTimelineItem({
           server: "file_change",
           tool: "apply_patch",
           status: "completed",
           callId,
-          displayName: buildFileChangeSummary(files),
+          displayName: buildFileChangeSummary(
+            files.map((file) => ({ path: file.path, kind: file.kind ?? "edit" }))
+          ),
           kind: "edit",
           output: { files },
         });
