@@ -228,6 +228,11 @@ function buildCodexMcpConfig(
   };
 }
 
+function isUnsupportedChatGptModelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("model is not supported when using Codex with a ChatGPT account");
+}
+
 function extractCommandText(command?: unknown): string | null {
   if (typeof command === "string") {
     return command;
@@ -295,6 +300,8 @@ class CodexMcpAgentSession implements AgentSession {
   private currentMode: string;
   private sessionId: string | null = null;
   private conversationId: string | null = null;
+  private runtimeModel: string | null = null;
+  private modelRejected = false;
   private pendingLocalId: string | null = null;
   private persistence: AgentPersistenceHandle | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
@@ -410,7 +417,7 @@ class CodexMcpAgentSession implements AgentSession {
     this.cachedRuntimeInfo = {
       provider: "codex-mcp" as AgentRuntimeInfo["provider"],
       sessionId: this.sessionId ?? this.pendingLocalId ?? null,
-      model: this.config.model ?? null,
+      model: this.runtimeModel ?? this.config.model ?? null,
       modeId: this.currentMode ?? null,
     };
 
@@ -509,7 +516,7 @@ class CodexMcpAgentSession implements AgentSession {
     const info: AgentRuntimeInfo = {
       provider: "codex-mcp" as AgentRuntimeInfo["provider"],
       sessionId: this.sessionId ?? this.pendingLocalId ?? null,
-      model: this.config.model ?? null,
+      model: this.runtimeModel ?? this.config.model ?? null,
       modeId: this.currentMode ?? null,
     };
     this.cachedRuntimeInfo = info;
@@ -648,11 +655,25 @@ class CodexMcpAgentSession implements AgentSession {
     try {
       if (!this.sessionId) {
         const config = buildCodexMcpConfig(this.config, prompt, this.currentMode);
-        response = await this.client.callTool(
-          { name: "codex", arguments: config },
-          undefined,
-          { signal, timeout: DEFAULT_TIMEOUT_MS }
-        );
+        const attempt = async (arguments_: Record<string, unknown>) =>
+          this.client.callTool(
+            { name: "codex", arguments: arguments_ },
+            undefined,
+            { signal, timeout: DEFAULT_TIMEOUT_MS }
+          );
+        try {
+          response = await attempt(config);
+        } catch (error) {
+          if (config.model && isUnsupportedChatGptModelError(error)) {
+            const { model: _ignoredModel, ...fallback } = config;
+            this.modelRejected = true;
+            this.runtimeModel = null;
+            this.config.model = undefined;
+            response = await attempt(fallback);
+          } else {
+            throw error;
+          }
+        }
       } else {
         const conversationId = this.conversationId ?? this.sessionId;
         response = await this.client.callTool(
@@ -683,6 +704,9 @@ class CodexMcpAgentSession implements AgentSession {
     }
 
     this.updateIdentifiersFromResponse(response);
+    if (this.modelRejected && !this.runtimeModel) {
+      this.runtimeModel = "default";
+    }
 
     if (!turnState.sawAssistant) {
       const text = extractTextContent(response);
@@ -778,12 +802,16 @@ class CodexMcpAgentSession implements AgentSession {
     const meta = record.meta && typeof record.meta === "object" ? (record.meta as Record<string, unknown>) : null;
     const sessionId = meta?.sessionId ?? record.sessionId;
     const conversationId = meta?.conversationId ?? record.conversationId;
+    const model = meta?.model ?? record.model;
     if (typeof sessionId === "string") {
       this.sessionId = sessionId;
       this.flushPendingHistory();
     }
     if (typeof conversationId === "string") {
       this.conversationId = conversationId;
+    }
+    if (typeof model === "string" && model.length > 0) {
+      this.runtimeModel = model;
     }
 
     const content = record.content;
@@ -798,6 +826,10 @@ class CodexMcpAgentSession implements AgentSession {
         }
         if (!this.conversationId && typeof conversationCandidate === "string") {
           this.conversationId = conversationCandidate;
+        }
+        const modelCandidate = (item as Record<string, unknown>).model;
+        if (typeof modelCandidate === "string" && modelCandidate.length > 0) {
+          this.runtimeModel = modelCandidate;
         }
       }
     }
@@ -815,12 +847,16 @@ class CodexMcpAgentSession implements AgentSession {
       const record = candidate as Record<string, unknown>;
       const sessionId = record.session_id ?? record.sessionId;
       const conversationId = record.conversation_id ?? record.conversationId;
+      const model = record.model;
       if (!this.sessionId && typeof sessionId === "string") {
         this.sessionId = sessionId;
         this.flushPendingHistory();
       }
       if (!this.conversationId && typeof conversationId === "string") {
         this.conversationId = conversationId;
+      }
+      if (typeof model === "string" && model.length > 0) {
+        this.runtimeModel = model;
       }
     }
   }
