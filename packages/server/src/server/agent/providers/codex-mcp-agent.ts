@@ -119,14 +119,6 @@ function createToolCallTimelineItem(
   return { type: "tool_call", ...data };
 }
 
-function normalizeCallId(value?: string | null): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : undefined;
-}
-
 function normalizeThreadEventType(type: string): string {
   if (type.startsWith("thread.item.")) {
     return type.slice("thread.".length);
@@ -137,17 +129,52 @@ function normalizeThreadEventType(type: string): string {
   return type;
 }
 
-function firstDefined<T>(values: Array<T | undefined>): T | undefined {
-  for (const value of values) {
-    if (value !== undefined) {
-      return value;
+function resolveExclusiveValue<T>(
+  ctx: z.RefinementCtx,
+  entries: Array<{ key: string; value: T | undefined }>,
+  label: string,
+  required = false
+): T | undefined {
+  const present = entries.filter((entry) => entry.value !== undefined);
+  if (present.length === 0) {
+    if (required) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${label} missing`,
+      });
     }
+    return undefined;
   }
-  return undefined;
+  if (present.length > 1) {
+    const keys = present.map((entry) => entry.key).join(", ");
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${label} provided multiple times (${keys})`,
+    });
+    return undefined;
+  }
+  return present[0].value;
 }
 
-function firstString(values: Array<string | undefined>): string | undefined {
-  return firstDefined(values);
+function resolveExclusiveString(
+  ctx: z.RefinementCtx,
+  entries: Array<{ key: string; value: string | undefined }>,
+  label: string,
+  required = false
+): string | undefined {
+  const value = resolveExclusiveValue(ctx, entries, label, required);
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${label} cannot be empty`,
+    });
+    return undefined;
+  }
+  return trimmed;
 }
 
 const CommandSchema = z.union([
@@ -157,11 +184,138 @@ const CommandSchema = z.union([
 
 type Command = z.infer<typeof CommandSchema>;
 
+const CallIdSchema = z.string().transform((value, ctx) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "call_id cannot be empty",
+    });
+    return z.NEVER;
+  }
+  return trimmed;
+});
+
 const ExitCodeSchema = z
   .union([z.number(), z.string().regex(/^-?\d+$/)])
   .transform((value) => (typeof value === "string" ? Number(value) : value));
 
-const PatchChangeDetailsSchema = z
+type PatchChangeDetailsInput = {
+  before?: string;
+  original?: string;
+  old?: string;
+  previous?: string;
+  from?: string;
+  after?: string;
+  new?: string;
+  next?: string;
+  to?: string;
+  patch?: string;
+  diff?: string;
+  unified_diff?: string;
+  unifiedDiff?: string;
+  kind?: string;
+  type?: string;
+  action?: string;
+  change_type?: string;
+};
+
+function normalizePatchChangeDetails(
+  data: PatchChangeDetailsInput,
+  ctx: z.RefinementCtx
+): Omit<PatchFileChange, "path"> | null {
+  const hasBeforeCandidate =
+    data.before !== undefined ||
+    data.original !== undefined ||
+    data.old !== undefined ||
+    data.previous !== undefined ||
+    data.from !== undefined;
+  const before = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "before", value: data.before },
+      { key: "original", value: data.original },
+      { key: "old", value: data.old },
+      { key: "previous", value: data.previous },
+      { key: "from", value: data.from },
+    ],
+    "patch change before",
+    hasBeforeCandidate
+  );
+  if (hasBeforeCandidate && before === undefined) {
+    return null;
+  }
+  const hasAfterCandidate =
+    data.after !== undefined ||
+    data.new !== undefined ||
+    data.next !== undefined ||
+    data.to !== undefined;
+  const after = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "after", value: data.after },
+      { key: "new", value: data.new },
+      { key: "next", value: data.next },
+      { key: "to", value: data.to },
+    ],
+    "patch change after",
+    hasAfterCandidate
+  );
+  if (hasAfterCandidate && after === undefined) {
+    return null;
+  }
+  const hasPatchCandidate =
+    data.patch !== undefined ||
+    data.diff !== undefined ||
+    data.unified_diff !== undefined ||
+    data.unifiedDiff !== undefined;
+  const patch = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "patch", value: data.patch },
+      { key: "diff", value: data.diff },
+      { key: "unified_diff", value: data.unified_diff },
+      { key: "unifiedDiff", value: data.unifiedDiff },
+    ],
+    "patch change patch",
+    hasPatchCandidate
+  );
+  if (hasPatchCandidate && patch === undefined) {
+    return null;
+  }
+  const hasKindCandidate =
+    data.kind !== undefined ||
+    data.type !== undefined ||
+    data.action !== undefined ||
+    data.change_type !== undefined;
+  const kind = resolveExclusiveString(
+    ctx,
+    [
+      { key: "kind", value: data.kind },
+      { key: "type", value: data.type },
+      { key: "action", value: data.action },
+      { key: "change_type", value: data.change_type },
+    ],
+    "patch change kind",
+    hasKindCandidate
+  );
+  if (hasKindCandidate && !kind) {
+    return null;
+  }
+  let resolvedKind = kind;
+  if (!resolvedKind) {
+    if (before === undefined && after !== undefined) {
+      resolvedKind = "create";
+    } else if (before !== undefined && after === undefined) {
+      resolvedKind = "delete";
+    } else if (before !== undefined || after !== undefined || patch !== undefined) {
+      resolvedKind = "edit";
+    }
+  }
+  return { before, after, patch, kind: resolvedKind };
+}
+
+const PatchChangeDetailsBaseSchema = z
   .object({
     before: z.string().optional(),
     original: z.string().optional(),
@@ -183,10 +337,24 @@ const PatchChangeDetailsSchema = z
   })
   .passthrough();
 
+const PatchChangeDetailsSchema = PatchChangeDetailsBaseSchema.transform((data, ctx) => {
+  const normalized = normalizePatchChangeDetails(data, ctx);
+  if (!normalized) {
+    return z.NEVER;
+  }
+  return normalized;
+});
+
 type PatchChangeDetails = z.infer<typeof PatchChangeDetailsSchema>;
 
-const PatchChangeEntrySchema = PatchChangeDetailsSchema.extend({
+const PatchChangeEntrySchema = PatchChangeDetailsBaseSchema.extend({
   path: z.string().min(1),
+}).transform((data, ctx) => {
+  const normalized = normalizePatchChangeDetails(data, ctx);
+  if (!normalized) {
+    return z.NEVER;
+  }
+  return { path: data.path, ...normalized };
 });
 
 const PatchChangesSchema = z.union([
@@ -201,7 +369,25 @@ const PatchFileEntrySchema = z
     type: z.string().optional(),
     action: z.string().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .transform((data, ctx) => {
+    const hasKindCandidate =
+      data.kind !== undefined || data.type !== undefined || data.action !== undefined;
+    const kind = resolveExclusiveString(
+      ctx,
+      [
+        { key: "kind", value: data.kind },
+        { key: "type", value: data.type },
+        { key: "action", value: data.action },
+      ],
+      "patch file kind",
+      hasKindCandidate
+    );
+    if (hasKindCandidate && !kind) {
+      return z.NEVER;
+    }
+    return { path: data.path, kind };
+  });
 
 const McpToolObjectSchema = z
   .object({
@@ -225,9 +411,22 @@ const ReadFileInputSchema = z
     filePath: z.string().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    path: firstString([data.path, data.file_path, data.filePath]),
-  }));
+  .transform((data, ctx) => {
+    const path = resolveExclusiveString(
+      ctx,
+      [
+        { key: "path", value: data.path },
+        { key: "file_path", value: data.file_path },
+        { key: "filePath", value: data.filePath },
+      ],
+      "read_file input path",
+      true
+    );
+    if (!path) {
+      return z.NEVER;
+    }
+    return { path };
+  });
 
 const ReadFileOutputSchema = z
   .object({
@@ -238,11 +437,26 @@ const ReadFileOutputSchema = z
 const WebSearchInputSchema = z
   .object({
     query: z.string().optional(),
+    search_query: z.string().optional(),
+    searchQuery: z.string().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    query: data.query,
-  }));
+  .transform((data, ctx) => {
+    const query = resolveExclusiveString(
+      ctx,
+      [
+        { key: "query", value: data.query },
+        { key: "search_query", value: data.search_query },
+        { key: "searchQuery", value: data.searchQuery },
+      ],
+      "web_search input query",
+      true
+    );
+    if (!query) {
+      return z.NEVER;
+    }
+    return { query };
+  });
 
 const TextContentItemSchema = z.object({
   type: z.literal("text"),
@@ -272,15 +486,44 @@ const SessionIdentifiersSchema = z
     model: z.string().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    sessionId: firstString([data.sessionId, data.session_id]),
-    conversationId: firstString([
-      data.conversationId,
-      data.conversation_id,
-      data.thread_id,
-    ]),
-    model: data.model,
-  }));
+  .transform((data, ctx) => {
+    const hasSessionCandidate =
+      data.sessionId !== undefined || data.session_id !== undefined;
+    const sessionId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "sessionId", value: data.sessionId },
+        { key: "session_id", value: data.session_id },
+      ],
+      "session id",
+      hasSessionCandidate
+    );
+    if (hasSessionCandidate && !sessionId) {
+      return z.NEVER;
+    }
+    const hasConversationCandidate =
+      data.conversationId !== undefined ||
+      data.conversation_id !== undefined ||
+      data.thread_id !== undefined;
+    const conversationId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "conversationId", value: data.conversationId },
+        { key: "conversation_id", value: data.conversation_id },
+        { key: "thread_id", value: data.thread_id },
+      ],
+      "conversation id",
+      hasConversationCandidate
+    );
+    if (hasConversationCandidate && !conversationId) {
+      return z.NEVER;
+    }
+    return {
+      sessionId,
+      conversationId,
+      model: data.model,
+    };
+  });
 
 type SessionIdentifiers = z.infer<typeof SessionIdentifiersSchema>;
 
@@ -321,9 +564,22 @@ const ThreadItemCallIdSchema = z
     id: z.string().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    callId: normalizeCallId(firstString([data.call_id, data.id])),
-  }));
+  .transform((data, ctx) => {
+    const hasCallIdCandidate = data.call_id !== undefined || data.id !== undefined;
+    const callId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "call_id", value: data.call_id },
+        { key: "id", value: data.id },
+      ],
+      "thread item call_id",
+      hasCallIdCandidate
+    );
+    if (hasCallIdCandidate && !callId) {
+      return z.NEVER;
+    }
+    return { callId };
+  });
 
 const CommandOutputObjectSchema = z
   .object({
@@ -333,19 +589,41 @@ const CommandOutputObjectSchema = z
     exitCode: ExitCodeSchema.optional(),
     success: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .transform((data, ctx) => {
+    const hasExitCodeCandidate =
+      data.exit_code !== undefined || data.exitCode !== undefined;
+    const exitCode = resolveExclusiveValue(
+      ctx,
+      [
+        { key: "exit_code", value: data.exit_code },
+        { key: "exitCode", value: data.exitCode },
+      ],
+      "command output exit_code",
+      hasExitCodeCandidate
+    );
+    if (hasExitCodeCandidate && exitCode === undefined) {
+      return z.NEVER;
+    }
+    return {
+      stdout: data.stdout,
+      stderr: data.stderr,
+      exitCode,
+      success: data.success,
+    };
+  });
 
 const ExecCommandBeginEventSchema = z
   .object({
     type: z.literal("exec_command_begin"),
-    call_id: z.string().min(1),
+    call_id: CallIdSchema,
     command: CommandSchema,
     cwd: z.string().optional(),
   })
   .passthrough()
   .transform((data) => ({
     type: data.type,
-    callId: normalizeCallId(data.call_id),
+    callId: data.call_id,
     command: data.command,
     cwd: data.cwd,
   }));
@@ -353,7 +631,7 @@ const ExecCommandBeginEventSchema = z
 const ExecCommandEndEventSchema = z
   .object({
     type: z.literal("exec_command_end"),
-    call_id: z.string().min(1),
+    call_id: CallIdSchema,
     command: CommandSchema,
     cwd: z.string().optional(),
     exit_code: ExitCodeSchema.optional(),
@@ -366,37 +644,53 @@ const ExecCommandEndEventSchema = z
     error: z.unknown().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    type: data.type,
-    callId: normalizeCallId(data.call_id),
-    command: data.command,
-    cwd: data.cwd,
-    exitCode: firstDefined([data.exit_code, data.exitCode]),
-    output: data.output,
-    stdout: data.stdout,
-    stderr: data.stderr,
-    status: data.status,
-    success: data.success,
-    error: data.error,
-  }));
+  .transform((data, ctx) => {
+    const hasExitCodeCandidate =
+      data.exit_code !== undefined || data.exitCode !== undefined;
+    const exitCode = resolveExclusiveValue(
+      ctx,
+      [
+        { key: "exit_code", value: data.exit_code },
+        { key: "exitCode", value: data.exitCode },
+      ],
+      "exec_command_end exit_code",
+      hasExitCodeCandidate
+    );
+    if (hasExitCodeCandidate && exitCode === undefined) {
+      return z.NEVER;
+    }
+    return {
+      type: data.type,
+      callId: data.call_id,
+      command: data.command,
+      cwd: data.cwd,
+      exitCode,
+      output: data.output,
+      stdout: data.stdout,
+      stderr: data.stderr,
+      status: data.status,
+      success: data.success,
+      error: data.error,
+    };
+  });
 
 const PatchApplyBeginEventSchema = z
   .object({
     type: z.literal("patch_apply_begin"),
-    call_id: z.string().min(1),
+    call_id: CallIdSchema,
     changes: PatchChangesSchema,
   })
   .passthrough()
   .transform((data) => ({
     type: data.type,
-    callId: normalizeCallId(data.call_id),
+    callId: data.call_id,
     changes: data.changes,
   }));
 
 const PatchApplyEndEventSchema = z
   .object({
     type: z.literal("patch_apply_end"),
-    call_id: z.string().min(1),
+    call_id: CallIdSchema,
     success: z.boolean().optional(),
     changes: PatchChangesSchema.optional(),
     files: z.array(PatchFileEntrySchema).optional(),
@@ -406,7 +700,7 @@ const PatchApplyEndEventSchema = z
   .passthrough()
   .transform((data) => ({
     type: data.type,
-    callId: normalizeCallId(data.call_id),
+    callId: data.call_id,
     success: data.success,
     changes: data.changes,
     files: data.files,
@@ -422,12 +716,16 @@ const AgentMessageEventSchema = z
   })
   .passthrough()
   .transform((data, ctx) => {
-    const text = firstString([data.message, data.text]);
+    const text = resolveExclusiveString(
+      ctx,
+      [
+        { key: "message", value: data.message },
+        { key: "text", value: data.text },
+      ],
+      "agent_message text",
+      true
+    );
     if (!text) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "agent_message missing text",
-      });
       return z.NEVER;
     }
     return { type: data.type, text };
@@ -441,12 +739,16 @@ const AgentReasoningEventSchema = z
   })
   .passthrough()
   .transform((data, ctx) => {
-    const text = firstString([data.text, data.delta]);
+    const text = resolveExclusiveString(
+      ctx,
+      [
+        { key: "text", value: data.text },
+        { key: "delta", value: data.delta },
+      ],
+      "agent_reasoning text",
+      true
+    );
     if (!text) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "agent_reasoning missing text",
-      });
       return z.NEVER;
     }
     return { type: data.type, text };
@@ -460,12 +762,16 @@ const AgentReasoningDeltaEventSchema = z
   })
   .passthrough()
   .transform((data, ctx) => {
-    const text = firstString([data.text, data.delta]);
+    const text = resolveExclusiveString(
+      ctx,
+      [
+        { key: "text", value: data.text },
+        { key: "delta", value: data.delta },
+      ],
+      "agent_reasoning_delta text",
+      true
+    );
     if (!text) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "agent_reasoning_delta missing text",
-      });
       return z.NEVER;
     }
     return { type: data.type, text };
@@ -577,17 +883,33 @@ const CommandExecutionItemSchema = ThreadItemCallIdSchema.and(
       cwd: z.string().optional(),
     })
     .passthrough()
-).transform((data) => ({
-  type: data.type,
-  callId: data.callId,
-  command: data.command,
-  status: data.status,
-  success: data.success,
-  error: data.error,
-  exitCode: firstDefined([data.exit_code, data.exitCode]),
-  aggregatedOutput: data.aggregated_output,
-  cwd: data.cwd,
-}));
+).transform((data, ctx) => {
+  const hasExitCodeCandidate =
+    data.exit_code !== undefined || data.exitCode !== undefined;
+  const exitCode = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "exit_code", value: data.exit_code },
+      { key: "exitCode", value: data.exitCode },
+    ],
+    "command_execution exit_code",
+    hasExitCodeCandidate
+  );
+  if (hasExitCodeCandidate && exitCode === undefined) {
+    return z.NEVER;
+  }
+  return {
+    type: data.type,
+    callId: data.callId,
+    command: data.command,
+    status: data.status,
+    success: data.success,
+    error: data.error,
+    exitCode,
+    aggregatedOutput: data.aggregated_output,
+    cwd: data.cwd,
+  };
+});
 
 const FileChangeItemSchema = ThreadItemCallIdSchema.and(
   z
@@ -617,29 +939,68 @@ const ReadFileItemSchema = ThreadItemCallIdSchema.and(
     })
     .passthrough()
 ).transform((data, ctx) => {
-  const inputParsed = ReadFileInputSchema.safeParse(data.input);
-  const input = inputParsed.success ? inputParsed.data : undefined;
-  const outputParsed = ReadFileOutputSchema.safeParse(data.output);
-  const output = outputParsed.success ? outputParsed.data : undefined;
-  const path = firstString([
-    input?.path,
-    data.path,
-    data.file_path,
-    data.filePath,
-  ]);
+  let input: z.infer<typeof ReadFileInputSchema> | undefined;
+  if (data.input !== undefined) {
+    const inputParsed = ReadFileInputSchema.safeParse(data.input);
+    if (!inputParsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "read_file input invalid",
+      });
+      return z.NEVER;
+    }
+    input = inputParsed.data;
+  }
+  let output: z.infer<typeof ReadFileOutputSchema> | undefined;
+  let outputText: string | undefined;
+  if (data.output !== undefined) {
+    if (typeof data.output === "string") {
+      outputText = data.output;
+    } else {
+      const outputParsed = ReadFileOutputSchema.safeParse(data.output);
+      if (!outputParsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "read_file output invalid",
+        });
+        return z.NEVER;
+      }
+      output = outputParsed.data;
+    }
+  }
+  const path = resolveExclusiveString(
+    ctx,
+    [
+      { key: "input.path", value: input?.path },
+      { key: "path", value: data.path },
+      { key: "file_path", value: data.file_path },
+      { key: "filePath", value: data.filePath },
+    ],
+    "read_file path",
+    true
+  );
   if (!path) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "read_file missing path",
-    });
     return z.NEVER;
   }
-  const content = firstString([
-    typeof data.output === "string" ? data.output : undefined,
-    output?.content,
-    data.content,
-    data.text,
-  ]);
+  const hasContentCandidate =
+    outputText !== undefined ||
+    output?.content !== undefined ||
+    data.content !== undefined ||
+    data.text !== undefined;
+  const content = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "output", value: outputText },
+      { key: "output.content", value: output?.content },
+      { key: "content", value: data.content },
+      { key: "text", value: data.text },
+    ],
+    "read_file content",
+    hasContentCandidate
+  );
+  if (hasContentCandidate && content === undefined) {
+    return z.NEVER;
+  }
   return {
     type: data.type,
     callId: data.callId,
@@ -697,24 +1058,80 @@ const McpToolCallItemSchema = ThreadItemCallIdSchema.and(
         ? McpToolObjectSchema.parse(data.tool)
         : undefined
       : undefined;
-  const server = firstString([
-    typeof data.server === "string" ? data.server : undefined,
-    serverObject?.name,
-    serverObject?.id,
-    data.server_name,
-    data.serverId,
-    data.server_id,
-    data.mcp_server,
-  ]);
-  let tool = firstString([
-    typeof data.tool === "string" ? data.tool : undefined,
-    toolObject?.name,
-    toolObject?.tool,
-    data.tool_name,
-    data.toolId,
-    data.tool_id,
-    data.name,
-  ]);
+  const serverFromObject = serverObject
+    ? resolveExclusiveString(
+        ctx,
+        [
+          { key: "server.name", value: serverObject.name },
+          { key: "server.id", value: serverObject.id },
+        ],
+        "mcp_tool_call server",
+        true
+      )
+    : undefined;
+  if (serverObject && !serverFromObject) {
+    return z.NEVER;
+  }
+  const toolFromObject = toolObject
+    ? resolveExclusiveString(
+        ctx,
+        [
+          { key: "tool.name", value: toolObject.name },
+          { key: "tool.tool", value: toolObject.tool },
+        ],
+        "mcp_tool_call tool",
+        true
+      )
+    : undefined;
+  if (toolObject && !toolFromObject) {
+    return z.NEVER;
+  }
+  const hasServerCandidate =
+    typeof data.server === "string" ||
+    serverFromObject !== undefined ||
+    data.server_name !== undefined ||
+    data.serverId !== undefined ||
+    data.server_id !== undefined ||
+    data.mcp_server !== undefined;
+  const server = resolveExclusiveString(
+    ctx,
+    [
+      { key: "server", value: typeof data.server === "string" ? data.server : undefined },
+      { key: "server.object", value: serverFromObject },
+      { key: "server_name", value: data.server_name },
+      { key: "serverId", value: data.serverId },
+      { key: "server_id", value: data.server_id },
+      { key: "mcp_server", value: data.mcp_server },
+    ],
+    "mcp_tool_call server",
+    hasServerCandidate
+  );
+  if (hasServerCandidate && !server) {
+    return z.NEVER;
+  }
+  const hasToolCandidate =
+    typeof data.tool === "string" ||
+    toolFromObject !== undefined ||
+    data.tool_name !== undefined ||
+    data.toolId !== undefined ||
+    data.tool_id !== undefined ||
+    data.name !== undefined;
+  let tool = resolveExclusiveString(
+    ctx,
+    [
+      { key: "tool", value: typeof data.tool === "string" ? data.tool : undefined },
+      { key: "tool.object", value: toolFromObject },
+      { key: "tool_name", value: data.tool_name },
+      { key: "toolId", value: data.toolId },
+      { key: "tool_id", value: data.tool_id },
+      { key: "name", value: data.name },
+    ],
+    "mcp_tool_call tool",
+    hasToolCandidate
+  );
+  if (hasToolCandidate && !tool) {
+    return z.NEVER;
+  }
   let resolvedServer = server;
   if (!resolvedServer && tool && tool.includes(".")) {
     const [serverName, ...toolParts] = tool.split(".");
@@ -731,26 +1148,73 @@ const McpToolCallItemSchema = ThreadItemCallIdSchema.and(
     });
     return z.NEVER;
   }
-  const input = firstDefined([
-    data.input,
-    data.arguments,
-    data.args,
-    data.params,
-    data.request,
-    toolObject?.input,
-  ]);
-  const output = firstDefined([
-    data.output,
-    data.result,
-    data.response,
-    data.return,
-    data.returns,
-    data.result_content,
-    data.content,
-    data.structuredContent,
-    data.structured_content,
-  ]);
-  const status = firstString([data.status, data.state, data.outcome]);
+  const hasInputCandidate =
+    data.input !== undefined ||
+    data.arguments !== undefined ||
+    data.args !== undefined ||
+    data.params !== undefined ||
+    data.request !== undefined ||
+    toolObject?.input !== undefined;
+  const input = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "input", value: data.input },
+      { key: "arguments", value: data.arguments },
+      { key: "args", value: data.args },
+      { key: "params", value: data.params },
+      { key: "request", value: data.request },
+      { key: "tool.input", value: toolObject?.input },
+    ],
+    "mcp_tool_call input",
+    hasInputCandidate
+  );
+  if (hasInputCandidate && input === undefined) {
+    return z.NEVER;
+  }
+  const hasOutputCandidate =
+    data.output !== undefined ||
+    data.result !== undefined ||
+    data.response !== undefined ||
+    data.return !== undefined ||
+    data.returns !== undefined ||
+    data.result_content !== undefined ||
+    data.content !== undefined ||
+    data.structuredContent !== undefined ||
+    data.structured_content !== undefined;
+  const output = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "output", value: data.output },
+      { key: "result", value: data.result },
+      { key: "response", value: data.response },
+      { key: "return", value: data.return },
+      { key: "returns", value: data.returns },
+      { key: "result_content", value: data.result_content },
+      { key: "content", value: data.content },
+      { key: "structuredContent", value: data.structuredContent },
+      { key: "structured_content", value: data.structured_content },
+    ],
+    "mcp_tool_call output",
+    hasOutputCandidate
+  );
+  if (hasOutputCandidate && output === undefined) {
+    return z.NEVER;
+  }
+  const hasStatusCandidate =
+    data.status !== undefined || data.state !== undefined || data.outcome !== undefined;
+  const status = resolveExclusiveString(
+    ctx,
+    [
+      { key: "status", value: data.status },
+      { key: "state", value: data.state },
+      { key: "outcome", value: data.outcome },
+    ],
+    "mcp_tool_call status",
+    hasStatusCandidate
+  );
+  if (hasStatusCandidate && !status) {
+    return z.NEVER;
+  }
   return {
     type: data.type,
     callId: data.callId,
@@ -784,37 +1248,70 @@ const WebSearchItemSchema = ThreadItemCallIdSchema.and(
     })
     .passthrough()
 ).transform((data, ctx) => {
-  const input =
-    typeof data.input === "object" && data.input !== null
-      ? WebSearchInputSchema.safeParse(data.input).success
-        ? WebSearchInputSchema.parse(data.input)
-        : undefined
-      : undefined;
-  const query = firstString([
-    data.query,
-    input?.query,
-    data.search_query,
-    data.searchQuery,
-  ]);
+  let input: z.infer<typeof WebSearchInputSchema> | undefined;
+  if (data.input !== undefined) {
+    if (typeof data.input !== "object" || data.input === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "web_search input invalid",
+      });
+      return z.NEVER;
+    }
+    const inputParsed = WebSearchInputSchema.safeParse(data.input);
+    if (!inputParsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "web_search input invalid",
+      });
+      return z.NEVER;
+    }
+    input = inputParsed.data;
+  }
+  const query = resolveExclusiveString(
+    ctx,
+    [
+      { key: "query", value: data.query },
+      { key: "search_query", value: data.search_query },
+      { key: "searchQuery", value: data.searchQuery },
+      { key: "input.query", value: input?.query },
+    ],
+    "web_search query",
+    true
+  );
   if (!query) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "web_search missing query",
-    });
     return z.NEVER;
   }
-  const results = firstDefined([
-    data.output,
-    data.results,
-    data.search_results,
-    data.searchResults,
-    data.items,
-    data.documents,
-    data.data,
-    data.content,
-    data.response,
-    data.result,
-  ]);
+  const hasResultsCandidate =
+    data.output !== undefined ||
+    data.results !== undefined ||
+    data.search_results !== undefined ||
+    data.searchResults !== undefined ||
+    data.items !== undefined ||
+    data.documents !== undefined ||
+    data.data !== undefined ||
+    data.content !== undefined ||
+    data.response !== undefined ||
+    data.result !== undefined;
+  const results = resolveExclusiveValue(
+    ctx,
+    [
+      { key: "output", value: data.output },
+      { key: "results", value: data.results },
+      { key: "search_results", value: data.search_results },
+      { key: "searchResults", value: data.searchResults },
+      { key: "items", value: data.items },
+      { key: "documents", value: data.documents },
+      { key: "data", value: data.data },
+      { key: "content", value: data.content },
+      { key: "response", value: data.response },
+      { key: "result", value: data.result },
+    ],
+    "web_search results",
+    hasResultsCandidate
+  );
+  if (hasResultsCandidate && results === undefined) {
+    return z.NEVER;
+  }
   return {
     type: data.type,
     callId: data.callId,
@@ -950,34 +1447,44 @@ const PermissionParamsSchema = z
   })
   .passthrough()
   .transform((data, ctx) => {
-    const callIdValue = firstString([
-      data.codex_call_id,
-      data.codex_mcp_tool_call_id,
-      data.codex_event_id,
-      data.call_id,
-    ]);
-    const callId = normalizeCallId(callIdValue);
+    const callId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "codex_call_id", value: data.codex_call_id },
+        { key: "codex_mcp_tool_call_id", value: data.codex_mcp_tool_call_id },
+        { key: "codex_event_id", value: data.codex_event_id },
+        { key: "call_id", value: data.call_id },
+      ],
+      "permission call_id",
+      true
+    );
     if (!callId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "permission request missing call_id",
-      });
       return z.NEVER;
     }
-    let command = data.codex_command;
-    if (command === undefined) {
-      command = data.command;
-    }
+    const command = resolveExclusiveValue(
+      ctx,
+      [
+        { key: "codex_command", value: data.codex_command },
+        { key: "command", value: data.command },
+      ],
+      "permission command",
+      true
+    );
     if (!command) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "permission request missing command",
-      });
       return z.NEVER;
     }
-    let cwd = data.codex_cwd;
-    if (cwd === undefined) {
-      cwd = data.cwd;
+    const hasCwdCandidate = data.codex_cwd !== undefined || data.cwd !== undefined;
+    const cwd = resolveExclusiveString(
+      ctx,
+      [
+        { key: "codex_cwd", value: data.codex_cwd },
+        { key: "cwd", value: data.cwd },
+      ],
+      "permission cwd",
+      hasCwdCandidate
+    );
+    if (hasCwdCandidate && !cwd) {
+      return z.NEVER;
     }
     return {
       callId,
@@ -1016,54 +1523,16 @@ const AgentSessionConfigSchema = z
 
 type StoredSessionConfig = z.infer<typeof AgentSessionConfigSchema>;
 
-function normalizePatchChange(path: string, details: PatchChangeDetails): PatchFileChange {
-  const before = firstString([
-    details.before,
-    details.original,
-    details.old,
-    details.previous,
-    details.from,
-  ]);
-  const after = firstString([
-    details.after,
-    details.new,
-    details.next,
-    details.to,
-  ]);
-  const patch = firstString([
-    details.patch,
-    details.diff,
-    details.unified_diff,
-    details.unifiedDiff,
-  ]);
-  let kind = firstString([
-    details.kind,
-    details.type,
-    details.action,
-    details.change_type,
-  ]);
-  if (!kind) {
-    if (before === undefined && after !== undefined) {
-      kind = "create";
-    } else if (before !== undefined && after === undefined) {
-      kind = "delete";
-    } else if (before !== undefined || after !== undefined || patch !== undefined) {
-      kind = "edit";
-    }
-  }
-  return { path, kind, before, after, patch };
-}
-
 function parsePatchChanges(changes: unknown): PatchFileChange[] {
   const parsed = PatchChangesSchema.parse(changes);
   if (Array.isArray(parsed)) {
-    return parsed.map((entry) => normalizePatchChange(entry.path, entry));
+    return parsed;
   }
   return Object.entries(parsed).map(([path, value]) => {
     if (typeof value === "string") {
       return { path, kind: "edit", patch: value };
     }
-    return normalizePatchChange(path, value);
+    return { path, ...value };
   });
 }
 
@@ -1071,11 +1540,7 @@ function parsePatchFiles(files: unknown): PatchFileChange[] {
   if (files === undefined) {
     return [];
   }
-  const parsed = z.array(PatchFileEntrySchema).parse(files);
-  return parsed.map((entry) => ({
-    path: entry.path,
-    kind: firstString([entry.kind, entry.type, entry.action]),
-  }));
+  return z.array(PatchFileEntrySchema).parse(files);
 }
 
 function normalizeCommand(command: Command): string {
@@ -1628,7 +2093,6 @@ class CodexMcpAgentSession implements AgentSession {
       metadata: {
         ...restConfig,
         conversationId,
-        conversation_id: conversationId,
       },
     };
     this.updatePersistenceConversationId();
@@ -1642,7 +2106,6 @@ class CodexMcpAgentSession implements AgentSession {
     }
     const metadata = this.persistence.metadata;
     metadata.conversationId = conversationId;
-    metadata.conversation_id = conversationId;
   }
 
   async close(): Promise<void> {
@@ -2027,9 +2490,12 @@ class CodexMcpAgentSession implements AgentSession {
           parsedEvent.output !== null
             ? parsedEvent.output
             : undefined;
-        const outputExitCode = outputRecord
-          ? firstDefined([outputRecord.exit_code, outputRecord.exitCode])
-          : undefined;
+        const outputExitCode =
+          outputRecord &&
+          "exitCode" in outputRecord &&
+          typeof outputRecord.exitCode === "number"
+            ? outputRecord.exitCode
+            : undefined;
         let resolvedExitCode = parsedEvent.exitCode;
         if (resolvedExitCode === undefined && outputExitCode !== undefined) {
           resolvedExitCode = outputExitCode;

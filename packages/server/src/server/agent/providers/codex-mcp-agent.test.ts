@@ -110,22 +110,19 @@ function providerFromEvent(event: AgentStreamEvent): string | undefined {
   return event.provider;
 }
 
-function firstNumber(values: Array<number | undefined>): number | undefined {
-  for (const value of values) {
-    if (value !== undefined) {
-      return value;
-    }
+function resolveExclusiveValue<T>(
+  label: string,
+  entries: Array<{ key: string; value: T | undefined }>
+): T | undefined {
+  const present = entries.filter((entry) => entry.value !== undefined);
+  if (present.length === 0) {
+    return undefined;
   }
-  return undefined;
-}
-
-function firstString(values: Array<string | undefined>): string | undefined {
-  for (const value of values) {
-    if (value !== undefined) {
-      return value;
-    }
+  if (present.length > 1) {
+    const keys = present.map((entry) => entry.key).join(", ");
+    throw new Error(`${label} provided multiple times (${keys})`);
   }
-  return undefined;
+  return present[0].value;
 }
 
 const CommandInputSchema = z.object({
@@ -152,7 +149,10 @@ function extractExitCode(output: unknown): number | undefined {
   if (!parsed.success) {
     return undefined;
   }
-  const direct = firstNumber([parsed.data.exitCode, parsed.data.exit_code]);
+  const direct = resolveExclusiveValue("exit code", [
+    { key: "exitCode", value: parsed.data.exitCode },
+    { key: "exit_code", value: parsed.data.exit_code },
+  ]);
   if (direct !== undefined) {
     return direct;
   }
@@ -160,7 +160,10 @@ function extractExitCode(output: unknown): number | undefined {
   if (!metaParsed.success) {
     return undefined;
   }
-  return firstNumber([metaParsed.data.exitCode, metaParsed.data.exit_code]);
+  return resolveExclusiveValue("exit code metadata", [
+    { key: "exitCode", value: metaParsed.data.exitCode },
+    { key: "exit_code", value: metaParsed.data.exit_code },
+  ]);
 }
 
 function commandTextFromInput(input: unknown): string | null {
@@ -187,7 +190,11 @@ function commandOutputText(output: unknown): string | null {
   if (!record.success) {
     return null;
   }
-  const text = firstString([record.data.output, record.data.stdout, record.data.stderr]);
+  const text = resolveExclusiveValue("command output text", [
+    { key: "output", value: record.data.output },
+    { key: "stdout", value: record.data.stdout },
+    { key: "stderr", value: record.data.stderr },
+  ]);
   return text ? text : null;
 }
 
