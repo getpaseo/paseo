@@ -127,7 +127,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Fix**: Codex MCP persistence should include conversationId metadata for resume.
   - **Done (2025-12-24 19:44)**: Ensured persistence metadata always includes a conversationId, falling back to the session id when needed.
 
-- [ ] **Investigate**: Elicitation was fixed in Codex 0.71.0 - why isn't it working for us?
+- [x] **Investigate**: Elicitation was fixed in Codex 0.71.0 - why isn't it working for us?
 
   - Clone https://github.com/openai/codex to investigate the actual implementation
   - Web search found: Issue #6992 - Codex auto-declined elicitation requests, fixed in 0.71.0
@@ -137,6 +137,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Check the fix commit for issue #6992
   - Verify we're actually receiving ElicitRequest but maybe handling it wrong
   - Add debug logging to confirm what MCP messages we receive
+  - **Done (2025-12-24 19:50)**: Traced the 0.71.0 fix to `codex-rs/rmcp-client/src/logging_client_handler.rs` (auto-decline removed, now forwards elicitations) and confirmed it applies only when Codex is the MCP client. For our `codex mcp-server` flow, elicitations only fire on exec approval requests; with `approval-policy=untrusted` the safe-command allowlist (e.g., `pwd`) bypasses approval, so no `elicitation/create` is emitted.
 
 - [ ] **Fix**: Codex MCP permission elicitation should surface permission_requested/resolved events (read-only/untrusted too).
 
