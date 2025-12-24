@@ -74,12 +74,13 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Update tests and provider to use a valid default model.
   - **Done (2025-12-24 18:58)**: Updated Codex MCP default model to gpt-5.1-codex and switched runtime info test to use the valid model id.
 
-- [ ] **Fix**: Remove hardcoded default model - passthrough user choice.
+- [x] **Fix**: Remove hardcoded default model - passthrough user choice.
 
   - Pass `config.model` if user specifies one.
   - If user doesn't specify, omit `model` field - let Codex CLI pick its default.
   - Do NOT hardcode any fallback model in the provider.
   - Tests should not specify a model unless testing model passthrough.
+  - **Done (2025-12-24 19:14)**: Dropped the default model constant, omitted `model` from MCP config when unset, and removed the hardcoded fallback in runtime info; adjusted Codex MCP runtime test to avoid specifying a model.
 
 - [ ] **Review**: Flag ALL workarounds/hacks in `codex-mcp-agent.ts` - they are NOT acceptable.
 

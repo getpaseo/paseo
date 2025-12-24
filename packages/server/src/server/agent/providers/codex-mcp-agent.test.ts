@@ -504,7 +504,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         provider: "codex-mcp",
         cwd,
         modeId: "full-access",
-        model: "gpt-5.1-codex",
       } as AgentSessionConfig;
 
       let session: AgentSession | null = null;
