@@ -19,6 +19,8 @@ import { MoreVertical, GitBranch, Folder, RotateCcw, PlusCircle, Download, Users
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { AgentList } from "@/components/agent-list";
+import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { CreateAgentModal, ImportAgentModal, type CreateAgentInitialValues } from "@/components/create-agent-modal";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -133,11 +135,17 @@ type AgentScreenContentProps = {
   onBack: () => void;
 };
 
+const SIDEBAR_WIDTH = 280;
+const LARGE_SCREEN_BREAKPOINT = 768;
+
 function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLargeScreen = windowWidth >= LARGE_SCREEN_BREAKPOINT;
+
+  const { agents: aggregatedAgents, isRevalidating, refreshAll } = useAggregatedAgents();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
@@ -531,43 +539,60 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   return (
     <>
       <View style={styles.container}>
-        {/* Header */}
-        <BackHeader
-          title={agent.title || "Agent"}
-          onBack={handleBack}
-          rightContent={
-            <View ref={menuButtonRef} collapsable={false}>
-              <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                <MoreVertical size={20} color={theme.colors.foreground} />
-              </Pressable>
-            </View>
-          }
-        />
-
-        {/* Content Area with Keyboard Animation */}
-        <View style={styles.contentContainer}>
-          <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
-            {isInitializing ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={styles.loadingText}>Loading agent...</Text>
-              </View>
-            ) : (
-              <AgentStreamView
-                agentId={agent.id}
-                serverId={serverId}
-                agent={agent}
-                streamItems={streamItems}
-                pendingPermissions={pendingPermissions}
+        <View style={[styles.mainLayout, isLargeScreen && styles.mainLayoutRow]}>
+          {/* Sidebar - only on large screens */}
+          {isLargeScreen && (
+            <View style={[styles.sidebar, { width: SIDEBAR_WIDTH }]}>
+              <AgentList
+                agents={aggregatedAgents}
+                isRefreshing={isRevalidating}
+                onRefresh={refreshAll}
+                selectedAgentId={resolvedAgentId}
               />
-            )}
-          </ReanimatedAnimated.View>
-        </View>
+            </View>
+          )}
 
-        {/* Agent Input Area */}
-        {!isInitializing && agent && resolvedAgentId && (
-          <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />
-        )}
+          {/* Main agent panel */}
+          <View style={styles.agentPanel}>
+            {/* Header */}
+            <BackHeader
+              title={agent.title || "Agent"}
+              onBack={handleBack}
+              rightContent={
+                <View ref={menuButtonRef} collapsable={false}>
+                  <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
+                    <MoreVertical size={20} color={theme.colors.foreground} />
+                  </Pressable>
+                </View>
+              }
+            />
+
+            {/* Content Area with Keyboard Animation */}
+            <View style={styles.contentContainer}>
+              <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
+                {isInitializing ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={theme.colors.primary} />
+                    <Text style={styles.loadingText}>Loading agent...</Text>
+                  </View>
+                ) : (
+                  <AgentStreamView
+                    agentId={agent.id}
+                    serverId={serverId}
+                    agent={agent}
+                    streamItems={streamItems}
+                    pendingPermissions={pendingPermissions}
+                  />
+                )}
+              </ReanimatedAnimated.View>
+            </View>
+
+            {/* Agent Input Area */}
+            {!isInitializing && agent && resolvedAgentId && (
+              <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />
+            )}
+          </View>
+        </View>
 
         {/* Dropdown Menu */}
         <Modal
@@ -792,6 +817,19 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  mainLayout: {
+    flex: 1,
+  },
+  mainLayoutRow: {
+    flexDirection: "row",
+  },
+  sidebar: {
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  agentPanel: {
+    flex: 1,
   },
   contentContainer: {
     flex: 1,

@@ -12,9 +12,10 @@ interface AgentListProps {
   agents: AggregatedAgent[];
   isRefreshing?: boolean;
   onRefresh?: () => void;
+  selectedAgentId?: string;
 }
 
-export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentListProps) {
+export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAgentId }: AgentListProps) {
   const { theme } = useUnistyles();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
@@ -87,11 +88,13 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
       const providerLabel = getAgentProviderDefinition(agent.provider).label;
       const isRunning = agent.status === "running";
+      const isSelected = selectedAgentId === agent.id;
 
       return (
         <Pressable
           style={({ pressed }) => [
             styles.agentItem,
+            isSelected && styles.agentItemSelected,
             pressed && styles.agentItemPressed,
           ]}
           onPress={() => handleAgentPress(agent.serverId, agent.id)}
@@ -157,7 +160,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh }: AgentList
         </Pressable>
       );
     },
-    [handleAgentLongPress, handleAgentPress, theme.colors.muted, theme.colors.mutedForeground, theme.colors.primary, theme.colors.primaryForeground]
+    [handleAgentLongPress, handleAgentPress, selectedAgentId, theme.colors.muted, theme.colors.mutedForeground, theme.colors.primary, theme.colors.primaryForeground]
   );
 
   const keyExtractor = useCallback(
@@ -247,6 +250,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     backgroundColor: theme.colors.muted,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  agentItemSelected: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.primary,
   },
   agentItemPressed: {
     opacity: 0.7,
