@@ -1117,7 +1117,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - DaemonClient `setAgentMode()` method verified working
   - **Done (2025-12-25 17:48)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:711-821` that creates Codex agent, verifies initial mode is "auto", switches to "read-only", verifies mode persists after sending a message, and switches to "full-access". FIXED BUG: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2763-2773` - `setMode()` was not updating `cachedRuntimeInfo`, so `getRuntimeInfo()` returned stale `modeId`. Fix: update `cachedRuntimeInfo.modeId` when mode changes. RESULT: Test passes - mode switch reflects in both `currentModeId` and `runtimeInfo.modeId`, persists across messages. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "setAgentMode"` (1 passed, 10 skipped in 4154ms).
 
-- [ ] **Test**: Add daemon E2E test for `listAgents()`.
+- [x] **Test**: Add daemon E2E test for `listAgents()`.
 
   Verify session state returns current agents.
 
@@ -1134,6 +1134,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Test passes
   - Agent list accurate after create/delete operations
   - DaemonClient `listAgents()` method verified working
+  - **Done (2025-12-25 17:53)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:823-901` that creates two agents, calls `listAgents()` to verify both appear, deletes one, and verifies only the remaining agent is returned. Also updated `listAgents()` in `packages/server/src/server/test-utils/daemon-client.ts:197-227` to compute current agent list by processing `session_state`, `agent_state`, and `agent_deleted` messages. FIXED BUG: `packages/server/src/server/test-utils/daemon-client.ts:143-197` - `createAgent()` was not using `skipQueueBefore` option, causing second agent creation to match stale messages from the first agent. Fix: track queue position before sending request and only check new messages. RESULT: Test passes - listAgents correctly reflects agents after create/delete operations. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "listAgents"` (1 passed, 11 skipped in 254ms).
 
 - [ ] **Investigate**: Claude provider permissions don't work in daemon E2E tests.
 

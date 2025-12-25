@@ -142,6 +142,10 @@ export class DaemonClient {
 
   async createAgent(options: CreateAgentOptions): Promise<AgentSnapshotPayload> {
     const requestId = nanoid();
+
+    // Record the current queue position so we only check NEW messages
+    const startPosition = this.messageQueue.length;
+
     this.send({
       type: "create_agent_request",
       requestId,
@@ -157,31 +161,39 @@ export class DaemonClient {
       initialPrompt: options.initialPrompt,
     });
 
-    // First get the agent ID from the initial state
+    // First get the agent ID from the initial state (only check new messages)
     let agentId: string | null = null;
-    await this.waitFor((msg) => {
-      if (msg.type === "agent_state") {
-        agentId = msg.payload.id;
-        return msg.payload;
-      }
-      return null;
-    }, 10000);
+    await this.waitFor(
+      (msg) => {
+        if (msg.type === "agent_state") {
+          agentId = msg.payload.id;
+          return msg.payload;
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
 
     if (!agentId) {
       throw new Error("Failed to get agent ID from create response");
     }
 
-    // Wait for the agent to be idle
-    return this.waitFor((msg) => {
-      if (
-        msg.type === "agent_state" &&
-        msg.payload.id === agentId &&
-        msg.payload.status === "idle"
-      ) {
-        return msg.payload;
-      }
-      return null;
-    }, 60000); // 60 second timeout for initialization
+    // Wait for the agent to be idle (only check new messages from startPosition)
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "agent_state" &&
+          msg.payload.id === agentId &&
+          msg.payload.status === "idle"
+        ) {
+          return msg.payload;
+        }
+        return null;
+      },
+      60000,
+      { skipQueueBefore: startPosition }
+    ); // 60 second timeout for initialization
   }
 
   async deleteAgent(agentId: string): Promise<void> {
@@ -194,14 +206,36 @@ export class DaemonClient {
     });
   }
 
-  async listAgents(): Promise<AgentSnapshotPayload[]> {
-    // session_state is sent on connection, or we can wait for it
-    return this.waitFor((msg) => {
+  /**
+   * Returns the current list of agents by analyzing the message queue.
+   * This computes the latest state by:
+   * 1. Starting with agents from session_state (if any)
+   * 2. Updating with agent_state messages
+   * 3. Removing agents that have agent_deleted events
+   */
+  listAgents(): AgentSnapshotPayload[] {
+    const agentMap = new Map<string, AgentSnapshotPayload>();
+    const deletedAgents = new Set<string>();
+
+    for (const msg of this.messageQueue) {
       if (msg.type === "session_state") {
-        return msg.payload.agents;
+        // Initial agents from session state
+        for (const agent of msg.payload.agents) {
+          agentMap.set(agent.id, agent);
+        }
+      } else if (msg.type === "agent_state") {
+        // Update or add agent from state event
+        agentMap.set(msg.payload.id, msg.payload);
+      } else if (msg.type === "agent_deleted") {
+        // Mark agent as deleted
+        deletedAgents.add(msg.payload.agentId);
       }
-      return null;
-    });
+    }
+
+    // Filter out deleted agents and return
+    return Array.from(agentMap.values()).filter(
+      (agent) => !deletedAgents.has(agent.id)
+    );
   }
 
   async listPersistedAgents(): Promise<PersistedAgentDescriptorPayload[]> {
