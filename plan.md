@@ -1136,7 +1136,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - DaemonClient `listAgents()` method verified working
   - **Done (2025-12-25 17:53)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:823-901` that creates two agents, calls `listAgents()` to verify both appear, deletes one, and verifies only the remaining agent is returned. Also updated `listAgents()` in `packages/server/src/server/test-utils/daemon-client.ts:197-227` to compute current agent list by processing `session_state`, `agent_state`, and `agent_deleted` messages. FIXED BUG: `packages/server/src/server/test-utils/daemon-client.ts:143-197` - `createAgent()` was not using `skipQueueBefore` option, causing second agent creation to match stale messages from the first agent. Fix: track queue position before sending request and only check new messages. RESULT: Test passes - listAgents correctly reflects agents after create/delete operations. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "listAgents"` (1 passed, 11 skipped in 254ms).
 
-- [ ] **Investigate**: Claude provider permissions don't work in daemon E2E tests.
+- [x] **Investigate**: Claude provider permissions don't work in daemon E2E tests.
 
   **Problem**: Claude permission tests are skipped because Claude SDK doesn't request permissions in daemon context. Direct `claude-agent.test.ts` tests pass, but daemon E2E tests don't.
 
@@ -1151,3 +1151,5 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **Acceptance criteria**:
   - Root cause identified and documented
   - Claude permission tests pass (or clear explanation of why they can't)
+
+  - **Done (2025-12-25 19:12)**: WHAT: Analyzed permission handling differences between `claude-agent.test.ts` and `daemon.e2e.test.ts`. RESULT: Root cause identified - daemon E2E tests read the user's real `~/.claude/settings.json` which has `allow: ["Bash(rm:*)"]`, causing `rm` commands to auto-execute without permission prompts. In contrast, direct tests use `useTempClaudeConfigDir()` (`claude-agent.test.ts:57-87`) which creates a temp config dir with `ask: ["Bash(rm:*)"]` and sets `CLAUDE_CONFIG_DIR` env var. EVIDENCE: User's `~/.claude/settings.json` contains `"Bash(rm:*)"` in allow list. SDK uses `settingSources: ["user", "project"]` (`claude-agent.ts:665`) to read settings from disk. FIX: Add temp config setup to daemon tests (same pattern as direct tests) or use `settingSources: []` for SDK isolation mode. Full report: `REPORT-claude-permission-tests.md`.
