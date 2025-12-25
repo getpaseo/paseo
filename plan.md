@@ -81,20 +81,17 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
-- [x] **BUG**: Codex MCP agent returns 0 timeline events after daemon restart.
-  - **Done (2025-12-25 19:13)**: Fixed by implementing disk-based timeline history loading in `codex-mcp-agent.ts`.
+- [x] **REFACTOR**: Remove module-level `SESSION_HISTORY` Map from `codex-mcp-agent.ts`.
+  - **Done (2025-12-25 19:28)**: Removed `SESSION_HISTORY` global Map and refactored to use instance-level `persistedHistory` field.
 
-  **WHAT**: Added rollout file parsing to load persisted timeline from `~/.codex/sessions/` when `SESSION_HISTORY` is empty after daemon restart.
+  **WHAT**:
+  - Removed `SESSION_HISTORY` Map declaration (was at `codex-mcp-agent.ts:118`)
+  - Constructor: now sets `historyPending = true` for resume instead of looking up `SESSION_HISTORY.get()` (`codex-mcp-agent.ts:2564-2565`)
+  - `connect()`: simplified condition to always load from disk when resuming (`codex-mcp-agent.ts:2606-2608`)
+  - `loadPersistedHistoryFromDisk()`: removed `SESSION_HISTORY.set()` line (`codex-mcp-agent.ts:2629-2639`)
+  - `recordHistory()`: appends to `this.persistedHistory` instead of `SESSION_HISTORY` (`codex-mcp-agent.ts:3147-3152`)
+  - `flushPendingHistory()`: appends to `this.persistedHistory` instead of `SESSION_HISTORY` (`codex-mcp-agent.ts:3155-3160`)
 
-  **CHANGES**:
-  - `codex-mcp-agent.ts:2-6`: Added imports for `fs`, `Dirent`, `os`, `path`
-  - `codex-mcp-agent.ts:2521`: Added `resumeHandle` field to store handle for async loading
-  - `codex-mcp-agent.ts:2530`: Save `resumeHandle` in constructor
-  - `codex-mcp-agent.ts:2592-2596`: Load history from disk in `connect()` when `persistedHistory.length === 0`
-  - `codex-mcp-agent.ts:2616-2628`: New `loadPersistedHistoryFromDisk()` method
-  - `codex-mcp-agent.ts:3919-4181`: New helper functions: `resolveCodexSessionRoot()`, `findRolloutFile()`, `parseRolloutFile()`, `loadCodexPersistedTimeline()`, plus rollout entry parsing functions
+  **RESULT**: Typecheck passes. Persistence E2E test "persists session metadata and resumes with history" passes (8.3s). The test now exercises disk loading since there's no global Map to provide in-memory history. Net change: -12 lines.
 
-  **TEST ADDED**:
-  - `daemon.e2e.test.ts:1638-1757`: New test "Codex agent timeline survives daemon restart" that verifies timeline is preserved via `agent_stream_snapshot` message after resume
-
-  **RESULT**: E2E test passes, typecheck passes. Timeline items are loaded from rollout files when resuming an agent after daemon restart.
+  **NOTE**: Two flaky tests ("maps thread/item events..." and "captures tool call inputs/outputs...") also failed before this change - they depend on LLM choosing to call MCP tools/web search which is non-deterministic.
