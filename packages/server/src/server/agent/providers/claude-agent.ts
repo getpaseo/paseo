@@ -45,6 +45,16 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 
 const fsPromises = promises;
 
+/**
+ * Per-turn context to track streaming state.
+ * This prevents race conditions when multiple stream() calls overlap
+ * (e.g., when an interrupt sends a new message before the previous one completes).
+ */
+interface TurnContext {
+  streamedAssistantTextThisTurn: boolean;
+  streamedReasoningThisTurn: boolean;
+}
+
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -365,8 +375,9 @@ class ClaudeAgentSession implements AgentSession {
   private persistedHistory: AgentTimelineItem[] = [];
   private historyPending = false;
   private turnCancelRequested = false;
-  private streamedAssistantTextThisTurn = false;
-  private streamedReasoningThisTurn = false;
+  // NOTE: streamedAssistantTextThisTurn and streamedReasoningThisTurn were removed
+  // These flags are now tracked per-turn via TurnContext to prevent race conditions
+  // when multiple stream() calls overlap (e.g., interrupt + new message)
   private cancelCurrentTurn: (() => void) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
@@ -766,11 +777,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async forwardPromptEvents(message: SDKUserMessage, queue: Pushable<AgentStreamEvent>) {
-    this.streamedAssistantTextThisTurn = false;
-    this.streamedReasoningThisTurn = false;
+    // Create a turn-local context to track streaming state.
+    // This prevents race conditions when a new stream() call interrupts a running one.
+    const turnContext: TurnContext = {
+      streamedAssistantTextThisTurn: false,
+      streamedReasoningThisTurn: false,
+    };
     try {
       for await (const sdkEvent of this.processPrompt(message)) {
-        const events = this.translateMessageToEvents(sdkEvent);
+        const events = this.translateMessageToEvents(sdkEvent, turnContext);
         for (const event of events) {
           queue.push(event);
         }
@@ -800,7 +815,7 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private translateMessageToEvents(message: SDKMessage): AgentStreamEvent[] {
+  private translateMessageToEvents(message: SDKMessage, turnContext: TurnContext): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
 
     switch (message.type) {
@@ -812,7 +827,7 @@ class ClaudeAgentSession implements AgentSession {
       case "user": {
         const content = message.message?.content;
         if (Array.isArray(content)) {
-          const timelineItems = this.mapBlocksToTimeline(content);
+          const timelineItems = this.mapBlocksToTimeline(content, { turnContext });
           for (const item of timelineItems) {
             events.push({ type: "timeline", item, provider: "claude" });
           }
@@ -821,8 +836,9 @@ class ClaudeAgentSession implements AgentSession {
       }
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
-          suppressAssistantText: this.streamedAssistantTextThisTurn,
-          suppressReasoning: this.streamedReasoningThisTurn,
+          turnContext,
+          suppressAssistantText: turnContext.streamedAssistantTextThisTurn,
+          suppressReasoning: turnContext.streamedReasoningThisTurn,
         });
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
@@ -830,7 +846,7 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "stream_event": {
-        const timelineItems = this.mapPartialEvent(message.event);
+        const timelineItems = this.mapPartialEvent(message.event, turnContext);
         for (const item of timelineItems) {
           events.push({ type: "timeline", item, provider: "claude" });
         }
@@ -1107,11 +1123,13 @@ class ClaudeAgentSession implements AgentSession {
     content: string | ClaudeContentChunk[],
     options?: {
       context?: "live" | "history";
+      turnContext?: TurnContext;
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
     }
   ): AgentTimelineItem[] {
     const context = options?.context ?? "live";
+    const turnContext = options?.turnContext;
     const suppressAssistant = options?.suppressAssistantText ?? false;
     const suppressReasoning = options?.suppressReasoning ?? false;
 
@@ -1119,8 +1137,8 @@ class ClaudeAgentSession implements AgentSession {
       if (!content || content === "[Request interrupted by user for tool use]") {
         return [];
       }
-      if (context === "live") {
-        this.streamedAssistantTextThisTurn = true;
+      if (context === "live" && turnContext) {
+        turnContext.streamedAssistantTextThisTurn = true;
       }
       if (suppressAssistant) {
         return [];
@@ -1134,8 +1152,8 @@ class ClaudeAgentSession implements AgentSession {
         case "text":
         case "text_delta":
           if (block.text && block.text !== "[Request interrupted by user for tool use]") {
-            if (context === "live") {
-              this.streamedAssistantTextThisTurn = true;
+            if (context === "live" && turnContext) {
+              turnContext.streamedAssistantTextThisTurn = true;
             }
             if (!suppressAssistant) {
               items.push({ type: "assistant_message", text: block.text });
@@ -1145,8 +1163,8 @@ class ClaudeAgentSession implements AgentSession {
         case "thinking":
         case "thinking_delta":
           if (block.thinking) {
-            if (context === "live") {
-              this.streamedReasoningThisTurn = true;
+            if (context === "live" && turnContext) {
+              turnContext.streamedReasoningThisTurn = true;
             }
             if (!suppressReasoning) {
               items.push({ type: "reasoning", text: block.thinking });
@@ -1352,7 +1370,7 @@ class ClaudeAgentSession implements AgentSession {
     return undefined;
   }
 
-  private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {
+  private mapPartialEvent(event: SDKPartialAssistantMessage["event"], turnContext: TurnContext): AgentTimelineItem[] {
     if (event.type === "content_block_start") {
       const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
       if (block?.type === "tool_use" && typeof event.index === "number" && typeof block.id === "string") {
@@ -1377,10 +1395,10 @@ class ClaudeAgentSession implements AgentSession {
     switch (event.type) {
       case "content_block_start":
         return isClaudeContentChunk(event.content_block)
-          ? this.mapBlocksToTimeline([event.content_block])
+          ? this.mapBlocksToTimeline([event.content_block], { turnContext })
           : [];
       case "content_block_delta":
-        return isClaudeContentChunk(event.delta) ? this.mapBlocksToTimeline([event.delta]) : [];
+        return isClaudeContentChunk(event.delta) ? this.mapBlocksToTimeline([event.delta], { turnContext }) : [];
       default:
         return [];
     }

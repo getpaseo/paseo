@@ -335,7 +335,8 @@ export class Session {
 
   /**
    * Interrupt the agent's active run so the next prompt starts a fresh turn.
-   * Returns once the manager confirms the stream has been cancelled.
+   * Returns once the manager confirms the stream has been cancelled AND
+   * the agent has fully transitioned to idle state.
    */
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
@@ -343,7 +344,7 @@ export class Session {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    if (snapshot.lifecycle !== "running") {
+    if (snapshot.lifecycle !== "running" && !snapshot.pendingRun) {
       return;
     }
 
@@ -357,6 +358,22 @@ export class Session {
         console.warn(
           `[Session ${this.clientId}] Agent ${agentId} reported running but no active run was cancelled`
         );
+      }
+
+      // Wait for the agent to become idle after cancellation
+      // cancelAgentRun only initiates cancellation; doesn't wait for generator to terminate
+      const maxWaitMs = 5000;
+      const pollIntervalMs = 50;
+      const startTime = Date.now();
+      while (Date.now() - startTime < maxWaitMs) {
+        const current = this.agentManager.getAgent(agentId);
+        if (!current) {
+          throw new Error(`Agent ${agentId} not found during cancellation wait`);
+        }
+        if (current.lifecycle !== "running" && !current.pendingRun) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       }
     } catch (error) {
       console.error(
