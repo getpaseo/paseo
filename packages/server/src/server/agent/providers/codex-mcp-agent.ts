@@ -115,8 +115,6 @@ const MODE_PRESETS: Record<
   },
 };
 
-const SESSION_HISTORY = new Map<string, AgentTimelineItem[]>();
-
 function createToolCallTimelineItem(
   data: Omit<ToolCallTimelineItem, "type">
 ): AgentTimelineItem {
@@ -2563,11 +2561,8 @@ class CodexMcpAgentSession implements AgentSession {
           this.conversationId = this.sessionId;
         }
       }
-      // Try in-memory history first (for same-process resume)
-      const history = this.sessionId ? SESSION_HISTORY.get(this.sessionId) : undefined;
-      this.persistedHistory = history ? [...history] : [];
-      this.historyPending = this.persistedHistory.length > 0;
-      // Note: If SESSION_HISTORY is empty (daemon restarted), we load from disk in connect()
+      // Mark history as pending; actual loading happens in connect() from disk
+      this.historyPending = true;
     }
 
     this.client = new Client(
@@ -2608,9 +2603,8 @@ class CodexMcpAgentSession implements AgentSession {
   async connect(): Promise<void> {
     if (this.connected) return;
 
-    // If resuming with no in-memory history, load from rollout file on disk
-    // This handles the case where the daemon restarted and SESSION_HISTORY was lost
-    if (this.resumeHandle && this.sessionId && this.persistedHistory.length === 0) {
+    // Load history from disk when resuming a session
+    if (this.resumeHandle && this.sessionId) {
       await this.loadPersistedHistoryFromDisk();
     }
 
@@ -2641,8 +2635,6 @@ class CodexMcpAgentSession implements AgentSession {
     if (timeline.length > 0) {
       this.persistedHistory = timeline;
       this.historyPending = true;
-      // Also populate SESSION_HISTORY so future in-process resumes work
-      SESSION_HISTORY.set(this.sessionId, [...timeline]);
     }
   }
 
@@ -3154,9 +3146,7 @@ class CodexMcpAgentSession implements AgentSession {
 
   private recordHistory(item: AgentTimelineItem): void {
     if (this.sessionId) {
-      const history = SESSION_HISTORY.get(this.sessionId) || [];
-      history.push(item);
-      SESSION_HISTORY.set(this.sessionId, history);
+      this.persistedHistory.push(item);
       return;
     }
     this.pendingHistory.push(item);
@@ -3166,9 +3156,7 @@ class CodexMcpAgentSession implements AgentSession {
     if (!this.sessionId || this.pendingHistory.length === 0) {
       return;
     }
-    const history = SESSION_HISTORY.get(this.sessionId) || [];
-    history.push(...this.pendingHistory);
-    SESSION_HISTORY.set(this.sessionId, history);
+    this.persistedHistory.push(...this.pendingHistory);
     this.pendingHistory = [];
   }
 
