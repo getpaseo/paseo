@@ -1032,7 +1032,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Persistence round-trip works via DaemonClient
   - **Done (2025-12-25 17:23)**: WHAT: Modified `daemon-client.ts:217-265` to fix `resumeAgent()` to properly wait for the new agent's idle state using `skipQueueBefore` option (not cached old agent messages). Added E2E test `daemon.e2e.test.ts:255-366` "persists and resumes Codex agent with conversation history" that creates agent, sends message, deletes, and resumes from persistence handle. RESULT: Persistence round-trip works - agent is deleted, resumed via persistence handle with conversationId, and responds to follow-up messages. EVIDENCE: `npm run test -- daemon.e2e.test.ts -t "persists and resumes"` passed (9.2s). Note: `listPersistedAgents()` and `resumeAgent()` methods already existed; the fix was to make `resumeAgent()` properly skip stale queue messages when waiting for the new agent.
 
-- [ ] **Implement**: Multi-agent E2E test (Phase 4).
+- [x] **Implement**: Multi-agent E2E test (Phase 4).
 
   **Add E2E test**:
   - `multi-agent: agent A launches agent B` - parent agent uses agent-control MCP to create child
@@ -1040,6 +1040,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **Acceptance criteria**:
   - Multi-agent orchestration works via DaemonClient
   - Both parent and child agents visible in listAgents()
+  - **Done (2025-12-25 17:32)**: WHAT: Added `daemon.e2e.test.ts:369-483` describe block "multi-agent orchestration" with test "parent agent creates child agent via agent-control MCP". Test creates a parent Codex agent, prompts it to call `create_agent` tool via agent-control MCP, then verifies: (1) tool call to `create_agent` with server `agent-control` exists in timeline, (2) both parent and child agent IDs are visible via `agent_state` messages, (3) child agent ID from tool output matches tracked agents. RESULT: Multi-agent orchestration verified - parent agent successfully creates child agent using agent-control MCP, both agents tracked by daemon. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (5 passed, 2 skipped in 40.8s), `npm run typecheck --workspace=@paseo/server` (exit 0).
 
 - [ ] **Review**: Audit daemon E2E test coverage.
 
