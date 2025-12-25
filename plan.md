@@ -81,6 +81,22 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
+- [x] **BUG (App-side)**: Claude assistant text garbled in React Native app rendering.
+  - **Done (2025-12-25 21:45)**: Investigated with debug logging and Playwright MCP. **App-side code is NOT the cause.** See `REPORT-garbled-text-bug.md` for full analysis.
+
+  **INVESTIGATION SUMMARY**:
+  1. Added debug logging to `appendAssistantMessage` - state transitions are correct
+  2. Reproduced bug via Playwright MCP on `localhost:8081`
+  3. Console logs show chunks received by client are already incomplete (e.g., " a" + "check error" instead of " a" + "type" + "check error")
+  4. Client-side Zustand state updates work correctly - no race condition
+  5. FlatList renders `item.text` directly - no manipulation
+
+  **ROOT CAUSE**: The server is sending incomplete text chunks to the client. The E2E test passes because it tests NEW agent creation; the bug appears in LONG-RUNNING agents during streaming.
+
+  **NEXT STEPS**: Investigate server-side Claude agent streaming (NOT app-side):
+  - `packages/server/src/server/agent/providers/` - Claude agent streaming implementation
+  - Add server-side logging to compare Claude API output vs what's sent to clients
+
 - [x] **BUG**: Claude agent assistant text is garbled/corrupted during streaming.
   - **Done (2025-12-25 20:15)**: Added E2E test `daemon.e2e.test.ts:1760-1881` that verifies server-side streaming text integrity. **Test passes** - server sends clean, non-corrupted text chunks. The bug is NOT on the server side.
 
