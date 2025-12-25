@@ -389,6 +389,49 @@ export class DaemonClient {
     );
   }
 
+  async getGitRepoInfo(agentId: string): Promise<{
+    repoRoot: string;
+    currentBranch: string | null;
+    branches: Array<{ name: string; isCurrent: boolean }>;
+    isDirty: boolean;
+    error: string | null;
+  }> {
+    // Get the agent's cwd from the current list
+    const agents = this.listAgents();
+    const agent = agents.find((a) => a.id === agentId);
+    if (!agent) {
+      return {
+        repoRoot: "",
+        currentBranch: null,
+        branches: [],
+        isDirty: false,
+        error: `Agent not found: ${agentId}`,
+      };
+    }
+
+    const cwd = agent.cwd;
+    const startPosition = this.messageQueue.length;
+
+    this.send({ type: "git_repo_info_request", cwd });
+
+    return this.waitFor(
+      (msg) => {
+        if (msg.type === "git_repo_info_response" && msg.payload.cwd === cwd) {
+          return {
+            repoRoot: msg.payload.repoRoot,
+            currentBranch: msg.payload.currentBranch ?? null,
+            branches: msg.payload.branches ?? [],
+            isDirty: msg.payload.isDirty ?? false,
+            error: msg.payload.error ?? null,
+          };
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
   // ============================================================================
   // Permissions
   // ============================================================================
