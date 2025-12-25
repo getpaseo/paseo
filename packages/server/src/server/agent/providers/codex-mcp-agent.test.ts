@@ -722,7 +722,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           "2. Run the command `bash -lc \"printf 'stderr-marker' 1>&2\"` using your shell tool.",
           "3. Use apply_patch (not the shell) to create a new file named tool-create.txt containing only the line 'alpha'.",
           "4. Use apply_patch (not the shell) to edit tool-create.txt, replacing 'alpha' with 'beta'.",
-          "5. Use the read_file tool (not the shell) to read tool-create.txt.",
+          "5. Read the file tool-create.txt and report its contents (you can use cat or any file reading method).",
           "6. Call the MCP tool test.echo with input {\"text\":\"mcp-ok\"}.",
           "7. Use the web_search tool to search for \"OpenAI Codex MCP\".",
           "8. Request approval to run the command `printf \"permit\" > tool-permission.txt`, then run it.",
@@ -794,15 +794,12 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           fileChangeCalls.some((item) => stringifyUnknown(item.output).includes("tool-create.txt"))
         ).toBe(true);
 
-        // NOTE: Codex MCP does not expose a separate read_file tool.
-        // Reading files is done via shell commands (cat/head/tail) instead.
-        // The test prompt asks for read_file but Codex uses cat internally.
-        const readCall = toolCalls.find((item) => item.tool === "read_file");
-        // Skip assertion - Codex doesn't have a read_file tool
-        if (readCall) {
-          expect.soft(stringifyUnknown(readCall.input)).toContain("tool-create.txt");
-          expect.soft(stringifyUnknown(readCall.output)).toContain("beta");
-        }
+        const readCall = toolCalls.find(
+          (item) => item.tool === "read_file" && item.status === "completed"
+        );
+        expect.soft(readCall).toBeTruthy();
+        expect.soft(stringifyUnknown(readCall?.input)).toContain("tool-create.txt");
+        expect.soft(stringifyUnknown(readCall?.output)).toContain("beta");
 
         const mcpCall = toolCalls.find(
           (item) => item.server === "test" && item.tool === "echo"

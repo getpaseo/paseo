@@ -640,12 +640,23 @@ const CommandOutputObjectSchema = z
     };
   });
 
+const ParsedCmdItemSchema = z.object({
+  type: z.string(),
+  cmd: z.string().optional(),
+  name: z.string().optional(),
+  path: z.string().optional(),
+});
+type ParsedCmdItem = z.infer<typeof ParsedCmdItemSchema>;
+
+const ParsedCmdSchema = z.array(ParsedCmdItemSchema).optional();
+
 const ExecCommandBeginEventSchema = z
   .object({
     type: z.literal("exec_command_begin"),
     call_id: CallIdSchema,
     command: CommandSchema,
     cwd: z.string().optional(),
+    parsed_cmd: ParsedCmdSchema,
   })
   .passthrough()
   .transform((data) => ({
@@ -653,6 +664,7 @@ const ExecCommandBeginEventSchema = z
     callId: data.call_id,
     command: data.command,
     cwd: data.cwd,
+    parsedCmd: data.parsed_cmd,
   }));
 
 const ExecCommandEndEventSchema = z
@@ -669,6 +681,7 @@ const ExecCommandEndEventSchema = z
     status: z.string().optional(),
     success: z.boolean().optional(),
     error: z.unknown().optional(),
+    parsed_cmd: ParsedCmdSchema,
   })
   .passthrough()
   .transform((data, ctx) => {
@@ -698,6 +711,7 @@ const ExecCommandEndEventSchema = z
       status: data.status,
       success: data.success,
       error: data.error,
+      parsedCmd: data.parsed_cmd,
     };
   });
 
@@ -1888,6 +1902,24 @@ function extractPatchPaths(text: string): string[] {
 
 function normalizeCommand(command: Command): string {
   return typeof command === "string" ? command : command.join(" ");
+}
+
+function extractFileReadFromParsedCmd(parsedCmd: ParsedCmdItem[] | undefined): {
+  path: string;
+  name: string;
+} | null {
+  if (!parsedCmd || parsedCmd.length === 0) {
+    return null;
+  }
+  for (const item of parsedCmd) {
+    if (item.type === "read" && item.path) {
+      return {
+        path: item.path,
+        name: item.name ?? item.path.split("/").pop() ?? item.path,
+      };
+    }
+  }
+  return null;
 }
 
 function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
@@ -3193,19 +3225,36 @@ class CodexMcpAgentSession implements AgentSession {
           throw new Error("exec_command_begin missing call_id");
         }
         const commandText = normalizeCommand(parsedEvent.command);
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: createToolCallTimelineItem({
-            server: "command",
-            tool: "shell",
-            status: "running",
-            callId,
-            displayName: commandText,
-            kind: "execute",
-            input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
-          }),
-        });
+        const fileRead = extractFileReadFromParsedCmd(parsedEvent.parsedCmd);
+        if (fileRead) {
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: createToolCallTimelineItem({
+              server: "file",
+              tool: "read_file",
+              status: "running",
+              callId,
+              displayName: `Read: ${fileRead.name}`,
+              kind: "read",
+              input: { path: fileRead.path },
+            }),
+          });
+        } else {
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: createToolCallTimelineItem({
+              server: "command",
+              tool: "shell",
+              status: "running",
+              callId,
+              displayName: commandText,
+              kind: "execute",
+              input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+            }),
+          });
+        }
         return;
       }
       case "exec_command_end": {
@@ -3257,27 +3306,6 @@ class CodexMcpAgentSession implements AgentSession {
             outputText = parsedEvent.stderr;
           }
         }
-        let structuredOutput: unknown = outputRecord;
-        if (outputText !== undefined || resolvedExitCode !== undefined) {
-          const commandOutput: {
-            type: "command";
-            command: string;
-            output?: string;
-            exitCode?: number;
-            cwd?: string;
-          } = {
-            type: "command",
-            command: commandText,
-            cwd: parsedEvent.cwd,
-          };
-          if (outputText !== undefined) {
-            commandOutput.output = outputText;
-          }
-          if (resolvedExitCode !== undefined) {
-            commandOutput.exitCode = resolvedExitCode;
-          }
-          structuredOutput = commandOutput;
-        }
         const failed =
           parsedEvent.success === false ||
           parsedEvent.status === "failed" ||
@@ -3286,20 +3314,63 @@ class CodexMcpAgentSession implements AgentSession {
         if (failed) {
           this.turnState && (this.turnState.sawError = true);
         }
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: createToolCallTimelineItem({
-            server: "command",
-            tool: "shell",
-            status: failed ? "failed" : "completed",
-            callId,
-            displayName: commandText,
-            kind: "execute",
-            input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
-            output: structuredOutput,
-          }),
-        });
+        const fileRead = extractFileReadFromParsedCmd(parsedEvent.parsedCmd);
+        if (fileRead) {
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: createToolCallTimelineItem({
+              server: "file",
+              tool: "read_file",
+              status: failed ? "failed" : "completed",
+              callId,
+              displayName: `Read: ${fileRead.name}`,
+              kind: "read",
+              input: { path: fileRead.path },
+              output: {
+                type: "read_file",
+                path: fileRead.path,
+                content: outputText,
+              },
+            }),
+          });
+        } else {
+          let structuredOutput: unknown = outputRecord;
+          if (outputText !== undefined || resolvedExitCode !== undefined) {
+            const commandOutput: {
+              type: "command";
+              command: string;
+              output?: string;
+              exitCode?: number;
+              cwd?: string;
+            } = {
+              type: "command",
+              command: commandText,
+              cwd: parsedEvent.cwd,
+            };
+            if (outputText !== undefined) {
+              commandOutput.output = outputText;
+            }
+            if (resolvedExitCode !== undefined) {
+              commandOutput.exitCode = resolvedExitCode;
+            }
+            structuredOutput = commandOutput;
+          }
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: createToolCallTimelineItem({
+              server: "command",
+              tool: "shell",
+              status: failed ? "failed" : "completed",
+              callId,
+              displayName: commandText,
+              kind: "execute",
+              input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+              output: structuredOutput,
+            }),
+          });
+        }
         if (failed) {
           const errorMessage =
             resolvedExitCode !== undefined
