@@ -609,6 +609,57 @@ export function ToggleRow({
   );
 }
 
+export type IsolationMode = "none" | "branch" | "worktree";
+
+interface IsolationControlProps {
+  value: IsolationMode;
+  onChange: (mode: IsolationMode) => void;
+  disabled?: boolean;
+}
+
+export function IsolationControl({
+  value,
+  onChange,
+  disabled,
+}: IsolationControlProps): ReactElement {
+  const options: Array<{ id: IsolationMode; label: string }> = [
+    { id: "none", label: "None" },
+    { id: "branch", label: "Branch" },
+    { id: "worktree", label: "Worktree" },
+  ];
+
+  return (
+    <View style={[styles.segmentedControl, disabled && styles.segmentedControlDisabled]}>
+      {options.map((option) => {
+        const isSelected = option.id === value;
+        return (
+          <Pressable
+            key={option.id}
+            onPress={() => {
+              if (!disabled) {
+                onChange(option.id);
+              }
+            }}
+            style={[
+              styles.segmentedOption,
+              isSelected && styles.segmentedOptionSelected,
+            ]}
+          >
+            <Text
+              style={[
+                styles.segmentedOptionText,
+                isSelected && styles.segmentedOptionTextSelected,
+              ]}
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export interface GitOptionsSectionProps {
   baseBranch: string;
   onBaseBranchChange: (value: string) => void;
@@ -617,12 +668,10 @@ export interface GitOptionsSectionProps {
   repoError: string | null;
   helperText?: string | null;
   warning: string | null;
-  createNewBranch: boolean;
-  onToggleCreateNewBranch: (value: boolean) => void;
+  isolationMode: IsolationMode;
+  onIsolationModeChange: (mode: IsolationMode) => void;
   branchName: string;
   onBranchNameChange: (value: string) => void;
-  createWorktree: boolean;
-  onToggleCreateWorktree: (value: boolean) => void;
   worktreeSlug: string;
   onWorktreeSlugChange: (value: string) => void;
   gitValidationError: string | null;
@@ -640,12 +689,10 @@ export function GitOptionsSection({
   repoError,
   helperText,
   warning,
-  createNewBranch,
-  onToggleCreateNewBranch,
+  isolationMode,
+  onIsolationModeChange,
   branchName,
   onBranchNameChange,
-  createWorktree,
-  onToggleCreateWorktree,
   worktreeSlug,
   onWorktreeSlugChange,
   gitValidationError,
@@ -668,6 +715,10 @@ export function GitOptionsSection({
   const baseInputRef = useRef<TextInput | null>(null);
   const gitInputsDisabled = Boolean(isGitDisabled) || status === "loading";
 
+  // Show warning only for "branch" mode (requires clean state for checkout)
+  // Worktree mode doesn't require clean state
+  const showDirtyWarning = isolationMode === "branch" && warning;
+
   useEffect(() => {
     if (isBaseDropdownOpen) {
       setBranchSearch("");
@@ -677,25 +728,19 @@ export function GitOptionsSection({
 
   return (
     <View style={styles.formSection}>
-      <Text style={styles.label}>Git Setup</Text>
-      <Text style={styles.helperText}>
-        Choose a base branch, then optionally create a feature branch or
-        isolated worktree.
-      </Text>
-
       <DropdownField
-        label="Base Branch"
+        label="Git"
         value={baseBranch}
         placeholder={currentBranchLabel || "main"}
         onPress={onToggleBaseDropdown}
         disabled={gitInputsDisabled}
         errorMessage={repoError}
-        warningMessage={!gitValidationError && !isGitDisabled ? warning : null}
+        warningMessage={!gitValidationError && !isGitDisabled ? (showDirtyWarning ? warning : null) : null}
         helperText={
           helperText ??
           (status === "loading"
             ? "Inspecting repository…"
-            : "Search existing branches, then tap to select.")
+            : undefined)
         }
       />
       <DropdownSheet
@@ -756,39 +801,22 @@ export function GitOptionsSection({
         ) : null}
       </DropdownSheet>
 
-      <ToggleRow
-        label="New Branch"
-        description="Create a feature branch before launching the agent"
-        value={createNewBranch}
-        onToggle={onToggleCreateNewBranch}
-        disabled={isGitDisabled}
-      />
-      {createNewBranch ? (
-        <TextInput
-          style={styles.input}
-          placeholder="feature-branch-name"
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={branchName}
-          onChangeText={onBranchNameChange}
-          autoCapitalize="none"
-          autoCorrect={false}
+      <View style={styles.formSection}>
+        <Text style={styles.label}>Isolation</Text>
+        <IsolationControl
+          value={isolationMode}
+          onChange={onIsolationModeChange}
+          disabled={isGitDisabled}
         />
-      ) : null}
+      </View>
 
-      <ToggleRow
-        label="Create Worktree"
-        description="Use an isolated directory so your current branch stays untouched"
-        value={createWorktree}
-        onToggle={onToggleCreateWorktree}
-        disabled={isGitDisabled}
-      />
-      {createWorktree ? (
+      {isolationMode !== "none" ? (
         <TextInput
           style={styles.input}
-          placeholder={branchName || "feature-worktree"}
+          placeholder={isolationMode === "worktree" ? "worktree-name" : "feature-branch-name"}
           placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={worktreeSlug}
-          onChangeText={onWorktreeSlugChange}
+          value={isolationMode === "worktree" ? worktreeSlug : branchName}
+          onChangeText={isolationMode === "worktree" ? onWorktreeSlugChange : onBranchNameChange}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -987,5 +1015,33 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[1],
+  },
+  segmentedControlDisabled: {
+    opacity: theme.opacity[50],
+  },
+  segmentedOption: {
+    flex: 1,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentedOptionSelected: {
+    backgroundColor: theme.colors.background,
+  },
+  segmentedOptionText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  segmentedOptionTextSelected: {
+    color: theme.colors.foreground,
   },
 }));

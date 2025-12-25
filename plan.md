@@ -397,3 +397,91 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **FILES CHANGED**:
   - `packages/app/src/app/agent/[serverId]/[agentId].tsx:419-437`
 
+- [⏳] **REFACTOR (App)**: Redesign new agent page UI layout per mockup.
+
+  **TARGET LAYOUT**:
+  ```
+  ┌─────────────────────────────────────────────────────┐
+  │ ←  New Agent                      🖥 local  🟢     │
+  ├─────────────────────────────────────────────────────┤
+  │  WORKING DIRECTORY                                  │
+  │  ┌───────────────────────────────────────────────┐  │
+  │  │ 📁  voice-dev                              〉 │  │
+  │  └───────────────────────────────────────────────┘  │
+  │                                                     │
+  │  AGENT                                              │
+  │  ┌───────────────────────────────────────────────┐  │
+  │  │ ✦ Claude  ·  opus-4.5                      〉 │  │
+  │  └───────────────────────────────────────────────┘  │
+  │                                                     │
+  │  GIT  (only if working dir is a git repo)           │
+  │  ┌───────────────────────────────────────────────┐  │
+  │  │ 🌿 main                                    〉 │  │
+  │  └───────────────────────────────────────────────┘  │
+  │  ⚠️ Uncommitted changes  (only if Branch selected)  │
+  │                                                     │
+  │  Isolation  (only if working dir is a git repo)     │
+  │  ┌────────────┬────────────┬────────────┐          │
+  │  │   None     │  Branch    │  Worktree  │          │
+  │  └────────────┴────────────┴────────────┘          │
+  │  [Branch name input - only if Branch/Worktree]      │
+  │                                                     │
+  ├─────────────────────────────────────────────────────┤
+  │  ┌───────────────────────────────────────────────┐  │
+  │  │ Message agent...                              │  │
+  │  └───────────────────────────────────────────────┘  │
+  │       📎                    🎤  ⟨⦿⟩               │
+  │                         Bypass Permissions  ▼      │
+  └─────────────────────────────────────────────────────┘
+  ```
+
+  **CHANGES REQUIRED**:
+
+  1. **Host in header** (not a form row):
+     - Move server/host selector to header bar, right side
+     - Show as icon + name + status dot (🖥 local 🟢)
+     - Tappable to change host
+     - Remove the separate "Host" form row
+
+  2. **Rename "Model" to "Agent"**:
+     - Single row showing provider + model: `✦ Claude · opus-4.5`
+     - Tapping opens picker with TWO dropdowns: provider first, then model
+     - Provider shown as icon or word prefix
+
+  3. **Git section visibility**:
+     - ONLY show "GIT" row and "Isolation" control if working directory is a git repo
+     - If not a git repo, hide entire git section (no greyed out state, just hidden)
+
+  4. **Isolation as segmented control** (replaces toggle checkboxes):
+     - Three options: None | Branch | Worktree
+     - Default: None (no isolation, use current branch as-is)
+     - **None**: No branch input shown, no git operations
+     - **Branch**: Shows branch name input below. User can select existing branch OR type new name to create
+     - **Worktree**: Shows branch name input below. Creates new worktree. Worktree implies branch creation.
+
+  5. **Branch name input**:
+     - Only visible when isolation is Branch or Worktree
+     - Auto-generated from prompt (slugified) like before
+     - User can edit manually
+     - For Branch: can also select from existing branches dropdown
+     - For Worktree: always new branch name (worktree slug derived from it)
+
+  6. **Uncommitted changes warning**:
+     - ONLY show when isolation is "Branch" (switching branches requires clean state)
+     - Do NOT show for "None" (staying on current branch)
+     - Do NOT show for "Worktree" (creating worktree does NOT require clean state)
+
+  7. **Mode under input area**:
+     - Move mode selector (Bypass Permissions dropdown) BELOW the text input
+     - Check how `[agentId].tsx` shows mode when agent is running - use same pattern
+     - **CRITICAL**: Refactor `AgentInputArea` to be a pure display component
+     - Both new.tsx and [agentId].tsx should use the SAME component to prevent drift
+
+  **REFACTORING REQUIREMENT**:
+  The `AgentInputArea` component should be refactored to accept all UI elements as props/children so both screens use identical rendering. Do NOT duplicate mode dropdown logic. Study `[agentId].tsx` to see how it shows mode during agent runs.
+
+  **FILES TO MODIFY**:
+  - `packages/app/src/app/agent/new.tsx` - Layout changes
+  - `packages/app/src/components/agent-input-area.tsx` - Refactor for reuse
+  - `packages/app/src/components/agent-form/agent-form-dropdowns.tsx` - Segmented control
+

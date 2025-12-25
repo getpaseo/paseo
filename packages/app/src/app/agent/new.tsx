@@ -3,20 +3,18 @@ import {
   View,
   Text,
   Pressable,
+  ScrollView,
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronRight, Plus } from "lucide-react-native";
+import { ChevronRight, Plus, Monitor } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentList } from "@/components/agent-list";
 import { AgentInputArea } from "@/components/agent-input-area";
 import {
-  AssistantDropdown,
   DropdownSheet,
   GitOptionsSection,
-  ModelDropdown,
-  PermissionsDropdown,
   WorkingDirectoryDropdown,
 } from "@/components/agent-form/agent-form-dropdowns";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
@@ -120,20 +118,23 @@ export default function DraftAgentScreen() {
     : undefined;
 
   const [openDropdown, setOpenDropdown] = useState<
-    "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch" | null
+    "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch" | "agent" | null
   >(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [baseBranch, setBaseBranch] = useState("");
-  const [createNewBranch, setCreateNewBranch] = useState(false);
+  // Isolation mode: "none" | "branch" | "worktree"
+  const [isolationMode, setIsolationMode] = useState<"none" | "branch" | "worktree">("none");
   const [branchName, setBranchName] = useState("");
-  const [createWorktree, setCreateWorktree] = useState(false);
   const [worktreeSlug, setWorktreeSlug] = useState("");
   const [branchNameEdited, setBranchNameEdited] = useState(false);
   const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
   const shouldSyncBaseBranchRef = useRef(true);
+  // Derive old flags from isolationMode for backwards compatibility
+  const createNewBranch = isolationMode === "branch" || isolationMode === "worktree";
+  const createWorktree = isolationMode === "worktree";
   const openDropdownSheet = useCallback(
-    (key: "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch") => {
+    (key: "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch" | "agent") => {
       setOpenDropdown(key);
     },
     []
@@ -393,14 +394,12 @@ export default function DraftAgentScreen() {
       return;
     }
     if (
-      createNewBranch ||
-      createWorktree ||
+      isolationMode !== "none" ||
       baseBranch.trim().length > 0 ||
       branchName.trim().length > 0 ||
       worktreeSlug.trim().length > 0
     ) {
-      setCreateNewBranch(false);
-      setCreateWorktree(false);
+      setIsolationMode("none");
       setBaseBranch("");
       setBranchName("");
       setWorktreeSlug("");
@@ -411,8 +410,7 @@ export default function DraftAgentScreen() {
   }, [
     baseBranch,
     branchName,
-    createNewBranch,
-    createWorktree,
+    isolationMode,
     isNonGitDirectory,
     worktreeSlug,
   ]);
@@ -657,62 +655,28 @@ export default function DraftAgentScreen() {
         )}
 
         <View style={styles.agentPanel}>
-          <BackHeader title="New Agent" onBack={handleBackToHome} />
+          <BackHeader
+            title="New Agent"
+            onBack={handleBackToHome}
+            rightContent={
+              <Pressable
+                style={styles.hostBadge}
+                onPress={() => openDropdownSheet("host")}
+              >
+                <Monitor size={14} color={theme.colors.mutedForeground} />
+                <Text style={styles.hostBadgeLabel}>{hostLabel}</Text>
+                <View
+                  style={[
+                    styles.hostStatusDot,
+                    hostEntry?.status === "online" && styles.hostStatusDotOnline,
+                  ]}
+                />
+              </Pressable>
+            }
+          />
 
-          <View style={styles.contentContainer}>
+          <ScrollView style={styles.contentContainer} contentContainerStyle={styles.configScrollContent}>
             <View style={styles.configSection}>
-              {renderConfigRow({
-                label: "Host",
-                value: hostLabel,
-                meta: hostStatus,
-                onPress: () => openDropdownSheet("host"),
-              })}
-              <AssistantDropdown
-                providerDefinitions={providerDefinitions}
-                disabled={false}
-                selectedProvider={selectedProvider}
-                isOpen={openDropdown === "provider"}
-                onOpen={() => openDropdownSheet("provider")}
-                onClose={closeDropdown}
-                onSelect={setProviderFromUser}
-                label="Provider"
-                placeholder="Select provider"
-                sheetTitle="Choose Provider"
-                wrapInContainer={false}
-                renderTrigger={renderDropdownTrigger}
-              />
-              <PermissionsDropdown
-                disabled={false}
-                modeOptions={modeOptions}
-                selectedMode={selectedMode}
-                isOpen={openDropdown === "mode"}
-                onOpen={() => openDropdownSheet("mode")}
-                onClose={closeDropdown}
-                onSelect={setModeFromUser}
-                label="Mode"
-                placeholder="Select mode"
-                sheetTitle="Mode"
-                wrapInContainer={false}
-                renderTrigger={renderDropdownTrigger}
-              />
-              <ModelDropdown
-                models={availableModels}
-                selectedModel={selectedModel}
-                isLoading={isModelLoading}
-                error={modelError}
-                isOpen={openDropdown === "model"}
-                onOpen={() => {
-                  refreshProviderModels();
-                  openDropdownSheet("model");
-                }}
-                onClose={closeDropdown}
-                onSelect={setModelFromUser}
-                onClear={() => setModelFromUser("")}
-                onRefresh={refreshProviderModels}
-                label="Model"
-                wrapInContainer={false}
-                renderTrigger={renderDropdownTrigger}
-              />
               <WorkingDirectoryDropdown
                 workingDir={workingDir}
                 errorMessage=""
@@ -726,7 +690,13 @@ export default function DraftAgentScreen() {
                 wrapInContainer={false}
                 renderTrigger={renderDropdownTrigger}
               />
-              {trimmedWorkingDir.length > 0 ? (
+              {renderConfigRow({
+                label: "Agent",
+                value: `${providerDefinitions.find((p) => p.id === selectedProvider)?.label ?? selectedProvider} · ${selectedModel || "auto"}`,
+                onPress: () => openDropdownSheet("agent"),
+              })}
+              {/* Git section - only show for git repos */}
+              {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
                 <GitOptionsSection
                   baseBranch={baseBranch}
                   onBaseBranchChange={handleBaseBranchChange}
@@ -736,42 +706,36 @@ export default function DraftAgentScreen() {
                   helperText={gitHelperText}
                   isGitDisabled={Boolean(gitHelperText)}
                   warning={
-                    !createWorktree && repoInfo?.isDirty
+                    repoInfo?.isDirty
                       ? "Working directory has uncommitted changes"
                       : null
                   }
-                  createNewBranch={createNewBranch}
-                  onToggleCreateNewBranch={(next) => {
-                    setCreateNewBranch(next);
-                    if (next) {
+                  isolationMode={isolationMode}
+                  onIsolationModeChange={(mode) => {
+                    setIsolationMode(mode);
+                    if (mode === "none") {
+                      setBranchName("");
+                      setWorktreeSlug("");
+                      setBranchNameEdited(false);
+                      setWorktreeSlugEdited(false);
+                    } else if (mode === "branch") {
                       if (!branchNameEdited) {
                         const slug = slugifyWorktreeName(baseBranch || "");
                         setBranchName(slug);
                       }
-                    } else {
-                      setBranchName("");
-                      setBranchNameEdited(false);
-                    }
-                  }}
-                  branchName={branchName}
-                  onBranchNameChange={(value) => {
-                    setBranchName(slugifyWorktreeName(value));
-                    setBranchNameEdited(true);
-                  }}
-                  createWorktree={createWorktree}
-                  onToggleCreateWorktree={(next) => {
-                    setCreateWorktree(next);
-                    if (next) {
+                    } else if (mode === "worktree") {
                       if (!worktreeSlugEdited) {
                         const slug = slugifyWorktreeName(
                           branchName || baseBranch || ""
                         );
                         setWorktreeSlug(slug);
                       }
-                    } else {
-                      setWorktreeSlug("");
-                      setWorktreeSlugEdited(false);
                     }
+                  }}
+                  branchName={branchName}
+                  onBranchNameChange={(value) => {
+                    setBranchName(slugifyWorktreeName(value));
+                    setBranchNameEdited(true);
                   }}
                   worktreeSlug={worktreeSlug}
                   onWorktreeSlugChange={(value) => {
@@ -824,13 +788,118 @@ export default function DraftAgentScreen() {
               )}
             </DropdownSheet>
 
+            {/* Agent dropdown sheet - provider + model + mode */}
+            <DropdownSheet
+              title="Agent"
+              visible={openDropdown === "agent"}
+              onClose={closeDropdown}
+            >
+              <View style={styles.agentSheetSection}>
+                <Text style={styles.agentSheetSectionLabel}>Provider</Text>
+                <View style={styles.dropdownSheetList}>
+                  {providerDefinitions.map((definition) => {
+                    const isSelected = definition.id === selectedProvider;
+                    return (
+                      <Pressable
+                        key={definition.id}
+                        style={[
+                          styles.dropdownSheetOption,
+                          isSelected && styles.dropdownSheetOptionSelected,
+                        ]}
+                        onPress={() => {
+                          setProviderFromUser(definition.id);
+                        }}
+                      >
+                        <Text style={styles.dropdownSheetOptionLabel}>
+                          {definition.label}
+                        </Text>
+                        {definition.description ? (
+                          <Text style={styles.dropdownSheetOptionDescription}>
+                            {definition.description}
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.agentSheetSection}>
+                <Text style={styles.agentSheetSectionLabel}>Model</Text>
+                <View style={styles.dropdownSheetList}>
+                  <Pressable
+                    style={[
+                      styles.dropdownSheetOption,
+                      !selectedModel && styles.dropdownSheetOptionSelected,
+                    ]}
+                    onPress={() => setModelFromUser("")}
+                  >
+                    <Text style={styles.dropdownSheetOptionLabel}>
+                      Automatic (provider default)
+                    </Text>
+                  </Pressable>
+                  {availableModels.map((model) => {
+                    const isSelected = model.id === selectedModel;
+                    return (
+                      <Pressable
+                        key={model.id}
+                        style={[
+                          styles.dropdownSheetOption,
+                          isSelected && styles.dropdownSheetOptionSelected,
+                        ]}
+                        onPress={() => setModelFromUser(model.id)}
+                      >
+                        <Text style={styles.dropdownSheetOptionLabel}>
+                          {model.label}
+                        </Text>
+                        {model.description ? (
+                          <Text style={styles.dropdownSheetOptionDescription}>
+                            {model.description}
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {modeOptions.length > 0 ? (
+                <View style={styles.agentSheetSection}>
+                  <Text style={styles.agentSheetSectionLabel}>Mode</Text>
+                  <View style={styles.dropdownSheetList}>
+                    {modeOptions.map((mode) => {
+                      const isSelected = mode.id === selectedMode;
+                      return (
+                        <Pressable
+                          key={mode.id}
+                          style={[
+                            styles.dropdownSheetOption,
+                            isSelected && styles.dropdownSheetOptionSelected,
+                          ]}
+                          onPress={() => setModeFromUser(mode.id)}
+                        >
+                          <Text style={styles.dropdownSheetOptionLabel}>
+                            {mode.label}
+                          </Text>
+                          {mode.description ? (
+                            <Text style={styles.dropdownSheetOptionDescription}>
+                              {mode.description}
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+            </DropdownSheet>
+
             {errorMessage ? (
               <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>{errorMessage}</Text>
               </View>
             ) : null}
-            <View style={styles.streamContainer} />
-          </View>
+          </ScrollView>
           <AgentInputArea
             agentId={DRAFT_AGENT_ID}
             serverId={selectedServerId ?? ""}
@@ -881,10 +950,13 @@ const styles = StyleSheet.create((theme) => ({
   contentContainer: {
     flex: 1,
   },
+  configScrollContent: {
+    flexGrow: 1,
+  },
   configSection: {
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[4],
     gap: theme.spacing[2],
   },
   configRow: {
@@ -949,9 +1021,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
-  streamContainer: {
-    flex: 1,
-  },
   errorContainer: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
@@ -963,5 +1032,37 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.destructiveForeground,
     fontSize: theme.fontSize.sm,
+  },
+  hostBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.full,
+  },
+  hostBadgeLabel: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  hostStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.mutedForeground,
+  },
+  hostStatusDotOnline: {
+    backgroundColor: theme.colors.palette.green[500],
+  },
+  agentSheetSection: {
+    marginBottom: theme.spacing[4],
+  },
+  agentSheetSectionLabel: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing[2],
   },
 }));
