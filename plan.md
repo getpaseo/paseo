@@ -81,6 +81,28 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
+- [x] **BUG**: Claude agent assistant text is garbled/corrupted during streaming.
+  - **Done (2025-12-25 20:15)**: Added E2E test `daemon.e2e.test.ts:1760-1881` that verifies server-side streaming text integrity. **Test passes** - server sends clean, non-corrupted text chunks. The bug is NOT on the server side.
+
+  **INVESTIGATION RESULT**:
+  - Server-side data is clean (verified via E2E test)
+  - Each `assistant_message` timeline event contains correct text delta
+  - Text chunks are properly accumulated in order
+  - Bug must be in React Native app rendering layer (`packages/app`)
+
+  **App-side code reviewed (no obvious bugs found)**:
+  - `packages/app/src/types/stream.ts:216-244`: `appendAssistantMessage` correctly appends to last assistant message
+  - `packages/app/src/contexts/session-context.tsx:698-718`: Zustand functional updates for state management
+  - `packages/app/src/components/agent-stream-view.tsx`: FlatList rendering of stream items
+
+  **ALSO FIXED**: Removed duplicate `DropdownField` import in `create-agent-modal.tsx:66` that was causing build errors.
+
+  **NEXT STEPS** (for follow-up task):
+  1. Test in actual React Native app to observe garbled text reproduction
+  2. Check for React concurrent rendering issues with rapid state updates
+  3. Investigate FlatList virtualization edge cases
+  4. Consider adding debug logging to `appendAssistantMessage` in production to capture actual state transitions
+
 - [x] **REFACTOR**: Remove module-level `SESSION_HISTORY` Map from `codex-mcp-agent.ts`.
   - **Done (2025-12-25 19:28)**: Removed `SESSION_HISTORY` global Map and refactored to use instance-level `persistedHistory` field.
 
