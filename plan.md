@@ -314,7 +314,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - `packages/app/src/app/agent/[serverId]/[agentId].tsx:687-688`
   - Playwright screenshots: `new-agent-page.png`, `existing-agent-screen.png`
 
-- [ ] **FIX (App)**: New agent page - add visual loading indicator during creation
+- [x] **FIX (App)**: New agent page - add visual loading indicator during creation
   - Location: `new.tsx`
   - Issue: Has `isLoading` state (line 123) but no visual feedback
   - Fix: When `isLoading` is true:
@@ -322,17 +322,65 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     2. Change submit icon/text to indicate loading
     3. Disable submit button visually (opacity, non-clickable)
   - Reference: `create-agent-modal.tsx:2015-2024` for loading button pattern
+  - **Done (2025-12-25 21:08)**: Added `isSubmitLoading` prop to `AgentInputArea` for external loading state control.
 
-- [ ] **FEATURE (App)**: New agent page - add Git Options Section
-  - Location: `new.tsx`
-  - Issue: Missing ~200 lines of git configuration from old modal
-  - What's missing:
-    - State: baseBranch, createNewBranch, branchName, createWorktree, worktreeSlug
-    - UI: `GitOptionsSection` component with toggles and inputs
-    - Validation: `gitBlockingError` logic for branch names, dirty directories
-    - Request: `useDaemonRequest` for `git_repo_info_request`
-  - Reference files:
-    - UI: `create-agent-modal.tsx:1936-1993`
-    - Validation: `create-agent-modal.tsx:1653-1707`
-    - State: `create-agent-modal.tsx:448-454`
-    - createAgent call: `create-agent-modal.tsx:1388-1401`
+  **WHAT**:
+  1. Added `isSubmitLoading?: boolean` prop to `AgentInputAreaProps` interface (`agent-input-area.tsx:53-54`)
+  2. Destructured `isSubmitLoading = false` in component function (`agent-input-area.tsx:98`)
+  3. Updated send button disabled condition to include `isSubmitLoading` (`agent-input-area.tsx:1050`)
+  4. Updated send button style condition to include `isSubmitLoading` (`agent-input-area.tsx:1053`)
+  5. Added conditional render: `ActivityIndicator` when loading, `ArrowUp` icon otherwise (`agent-input-area.tsx:1056-1060`)
+  6. Passed `isSubmitLoading={isLoading}` from `new.tsx` to `AgentInputArea` (`new.tsx:472`)
+
+  **RESULT**: When creating an agent, the send button now shows a spinning indicator and becomes disabled (opacity 0.5) during the async creation process.
+
+  **VERIFICATION**:
+  - `npm run typecheck` passes
+  - Playwright MCP test: Error "Working directory is required" correctly displays on empty submit
+  - Visual inspection confirms ActivityIndicator imports already exist in agent-input-area.tsx (line 11)
+
+- [x] **FEATURE (App)**: New agent page - add Git Options Section
+  - **Done (2025-12-25 22:45)**: Added complete Git Options Section to new agent page.
+
+  **WHAT**:
+  1. Added `GitOptionsSection` and `ToggleRow` components to `agent-form-dropdowns.tsx:569-801`
+  2. Added styles for toggles, checkboxes, and inputs: `agent-form-dropdowns.tsx:701-755`
+  3. Added git-related state in `new.tsx:127-134`: baseBranch, createNewBranch, branchName, createWorktree, worktreeSlug, branchNameEdited, worktreeSlugEdited, shouldSyncBaseBranchRef
+  4. Added `useDaemonRequest` hook for `git_repo_info_request` in `new.tsx:195-229`
+  5. Added git validation logic in `new.tsx:231-353`: isNonGitDirectory, repoInfoStatus, repoInfoError, gitHelperText, slugifyWorktreeName, validateWorktreeName, gitBlockingError
+  6. Added repo info sync effects in `new.tsx:355-423`
+  7. Updated `handleCreateFromInput` to include git options in `new.tsx:529-548`
+  8. Added `GitOptionsSection` UI in `new.tsx:729-785`
+
+  **RESULT**:
+  - Git Options Section appears when working directory is set
+  - Auto-populates base branch from current branch
+  - Shows dirty directory warning in orange
+  - New Branch toggle with auto-slugified branch name input
+  - Create Worktree toggle with worktree slug input
+  - Validates branch/worktree names
+  - Git options passed to createAgent call
+
+  **VERIFICATION**:
+  - `npm run typecheck` passes
+  - Playwright MCP test: Selected `/Users/moboudra/dev/voice-dev` as working directory
+  - Git section appeared with "main" as base branch
+  - Warning "Working directory has uncommitted changes" displayed correctly
+  - Screenshot saved: `.playwright-mcp/new-agent-page-git-section.png`
+
+  **FILES CHANGED**:
+  - `packages/app/src/app/agent/new.tsx` (+371 lines)
+  - `packages/app/src/components/agent-form/agent-form-dropdowns.tsx` (+290 lines)
+
+- [ ] **BUG (App)**: Agent shows "requires attention" even when user was viewing it when it finished.
+
+  **Problem**: If user is actively viewing an agent screen when the agent finishes running, pressing back shows the agent as "requires attention" / finished notification. This is wrong - the user was already looking at the agent, they don't need to be notified.
+
+  **Expected**: If user is on the agent screen when it transitions to idle/finished, that should clear the "requires attention" state since they witnessed it.
+
+  **Investigate**:
+  1. Find where "requires attention" state is set (likely on agent lifecycle change to idle)
+  2. Find where it's cleared (likely `clearAgentAttention` call)
+  3. Check if viewing the agent screen should auto-clear attention when agent finishes
+  4. Fix: Either clear attention when agent finishes while user is viewing, or don't set attention if user is already on that agent's screen
+
