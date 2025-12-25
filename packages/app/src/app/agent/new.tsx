@@ -469,6 +469,7 @@ export default function DraftAgentScreen() {
             agentId={DRAFT_AGENT_ID}
             serverId={selectedServerId ?? ""}
             onSubmitMessage={handleCreateFromInput}
+            isSubmitLoading={isLoading}
           />
         </View>
       </View>
