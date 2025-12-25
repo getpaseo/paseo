@@ -995,7 +995,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Full permission cycle works via DaemonClient
   - **Done (2025-12-25 17:06)**: WHAT: Updated `daemon-client.ts:26-35` (added `extra?: Record<string, unknown>` to CreateAgentOptions), `daemon-client.ts:143-158` (added extra to createAgent config). Updated `daemon.e2e.test.ts:1-14` (added imports for fs, os, path, AgentTimelineItem, tmpCwd helper). Added `daemon.e2e.test.ts:83-253` (Codex permission approve/deny tests with full cycle verification). Added `daemon.e2e.test.ts:255-436` (Claude permission tests - currently skipped, see below). RESULT: Codex permission tests pass (2/2). Claude permission tests skipped due to SDK behavior - config is passed correctly (`{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":false}}`) but Claude SDK does not request permissions in daemon context (works in direct claude-agent.test.ts). Full permission cycle verified: permission_requested → respondToPermission → permission_resolved → tool executed/denied. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (3 passed, 2 skipped in 21s), `npm run typecheck --workspace=@paseo/server` (exit 0). NOTE: Added task to investigate Claude SDK permission behavior.
 
-- [ ] **Review**: Audit DaemonClient type reusability.
+- [x] **Review**: Audit DaemonClient type reusability.
 
   **Problem**: The DaemonClient may be duplicating types that already exist in the server. Types should be reused, not duplicated.
 
@@ -1017,6 +1017,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - All message types imported from messages.ts
   - All agent types imported from agent-sdk-types.ts
   - Easy to maintain as server types evolve
+  - **Done (2025-12-25 17:39)**: WHAT: Audited `daemon-client.ts:1-66` for type definitions. RESULT: **PASS - No duplicates found.** Imports from `messages.ts:3-9` (SessionInboundMessage, SessionOutboundMessage, AgentSnapshotPayload, AgentStreamEventPayload, PersistedAgentDescriptorPayload) and `agent-sdk-types.ts:10-15` (AgentPermissionRequest, AgentPermissionResponse, AgentPersistenceHandle, AgentProvider). Local types are client-specific: DaemonClientConfig (connection config), CreateAgentOptions (client options subset), SendMessageOptions (client message options), DaemonEvent (flattened client event representation), DaemonEventHandler (callback type). EVIDENCE: `npm run typecheck --workspace=@paseo/server` (exit 0). Architecture is clean - daemon-client acts as thin wrapper around server message types with no duplication.
 
 - [ ] **Implement**: DaemonClient persistence (Phase 3).
 
