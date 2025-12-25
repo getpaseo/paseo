@@ -1851,6 +1851,25 @@ function parsePatchFiles(files: unknown): PatchFileChange[] {
   return z.array(PatchFileEntrySchema).parse(files);
 }
 
+function extractPatchPaths(text: string): string[] {
+  const paths = new Set<string>();
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("+++ ") && !trimmed.startsWith("--- ")) {
+      continue;
+    }
+    const rawPath = trimmed.slice(4).trim();
+    if (!rawPath || rawPath === "/dev/null") {
+      continue;
+    }
+    const cleaned = rawPath.replace(/^([ab])\//, "");
+    if (cleaned) {
+      paths.add(cleaned);
+    }
+  }
+  return Array.from(paths);
+}
+
 function normalizeCommand(command: Command): string {
   return typeof command === "string" ? command : command.join(" ");
 }
@@ -2037,9 +2056,26 @@ function mapRawResponseItemToThreadItem(item: unknown): ThreadItem | null {
   const output = normalizeStructuredPayload(toolCallParsed.data.output);
 
   if (toolNameLower === "apply_patch") {
+    let changes: PatchFileChange[] | undefined;
+    const changeSource =
+      isKeyedObject(input) && "changes" in input ? input.changes : input;
+    if (changeSource !== undefined) {
+      const parsedChanges = PatchChangesSchema.safeParse(changeSource);
+      if (parsedChanges.success) {
+        changes = parsePatchChanges(parsedChanges.data);
+      }
+    }
+    if (!changes && isKeyedObject(input) && typeof input.patch === "string") {
+      const patchContent = input.patch;
+      const paths = extractPatchPaths(patchContent);
+      if (paths.length > 0) {
+        changes = paths.map((path) => ({ path, kind: "edit", patch: patchContent }));
+      }
+    }
     const parsed = ThreadItemSchema.safeParse({
       type: "file_change",
       call_id: callId,
+      changes,
     });
     return parsed.success ? parsed.data : null;
   }
@@ -2344,6 +2380,7 @@ class CodexMcpAgentSession implements AgentSession {
   private pendingHistory: AgentTimelineItem[] = [];
   private turnState: TurnState | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
+  private patchChangesByCallId = new Map<string, PatchFileChange[]>();
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
@@ -2950,11 +2987,8 @@ class CodexMcpAgentSession implements AgentSession {
       this.flushPendingHistory();
     }
     if (identifiers.conversationId && identifiers.conversationId.length > 0) {
-      const shouldUpdate =
-        !this.lockConversationId ||
-        !this.conversationId ||
-        this.conversationId !== identifiers.conversationId;
-      if (shouldUpdate) {
+      const shouldUpdate = !this.lockConversationId || !this.conversationId;
+      if (shouldUpdate && this.conversationId !== identifiers.conversationId) {
         this.conversationId = identifiers.conversationId;
         this.updatePersistenceConversationId();
       }
@@ -3198,6 +3232,7 @@ class CodexMcpAgentSession implements AgentSession {
           return { path: change.path, kind: change.kind };
         });
         this.pendingPatchChanges.set(callId, normalizedChanges);
+        this.patchChangesByCallId.set(callId, normalizedChanges);
         this.emitEvent({
           type: "timeline",
           provider: CODEX_PROVIDER,
@@ -3235,6 +3270,9 @@ class CodexMcpAgentSession implements AgentSession {
               ? endChanges
               : fileRecords;
         this.pendingPatchChanges.delete(callId);
+        if (files.length > 0) {
+          this.patchChangesByCallId.set(callId, files);
+        }
         const output: {
           files: PatchFileChange[];
           stdout?: string;
@@ -3275,20 +3313,6 @@ class CodexMcpAgentSession implements AgentSession {
         return;
       }
       case "mcp_tool_call_begin": {
-        const input = normalizeStructuredPayload(parsedEvent.input);
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: createToolCallTimelineItem({
-            server: parsedEvent.server,
-            tool: parsedEvent.tool,
-            status: "running",
-            callId: parsedEvent.callId,
-            displayName: `${parsedEvent.server}.${parsedEvent.tool}`,
-            kind: "tool",
-            input,
-          }),
-        });
         return;
       }
       case "mcp_tool_call_end": {
@@ -3339,7 +3363,15 @@ class CodexMcpAgentSession implements AgentSession {
         return;
       case "turn.completed": {
         const usage: AgentUsage | undefined = event.usage;
-        this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage });
+        if (this.turnState?.sawError) {
+          this.emitEvent({
+            type: "turn_failed",
+            provider: CODEX_PROVIDER,
+            error: "Codex MCP turn failed",
+          });
+        } else {
+          this.emitEvent({ type: "turn_completed", provider: CODEX_PROVIDER, usage });
+        }
         return;
       }
       case "turn.failed": {
@@ -3360,7 +3392,7 @@ class CodexMcpAgentSession implements AgentSession {
       case "item.started":
       case "item.updated":
       case "item.completed": {
-        const timelineItem = this.threadItemToTimeline(event.item);
+        const timelineItem = this.threadItemToTimeline(event.item, event.type);
         if (timelineItem) {
           this.emitEvent({
             type: "timeline",
@@ -3416,7 +3448,10 @@ class CodexMcpAgentSession implements AgentSession {
     }
   }
 
-  private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
+  private threadItemToTimeline(
+    item: ThreadItem,
+    eventType?: "item.started" | "item.updated" | "item.completed"
+  ): AgentTimelineItem | null {
     if (isThreadItemType(item, "agent_message")) {
       return { type: "assistant_message", text: item.text };
     }
@@ -3470,17 +3505,27 @@ class CodexMcpAgentSession implements AgentSession {
       });
     }
     if (isThreadItemType(item, "file_change")) {
-      const changes = item.changes ? parsePatchChanges(item.changes) : [];
+      let changes = item.changes ? parsePatchChanges(item.changes) : [];
+      if (changes.length === 0 && item.callId) {
+        const cached = this.patchChangesByCallId.get(item.callId);
+        if (cached && cached.length > 0) {
+          changes = cached;
+        }
+      }
       const summaryFiles = changes.map((change) => {
         if (!change.kind) {
           throw new Error(`file_change missing kind for ${change.path}`);
         }
         return { path: change.path, kind: change.kind };
       });
+      const status =
+        eventType === "item.started" || eventType === "item.updated"
+          ? "running"
+          : "completed";
       return createToolCallTimelineItem({
         server: "file_change",
         tool: "apply_patch",
-        status: "completed",
+        status,
         callId: item.callId,
         displayName: buildFileChangeSummary(summaryFiles),
         kind: "edit",
@@ -3488,6 +3533,9 @@ class CodexMcpAgentSession implements AgentSession {
       });
     }
     if (item.type === "read_file" || item.type === "file_read") {
+      if (eventType && eventType !== "item.completed") {
+        return null;
+      }
       const readItem = item as ReadFileThreadItem;
       const displayName = `Read ${readItem.path}`;
       const output =
@@ -3504,6 +3552,9 @@ class CodexMcpAgentSession implements AgentSession {
       });
     }
     if (isThreadItemType(item, "mcp_tool_call")) {
+      if (eventType && eventType !== "item.completed") {
+        return null;
+      }
       return createToolCallTimelineItem({
         server: item.server,
         tool: item.tool,
@@ -3516,6 +3567,9 @@ class CodexMcpAgentSession implements AgentSession {
       });
     }
     if (isThreadItemType(item, "web_search")) {
+      if (eventType && eventType !== "item.completed") {
+        return null;
+      }
       const displayName = `Web search: ${item.query}`;
       const output =
         item.results !== undefined ? item.results : item.output;
