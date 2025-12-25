@@ -905,7 +905,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - **Done (2025-12-25 18:00)**: WHAT: Removed duplicate user_message emission from `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2599-2603` - the provider was emitting user_message in `stream()` but `agent-manager.ts`'s `recordUserMessage()` (called by session.ts before stream) already dispatches this event. Updated test in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:405` to expect 0 user_messages from provider since agent-manager handles this. RESULT: User messages now appear exactly once in the UI. EVIDENCE: Playwright verification on localhost:8081 - created new Codex agent with prompt "test fix", confirmed only ONE user message in UI (newStreamLength stayed at 1, UI snapshot showed single "test fix" bubble). Unit test passes: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "provider does not emit user_message"` (1 passed).
 
 - [x] **BUG**: Codex agent doesn't see agent-control MCP - Claude does.
-  - **Done (2025-12-25 22:45)**: WHAT: Fixed `buildCodexMcpConfig()` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2337-2429` to include MCP servers in the Codex tool call. Added `CodexMcpServerConfig` and `CodexConfigPayload` types at lines 2324-2335. Added `managedAgentId` parameter to append caller agent ID to agent-control URL. Built MCP servers config including: (1) `agent-control` HTTP MCP with URL and `http_headers` (using Codex's field name, not `headers`), (2) `playwright` STDIO MCP server, (3) user-provided MCP servers from `config.mcpServers`. Added `managedAgentId` property to `CodexMcpAgentSession` class at line 2516. Updated `setManagedAgentId()` at lines 2907-2909 to store the ID. Updated all 3 call sites of `buildCodexMcpConfig()` at lines 2924, 2962, 2985 to pass `this.managedAgentId`. ROOT CAUSE: Claude provider at lines 672-699 builds MCP servers config and passes to Claude SDK. Codex MCP provider at line 2360 only passed `config.extra.codex` - completely ignoring `config.agentControlMcp` and `config.mcpServers`. Codex CLI expects MCP servers in `config.mcp_servers` field with `http_headers` (not `headers`) for HTTP servers. RESULT: Codex agents now receive agent-control and playwright MCP servers in tool call config. EVIDENCE: Typecheck passes (`npm run typecheck --workspace=@paseo/server`), unit test passes (`npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "responds with text"`), quick verification script shows MCP config includes `agent-control` with URL and headers.
+  - **Done (2025-12-25 23:15)**: WHAT: Fixed `buildCodexMcpConfig()` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2337-2429` to include MCP servers in the Codex tool call. Added `CodexMcpServerConfig` and `CodexConfigPayload` types at lines 2324-2335. Added `managedAgentId` parameter to append caller agent ID to agent-control URL. Built MCP servers config including: (1) `agent-control` HTTP MCP with URL and `http_headers` (using Codex's field name, not `headers`), (2) `playwright` STDIO MCP server, (3) user-provided MCP servers from `config.mcpServers`. Added `managedAgentId` property to `CodexMcpAgentSession` class at line 2516. Updated `setManagedAgentId()` at lines 2907-2909 to store the ID. Updated all 3 call sites of `buildCodexMcpConfig()` at lines 2924, 2962, 2985 to pass `this.managedAgentId`. ROOT CAUSE: Claude provider at lines 672-699 builds MCP servers config and passes to Claude SDK. Codex MCP provider at line 2360 only passed `config.extra.codex` - completely ignoring `config.agentControlMcp` and `config.mcpServers`. Codex CLI expects MCP servers in `config.mcp_servers` field with `http_headers` (not `headers`) for HTTP servers. RESULT: Codex agents now receive agent-control and playwright MCP servers in tool call config. EVIDENCE: Typecheck passes (`npm run typecheck --workspace=@paseo/server`), unit test passes (`npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "responds with text"`), quick verification script shows MCP config includes `agent-control` with URL and headers.
+  - **Done (2025-12-25 23:45)**: WHAT: Fixed `parentAgentId` schema to allow null values. Changed `z.string().optional()` to `z.string().nullable().optional()` in `packages/server/src/server/messages.ts:254`. Updated `toAgentPayload` to use `agent.parentAgentId ?? null` in `packages/server/src/server/agent/agent-projections.ts:87`. Updated `Agent` types to accept `string | null | undefined` in `packages/app/src/types/agent-directory.ts:15` and `packages/server/src/stores/session-store.ts:109`. ROOT CAUSE: `list_agents` MCP tool returned `parentAgentId: null` but schema expected `string | undefined`, causing Zod validation to fail with "invalid parentAgentId type". RESULT: Codex agent successfully calls `agent-control.list_agents` and sees agent list. EVIDENCE: Playwright E2E test on localhost:8081 - Codex agent called list_agents and displayed "Found 1 agent: List Agents (Names & Statuses) — running".
 
 - [x] **Plan**: Design daemon client for E2E testing.
 
@@ -944,3 +945,80 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   **DO NOT implement yet - just plan and propose options.**
   - **Done (2025-12-25 23:15)**: WHAT: Authored comprehensive design report in `REPORT-daemon-client-design.md:1` covering 3 architectural approaches (Simple WebSocket Wrapper, Reactive Event Store, Hybrid), with full type definitions, implementation sketches, and example E2E tests. RESULT: Recommended Approach 1 (Simple WebSocket Wrapper) for ~300-400 lines of code, leveraging existing `messages.ts` Zod schemas and `test-utils/paseo-daemon.ts` infrastructure. Key files identified: `daemon-client.ts` (new), `daemon-test-context.ts` (new), `daemon.e2e.test.ts` (new E2E suite). EVIDENCE: `REPORT-daemon-client-design.md` contains: (1) 3 approaches with pros/cons, (2) full TypeScript interface for DaemonClient, (3) implementation code for core methods (connect, createAgent, sendMessage, waitForAgentIdle, respondToPermission), (4) test context helper, (5) 5 example E2E tests (basic flow, permission approve/deny, persistence/resume, multi-agent), (6) scope estimate of ~550-650 total lines, (7) 5-phase migration path.
+
+- [x] **Implement**: DaemonClient core (Phase 1).
+
+  Follow `REPORT-daemon-client-design.md` - Approach 1 (Simple WebSocket Wrapper).
+
+  **Create**:
+  1. `packages/server/src/server/test-utils/daemon-client.ts`:
+     - `DaemonClient` class with constructor taking `{ url, authHeader? }`
+     - `connect()`, `close()`
+     - `createAgent(options)` → returns `AgentSnapshotPayload`
+     - `deleteAgent(agentId)`
+     - `listAgents()`
+     - `sendMessage(agentId, text, options?)`
+     - `cancelAgent(agentId)`
+     - `waitForAgentIdle(agentId, timeout?)` → returns final state
+     - `on(handler)` → event subscription
+     - Private: `send()`, `waitFor()`, message handling
+
+  2. `packages/server/src/server/test-utils/daemon-test-context.ts`:
+     - `createDaemonTestContext()` → `{ daemon, client, cleanup }`
+     - Uses existing `createTestPaseoDaemon()` from `paseo-daemon.ts`
+
+  3. Update `packages/server/src/server/test-utils/index.ts` to export new utilities
+
+  **Test**:
+  - Add `packages/server/src/server/daemon.e2e.test.ts` with ONE test:
+    - `creates agent and receives response` (basic flow from report)
+  - Run test to verify it works
+
+  **Acceptance criteria**:
+  - Typecheck passes
+  - One E2E test passes: create agent → send message → wait for idle
+  - No Playwright required
+  - **Done (2025-12-25 16:49)**: WHAT: Created `packages/server/src/server/test-utils/daemon-client.ts:1-469` (DaemonClient class with connect, close, createAgent, deleteAgent, listAgents, listPersistedAgents, resumeAgent, sendMessage, cancelAgent, setAgentMode, respondToPermission, waitForAgentIdle, waitForPermission, on, send, waitFor, handleSessionMessage, toEvent, getMessageQueue, clearMessageQueue methods). Created `packages/server/src/server/test-utils/daemon-test-context.ts:1-46` (createDaemonTestContext helper). Created `packages/server/src/server/test-utils/index.ts:1-13` (exports). Created `packages/server/src/server/daemon.e2e.test.ts:1-77` (one E2E test "creates agent and receives response"). RESULT: All acceptance criteria met - typecheck passes, E2E test passes in 3.5s (creates Codex agent, sends message, waits for idle, verifies turn_started/turn_completed/assistant_message events), no Playwright required. EVIDENCE: `npm run typecheck --workspace=@paseo/server` (exit 0), `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (1 passed in 3537ms).
+
+- [ ] **Implement**: DaemonClient permissions (Phase 2).
+
+  **Add methods to DaemonClient**:
+  - `respondToPermission(agentId, requestId, response)`
+  - `waitForPermission(agentId, timeout?)`
+
+  **Add E2E tests**:
+  - `permission flow: approve` - trigger permission, approve, verify execution
+  - `permission flow: deny` - trigger permission, deny, verify handling
+
+  **Acceptance criteria**:
+  - Permission tests pass for both Claude and Codex providers
+  - Full permission cycle works via DaemonClient
+
+- [ ] **Implement**: DaemonClient persistence (Phase 3).
+
+  **Add methods to DaemonClient**:
+  - `listPersistedAgents()`
+  - `resumeAgent(persistence)`
+
+  **Add E2E tests**:
+  - `agent persistence and resume` - create, message, delete, list persisted, resume, verify state
+
+  **Acceptance criteria**:
+  - Persistence round-trip works via DaemonClient
+
+- [ ] **Implement**: Multi-agent E2E test (Phase 4).
+
+  **Add E2E test**:
+  - `multi-agent: agent A launches agent B` - parent agent uses agent-control MCP to create child
+
+  **Acceptance criteria**:
+  - Multi-agent orchestration works via DaemonClient
+  - Both parent and child agents visible in listAgents()
+
+- [ ] **Review**: Audit daemon E2E test coverage.
+
+  After all phases complete:
+  - Run full E2E suite
+  - Identify any gaps in coverage
+  - Propose additional tests if needed
+  - Document what's tested vs not tested
