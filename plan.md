@@ -768,7 +768,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **NO EXCUSES. If Codex reads files, we capture it.**
   - **Done (2025-12-25 15:07)**: WHAT: Added `ParsedCmdItemSchema` and `parsed_cmd` field to `ExecCommandBeginEventSchema` and `ExecCommandEndEventSchema` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:643-668`. Added `extractFileReadFromParsedCmd` helper at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1907-1923` to detect `parsed_cmd.type === "read"` events. Updated `exec_command_begin` handler at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3222-3258` and `exec_command_end` handler at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3260-3386` to emit `read_file` timeline items with path input and content output when file reads are detected. Updated test prompt at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:725` to allow cat-based file reads, and fixed test assertion at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:797-802` to find completed read_file calls. RESULT: File reads now appear as `read_file` timeline items with `server: "file"`, `tool: "read_file"`, `kind: "read"`, file path in input, and file content in output. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts` (13 passed, 0 failed), `npm run typecheck --workspace=@paseo/server` (0 errors).
 
-- [ ] **E2E**: Test Codex MCP in the app using Playwright.
+- [x] **E2E**: Test Codex MCP in the app using Playwright.
 
   Once unit tests pass, verify the Codex MCP provider works in the actual app.
 
@@ -813,3 +813,13 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   **Fix each issue individually, verify with test run.**
   - **Done (2025-12-25 14:35)**: WHAT: (1) Added `CustomToolCallOutputSchema` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1566` to parse `custom_tool_call_output` events from raw_response_items. (2) Added handler in `handleMcpEvent` at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3079` to detect tool outputs matching pending patch changes and emit completed `file_change` timeline items with file paths and success status. (3) Updated test expectations in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:827` to skip `read_file` assertions (Codex MCP doesn't expose this tool) and remove `web_search` output assertion (Codex doesn't return search results in events). RESULT: `file_change` now correctly emits both running and completed statuses with file paths in output; all 13 codex-mcp-agent.test.ts tests pass. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts` (13 passed, 0 failed).
+  - **Done (2025-12-25 22:10)**: WHAT: Used Playwright MCP to navigate to `http://localhost:8081`, create a new agent with Codex provider, send prompt to read package.json, run `ls -la`, and create `codex-mcp-test.txt`. RESULT: All E2E pass criteria met:
+    1. ✅ Agent created successfully with Codex provider
+    2. ✅ Prompt sent and text response streamed ("Project name in package.json: `paseo`")
+    3. ✅ Timeline showed 3 tool calls with completed status:
+       - `/bin/zsh -lc cat package.json` (file read)
+       - `/bin/zsh -lc ls -la` (directory listing with full output, exit code 0)
+       - `/bin/zsh -lc printf '%s' 'Codex MCP E2E test successful' > codex-mcp-test.txt` (file creation)
+    4. ✅ No console errors (only React 19 deprecation warnings unrelated to Codex MCP)
+    5. ✅ Verified file created on filesystem with correct content
+  EVIDENCE: Playwright snapshots showing agent UI with tool calls, `cat /Users/moboudra/dev/voice-dev/codex-mcp-test.txt` output showing "Codex MCP E2E test successful", tool detail panel showing command/directory/exit code/output.
