@@ -599,7 +599,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Typecheck**: Rerun `npm run typecheck --workspace=@paseo/server` after fixes and verify zero errors.
   - **Done (2025-12-25 11:32)**: WHAT: updated task status and recorded typecheck output in `plan.md:599`. RESULT: typecheck failed with TS2322 in `src/server/agent/agent-projections.ts:198:3` ({} not assignable to JsonValue | undefined) and TS2322 in `src/server/agent/providers/claude-agent.ts:343:5` (AgentSessionConfig not assignable to ClaudeAgentConfig). EVIDENCE: `npm run typecheck --workspace=@paseo/server` output showing both errors.
 
-- [ ] **Review**: Is Codex MCP ready to go live? Parity and test audit.
+- [x] **Review**: Is Codex MCP ready to go live? Parity and test audit.
 
   Answer this question: **Can we ship Codex MCP as the default "codex" provider?**
 
@@ -620,6 +620,85 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - If ready: mark this done and proceed to wire-up
   - If NOT ready: add specific fix tasks immediately after this one for each gap
   - Be specific: "missing X" or "Y test fails because Z"
+  - **Done (2025-12-25 11:49)**: WHAT: ran server test suite and typecheck, captured results in `test-output-live-audit.txt:1`, and documented go-live audit findings in `REPORT-codex-mcp-go-live-audit.md:1`; inserted follow-up fix tasks in `plan.md:620`. RESULT: Codex MCP is not ready to ship as default due to 4 failing MCP tests (mapping, tool IO timeout, error timeline, persistence), 1 failing + 1 skipped Codex SDK test, Claude SDK watcher errors, and typecheck failures. EVIDENCE: `npm run test --workspace=@paseo/server 2>&1 | tee test-output-live-audit.txt` (interrupted after stall; failures logged) and `npm run typecheck --workspace=@paseo/server` (TS2322 errors in `src/server/agent/agent-projections.ts:198:3` and `src/server/agent/providers/claude-agent.ts:343:5`).
+
+- [ ] **Fix**: Codex MCP thread/item mapping failure in `codex-mcp-agent.test.ts` (file change, MCP tool, web search, todo list assertions).
+
+- [ ] **Fix**: Codex MCP tool call input/output capture test timeout in `codex-mcp-agent.test.ts` (test timed out at 240000ms).
+
+- [ ] **Fix**: Codex MCP missing error timeline item on failed turns (`codex-mcp-agent.test.ts` expects >0).
+
+- [ ] **Fix**: Codex MCP persistence/resume metadata mismatch in `codex-mcp-agent.test.ts` (missing tool outputs/metadata and conversation id mismatch).
+
+- [ ] **Fix**: Codex SDK persisted shell_command hydration test failure in `codex-agent.test.ts` (`expected undefined to be truthy`).
+
+- [ ] **Fix**: Codex SDK permission test skip in `codex-agent.test.ts` (remove skip or implement missing permission flow).
+
+- [ ] **Fix**: Claude SDK tests emit FS watcher errors (`UNKNOWN: unknown error, watch '/var/folders/.../vscode-git-*.sock'`) causing `claude-agent.test.ts` instability.
+
+- [ ] **Fix**: Codex API network errors during tests (`https://chatgpt.com/backend-api/codex/responses`) - make tests deterministic or handle unavailable endpoint.
+
+- [ ] **Test (E2E)**: Rerun `npm run test --workspace=@paseo/server` and verify zero failures/skips; store full output.
+
+- [ ] **Fix**: Typecheck error in `agent-projections.ts:198` - {} not assignable to JsonValue.
+
+  - Error: TS2322 at `src/server/agent/agent-projections.ts:198:3`
+  - Issue: `{}` is not assignable to `JsonValue | undefined`
+  - Fix the type to match expected JsonValue type
+  - Run `npm run typecheck --workspace=@paseo/server` to verify fix
+
+- [ ] **Fix**: Typecheck error in `claude-agent.ts:343` - AgentSessionConfig not assignable to ClaudeAgentConfig.
+
+  - Error: TS2322 at `src/server/agent/providers/claude-agent.ts:343:5`
+  - Issue: `AgentSessionConfig` is not assignable to `ClaudeAgentConfig`
+  - Either narrow the type or update the interface to be compatible
+  - Run `npm run typecheck --workspace=@paseo/server` to verify fix
+
+- [ ] **Fix**: Test hang in `codex-mcp-agent.test.ts` - stuck at 3/13 tests.
+
+  **DO NOT just report "it stalled" - INVESTIGATE:**
+
+  1. Run each test individually to find which one hangs:
+     ```bash
+     npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "test name 1"
+     npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "test name 2"
+     # ... until you find the hanging test
+     ```
+
+  2. Once you find the hanging test, add debug logging:
+     - What promise is never resolving?
+     - What event is never emitted?
+     - What callback is never called?
+
+  3. Read the test code and trace the execution:
+     - What async operations does it wait for?
+     - What conditions must be met for it to complete?
+     - Where in the code path does it get stuck?
+
+  4. This is 100% OUR code's fault. Check:
+     - Are events being emitted but not handled?
+     - Is there a deadlock or race condition?
+     - Is there a missing event handler or callback?
+     - Is there an await that never resolves?
+
+  **Required output:**
+  - EXACT test name that hangs
+  - EXACT line of code where it waits
+  - EXACT reason it never completes
+  - ACTUAL fix in OUR code (not a workaround)
+
+  **NO EXCUSES:**
+  - "It stalled" is NOT an acceptable answer
+  - "Codex MCP server issue" is NOT an acceptable answer
+  - This is OUR bug. Find it. Fix it.
+
+- [ ] **Verify**: Rerun typecheck and full test suite after fixes.
+
+  - Run: `npm run typecheck --workspace=@paseo/server` → must be zero errors
+  - Run: `npm run test --workspace=@paseo/server` → capture output
+  - Ignore deprecated `codex-agent.test.ts` failures (marked deprecated)
+  - All other tests must pass
+  - If new issues found, add fix tasks and repeat
 
 - [ ] **Wire up**: Replace old Codex SDK provider with Codex MCP provider.
 
