@@ -219,6 +219,10 @@ export class DaemonClient {
     overrides?: Partial<CreateAgentOptions>
   ): Promise<AgentSnapshotPayload> {
     const requestId = nanoid();
+
+    // Record the current queue position so we only check NEW messages
+    const startPosition = this.messageQueue.length;
+
     this.send({
       type: "resume_agent_request",
       requestId,
@@ -226,12 +230,39 @@ export class DaemonClient {
       overrides: overrides as Record<string, unknown>,
     });
 
-    return this.waitFor((msg) => {
-      if (msg.type === "agent_state") {
-        return msg.payload;
-      }
-      return null;
-    });
+    // First get the agent ID from a NEW state message (not old cached ones)
+    let agentId: string | null = null;
+    await this.waitFor(
+      (msg) => {
+        if (msg.type === "agent_state") {
+          agentId = msg.payload.id;
+          return msg.payload;
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+
+    if (!agentId) {
+      throw new Error("Failed to get agent ID from resume response");
+    }
+
+    // Wait for the new agent to be idle (like createAgent does)
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "agent_state" &&
+          msg.payload.id === agentId &&
+          msg.payload.status === "idle"
+        ) {
+          return msg.payload;
+        }
+        return null;
+      },
+      60000,
+      { skipQueueBefore: startPosition }
+    ); // 60 second timeout for initialization
   }
 
   // ============================================================================
