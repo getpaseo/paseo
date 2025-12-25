@@ -712,6 +712,90 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 - [x] **Fix**: Remaining test failure `captures tool call inputs/outputs` (12/13 pass).
 
+- [x] **AUDIT**: Verify Codex MCP tests are real, not workarounds.
+
+  The previous agent may have added workarounds instead of real fixes. Review EVERY test change critically.
+
+  **Suspicious patterns to find:**
+  1. `if (readCall) { ... }` - skipping assertions when data is missing
+  2. `// NOTE: Codex doesn't...` - justifying missing features
+  3. Removed assertions that used to exist
+  4. `?.` optional chaining that hides missing data
+
+  **For each suspicious pattern, answer:**
+  1. Is this a REAL Codex limitation or did we fail to capture the data?
+  2. Can we verify the claim? (run Codex directly, check raw events)
+  3. Should we be capturing this data but aren't?
+
+  **Specific claims to verify:**
+  - "Codex MCP does not expose a separate read_file tool" - PROVE IT. Run Codex and check events.
+  - "web_search does not return results in the event" - PROVE IT. Check raw MCP events.
+
+  **Run ALL server tests and report results:**
+  ```bash
+  npm run test --workspace=@paseo/server 2>&1 | tee test-audit.txt
+  ```
+
+  **Output a REPORT-test-audit.md with:**
+  1. Full test results (pass/fail/skip counts)
+  2. List of every workaround found with file:line
+  3. For each workaround: verified real limitation OR needs fix
+  4. Recommendations for tests that need strengthening
+  - **Done (2025-12-25 16:20)**: WHAT: Ran full server test suite (`npm run test --workspace=@paseo/server`), identified 2 workarounds in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:797-805` (read_file skip) and `:819-821` (web_search output skip). Created debug scripts `scripts/codex-file-read-debug.ts` and `scripts/codex-websearch-debug.ts` to verify claims. RESULT: **Both claims are FALSE - workarounds are hiding bugs**. (1) File reads ARE exposed via `exec_command_begin/end` with `parsed_cmd[].type === "read"` containing path. (2) Web search results ARE exposed via `mcp_tool_call_end` with results in `result.Ok.content`. EVIDENCE: Full findings in `REPORT-test-audit.md:1`, raw event captures in debug script outputs show `parsed_cmd: [{"type":"read","path":"/tmp/..."}]` and `result: {"Ok":{"content":[{"text":"{\"web\":[...]}"}]}}`. Test results: codex-mcp-agent.test.ts 13/13 passed, codex-agent.test.ts 1 failed + 1 skipped (deprecated SDK).
+
+- [ ] **CRITICAL**: File reads MUST be captured in timeline.
+
+  The previous agent claimed "Codex MCP doesn't expose read_file tool" and skipped assertions. This is UNACCEPTABLE.
+
+  **File reads are a critical feature. We MUST show them in the UI.**
+
+  **Investigation:**
+  1. Run Codex directly with a prompt that reads a file
+  2. Capture ALL raw MCP events
+  3. Find what event type Codex uses for file reads (maybe `cat`, `head`, shell command?)
+  4. If Codex emits file content via shell commands, we need to detect and map those to `read_file` timeline items
+
+  **Possible approaches:**
+  - Detect shell commands that read files (cat, head, tail, less, etc.)
+  - Extract file path and content from command output
+  - Emit `read_file` timeline item with path and content
+
+  **Acceptance criteria:**
+  - When Codex reads a file, a `read_file` timeline item appears
+  - The item includes: file path, content (or snippet), status
+  - Test verifies this works
+
+  **NO EXCUSES. If Codex reads files, we capture it.**
+
+- [ ] **E2E**: Test Codex MCP in the app using Playwright.
+
+  Once unit tests pass, verify the Codex MCP provider works in the actual app.
+
+  **Test steps:**
+  1. Navigate to `http://localhost:8081` (Expo web)
+  2. Create a new agent with provider "codex"
+  3. Send a prompt that triggers:
+     - A file read (e.g., "read package.json")
+     - A file write (e.g., "create a file called test.txt with 'hello'")
+     - A shell command (e.g., "run ls -la")
+  4. Verify timeline shows:
+     - Text responses streaming
+     - Tool calls with running/completed status
+     - File operations with paths and content
+     - Permission prompts (if applicable)
+
+  **Use Playwright MCP tools:**
+  - `browser_navigate` to go to the app
+  - `browser_snapshot` to see UI state
+  - `browser_click` to interact
+  - `browser_type` to enter prompts
+
+  **Pass criteria:**
+  - Agent creates successfully
+  - Prompt sends and response streams
+  - Timeline items appear for tool calls
+  - No console errors
+
   Test: `codex-mcp-agent.test.ts:795` - "captures tool call inputs/outputs for commands, file changes, file reads, MCP tools, and web search"
 
   **Specific failures:**
