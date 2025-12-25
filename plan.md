@@ -1189,7 +1189,7 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
 
   - **Done (2025-12-25 19:33)**: WHAT: Added `getGitDiff(agentId: string)` method to `packages/server/src/server/test-utils/daemon-client.ts:370-390`. Added 3 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1102-1217`: (1) "returns diff for modified file in git repo" - creates temp git repo, commits file, modifies it, verifies diff contains expected content; (2) "returns empty diff when no changes" - creates clean repo, verifies empty diff; (3) "returns error for non-git directory" - verifies error message for non-git cwd. RESULT: All 3 tests pass. Method returns `{diff: string, error: string | null}` matching the server's `git_diff_response` payload structure. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "getGitDiff"` shows 3 passed (12 skipped).
 
-- [ ] **Implement**: Add `getGitRepoInfo()` to DaemonClient + E2E test.
+- [x] **Implement**: Add `getGitRepoInfo()` to DaemonClient + E2E test.
 
   **Context**: App calls `git_repo_info_request` to get repo info (branch, status, etc).
 
@@ -1202,7 +1202,9 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
   - Method returns repo info (branch, status, remotes)
   - E2E test passes
 
-- [ ] **Implement**: Add `exploreFileSystem()` to DaemonClient + E2E test.
+  - **Done (2025-12-25 18:16)**: WHAT: Added `getGitRepoInfo(agentId: string)` method to `packages/server/src/server/test-utils/daemon-client.ts:392-433`. Added 3 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1219-1335`: (1) "returns repo info for git repo with branch and dirty state" - creates temp git repo, commits file, modifies it, verifies repoRoot, currentBranch, branches array with isCurrent flag, and isDirty=true; (2) "returns clean state when no uncommitted changes" - creates clean repo, verifies isDirty=false; (3) "returns error for non-git directory" - verifies error message for non-git cwd. RESULT: All 3 tests pass. Method returns `{repoRoot, currentBranch, branches, isDirty, error}` matching the server's `git_repo_info_response` payload structure. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "getGitRepoInfo"` shows 3 passed (15 skipped).
+
+- [x] **Implement**: Add `exploreFileSystem()` to DaemonClient + E2E test.
 
   **Context**: App calls `file_explorer_request` to browse filesystem.
 
@@ -1215,7 +1217,9 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
   - Method returns file/directory listing
   - E2E test passes
 
-- [ ] **Implement**: Add `listProviderModels()` to DaemonClient + E2E test.
+  - **Done (2025-12-25 18:18)**: WHAT: Added `exploreFileSystem(agentId: string, path: string, mode?: "list" | "file")` method to `packages/server/src/server/test-utils/daemon-client.ts:439-490`. Added 3 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1338-1455`: (1) "lists directory contents" - creates temp dir with test.txt, data.json, and subdir/, verifies entries array with name, kind, size, modifiedAt; (2) "reads file contents" - creates readme.txt with content, verifies file object with path, kind="text", content, size; (3) "returns error for non-existent path" - verifies error for missing path. RESULT: All 3 tests pass. Method returns `{path, mode, directory, file, error}` matching the server's `file_explorer_response` payload structure. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "exploreFileSystem"` shows 3 passed (18 skipped).
+
+- [x] **Implement**: Add `listProviderModels()` to DaemonClient + E2E test.
 
   **Context**: App calls `list_provider_models_request` to get available models.
 
@@ -1228,7 +1232,9 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
   - Method returns model list
   - E2E test passes for at least one provider
 
-- [ ] **Implement**: Add `sendImages()` support to DaemonClient + E2E test.
+  - **Done (2025-12-25 18:20)**: WHAT: Added `listProviderModels(provider: AgentProvider, options?: {cwd?: string})` method to `packages/server/src/server/test-utils/daemon-client.ts:497-532`. Added import for `AgentModelDefinition` at line 11. Added 2 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1458-1506`: (1) "returns model list for Codex provider" - calls listProviderModels("codex"), verifies provider="codex", models array with id/label, fetchedAt timestamp; (2) "returns model list for Claude provider" - calls listProviderModels("claude"), verifies same structure for Claude. RESULT: Both tests pass. Method returns `{provider, models, fetchedAt, error}` matching the server's `list_provider_models_response` payload structure. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "listProviderModels"` shows 2 passed (21 skipped).
+
+- [x] **Implement**: Add `sendImages()` support to DaemonClient + E2E test.
 
   **Context**: App can send messages with image attachments. DaemonClient `sendMessage()` has `images` option but it's not tested.
 
@@ -1239,3 +1245,5 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
   **Acceptance criteria**:
   - E2E test passes with image attachment
   - Claude provider correctly receives image (multimodal support)
+
+  - **Done (2025-12-25 18:25)**: WHAT: Added 2 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1508-1636` in new `describe("sendImages")` block: (1) "sends message with image attachment to Claude agent" - creates Claude agent, sends message with 1x1 PNG image (base64 encoded), verifies agent processes message and returns assistant response; (2) "sends message with multiple image attachments" - sends message with 2 image attachments (PNG and JPEG mime types), verifies turn completes successfully. Tests use minimal valid PNG base64 constant at line 1511. RESULT: Both tests pass. Server logs confirm `with 1 image attachment(s)` and `with 2 image attachment(s)` are received, and `turn_completed` events fire. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "sendImages"` shows 2 passed (23 skipped) in 12s.
