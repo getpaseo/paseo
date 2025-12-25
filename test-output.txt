@@ -1,0 +1,120 @@
+
+> @paseo/server@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.4 /Users/moboudra/dev/voice-dev/packages/server
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > responds with text
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > responds with text
+[CodexAgentTest] Running single-turn acknowledgment test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits tool or command events when writing a file
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits tool or command events when writing a file
+[CodexAgentTest] Streaming file creation activity
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits Codex tool calls that hydrate into specific UI entries
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits Codex tool calls that hydrate into specific UI entries
+[CodexAgentTest] Streaming Codex run for tool call hydration test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits distinct non-empty call ids for sequential Codex tool calls
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > emits distinct non-empty call ids for sequential Codex tool calls
+[CodexAgentTest] Streaming Codex run for tool call id uniqueness test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > hydrates persisted shell_command tool calls with completed status
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > hydrates persisted shell_command tool calls with completed status
+[CodexAgentTest] Recording Codex command activity for persistence hydration test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > supports multiple turns within the same session
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > supports multiple turns within the same session
+[CodexAgentTest] Running multi-turn continuity test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > can change modes mid-session
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > can change modes mid-session
+[CodexAgentTest] Testing mode transitions inside a single session
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > resumes a session using a persistence handle
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > resumes a session using a persistence handle
+[CodexAgentTest] Recording initial turn before persistence
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > resumes a session using a persistence handle
+[CodexAgentTest] Resuming session from persistence handle
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > resumes a session using a persistence handle
+[CodexAgentTest] Replayed 5 history events: [
+  {
+    "type": "thread_started"
+  },
+  {
+    "type": "timeline",
+    "timelineType": "user_message"
+  },
+  {
+    "type": "timeline",
+    "timelineType": "reasoning"
+  },
+  {
+    "type": "timeline",
+    "timelineType": "reasoning"
+  },
+  {
+    "type": "timeline",
+    "timelineType": "assistant_message"
+  }
+]
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > interrupts a long-running shell command before it completes
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > interrupts a long-running shell command before it completes
+[CodexAgentTest] Launching sleep command interrupt test
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > hydrates user messages from persisted history
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > sees agent-control MCP tools (list_agents) via codex
+[Codex] Using system binary: /Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/codex
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > sees agent-control MCP tools (list_agents) via codex
+[CodexAgentTest] Agent MCP URL: http://127.0.0.1:55941/mcp/agents
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > sees agent-control MCP tools (list_agents) via codex
+[CodexAgentTest] Agent MCP initialize request received
+
+stdout | src/server/agent/providers/codex-agent.test.ts > CodexAgentClient (SDK integration) > sees agent-control MCP tools (list_agents) via codex
+[CodexAgentTest] Agent MCP session initialized: 505d0432-d831-4bcf-a84a-c059da7f36dc
+
+ ❯ src/server/agent/providers/codex-agent.test.ts (15 tests | 1 failed | 1 skipped) 89040ms
+   ✓ CodexAgentClient (SDK integration) > responds with text  5549ms
+   ✓ CodexAgentClient (SDK integration) > emits tool or command events when writing a file  6100ms
+   ✓ CodexAgentClient (SDK integration) > emits Codex tool calls that hydrate into specific UI entries  9843ms
+   ✓ CodexAgentClient (SDK integration) > emits distinct non-empty call ids for sequential Codex tool calls  15965ms
+   × CodexAgentClient (SDK integration) > hydrates persisted shell_command tool calls with completed status 10031ms
+     → expected undefined to be truthy
+   ✓ CodexAgentClient (SDK integration) > supports multiple turns within the same session  9747ms
+   ✓ CodexAgentClient (SDK integration) > can change modes mid-session  8538ms
+   ✓ CodexAgentClient (SDK integration) > resumes a session using a persistence handle  6728ms
+   ✓ CodexAgentClient (SDK integration) > interrupts a long-running shell command before it completes  4617ms
+   ↓ CodexAgentClient (SDK integration) > emits permission requests and resolves them when approvals are handled (awaiting Codex support)
+   ✓ CodexAgentClient (SDK integration) > hydrates user messages from persisted history  4661ms
+   ✓ CodexAgentClient (SDK integration) > sees agent-control MCP tools (list_agents) via codex  7258ms
+   ✓ isSyntheticRolloutUserMessage > flags AGENTS instruction payloads 0ms
+   ✓ isSyntheticRolloutUserMessage > flags environment context payloads 0ms
+   ✓ isSyntheticRolloutUserMessage > allows real user prompts 0ms
+2025-12-25T03:41:54.472453Z ERROR codex_mcp_server::message_processor: <- error: JSONRPCError { error: JSONRPCErrorError { code: -32603, data: None, message: "[\n  {\n    \"code\": \"custom\",\n    \"message\": \"permission call_id provided multiple times (codex_call_id, codex_mcp_tool_call_id, codex_event_id)\",\n    \"path\": []\n  }\n]" }, id: Integer(0), jsonrpc: "2.0" }
