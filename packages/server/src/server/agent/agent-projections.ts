@@ -195,7 +195,14 @@ function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
     }
     return Object.keys(result).length ? result : undefined;
   }
-  return value;
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function isJsonObject(
