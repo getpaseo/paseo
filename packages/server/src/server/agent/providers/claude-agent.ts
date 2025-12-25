@@ -180,7 +180,7 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   }
 
   const result: Partial<AgentSessionConfig> = {};
-  if (metadata.provider === "claude" || metadata.provider === "codex" || metadata.provider === "codex-mcp") {
+  if (metadata.provider === "claude" || metadata.provider === "codex") {
     result.provider = metadata.provider;
   }
   if (typeof metadata.cwd === "string") {

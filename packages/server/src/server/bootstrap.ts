@@ -131,7 +131,6 @@ export async function createPaseoDaemon(
     clients: {
       claude: new ClaudeAgentClient(),
       codex: new CodexMcpAgentClient(),
-      "codex-mcp": new CodexMcpAgentClient(),
       ...config.agentClients,
     },
     registry: agentRegistry,
