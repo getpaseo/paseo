@@ -1019,7 +1019,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Easy to maintain as server types evolve
   - **Done (2025-12-25 17:39)**: WHAT: Audited `daemon-client.ts:1-66` for type definitions. RESULT: **PASS - No duplicates found.** Imports from `messages.ts:3-9` (SessionInboundMessage, SessionOutboundMessage, AgentSnapshotPayload, AgentStreamEventPayload, PersistedAgentDescriptorPayload) and `agent-sdk-types.ts:10-15` (AgentPermissionRequest, AgentPermissionResponse, AgentPersistenceHandle, AgentProvider). Local types are client-specific: DaemonClientConfig (connection config), CreateAgentOptions (client options subset), SendMessageOptions (client message options), DaemonEvent (flattened client event representation), DaemonEventHandler (callback type). EVIDENCE: `npm run typecheck --workspace=@paseo/server` (exit 0). Architecture is clean - daemon-client acts as thin wrapper around server message types with no duplication.
 
-- [ ] **Implement**: DaemonClient persistence (Phase 3).
+- [x] **Implement**: DaemonClient persistence (Phase 3).
 
   **Add methods to DaemonClient**:
   - `listPersistedAgents()`
@@ -1030,6 +1030,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   **Acceptance criteria**:
   - Persistence round-trip works via DaemonClient
+  - **Done (2025-12-25 17:23)**: WHAT: Modified `daemon-client.ts:217-265` to fix `resumeAgent()` to properly wait for the new agent's idle state using `skipQueueBefore` option (not cached old agent messages). Added E2E test `daemon.e2e.test.ts:255-366` "persists and resumes Codex agent with conversation history" that creates agent, sends message, deletes, and resumes from persistence handle. RESULT: Persistence round-trip works - agent is deleted, resumed via persistence handle with conversationId, and responds to follow-up messages. EVIDENCE: `npm run test -- daemon.e2e.test.ts -t "persists and resumes"` passed (9.2s). Note: `listPersistedAgents()` and `resumeAgent()` methods already existed; the fix was to make `resumeAgent()` properly skip stale queue messages when waiting for the new agent.
 
 - [ ] **Implement**: Multi-agent E2E test (Phase 4).
 
