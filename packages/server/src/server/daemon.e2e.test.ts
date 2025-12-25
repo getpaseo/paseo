@@ -1454,4 +1454,54 @@ describe("daemon E2E", () => {
       60000 // 1 minute timeout
     );
   });
+
+  describe("listProviderModels", () => {
+    test(
+      "returns model list for Codex provider",
+      async () => {
+        // List models for Codex provider - no agent needed
+        const result = await ctx.client.listProviderModels("codex");
+
+        // Verify response structure
+        expect(result.provider).toBe("codex");
+        expect(result.error).toBeNull();
+        expect(result.fetchedAt).toBeTruthy();
+
+        // Should return at least one model
+        expect(result.models).toBeTruthy();
+        expect(result.models.length).toBeGreaterThan(0);
+
+        // Verify model structure
+        const model = result.models[0];
+        expect(model.provider).toBe("codex");
+        expect(model.id).toBeTruthy();
+        expect(model.label).toBeTruthy();
+      },
+      60000 // 1 minute timeout
+    );
+
+    test(
+      "returns model list for Claude provider",
+      async () => {
+        // List models for Claude provider - no agent needed
+        const result = await ctx.client.listProviderModels("claude");
+
+        // Verify response structure
+        expect(result.provider).toBe("claude");
+        expect(result.error).toBeNull();
+        expect(result.fetchedAt).toBeTruthy();
+
+        // Should return at least one model
+        expect(result.models).toBeTruthy();
+        expect(result.models.length).toBeGreaterThan(0);
+
+        // Verify model structure
+        const model = result.models[0];
+        expect(model.provider).toBe("claude");
+        expect(model.id).toBeTruthy();
+        expect(model.label).toBeTruthy();
+      },
+      60000 // 1 minute timeout
+    );
+  });
 });

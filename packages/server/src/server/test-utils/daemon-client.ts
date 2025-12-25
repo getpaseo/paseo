@@ -8,6 +8,7 @@ import type {
   PersistedAgentDescriptorPayload,
 } from "../messages.js";
 import type {
+  AgentModelDefinition,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -485,6 +486,47 @@ export class DaemonClient {
         return null;
       },
       10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  // ============================================================================
+  // Provider Models
+  // ============================================================================
+
+  async listProviderModels(
+    provider: AgentProvider,
+    options?: { cwd?: string }
+  ): Promise<{
+    provider: AgentProvider;
+    models: AgentModelDefinition[];
+    fetchedAt: string;
+    error: string | null;
+  }> {
+    const startPosition = this.messageQueue.length;
+
+    this.send({
+      type: "list_provider_models_request",
+      provider,
+      cwd: options?.cwd,
+    });
+
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "list_provider_models_response" &&
+          msg.payload.provider === provider
+        ) {
+          return {
+            provider: msg.payload.provider,
+            models: msg.payload.models ?? [],
+            fetchedAt: msg.payload.fetchedAt,
+            error: msg.payload.error ?? null,
+          };
+        }
+        return null;
+      },
+      30000,
       { skipQueueBefore: startPosition }
     );
   }
