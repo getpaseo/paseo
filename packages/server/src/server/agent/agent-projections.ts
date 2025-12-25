@@ -5,13 +5,16 @@ import type {
 } from "./agent-registry.js";
 import type {
   AgentCapabilityFlags,
+  AgentMetadata,
   AgentMode,
   AgentPermissionRequest,
   AgentPersistenceHandle,
   AgentSessionConfig,
+  AgentRuntimeInfo,
   AgentUsage,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import type { JsonValue } from "../json-utils.js";
 
 export type { ManagedAgent };
 
@@ -27,7 +30,7 @@ export function toStoredAgentRecord(
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
   const config = buildSerializableConfig(agent.config);
   const persistence = sanitizePersistenceHandle(agent.persistence);
-  const runtimeInfo = sanitizeOptionalJsonValue(agent.runtimeInfo);
+  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
 
   return {
     id: agent.id,
@@ -60,7 +63,7 @@ export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions
 ): AgentSnapshotPayload {
-  const runtimeInfo = sanitizeOptionalJsonValue(agent.runtimeInfo);
+  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
@@ -84,7 +87,7 @@ export function toAgentPayload(
     parentAgentId: agent.parentAgentId,
   };
 
-  const usage = sanitizeOptionalJsonValue<AgentUsage>(agent.lastUsage);
+  const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
     payload.lastUsage = usage;
   }
@@ -116,7 +119,7 @@ function buildSerializableConfig(
   if (config.model) {
     serializable.model = config.model;
   }
-  const extra = sanitizeOptionalJsonValue(config.extra);
+  const extra = sanitizeMetadata(config.extra);
   if (extra !== undefined) {
     serializable.extra = extra;
   }
@@ -129,9 +132,9 @@ function sanitizePendingPermissions(
   return Array.from(pending.values()).map((request) => (
     {
       ...request,
-      input: sanitizeOptionalJsonValue(request.input),
-      suggestions: sanitizeOptionalJsonValue(request.suggestions),
-      metadata: sanitizeOptionalJsonValue(request.metadata),
+      input: sanitizeMetadata(request.input),
+      suggestions: sanitizeMetadataArray(request.suggestions),
+      metadata: sanitizeMetadata(request.metadata),
     }
   ));
 }
@@ -149,7 +152,7 @@ function sanitizePersistenceHandle(
   if (handle.nativeHandle !== undefined) {
     sanitized.nativeHandle = handle.nativeHandle;
   }
-  const metadata = sanitizeOptionalJsonValue(handle.metadata);
+  const metadata = sanitizeMetadata(handle.metadata);
   if (metadata !== undefined) {
     sanitized.metadata = metadata;
   }
@@ -166,7 +169,7 @@ function cloneAvailableModes(modes: AgentMode[]): AgentMode[] {
   return modes.map((mode) => ({ ...mode }));
 }
 
-function sanitizeOptionalJson(value: unknown): unknown {
+function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -183,8 +186,8 @@ function sanitizeOptionalJson(value: unknown): unknown {
     return value.toISOString();
   }
   if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    const result: { [key: string]: JsonValue } = {};
+    for (const [key, val] of Object.entries(value)) {
       const sanitized = sanitizeOptionalJson(val);
       if (sanitized !== undefined) {
         result[key] = sanitized;
@@ -195,9 +198,82 @@ function sanitizeOptionalJson(value: unknown): unknown {
   return value;
 }
 
-function sanitizeOptionalJsonValue<T>(
-  value: T | null | undefined
-): T | undefined {
+function isJsonObject(
+  value: JsonValue
+): value is { [key: string]: JsonValue } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeMetadata(value: unknown): AgentMetadata | undefined {
   const sanitized = sanitizeOptionalJson(value);
-  return sanitized == null ? undefined : (sanitized as T);
+  if (!sanitized || !isJsonObject(sanitized)) {
+    return undefined;
+  }
+  return sanitized;
+}
+
+function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const sanitized = value
+    .map((entry) => sanitizeMetadata(entry))
+    .filter((entry): entry is AgentMetadata => entry !== undefined);
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function sanitizeUsage(value: unknown): AgentUsage | undefined {
+  const sanitized = sanitizeOptionalJson(value);
+  if (!sanitized || !isJsonObject(sanitized)) {
+    return undefined;
+  }
+  const result: AgentUsage = {};
+  const inputTokens = sanitized.inputTokens;
+  if (typeof inputTokens === "number") {
+    result.inputTokens = inputTokens;
+  } else if (inputTokens !== undefined && inputTokens !== null) {
+    return undefined;
+  }
+  const cachedInputTokens = sanitized.cachedInputTokens;
+  if (typeof cachedInputTokens === "number") {
+    result.cachedInputTokens = cachedInputTokens;
+  } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
+    return undefined;
+  }
+  const outputTokens = sanitized.outputTokens;
+  if (typeof outputTokens === "number") {
+    result.outputTokens = outputTokens;
+  } else if (outputTokens !== undefined && outputTokens !== null) {
+    return undefined;
+  }
+  const totalCostUsd = sanitized.totalCostUsd;
+  if (typeof totalCostUsd === "number") {
+    result.totalCostUsd = totalCostUsd;
+  } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
+    return undefined;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function sanitizeRuntimeInfo(
+  runtimeInfo: AgentRuntimeInfo | undefined
+): AgentRuntimeInfo | undefined {
+  if (!runtimeInfo) {
+    return undefined;
+  }
+  const sanitized: AgentRuntimeInfo = {
+    provider: runtimeInfo.provider,
+    sessionId: runtimeInfo.sessionId,
+  };
+  if (runtimeInfo.model !== undefined) {
+    sanitized.model = runtimeInfo.model;
+  }
+  if (runtimeInfo.modeId !== undefined) {
+    sanitized.modeId = runtimeInfo.modeId;
+  }
+  const extra = sanitizeMetadata(runtimeInfo.extra);
+  if (extra !== undefined) {
+    sanitized.extra = extra;
+  }
+  return sanitized;
 }

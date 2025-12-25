@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { v4 as uuidv4 } from "uuid";
+import { v4 } from "uuid";
 import { inferAudioExtension } from "./audio-utils.js";
 
 export interface STTConfig {
@@ -24,6 +24,30 @@ export interface TranscriptionResult {
   logprobs?: LogprobToken[];
   avgLogprob?: number;
   isLowConfidence?: boolean;
+}
+
+function isObject(value: unknown): value is { [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
+}
+
+function isLogprobToken(value: unknown): value is LogprobToken {
+  if (!isObject(value)) {
+    return false;
+  }
+  if (typeof value.token !== "string") {
+    return false;
+  }
+  if (typeof value.logprob !== "number") {
+    return false;
+  }
+  if (value.bytes === undefined) {
+    return true;
+  }
+  return Array.isArray(value.bytes) && value.bytes.every((entry) => typeof entry === "number");
+}
+
+function isLogprobTokenArray(value: unknown): value is LogprobToken[] {
+  return Array.isArray(value) && value.every((entry) => isLogprobToken(entry));
 }
 
 let openaiClient: OpenAI | null = null;
@@ -54,7 +78,7 @@ export async function transcribeAudio(
 
     // Write audio buffer to temporary file
     // OpenAI API requires file upload, not raw buffer
-    tempFilePath = join(tmpdir(), `audio-${uuidv4()}.${ext}`);
+    tempFilePath = join(tmpdir(), `audio-${v4()}.${ext}`);
     await writeFile(tempFilePath, audioBuffer);
 
     console.log(
@@ -65,12 +89,13 @@ export async function transcribeAudio(
     const modelToUse = config.model ?? "whisper-1";
     const supportsLogprobs =
       modelToUse === "gpt-4o-transcribe" || modelToUse === "gpt-4o-mini-transcribe";
+    const includeLogprobs: ["logprobs"] = ["logprobs"];
 
     const response = await openaiClient.audio.transcriptions.create({
       file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
       language: "en",
       model: modelToUse,
-      ...(supportsLogprobs ? { include: ["logprobs"] as ["logprobs"] } : {}),
+      ...(supportsLogprobs ? { include: includeLogprobs } : {}),
       response_format: "json", // Get language and duration info
     });
 
@@ -82,9 +107,12 @@ export async function transcribeAudio(
     // Analyze logprobs if available
     let avgLogprob: number | undefined;
     let isLowConfidence = false;
-    const logprobs = supportsLogprobs
-      ? (response.logprobs as LogprobToken[] | undefined)
-      : undefined;
+    const logprobs =
+      supportsLogprobs &&
+      isObject(response) &&
+      isLogprobTokenArray(response.logprobs)
+        ? response.logprobs
+        : undefined;
 
     if (logprobs && logprobs.length > 0) {
       // Calculate average logprob
@@ -124,7 +152,10 @@ export async function transcribeAudio(
       logprobs: logprobs,
       avgLogprob: avgLogprob,
       isLowConfidence: isLowConfidence,
-      language: (response as { language?: string }).language,
+      language:
+        isObject(response) && typeof response.language === "string"
+          ? response.language
+          : undefined,
     };
   } catch (error: any) {
     console.error("[STT] Transcription error:", error);

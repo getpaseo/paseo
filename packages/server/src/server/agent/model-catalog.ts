@@ -1,12 +1,16 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, URL } from "node:url";
 
 import {
   query,
-  type ModelInfo as ClaudeModelInfo,
-  type Options as ClaudeOptions,
+  type ModelInfo,
+  type Options,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -18,6 +22,9 @@ import type {
 type ProviderModelCatalogOptions = {
   cwd?: string;
 };
+
+type ClaudeModelInfo = ModelInfo;
+type ClaudeOptions = Options;
 
 export async function fetchProviderModelCatalog(
   provider: AgentProvider,
@@ -69,7 +76,8 @@ export async function fetchCodexModelCatalog(): Promise<AgentModelDefinition[]> 
   const binaryPath = resolveCodexBinary();
   const child = spawn(binaryPath, ["app-server"], {
     stdio: ["pipe", "pipe", "pipe"],
-  }) as ChildProcessWithoutNullStreams;
+  });
+  assertChildHasPipes(child);
 
   const client = new CodexAppServerClient(child);
 
@@ -82,7 +90,10 @@ export async function fetchCodexModelCatalog(): Promise<AgentModelDefinition[]> 
       },
     });
 
-    const response = (await client.request("model/list", {})) as CodexModelListResponse;
+    const response = await client.request("model/list", {});
+    if (!isCodexModelListResponse(response)) {
+      throw new Error("Unexpected Codex model list response");
+    }
     return response.data.map((model) => ({
       provider: "codex",
       id: model.id,
@@ -112,7 +123,7 @@ function resolveCodexBinary(): string {
   const vendorDir = path.join(packageRoot, "vendor");
 
   const { platform, arch } = process;
-  const triples: Record<string, string> = {
+  const triples: { [key: string]: string } = {
     "darwin:x64": "x86_64-apple-darwin",
     "darwin:arm64": "aarch64-apple-darwin",
     "linux:x64": "x86_64-unknown-linux-musl",
@@ -149,6 +160,72 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+function assertChildHasPipes(
+  child: ChildProcess
+): asserts child is ChildProcessWithoutNullStreams {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("Codex app-server must be started with stdio pipes");
+  }
+}
+
+function isObject(value: unknown): value is { [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
+}
+
+function isCodexModelInfo(value: unknown): value is CodexModelInfo {
+  if (!isObject(value)) {
+    return false;
+  }
+  if (typeof value.id !== "string") {
+    return false;
+  }
+  if (typeof value.model !== "string") {
+    return false;
+  }
+  if (typeof value.displayName !== "string") {
+    return false;
+  }
+  if (typeof value.description !== "string") {
+    return false;
+  }
+  if (typeof value.defaultReasoningEffort !== "string") {
+    return false;
+  }
+  if (typeof value.isDefault !== "boolean") {
+    return false;
+  }
+  if (!Array.isArray(value.supportedReasoningEfforts)) {
+    return false;
+  }
+  for (const entry of value.supportedReasoningEfforts) {
+    if (!isObject(entry)) {
+      return false;
+    }
+    if (typeof entry.reasoningEffort !== "string") {
+      return false;
+    }
+    if (typeof entry.description !== "string") {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isCodexModelListResponse(
+  value: unknown
+): value is CodexModelListResponse {
+  if (!isObject(value)) {
+    return false;
+  }
+  if (!Array.isArray(value.data)) {
+    return false;
+  }
+  if (value.nextCursor !== null && typeof value.nextCursor !== "string") {
+    return false;
+  }
+  return value.data.every((entry) => isCodexModelInfo(entry));
+}
+
 class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -177,7 +254,10 @@ class CodexAppServerClient {
     });
   }
 
-  async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  async request(
+    method: string,
+    params: { [key: string]: unknown }
+  ): Promise<unknown> {
     if (this.disposed) {
       throw new Error("Codex app-server client is closed");
     }

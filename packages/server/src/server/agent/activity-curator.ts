@@ -24,6 +24,32 @@ function flushBuffers(lines: string[], buffers: { message: string; thought: stri
   buffers.thought = "";
 }
 
+function isObject(value: unknown): value is { [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
+}
+
+function isFileChange(value: unknown): value is { path: string; kind: string } {
+  return (
+    isObject(value) &&
+    typeof value.path === "string" &&
+    typeof value.kind === "string"
+  );
+}
+
+function extractFileChanges(value: unknown): { path: string; kind: string }[] {
+  if (!isObject(value) || !Array.isArray(value.files)) {
+    return [];
+  }
+  return value.files.filter(isFileChange);
+}
+
+function extractWebQuery(value: unknown): string {
+  if (!isObject(value) || typeof value.query !== "string") {
+    return "";
+  }
+  return value.query;
+}
+
 /**
  * Convert normalized agent timeline items into a concise text summary.
  */
@@ -65,13 +91,7 @@ export function curateAgentActivity(
         if (item.kind === "execute" || item.server === "command") {
           lines.push(`[Command: ${label}]${status}`);
         } else if (item.kind === "edit" || item.server === "file_change") {
-          const files =
-            (item.output &&
-              typeof item.output === "object" &&
-              item.output !== null &&
-              Array.isArray((item.output as Record<string, unknown>).files)
-              ? ((item.output as Record<string, unknown>).files as { path: string; kind: string }[])
-              : []) ?? [];
+          const files = extractFileChanges(item.output);
           if (files.length > 0) {
             lines.push("[File Changes]");
             for (const file of files) {
@@ -81,10 +101,7 @@ export function curateAgentActivity(
             lines.push(`[Edit] ${label}${status}`);
           }
         } else if (item.kind === "search" || item.server === "web_search") {
-          const query =
-            typeof item.input === "object" && item.input !== null && "query" in (item.input as Record<string, unknown>)
-              ? String((item.input as Record<string, unknown>).query ?? "")
-              : "";
+          const query = extractWebQuery(item.input);
           lines.push(`[Web Search] ${query || label}`);
         } else {
           lines.push(`[Tool ${item.server}.${item.tool}]${status}`);
