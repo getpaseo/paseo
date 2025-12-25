@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
   LayoutChangeEvent,
   ScrollView,
+  Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -356,6 +357,14 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
 
     initializeAgent({ agentId: resolvedAgentId });
   }, [resolvedAgentId, initializeAgent, isInitializingFromMap]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      return;
+    }
+    const title = agent?.title || "Agent";
+    document.title = title;
+  }, [agent?.title]);
 
   const recalculateMenuPosition = useCallback(
     (onMeasured?: () => void) => {
