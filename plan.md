@@ -624,6 +624,28 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 - [⏳] **Fix**: Codex MCP thread/item mapping failure in `codex-mcp-agent.test.ts` (file change, MCP tool, web search, todo list assertions).
 
+  **BREAK IT DOWN - test each event type individually:**
+
+  1. Run a minimal test for JUST `file_change`:
+     ```bash
+     npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "file_change"
+     ```
+     Does Codex emit file_change events? Log raw events to see.
+
+  2. Run a minimal test for JUST `mcp_tool_call`:
+     - Does Codex emit `function_call` or `mcp_tool_call`?
+     - What's the EXACT shape of the event?
+     - Log: `console.log("RAW EVENT:", JSON.stringify(event))`
+
+  3. Run a minimal test for JUST `web_search`:
+     - What event type does Codex actually send?
+
+  4. For each: capture the EXACT raw event JSON, then fix the parser.
+
+  **Don't try to fix everything at once. Fix ONE event type, verify it works, then move to the next.**
+
+  **IMMEDIATE ACTION:** Add `console.log("RAW MCP EVENT:", JSON.stringify(msg))` in `handleMcpEvent` and run the test. Post the output.
+
 - [x] **Fix**: Typecheck error in `agent-projections.ts:198` - {} not assignable to JsonValue.
 
   - Error: TS2322 at `src/server/agent/agent-projections.ts:198:3`
@@ -648,7 +670,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Run `npm run typecheck --workspace=@paseo/server` → zero errors
   - **Done (2025-12-25 12:38)**: WHAT: tightened thread item schema transforms with literal `as const` types and added thread item type guards/read_file narrowing in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:872`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1453`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3247`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3366`. RESULT: TS2339 discriminated-union errors resolved and server typecheck completes with no errors. EVIDENCE: `npm run typecheck --workspace=@paseo/server`.
 
-- [ ] **Fix**: Test hang in `codex-mcp-agent.test.ts` - stuck at 3/13 tests.
+- [x] **Fix**: Test hang in `codex-mcp-agent.test.ts` - stuck at 3/13 tests.
 
   **DO NOT just report "it stalled" - INVESTIGATE:**
 
@@ -685,6 +707,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - "It stalled" is NOT an acceptable answer
   - "Codex MCP server issue" is NOT an acceptable answer
   - This is OUR bug. Find it. Fix it.
+  - **Done (2025-12-25 13:03)**: WHAT: added MCP tool call begin/end event schemas + handlers and MCP result parsing in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:746`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1938`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3277` to emit `tool_call` timeline items for MCP tools; documented investigation in `REPORT-codex-mcp-test-hang.md:1`. RESULT: the previously “stuck at 3/13” test now completes and passes with MCP tool calls recorded. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "maps thread/item events for file changes, MCP tools, web search, and todo lists"` (1 passed, 12 skipped).
 
 - [ ] **Verify**: Rerun typecheck and full test suite after fixes.
 
