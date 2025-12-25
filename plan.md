@@ -587,10 +587,21 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Do not refactor deprecated code
   - These tests may fail/skip - that's expected for deprecated code
 
-- [ ] **Fix**: Investigate MCP JSONRPC error during tests: `permission call_id provided multiple times (codex_call_id, codex_mcp_tool_call_id, codex_event_id)` (codex_mcp_server error logged during `npm run test --workspace=@paseo/server`).
+- [x] **Fix**: Investigate MCP JSONRPC error during tests: `permission call_id provided multiple times (codex_call_id, codex_mcp_tool_call_id, codex_event_id)` (codex_mcp_server error logged during `npm run test --workspace=@paseo/server`).
+  - **Done (2025-12-25 11:22)**: WHAT: added `resolvePreferredString` to prefer canonical permission call ids and updated permission parsing to use it in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:180` and `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1479`; documented the Codex MCP elicitation payload and resolution in `REPORT-mcp-jsonrpc-permission-callid.md:1`. RESULT: permission elicitation no longer errors on multi-field call ids from Codex MCP; permission test completes without the JSONRPC error. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "requests permission"` (1 passed, 12 skipped due to `-t`).
 
-- [ ] **Fix**: Resolve typecheck errors in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:348`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1674`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2945`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2959`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2970`.
+- [x] **Fix**: Resolve typecheck errors in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:348`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1674`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2945`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2959`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2970`.
+  - **Done (2025-12-25 11:25)**: WHAT: removed unused PatchChangeDetails alias, typed `CODEX_PROVIDER` as a literal, added typed session metadata schemas, and made config payload accept optional model in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:63`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1527`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1700`. RESULT: codex-mcp provider typecheck errors at the listed lines are resolved; remaining typecheck failures are outside this file. EVIDENCE: `npm run typecheck --workspace=@paseo/server` (only `agent-projections.ts` and `claude-agent.ts` errors reported).
 
 - [ ] **Test (E2E)**: Rerun full server tests after fixes and verify zero failures/skips.
 
 - [ ] **Typecheck**: Rerun `npm run typecheck --workspace=@paseo/server` after fixes and verify zero errors.
+
+- [ ] **Wire up**: Replace old Codex SDK provider with Codex MCP provider.
+
+  - Change the `"codex"` provider ID to use `codex-mcp-agent.ts` instead of `codex-agent.ts`
+  - Find where providers are registered/loaded (likely `agent-manager.ts` or similar)
+  - Update the provider mapping so `provider: "codex"` creates a `CodexMcpAgentClient`
+  - Keep `"codex-mcp"` as an alias if needed for backwards compatibility
+  - Remove or deprecate the old `codex-agent.ts` import
+  - This allows testing the new MCP provider in the app with the existing "codex" provider name

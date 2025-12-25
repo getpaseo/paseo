@@ -60,7 +60,7 @@ type PatchFileChange = {
 type CodexToolArguments = { [key: string]: unknown };
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
-const CODEX_PROVIDER: AgentClient["provider"] = "codex-mcp";
+const CODEX_PROVIDER = "codex-mcp" as const;
 
 const CODEX_MCP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -175,6 +175,35 @@ function resolveExclusiveString(
     return undefined;
   }
   return trimmed;
+}
+
+function resolvePreferredString(
+  ctx: z.RefinementCtx,
+  entries: Array<{ key: string; value: string | undefined }>,
+  label: string,
+  required = false
+): string | undefined {
+  for (const entry of entries) {
+    if (entry.value === undefined) {
+      continue;
+    }
+    const trimmed = entry.value.trim();
+    if (!trimmed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${label} cannot be empty`,
+      });
+      return undefined;
+    }
+    return trimmed;
+  }
+  if (required) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${label} missing`,
+    });
+  }
+  return undefined;
 }
 
 const CommandSchema = z.union([
@@ -344,8 +373,6 @@ const PatchChangeDetailsSchema = PatchChangeDetailsBaseSchema.transform((data, c
   }
   return normalized;
 });
-
-type PatchChangeDetails = z.infer<typeof PatchChangeDetailsSchema>;
 
 const PatchChangeEntrySchema = PatchChangeDetailsBaseSchema.extend({
   path: z.string().min(1),
@@ -1447,7 +1474,7 @@ const PermissionParamsSchema = z
   })
   .passthrough()
   .transform((data, ctx) => {
-    const callId = resolveExclusiveString(
+    const callId = resolvePreferredString(
       ctx,
       [
         { key: "codex_call_id", value: data.codex_call_id },
@@ -1497,6 +1524,18 @@ const PermissionParamsSchema = z
 
 type PermissionParams = z.infer<typeof PermissionParamsSchema>;
 
+const AgentControlMcpConfigSchema = z.object({
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+});
+
+type AgentSessionExtra = NonNullable<AgentSessionConfig["extra"]>;
+
+const AgentSessionExtraSchema = z.object({
+  codex: z.record(z.unknown()).optional(),
+  claude: z.custom<AgentSessionExtra["claude"]>().optional(),
+});
+
 const AgentSessionConfigSchema = z
   .object({
     provider: z.string(),
@@ -1509,14 +1548,9 @@ const AgentSessionConfigSchema = z
     networkAccess: z.boolean().optional(),
     webSearch: z.boolean().optional(),
     reasoningEffort: z.string().optional(),
-    agentControlMcp: z.unknown().optional(),
-    extra: z
-      .object({
-        codex: z.unknown().optional(),
-        claude: z.unknown().optional(),
-      })
-      .optional(),
-    mcpServers: z.unknown().optional(),
+    agentControlMcp: AgentControlMcpConfigSchema.optional(),
+    extra: AgentSessionExtraSchema.optional(),
+    mcpServers: z.record(z.unknown()).optional(),
     parentAgentId: z.string().optional(),
   })
   .passthrough();
@@ -1663,7 +1697,14 @@ function buildCodexMcpConfig(
     config.sandboxMode !== undefined ? config.sandboxMode : preset.sandbox;
   const extra = config.extra ? config.extra.codex : undefined;
 
-  const configPayload = {
+  const configPayload: {
+    prompt: string;
+    cwd?: string;
+    "approval-policy": string;
+    sandbox: string;
+    config?: unknown;
+    model?: string;
+  } = {
     prompt,
     cwd: config.cwd,
     "approval-policy": approvalPolicy,
