@@ -1051,7 +1051,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Document what's tested vs not tested
   - **Done (2025-12-25 18:10)**: WHAT: Ran full E2E suite and created comprehensive audit report at `REPORT-daemon-e2e-audit.md:1-163`. RESULT: 5 tests pass, 2 skipped. Coverage analysis: (1) Core flows covered: create agent, send message, permissions (approve/deny), persistence/resume, multi-agent orchestration - all for Codex. (2) DaemonClient methods untested: `cancelAgent()`, `setAgentMode()`, `listAgents()`. (3) Providers: Codex fully covered, Claude has 0 passing tests (permission issue). (4) Message types: 6/15 inbound types tested, 5/17 outbound types tested. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (5 passed, 2 skipped in 40.8s). Report includes prioritized recommendations: P1 (cancelAgent, setAgentMode, listAgents tests), P2 (Claude provider parity), P3 (error/edge cases), P4 (git/file-explorer features).
 
-- [ ] **BUG**: Agent timestamp updates when clicking/opening agent without interaction.
+- [x] **BUG**: Agent timestamp updates when clicking/opening agent without interaction.
 
   **Symptom**: In the app:
   - Click on an agent to open it
@@ -1080,3 +1080,71 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Opening agent without interaction does NOT update timestamp
   - Sending message DOES update timestamp
   - Agent list order reflects actual last interaction time
+  - **Done (2025-12-25 17:42)**: WHAT: (1) Bug was already fixed in commit `7b29978` (Dec 2, 2025) which removed timestamp thrashing - previously `lastActivityAt`/`updatedAt` was updated on every `agent_stream` event (15+ times/second during streaming); (2) Added `initializeAgent()` and `clearAgentAttention()` methods to `packages/server/src/server/test-utils/daemon-client.ts:268-304`; (3) Added E2E tests in `packages/server/src/server/daemon.e2e.test.ts:482-570` for timestamp behavior - "opening agent without interaction does not update timestamp" and "sending message DOES update timestamp". RESULT: Bug verified as fixed - clicking/opening agent does NOT update timestamp, only actual interactions (sending messages) update it. Server only sets `agent.updatedAt` in `recordUserMessage` (`packages/server/src/server/agent/agent-manager.ts:436`) and `handleStreamEvent` (`packages/server/src/server/agent/agent-manager.ts:864`), not in `clearAgentAttention` or `initializeAgent` flows. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "timestamp"` (2 passed, 7 skipped in 9.08s), Playwright test showed agent stayed in position 4 with unchanged timestamp after clicking.
+
+- [ ] **Test**: Add daemon E2E test for `cancelAgent()`.
+
+  Cancel an agent mid-execution and verify it stops properly.
+
+  **Test case**:
+  1. Create Codex agent
+  2. Send prompt that triggers a long-running operation (e.g., "Run: sleep 30")
+  3. Wait for tool call to start (status: "running")
+  4. Call `cancelAgent(agentId)`
+  5. Verify agent reaches idle or error state within 2 seconds
+  6. Verify no zombie processes left
+
+  **Acceptance criteria**:
+  - Test passes
+  - Agent stops within reasonable time after cancel
+  - DaemonClient `cancelAgent()` method verified working
+
+- [ ] **Test**: Add daemon E2E test for `setAgentMode()`.
+
+  Switch agent mode and verify it takes effect.
+
+  **Test case**:
+  1. Create Codex agent (default mode)
+  2. Verify initial mode in agent state
+  3. Call `setAgentMode(agentId, "plan")` or another valid mode
+  4. Verify mode change reflected in next `agent_state`
+  5. Send a message and verify agent behaves according to new mode
+
+  **Acceptance criteria**:
+  - Test passes
+  - Mode switch persists across messages
+  - DaemonClient `setAgentMode()` method verified working
+
+- [ ] **Test**: Add daemon E2E test for `listAgents()`.
+
+  Verify session state returns current agents.
+
+  **Test case**:
+  1. Connect client
+  2. Create 2 agents
+  3. Call `listAgents()`
+  4. Verify both agents returned with correct IDs and states
+  5. Delete one agent
+  6. Call `listAgents()` again
+  7. Verify only remaining agent returned
+
+  **Acceptance criteria**:
+  - Test passes
+  - Agent list accurate after create/delete operations
+  - DaemonClient `listAgents()` method verified working
+
+- [ ] **Investigate**: Claude provider permissions don't work in daemon E2E tests.
+
+  **Problem**: Claude permission tests are skipped because Claude SDK doesn't request permissions in daemon context. Direct `claude-agent.test.ts` tests pass, but daemon E2E tests don't.
+
+  **Investigation**:
+  1. Compare how permissions work in `claude-agent.test.ts` vs `daemon.e2e.test.ts`
+  2. Check if daemon context affects Claude SDK permission handling
+  3. Check if the issue is in DaemonClient, session setup, or Claude provider
+  4. Add debug logging to trace permission request flow
+
+  **Goal**: Unskip Claude permission tests and achieve parity with Codex.
+
+  **Acceptance criteria**:
+  - Root cause identified and documented
+  - Claude permission tests pass (or clear explanation of why they can't)

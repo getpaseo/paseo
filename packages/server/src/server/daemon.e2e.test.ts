@@ -479,6 +479,97 @@ describe("daemon E2E", () => {
     );
   });
 
+  describe("timestamp behavior", () => {
+    test(
+      "opening agent without interaction does not update timestamp",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create a Codex agent
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Timestamp Test Agent",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // Record the initial updatedAt timestamp
+        const initialUpdatedAt = agent.updatedAt;
+        expect(initialUpdatedAt).toBeTruthy();
+
+        // Wait a bit to ensure any timestamp update would be visible
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        // Clear message queue before the "click" action
+        ctx.client.clearMessageQueue();
+
+        // Simulate clicking on the agent (initialize_agent_request)
+        // This is what happens when the user opens an agent in the UI
+        const refreshedState = await ctx.client.initializeAgent(agent.id);
+
+        // Verify agent is still idle
+        expect(refreshedState.status).toBe("idle");
+
+        // CRITICAL: The timestamp should NOT have changed
+        // Just opening/clicking an agent should not update its updatedAt
+        expect(refreshedState.updatedAt).toBe(initialUpdatedAt);
+
+        // Also clear attention (what happens when opening an agent with notification)
+        await ctx.client.clearAgentAttention(agent.id);
+
+        // Get the state again after clearing attention
+        const stateAfterClear = await ctx.client.initializeAgent(agent.id);
+
+        // Timestamp should STILL not have changed
+        expect(stateAfterClear.updatedAt).toBe(initialUpdatedAt);
+
+        // Cleanup
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      60000
+    );
+
+    test(
+      "sending message DOES update timestamp",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create a Codex agent
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Timestamp Update Test Agent",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // Record the initial updatedAt timestamp
+        const initialUpdatedAt = new Date(agent.updatedAt);
+
+        // Wait a bit to ensure timestamp difference is visible
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        // Send a message (this SHOULD update the timestamp)
+        await ctx.client.sendMessage(agent.id, "Say 'test' and nothing else");
+
+        // Wait for agent to complete
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(finalState.status).toBe("idle");
+
+        // The timestamp SHOULD have been updated (should be later than initial)
+        const finalUpdatedAt = new Date(finalState.updatedAt);
+        expect(finalUpdatedAt.getTime()).toBeGreaterThan(initialUpdatedAt.getTime());
+
+        // Cleanup
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+  });
+
   // Claude permission tests are skipped due to SDK behavior:
   // - The sandbox config IS passed correctly to Claude SDK
   // - Claude executes tool calls without requesting permission

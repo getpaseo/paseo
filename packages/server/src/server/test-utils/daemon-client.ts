@@ -265,6 +265,44 @@ export class DaemonClient {
     ); // 60 second timeout for initialization
   }
 
+  /**
+   * Initialize an agent (fetch its current state without running a prompt).
+   * This mimics what happens when clicking on an agent in the UI.
+   */
+  async initializeAgent(agentId: string): Promise<AgentSnapshotPayload> {
+    const requestId = nanoid();
+    const startPosition = this.messageQueue.length;
+
+    this.send({
+      type: "initialize_agent_request",
+      agentId,
+      requestId,
+    });
+
+    // Wait for agent_state with this agent's ID
+    return this.waitFor(
+      (msg) => {
+        if (msg.type === "agent_state" && msg.payload.id === agentId) {
+          return msg.payload;
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  /**
+   * Clear agent attention (mark as viewed).
+   * This is what happens when opening an agent that requires attention.
+   */
+  async clearAgentAttention(agentId: string): Promise<void> {
+    this.send({
+      type: "clear_agent_attention",
+      agentId,
+    });
+  }
+
   // ============================================================================
   // Agent Interaction
   // ============================================================================
