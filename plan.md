@@ -1100,7 +1100,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - DaemonClient `cancelAgent()` method verified working
   - **Done (2025-12-25 17:44)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:573-708` that creates a Codex agent, sends "Run: sleep 30" to trigger a long-running operation, waits for "running" status, calls `cancelAgent(agentId)`, verifies the agent stops within 2 seconds, and checks for no zombie "sleep 30" processes. RESULT: Test passes - agent cancel request is received, turn_failed is emitted, and agent becomes idle/error within milliseconds (test completed in 291ms). EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "cancelAgent"` (1 passed, 9 skipped in 846ms).
 
-- [ ] **Test**: Add daemon E2E test for `setAgentMode()`.
+- [x] **Test**: Add daemon E2E test for `setAgentMode()`.
 
   Switch agent mode and verify it takes effect.
 
@@ -1115,6 +1115,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Test passes
   - Mode switch persists across messages
   - DaemonClient `setAgentMode()` method verified working
+  - **Done (2025-12-25 17:48)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:711-821` that creates Codex agent, verifies initial mode is "auto", switches to "read-only", verifies mode persists after sending a message, and switches to "full-access". FIXED BUG: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2763-2773` - `setMode()` was not updating `cachedRuntimeInfo`, so `getRuntimeInfo()` returned stale `modeId`. Fix: update `cachedRuntimeInfo.modeId` when mode changes. RESULT: Test passes - mode switch reflects in both `currentModeId` and `runtimeInfo.modeId`, persists across messages. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "setAgentMode"` (1 passed, 10 skipped in 4154ms).
 
 - [ ] **Test**: Add daemon E2E test for `listAgents()`.
 
