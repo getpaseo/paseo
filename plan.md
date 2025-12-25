@@ -823,3 +823,22 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
     4. ✅ No console errors (only React 19 deprecation warnings unrelated to Codex MCP)
     5. ✅ Verified file created on filesystem with correct content
   EVIDENCE: Playwright snapshots showing agent UI with tool calls, `cat /Users/moboudra/dev/voice-dev/codex-mcp-test.txt` output showing "Codex MCP E2E test successful", tool detail panel showing command/directory/exit code/output.
+
+- [x] **Deprecate**: Remove old Codex SDK provider completely.
+
+  The old `codex-agent.ts` is DEPRECATED. Codex MCP is now the only Codex provider.
+
+  **Tasks:**
+  1. Verify `bootstrap.ts` only registers `CodexMcpAgentClient` for "codex" provider
+  2. Delete `codex-agent.ts` (the old SDK provider)
+  3. Delete `codex-agent.test.ts` (the old SDK tests)
+  4. Remove any imports of `CodexAgentClient` from the codebase
+  5. Search for any remaining references to the old SDK provider and remove them
+  6. Run typecheck and tests to verify nothing is broken
+
+  **Acceptance criteria:**
+  - Only ONE Codex provider exists: `codex-mcp-agent.ts`
+  - No references to `CodexAgentClient` or `codex-agent.ts` in the codebase
+  - Typecheck passes
+  - All tests pass (no skipped tests for deprecated code)
+  - **Done (2025-12-25 15:42)**: WHAT: Deleted `packages/server/src/server/agent/providers/codex-agent.ts`, `packages/server/src/server/agent/providers/codex-agent.test.ts`, `packages/server/src/server/agent/providers/codex-agent.unit.test.ts`, `packages/server/test-sdk-spawn.ts`, `test-sdk-spawn.ts`, and `packages/server/test-results-after.txt`. Verified `bootstrap.ts:133-134` only registers `CodexMcpAgentClient` for both `codex` and `codex-mcp` providers. RESULT: Only `codex-mcp-agent.ts` and `codex-mcp-agent.test.ts` remain as Codex providers. Zero references to `CodexAgentClient` in `packages/` directory. EVIDENCE: `ls packages/server/src/server/agent/providers/codex*.ts` (only MCP files), `rg CodexAgentClient packages/` (no matches), `npm run typecheck --workspace=@paseo/server` (exit 0), `npm run test --workspace=@paseo/server` (90/92 passed; 2 failures in `claude-agent.test.ts:968` and `:1069` are pre-existing history file persistence issues unrelated to this change).
