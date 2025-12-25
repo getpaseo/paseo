@@ -1,7 +1,7 @@
 import { Codex } from "@openai/codex-sdk";
 
 const PROMPT =
-  'Run this command exactly: ["bash", "-lc", "echo ok > mcp-smoke.txt"].\n' +
+  'Run this command exactly: ["curl", "-s", "https://httpbin.org/get"].\n' +
   "After the command runs, reply with done and stop.";
 
 const CWD = process.cwd();
@@ -9,28 +9,29 @@ const TIMEOUT_MS = 90_000;
 
 const CASES = [
   {
-    name: "read-only + untrusted",
+    name: "workspace-write + untrusted (like happy-cli default)",
     options: {
       workingDirectory: CWD,
-      sandboxMode: "read-only",
+      sandboxMode: "workspace-write",
       approvalPolicy: "untrusted",
       skipGitRepoCheck: true,
     },
   },
   {
-    name: "read-only + on-request",
+    name: "workspace-write + on-request",
     options: {
       workingDirectory: CWD,
-      sandboxMode: "read-only",
+      sandboxMode: "workspace-write",
       approvalPolicy: "on-request",
       skipGitRepoCheck: true,
     },
   },
   {
-    name: "read-only + no approvalPolicy",
+    name: "read-only + untrusted (sandbox blocks before approval)",
     options: {
       workingDirectory: CWD,
       sandboxMode: "read-only",
+      approvalPolicy: "untrusted",
       skipGitRepoCheck: true,
     },
   },

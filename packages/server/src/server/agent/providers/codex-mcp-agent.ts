@@ -1563,6 +1563,22 @@ const RawResponseItemSchema = z
   })
   .passthrough();
 
+const CustomToolCallOutputSchema = z
+  .object({
+    type: z.union([
+      z.literal("custom_tool_call_output"),
+      z.literal("function_call_output"),
+    ]),
+    call_id: z.string(),
+    output: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: data.call_id,
+    output: data.output,
+  }));
+
 const RawToolCallSchema = z
   .object({
     type: z.union([
@@ -2076,6 +2092,27 @@ function mapRawResponseItemToThreadItem(item: unknown): ThreadItem | null {
       type: "file_change",
       call_id: callId,
       changes,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (toolNameLower === "read_file" || toolNameLower === "readfile" || toolNameLower === "file_read") {
+    const inputParsed = ReadFileInputSchema.safeParse(input);
+    const path = inputParsed.success ? inputParsed.data.path : undefined;
+    let content: string | undefined;
+    if (typeof output === "string") {
+      content = output;
+    } else if (isKeyedObject(output) && typeof output.content === "string") {
+      content = output.content;
+    }
+    const parsed = ThreadItemSchema.safeParse({
+      type: "read_file" as const,
+      call_id: callId,
+      path,
+      input: path ? { path } : input,
+      output: content !== undefined ? { content } : output,
+      content,
+      status: toolCallParsed.data.status,
     });
     return parsed.success ? parsed.data : null;
   }
@@ -3039,6 +3076,56 @@ class CodexMcpAgentSession implements AgentSession {
   private handleMcpEvent(event: unknown): void {
     const rawResponseParsed = RawResponseItemSchema.safeParse(event);
     if (rawResponseParsed.success) {
+      // Check if this is a tool output for a pending patch change
+      const toolOutputParsed = CustomToolCallOutputSchema.safeParse(rawResponseParsed.data.item);
+      if (toolOutputParsed.success) {
+        const { callId, output } = toolOutputParsed.data;
+        const pendingChanges = this.pendingPatchChanges.get(callId);
+        if (pendingChanges && pendingChanges.length > 0) {
+          // This is the output for a patch apply - emit completed file_change
+          this.pendingPatchChanges.delete(callId);
+          const summaryFiles = pendingChanges.map((change) => ({
+            path: change.path,
+            kind: change.kind ?? "edit",
+          }));
+          let success = true;
+          let parsedOutputText: string | undefined;
+          if (output) {
+            try {
+              const parsedOutput = JSON.parse(output);
+              if (typeof parsedOutput === "object" && parsedOutput !== null) {
+                if ("output" in parsedOutput && typeof parsedOutput.output === "string") {
+                  parsedOutputText = parsedOutput.output;
+                }
+                if ("metadata" in parsedOutput && typeof parsedOutput.metadata === "object" && parsedOutput.metadata !== null) {
+                  const meta = parsedOutput.metadata as Record<string, unknown>;
+                  if ("exit_code" in meta && typeof meta.exit_code === "number") {
+                    success = meta.exit_code === 0;
+                  }
+                }
+              }
+            } catch {
+              // output is not JSON, use as-is
+              parsedOutputText = output;
+            }
+          }
+          this.emitEvent({
+            type: "timeline",
+            provider: CODEX_PROVIDER,
+            item: createToolCallTimelineItem({
+              server: "file_change",
+              tool: "apply_patch",
+              status: success ? "completed" : "failed",
+              callId,
+              displayName: buildFileChangeSummary(summaryFiles),
+              kind: "edit",
+              input: { files: summaryFiles },
+              output: { files: pendingChanges, message: parsedOutputText, success },
+            }),
+          });
+          return;
+        }
+      }
       const mappedItem = mapRawResponseItemToThreadItem(rawResponseParsed.data.item);
       if (mappedItem) {
         const mappedEvent = ThreadItemEventSchema.parse({
