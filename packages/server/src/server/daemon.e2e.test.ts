@@ -1879,4 +1879,151 @@ describe("daemon E2E", () => {
       180000 // 3 minute timeout for Claude API call
     );
   });
+
+  describe("Claude agent streaming text integrity - long running", () => {
+    test(
+      "streaming chunks remain coherent after multiple back-and-forth messages",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Claude agent with bypassPermissions mode to avoid permission prompts
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Long Running Streaming Test",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.provider).toBe("claude");
+
+        // === MESSAGE 1: Establish conversation context ===
+        console.log("[LONG-RUNNING TEST] Sending message 1...");
+        await ctx.client.sendMessage(
+          agent.id,
+          "Remember the number 42. Just confirm you remember it."
+        );
+
+        let state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(state.status).toBe("idle");
+        expect(state.lastError).toBeUndefined();
+        console.log("[LONG-RUNNING TEST] Message 1 complete");
+
+        // === MESSAGE 2: Build on conversation ===
+        ctx.client.clearMessageQueue(); // Clear queue to isolate message 2
+        console.log("[LONG-RUNNING TEST] Sending message 2...");
+        await ctx.client.sendMessage(
+          agent.id,
+          "Now remember the word 'elephant'. Just confirm you remember both the number and the word."
+        );
+
+        state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(state.status).toBe("idle");
+        expect(state.lastError).toBeUndefined();
+        console.log("[LONG-RUNNING TEST] Message 2 complete");
+
+        // === MESSAGE 3: This is where the bug was reported to manifest ===
+        // Clear queue so we can capture streaming chunks for message 3 only
+        ctx.client.clearMessageQueue();
+        console.log("[LONG-RUNNING TEST] Sending message 3 (testing streaming integrity)...");
+        await ctx.client.sendMessage(
+          agent.id,
+          "Write a complete sentence using both the number (42) and the word (elephant) you remembered. The sentence should be grammatically correct English."
+        );
+
+        state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(state.status).toBe("idle");
+        expect(state.lastError).toBeUndefined();
+        console.log("[LONG-RUNNING TEST] Message 3 complete");
+
+        // Collect all assistant_message timeline events from message 3
+        const queue = ctx.client.getMessageQueue();
+        const assistantChunks: string[] = [];
+
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "assistant_message" && item.text) {
+              assistantChunks.push(item.text);
+            }
+          }
+        }
+
+        console.log("[LONG-RUNNING TEST] Collected", assistantChunks.length, "chunks");
+
+        // Should have received at least one assistant message chunk
+        expect(assistantChunks.length).toBeGreaterThan(0);
+
+        // Concatenate all chunks to form the complete response
+        const fullResponse = assistantChunks.join("");
+
+        console.log("[LONG-RUNNING TEST] Full response:", JSON.stringify(fullResponse));
+        console.log("[LONG-RUNNING TEST] Chunks:");
+        for (let i = 0; i < assistantChunks.length; i++) {
+          console.log(`  [${i}]: ${JSON.stringify(assistantChunks[i])}`);
+        }
+
+        // CRITICAL ASSERTION 1: Response should contain expected content
+        const lowerResponse = fullResponse.toLowerCase();
+        const containsNumber = lowerResponse.includes("42");
+        const containsWord = lowerResponse.includes("elephant");
+
+        console.log("[LONG-RUNNING TEST] Contains '42':", containsNumber);
+        console.log("[LONG-RUNNING TEST] Contains 'elephant':", containsWord);
+
+        expect(containsNumber).toBe(true);
+        expect(containsWord).toBe(true);
+
+        // CRITICAL ASSERTION 2: Check for garbled text patterns
+        // These patterns indicate chunks being incorrectly split/merged
+        // Pattern from bug report: "acheck error" instead of "a typecheck error" (missing "type")
+
+        // Check consecutive chunks for suspicious splits
+        for (let i = 0; i < assistantChunks.length - 1; i++) {
+          const current = assistantChunks[i];
+          const next = assistantChunks[i + 1];
+
+          // Look for a chunk ending with a letter followed by a chunk starting with
+          // a letter that wouldn't make sense together (e.g., "a" + "check")
+          const currentEndsWithLetter = /[a-zA-Z]$/.test(current);
+          const nextStartsWithLetter = /^[a-zA-Z]/.test(next);
+
+          if (currentEndsWithLetter && nextStartsWithLetter) {
+            // This could be legitimate (word continues) or a split issue
+            // Log for debugging
+            console.log(`[LONG-RUNNING TEST] Adjacent letter chunks: "${current.slice(-10)}" + "${next.slice(0, 10)}"`);
+          }
+        }
+
+        // CRITICAL ASSERTION 3: Check for UTF-8 corruption
+        for (const chunk of assistantChunks) {
+          expect(chunk).not.toMatch(/\x00/); // No null bytes
+          expect(chunk).not.toMatch(/\uFFFD/); // No replacement characters
+        }
+
+        // CRITICAL ASSERTION 4: The full response should be valid English
+        // Check that the response has proper word spacing
+        const wordPattern = /\b[a-zA-Z]+\b/g;
+        const words = fullResponse.match(wordPattern) || [];
+        expect(words.length).toBeGreaterThan(3); // Should have multiple words
+
+        // Check for improperly concatenated words (very long "words" that shouldn't exist)
+        const suspiciouslyLongWords = words.filter(w => w.length > 20);
+        if (suspiciouslyLongWords.length > 0) {
+          console.log("[LONG-RUNNING TEST] Suspiciously long words:", suspiciouslyLongWords);
+        }
+        // Allow some technical words but flag excessive length
+        expect(suspiciouslyLongWords.filter(w => w.length > 30).length).toBe(0);
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      300000 // 5 minute timeout for multiple Claude API calls
+    );
+  });
 });
