@@ -640,12 +640,13 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Run `npm run typecheck --workspace=@paseo/server` to verify fix
   - **Done (2025-12-25 14:11)**: WHAT: returned a Claude-specific config object by forcing `provider: "claude"` in `packages/server/src/server/agent/providers/claude-agent.ts:343`. RESULT: TS2322 for `claude-agent.ts:343` no longer appears; typecheck now fails only in `codex-mcp-agent.ts` (TS2339/TS2366). EVIDENCE: `npm run typecheck --workspace=@paseo/server` (errors reported only in `src/server/agent/providers/codex-mcp-agent.ts`).
 
-- [ ] **Fix**: Typecheck errors in `codex-mcp-agent.ts:3370-3395` - discriminated union not narrowed.
+- [x] **Fix**: Typecheck errors in `codex-mcp-agent.ts:3370-3395` - discriminated union not narrowed.
 
   - 15+ TS2339 errors: Property 'query'/'results'/'output'/'items'/'message' does not exist
   - The switch on `type` is not narrowing the union properly
   - Fix: use `as const` on type literals or proper type guards
   - Run `npm run typecheck --workspace=@paseo/server` → zero errors
+  - **Done (2025-12-25 12:38)**: WHAT: tightened thread item schema transforms with literal `as const` types and added thread item type guards/read_file narrowing in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:872`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1453`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3247`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3366`. RESULT: TS2339 discriminated-union errors resolved and server typecheck completes with no errors. EVIDENCE: `npm run typecheck --workspace=@paseo/server`.
 
 - [ ] **Fix**: Test hang in `codex-mcp-agent.test.ts` - stuck at 3/13 tests.
 
