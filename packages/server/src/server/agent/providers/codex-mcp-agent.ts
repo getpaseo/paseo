@@ -870,9 +870,27 @@ const ThreadItemMessageSchema = z
   })
   .passthrough()
   .transform((data) => ({
-    type: data.type,
+    type: "agent_message" as const,
     text: data.text,
   }));
+
+const ThreadItemAgentMessageSchema = z
+  .object({
+    type: z.literal("AgentMessage"),
+    content: z.array(z.unknown()).optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = extractContentText(data.content);
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent message content missing",
+      });
+      return z.NEVER;
+    }
+    return { type: "agent_message" as const, text };
+  });
 
 const ThreadItemReasoningSchema = z
   .object({
@@ -881,9 +899,30 @@ const ThreadItemReasoningSchema = z
   })
   .passthrough()
   .transform((data) => ({
-    type: data.type,
+    type: "reasoning" as const,
     text: data.text,
   }));
+
+const ThreadItemReasoningSummarySchema = z
+  .object({
+    type: z.literal("Reasoning"),
+    summary_text: z.array(z.unknown()).optional(),
+    summary: z.array(z.unknown()).optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = extractSummaryText(
+      data.summary_text !== undefined ? data.summary_text : data.summary
+    );
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reasoning summary missing",
+      });
+      return z.NEVER;
+    }
+    return { type: "reasoning" as const, text };
+  });
 
 const ThreadItemUserMessageSchema = z
   .object({
@@ -892,9 +931,27 @@ const ThreadItemUserMessageSchema = z
   })
   .passthrough()
   .transform((data) => ({
-    type: data.type,
+    type: "user_message" as const,
     text: data.text,
   }));
+
+const ThreadItemUserMessageContentSchema = z
+  .object({
+    type: z.literal("UserMessage"),
+    content: z.array(z.unknown()).optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const text = extractContentText(data.content);
+    if (!text) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "user message content missing",
+      });
+      return z.NEVER;
+    }
+    return { type: "user_message" as const, text };
+  });
 
 const CommandExecutionItemSchema = ThreadItemCallIdSchema.and(
   z
@@ -926,7 +983,7 @@ const CommandExecutionItemSchema = ThreadItemCallIdSchema.and(
     return z.NEVER;
   }
   return {
-    type: data.type,
+    type: "command_execution" as const,
     callId: data.callId,
     command: data.command,
     status: data.status,
@@ -946,7 +1003,7 @@ const FileChangeItemSchema = ThreadItemCallIdSchema.and(
     })
     .passthrough()
 ).transform((data) => ({
-  type: data.type,
+  type: "file_change" as const,
   callId: data.callId,
   changes: data.changes,
 }));
@@ -1029,7 +1086,7 @@ const ReadFileItemSchema = ThreadItemCallIdSchema.and(
     return z.NEVER;
   }
   return {
-    type: data.type,
+    type: data.type as "read_file" | "file_read",
     callId: data.callId,
     status: data.status,
     path,
@@ -1243,7 +1300,7 @@ const McpToolCallItemSchema = ThreadItemCallIdSchema.and(
     return z.NEVER;
   }
   return {
-    type: data.type,
+    type: "mcp_tool_call" as const,
     callId: data.callId,
     server: resolvedServer,
     tool,
@@ -1340,7 +1397,7 @@ const WebSearchItemSchema = ThreadItemCallIdSchema.and(
     return z.NEVER;
   }
   return {
-    type: data.type,
+    type: "web_search" as const,
     callId: data.callId,
     query,
     status: data.status,
@@ -1362,7 +1419,7 @@ const TodoListItemSchema = z
   })
   .passthrough()
   .transform((data) => ({
-    type: data.type,
+    type: "todo_list" as const,
     items: data.items,
   }));
 
@@ -1373,14 +1430,17 @@ const ErrorItemSchema = z
   })
   .passthrough()
   .transform((data) => ({
-    type: data.type,
+    type: "error" as const,
     message: data.message,
   }));
 
 const ThreadItemSchema = z.union([
   ThreadItemMessageSchema,
+  ThreadItemAgentMessageSchema,
   ThreadItemReasoningSchema,
+  ThreadItemReasoningSummarySchema,
   ThreadItemUserMessageSchema,
+  ThreadItemUserMessageContentSchema,
   CommandExecutionItemSchema,
   FileChangeItemSchema,
   ReadFileItemSchema,
@@ -1391,6 +1451,177 @@ const ThreadItemSchema = z.union([
 ]);
 
 type ThreadItem = z.infer<typeof ThreadItemSchema>;
+type ThreadItemByType<T extends ThreadItem["type"]> = Extract<
+  ThreadItem,
+  { type: T }
+>;
+type ReadFileThreadItem = Extract<
+  ThreadItem,
+  { type: "read_file" | "file_read" }
+>;
+
+function isThreadItemType<T extends ThreadItem["type"]>(
+  item: ThreadItem,
+  type: T
+): item is ThreadItemByType<T> {
+  return item.type === type;
+}
+
+const TodoListInputSchema = z
+  .union([
+    z.array(
+      z.union([
+        z.string().min(1),
+        z
+          .object({
+            text: z.string().min(1),
+            completed: z.boolean().optional(),
+          })
+          .passthrough(),
+      ])
+    ),
+    z
+      .object({
+        items: z.array(
+          z.union([
+            z.string().min(1),
+            z
+              .object({
+                text: z.string().min(1),
+                completed: z.boolean().optional(),
+              })
+              .passthrough(),
+          ])
+        ),
+      })
+      .passthrough(),
+  ])
+  .transform((data, ctx) => {
+    const rawItems = Array.isArray(data) ? data : data.items;
+    if (rawItems.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "todo_list items missing",
+      });
+      return z.NEVER;
+    }
+    return rawItems.map((item) => {
+      if (typeof item === "string") {
+        return { text: item, completed: false };
+      }
+      return {
+        text: item.text,
+        completed: item.completed ?? false,
+      };
+    });
+  });
+
+const RawResponseItemSchema = z
+  .object({
+    type: z.literal("raw_response_item"),
+    item: z.unknown(),
+  })
+  .passthrough();
+
+const RawToolCallSchema = z
+  .object({
+    type: z.union([
+      z.literal("custom_tool_call"),
+      z.literal("tool_call"),
+      z.literal("function_call"),
+    ]),
+    call_id: z.string().optional(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+    tool_name: z.string().optional(),
+    input: z.unknown().optional(),
+    arguments: z.unknown().optional(),
+    args: z.unknown().optional(),
+    params: z.unknown().optional(),
+    request: z.unknown().optional(),
+    output: z.unknown().optional(),
+    result: z.unknown().optional(),
+    response: z.unknown().optional(),
+    return: z.unknown().optional(),
+    returns: z.unknown().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough()
+  .transform((data, ctx) => {
+    const callId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "call_id", value: data.call_id },
+        { key: "id", value: data.id },
+      ],
+      "raw tool call id",
+      false
+    );
+    const toolName = resolveExclusiveString(
+      ctx,
+      [
+        { key: "name", value: data.name },
+        { key: "tool_name", value: data.tool_name },
+      ],
+      "raw tool call name",
+      true
+    );
+    if (!toolName) {
+      return z.NEVER;
+    }
+    const input = resolveExclusiveValue(
+      ctx,
+      [
+        { key: "input", value: data.input },
+        { key: "arguments", value: data.arguments },
+        { key: "args", value: data.args },
+        { key: "params", value: data.params },
+        { key: "request", value: data.request },
+      ],
+      "raw tool call input",
+      false
+    );
+    const output = resolveExclusiveValue(
+      ctx,
+      [
+        { key: "output", value: data.output },
+        { key: "result", value: data.result },
+        { key: "response", value: data.response },
+        { key: "return", value: data.return },
+        { key: "returns", value: data.returns },
+      ],
+      "raw tool call output",
+      false
+    );
+    return {
+      callId,
+      toolName,
+      input,
+      output,
+      status: data.status,
+    };
+  });
+
+const RawWebSearchCallSchema = z
+  .object({
+    type: z.literal("web_search_call"),
+    status: z.string().optional(),
+    action: z
+      .object({
+        query: z.string().min(1),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    query: data.action.query,
+    status: data.status,
+  }));
+
+const RawResponseItemEventSchema = RawResponseItemSchema.transform((data) => ({
+  type: data.type,
+  item: data.item,
+}));
 
 const ThreadItemEventSchema = z
   .object({
@@ -1441,6 +1672,7 @@ const CodexEventSchema = z.union([
   TurnCompletedEventSchema,
   TurnFailedEventSchema,
   ThreadItemEventSchema,
+  RawResponseItemEventSchema,
   ErrorEventSchema,
 ]);
 
@@ -1588,6 +1820,194 @@ function buildFileChangeSummary(files: { path: string; kind: string }[]): string
   return `${files.length} file changes`;
 }
 
+function extractContentText(content: unknown): string | null {
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const item of content) {
+    const parsed = z.object({ text: z.string() }).safeParse(item);
+    if (parsed.success) {
+      parts.push(parsed.data.text);
+    }
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join("");
+}
+
+function extractSummaryText(summary: unknown): string | null {
+  if (!Array.isArray(summary)) {
+    return null;
+  }
+  const parts: string[] = [];
+  for (const item of summary) {
+    if (typeof item === "string") {
+      parts.push(item);
+      continue;
+    }
+    const parsed = z.object({ text: z.string() }).safeParse(item);
+    if (parsed.success) {
+      parts.push(parsed.data.text);
+    }
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join("\n");
+}
+
+function normalizeStructuredPayload(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (
+    trimmed.length === 0 ||
+    (!trimmed.startsWith("{") && !trimmed.startsWith("["))
+  ) {
+    return value;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeToolName(toolName: string): string {
+  if (!toolName.startsWith("mcp__")) {
+    return toolName;
+  }
+  const parts = toolName.split("__").filter((part) => part.length > 0);
+  if (parts.length < 3) {
+    return toolName;
+  }
+  const serverName = parts[1];
+  const toolParts = parts.slice(2);
+  return `${serverName}.${toolParts.join("__")}`;
+}
+
+function extractWebSearchQuery(
+  input: unknown,
+  output: unknown
+): string | null {
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (input !== undefined) {
+    const parsed = WebSearchInputSchema.safeParse(input);
+    if (parsed.success) {
+      return parsed.data.query;
+    }
+  }
+  if (output !== undefined) {
+    const parsed = WebSearchInputSchema.safeParse(output);
+    if (parsed.success) {
+      return parsed.data.query;
+    }
+  }
+  return null;
+}
+
+function extractTodoItems(input: unknown, output: unknown) {
+  if (input !== undefined) {
+    const parsed = TodoListInputSchema.safeParse(input);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  if (output !== undefined) {
+    const parsed = TodoListInputSchema.safeParse(output);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  return null;
+}
+
+function mapRawResponseItemToThreadItem(item: unknown): ThreadItem | null {
+  const webSearchParsed = RawWebSearchCallSchema.safeParse(item);
+  if (webSearchParsed.success) {
+    const parsed = ThreadItemSchema.safeParse({
+      type: "web_search",
+      query: webSearchParsed.data.query,
+      status: webSearchParsed.data.status,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  const toolCallParsed = RawToolCallSchema.safeParse(item);
+  if (!toolCallParsed.success) {
+    return null;
+  }
+  const toolName = normalizeToolName(toolCallParsed.data.toolName);
+  const toolNameLower = toolName.toLowerCase();
+  const toolNameSuffix = toolNameLower.includes(".")
+    ? toolNameLower.split(".").slice(-1)[0]
+    : toolNameLower;
+  const callId = toolCallParsed.data.callId;
+  const input = normalizeStructuredPayload(toolCallParsed.data.input);
+  const output = normalizeStructuredPayload(toolCallParsed.data.output);
+
+  if (toolNameLower === "apply_patch") {
+    const parsed = ThreadItemSchema.safeParse({
+      type: "file_change",
+      call_id: callId,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (toolNameSuffix === "web_search") {
+    const query = extractWebSearchQuery(input, output);
+    if (!query) {
+      return null;
+    }
+    const parsed = ThreadItemSchema.safeParse({
+      type: "web_search",
+      call_id: callId,
+      query,
+      input: typeof input === "object" && input !== null ? input : { query },
+      output,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (toolNameSuffix === "todo_list") {
+    const items = extractTodoItems(input, output);
+    if (!items) {
+      return null;
+    }
+    const parsed = ThreadItemSchema.safeParse({
+      type: "todo_list",
+      items,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  if (toolName.includes(".")) {
+    const [serverName, ...toolParts] = toolName.split(".");
+    const tool = toolParts.join(".");
+    if (!serverName || !tool) {
+      return null;
+    }
+    const parsed = ThreadItemSchema.safeParse({
+      type: "mcp_tool_call",
+      call_id: callId,
+      server: serverName,
+      tool,
+      input,
+      output,
+      status: toolCallParsed.data.status,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  return null;
+}
+
 function extractTextContent(response: unknown): string | null {
   const parsed = ResponseBaseSchema.parse(response);
   const content = parsed.content;
@@ -1619,6 +2039,45 @@ function normalizeEvent(raw: unknown): CodexEvent {
   const normalizedType = normalizeThreadEventType(eventType);
   if (normalizedType !== eventType) {
     eventRecord = { ...eventRecord, type: normalizedType };
+  }
+  const snakeCaseTypeMap: Record<string, string> = {
+    thread_started: "thread.started",
+    turn_started: "turn.started",
+    turn_completed: "turn.completed",
+    turn_failed: "turn.failed",
+    item_started: "item.started",
+    item_updated: "item.updated",
+    item_completed: "item.completed",
+  };
+  const snakeCaseType = snakeCaseTypeMap[normalizedType];
+  if (snakeCaseType !== undefined) {
+    eventRecord = { ...eventRecord, type: snakeCaseType };
+  }
+  if (normalizedType === "task_started") {
+    eventRecord = { ...eventRecord, type: "turn.started" };
+  } else if (normalizedType === "task_complete") {
+    eventRecord = { ...eventRecord, type: "turn.completed" };
+  }
+  const rawResponseParsed = RawResponseItemSchema.safeParse(eventRecord);
+  if (rawResponseParsed.success) {
+    const mappedItem = mapRawResponseItemToThreadItem(rawResponseParsed.data.item);
+    if (mappedItem) {
+      return CodexEventSchema.parse({ type: "item.completed", item: mappedItem });
+    }
+  }
+  const patchEndParsed = PatchApplyEndEventSchema.safeParse(eventRecord);
+  if (patchEndParsed.success) {
+    const changes = patchEndParsed.data.changes
+      ? patchEndParsed.data.changes
+      : patchEndParsed.data.files;
+    const parsed = ThreadItemSchema.safeParse({
+      type: "file_change",
+      call_id: patchEndParsed.data.callId,
+      changes,
+    });
+    if (parsed.success) {
+      return CodexEventSchema.parse({ type: "item.completed", item: parsed.data });
+    }
   }
   const isTopLevelItemEvent = z
     .union([
@@ -2453,6 +2912,23 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private handleMcpEvent(event: unknown): void {
+    const rawResponseParsed = RawResponseItemSchema.safeParse(event);
+    if (rawResponseParsed.success) {
+      const mappedItem = mapRawResponseItemToThreadItem(rawResponseParsed.data.item);
+      if (mappedItem) {
+        const mappedEvent = ThreadItemEventSchema.parse({
+          type: "item.completed",
+          item: mappedItem,
+        });
+        this.emitEvent({
+          type: "provider_event",
+          provider: CODEX_PROVIDER,
+          raw: mappedEvent,
+        });
+        this.handleThreadEvent(mappedEvent);
+        return;
+      }
+    }
     const parsedEvent = normalizeEvent(event);
     this.emitEvent({
       type: "provider_event",
@@ -2768,7 +3244,7 @@ class CodexMcpAgentSession implements AgentSession {
             item: timelineItem,
           });
         }
-        if (event.item.type === "command_execution") {
+        if (isThreadItemType(event.item, "command_execution")) {
           let resolvedExitCode = event.item.exitCode;
           if (resolvedExitCode === undefined) {
             if (event.item.success === true) {
@@ -2817,122 +3293,126 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private threadItemToTimeline(item: ThreadItem): AgentTimelineItem | null {
-    switch (item.type) {
-      case "agent_message":
-        return { type: "assistant_message", text: item.text };
-      case "reasoning":
-        return { type: "reasoning", text: item.text };
-      case "user_message":
-        return { type: "user_message", text: item.text };
-      case "command_execution": {
-        const command = normalizeCommand(item.command);
-        let resolvedExitCode = item.exitCode;
-        if (resolvedExitCode === undefined) {
-          if (item.success === true) {
-            resolvedExitCode = 0;
-          } else if (item.success === false) {
-            resolvedExitCode = 1;
-          } else if (item.status === "failed") {
-            resolvedExitCode = 1;
-          } else if (item.status === "completed") {
-            resolvedExitCode = 0;
-          }
-        }
-        const commandOutput: {
-          type: "command";
-          command: string;
-          output?: string;
-          exitCode?: number;
-          cwd?: string;
-        } = {
-          type: "command",
-          command,
-          cwd: item.cwd,
-        };
-        if (item.aggregatedOutput !== undefined) {
-          commandOutput.output = item.aggregatedOutput;
-        }
-        if (resolvedExitCode !== undefined) {
-          commandOutput.exitCode = resolvedExitCode;
-        }
-        return createToolCallTimelineItem({
-          server: "command",
-          tool: "shell",
-          status: item.status,
-          callId: item.callId,
-          displayName: command,
-          kind: "execute",
-          input: { command: item.command, cwd: item.cwd },
-          output: commandOutput,
-          error: item.error,
-        });
-      }
-      case "file_change": {
-        const changes = item.changes ? parsePatchChanges(item.changes) : [];
-        const summaryFiles = changes.map((change) => {
-          if (!change.kind) {
-            throw new Error(`file_change missing kind for ${change.path}`);
-          }
-          return { path: change.path, kind: change.kind };
-        });
-        return createToolCallTimelineItem({
-          server: "file_change",
-          tool: "apply_patch",
-          status: "completed",
-          callId: item.callId,
-          displayName: buildFileChangeSummary(summaryFiles),
-          kind: "edit",
-          output: { files: changes },
-        });
-      }
-      case "read_file":
-      case "file_read": {
-        const displayName = `Read ${item.path}`;
-        const output =
-          item.content !== undefined ? item.content : item.output;
-        return createToolCallTimelineItem({
-          server: "file_read",
-          tool: "read_file",
-          status: item.status,
-          callId: item.callId,
-          displayName,
-          kind: "read",
-          input: item.input ? item.input : { path: item.path },
-          output,
-        });
-      }
-      case "mcp_tool_call": {
-        return createToolCallTimelineItem({
-          server: item.server,
-          tool: item.tool,
-          status: item.status,
-          callId: item.callId,
-          displayName: `${item.server}.${item.tool}`,
-          kind: "tool",
-          input: item.input,
-          output: item.output,
-        });
-      }
-      case "web_search": {
-        const displayName = `Web search: ${item.query}`;
-        const output =
-          item.results !== undefined ? item.results : item.output;
-        return createToolCallTimelineItem({
-          server: "web_search",
-          tool: "web_search",
-          status: item.status,
-          callId: item.callId,
-          displayName,
-          kind: "search",
-          input: item.input ? item.input : { query: item.query },
-          output,
-        });
-      }
-      case "todo_list":
-        return { type: "todo", items: item.items };
-      case "error":
-        return { type: "error", message: item.message };
+    if (isThreadItemType(item, "agent_message")) {
+      return { type: "assistant_message", text: item.text };
     }
+    if (isThreadItemType(item, "reasoning")) {
+      return { type: "reasoning", text: item.text };
+    }
+    if (isThreadItemType(item, "user_message")) {
+      return { type: "user_message", text: item.text };
+    }
+    if (isThreadItemType(item, "command_execution")) {
+      const command = normalizeCommand(item.command);
+      let resolvedExitCode = item.exitCode;
+      if (resolvedExitCode === undefined) {
+        if (item.success === true) {
+          resolvedExitCode = 0;
+        } else if (item.success === false) {
+          resolvedExitCode = 1;
+        } else if (item.status === "failed") {
+          resolvedExitCode = 1;
+        } else if (item.status === "completed") {
+          resolvedExitCode = 0;
+        }
+      }
+      const commandOutput: {
+        type: "command";
+        command: string;
+        output?: string;
+        exitCode?: number;
+        cwd?: string;
+      } = {
+        type: "command",
+        command,
+        cwd: item.cwd,
+      };
+      if (item.aggregatedOutput !== undefined) {
+        commandOutput.output = item.aggregatedOutput;
+      }
+      if (resolvedExitCode !== undefined) {
+        commandOutput.exitCode = resolvedExitCode;
+      }
+      return createToolCallTimelineItem({
+        server: "command",
+        tool: "shell",
+        status: item.status,
+        callId: item.callId,
+        displayName: command,
+        kind: "execute",
+        input: { command: item.command, cwd: item.cwd },
+        output: commandOutput,
+        error: item.error,
+      });
+    }
+    if (isThreadItemType(item, "file_change")) {
+      const changes = item.changes ? parsePatchChanges(item.changes) : [];
+      const summaryFiles = changes.map((change) => {
+        if (!change.kind) {
+          throw new Error(`file_change missing kind for ${change.path}`);
+        }
+        return { path: change.path, kind: change.kind };
+      });
+      return createToolCallTimelineItem({
+        server: "file_change",
+        tool: "apply_patch",
+        status: "completed",
+        callId: item.callId,
+        displayName: buildFileChangeSummary(summaryFiles),
+        kind: "edit",
+        output: { files: changes },
+      });
+    }
+    if (item.type === "read_file" || item.type === "file_read") {
+      const readItem = item as ReadFileThreadItem;
+      const displayName = `Read ${readItem.path}`;
+      const output =
+        readItem.content !== undefined ? readItem.content : readItem.output;
+      return createToolCallTimelineItem({
+        server: "file_read",
+        tool: "read_file",
+        status: readItem.status,
+        callId: readItem.callId,
+        displayName,
+        kind: "read",
+        input: readItem.input ? readItem.input : { path: readItem.path },
+        output,
+      });
+    }
+    if (isThreadItemType(item, "mcp_tool_call")) {
+      return createToolCallTimelineItem({
+        server: item.server,
+        tool: item.tool,
+        status: item.status,
+        callId: item.callId,
+        displayName: `${item.server}.${item.tool}`,
+        kind: "tool",
+        input: item.input,
+        output: item.output,
+      });
+    }
+    if (isThreadItemType(item, "web_search")) {
+      const displayName = `Web search: ${item.query}`;
+      const output =
+        item.results !== undefined ? item.results : item.output;
+      return createToolCallTimelineItem({
+        server: "web_search",
+        tool: "web_search",
+        status: item.status,
+        callId: item.callId,
+        displayName,
+        kind: "search",
+        input: item.input ? item.input : { query: item.query },
+        output,
+      });
+    }
+    if (isThreadItemType(item, "todo_list")) {
+      return { type: "todo", items: item.items };
+    }
+    if (isThreadItemType(item, "error")) {
+      return { type: "error", message: item.message };
+    }
+    return null;
   }
 
   private buildResumePrompt(prompt: string): string {
