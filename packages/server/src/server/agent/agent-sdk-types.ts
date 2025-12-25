@@ -1,6 +1,6 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 
-export type AgentProvider = "codex" | "codex-mcp" | "claude";
+export type AgentProvider = "codex" | "claude";
 
 export type AgentMetadata = { [key: string]: unknown };
 

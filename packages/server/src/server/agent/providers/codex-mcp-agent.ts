@@ -24,7 +24,7 @@ import type {
   AgentRuntimeInfo,
 } from "../agent-sdk-types.js";
 
-type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex-mcp" };
+type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex" };
 
 type TurnState = {
   sawAssistant: boolean;
@@ -60,7 +60,7 @@ type PatchFileChange = {
 type CodexToolArguments = { [key: string]: unknown };
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
-const CODEX_PROVIDER = "codex-mcp" as const;
+const CODEX_PROVIDER = "codex" as const;
 
 const CODEX_MCP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -2455,7 +2455,7 @@ class CodexMcpAgentSession implements AgentSession {
     this.config = config;
     this.currentMode =
       config.modeId !== undefined ? config.modeId : DEFAULT_CODEX_MODE_ID;
-    this.pendingLocalId = `codex-mcp-${randomUUID()}`;
+    this.pendingLocalId = `codex-${randomUUID()}`;
 
     if (resumeHandle) {
       this.sessionId = resumeHandle.sessionId;
@@ -2480,7 +2480,7 @@ class CodexMcpAgentSession implements AgentSession {
     }
 
     this.client = new Client(
-      { name: "voice-dev-codex-mcp", version: "1.0.0" },
+      { name: "voice-dev-codex", version: "1.0.0" },
       { capabilities: { elicitation: {} } }
     );
 
@@ -2598,7 +2598,7 @@ class CodexMcpAgentSession implements AgentSession {
     const promptText = toPromptText(prompt);
     this.emitEvent({
       type: "timeline",
-      provider: "codex-mcp",
+      provider: CODEX_PROVIDER,
       item: { type: "user_message", text: promptText },
     });
 
@@ -2606,12 +2606,12 @@ class CodexMcpAgentSession implements AgentSession {
       const message = error instanceof Error ? error.message : String(error);
       this.emitEvent({
         type: "timeline",
-        provider: "codex-mcp",
+        provider: CODEX_PROVIDER,
         item: { type: "error", message },
       });
       this.emitEvent({
         type: "turn_failed",
-        provider: "codex-mcp",
+        provider: CODEX_PROVIDER,
         error: message,
       });
       queue.end();
@@ -2647,7 +2647,7 @@ class CodexMcpAgentSession implements AgentSession {
     ) {
       this.emitEvent({
         type: "turn_failed",
-        provider: "codex-mcp",
+        provider: CODEX_PROVIDER,
         error: "Codex MCP turn interrupted",
       });
       this.eventQueue.end();
@@ -2721,7 +2721,7 @@ class CodexMcpAgentSession implements AgentSession {
     const status = response.behavior === "allow" ? "granted" : "denied";
     this.emitEvent({
       type: "timeline",
-      provider: "codex-mcp",
+      provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
         server: "permission",
         tool: pending.request.name,
@@ -2735,7 +2735,7 @@ class CodexMcpAgentSession implements AgentSession {
 
     this.emitEvent({
       type: "permission_resolved",
-      provider: "codex-mcp",
+      provider: CODEX_PROVIDER,
       requestId,
       resolution: response,
     });
@@ -2949,7 +2949,7 @@ class CodexMcpAgentSession implements AgentSession {
       if (signal.aborted) {
         this.emitEvent({
           type: "turn_failed",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
           error: "Codex MCP turn interrupted",
         });
         this.eventQueue?.end();
@@ -2964,7 +2964,7 @@ class CodexMcpAgentSession implements AgentSession {
       if (text) {
         this.emitEvent({
           type: "timeline",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
           item: { type: "assistant_message", text },
         });
       }
@@ -2978,13 +2978,13 @@ class CodexMcpAgentSession implements AgentSession {
       if (turnState.sawError) {
         this.emitEvent({
           type: "turn_failed",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
           error: "Codex MCP turn failed",
         });
       } else {
         this.emitEvent({
           type: "turn_completed",
-          provider: "codex-mcp",
+          provider: CODEX_PROVIDER,
         });
       }
     }
@@ -3019,7 +3019,7 @@ class CodexMcpAgentSession implements AgentSession {
   private emitPermissionRequested(request: AgentPermissionRequest): void {
     this.emitEvent({
       type: "timeline",
-      provider: "codex-mcp",
+      provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
         server: "permission",
         tool: request.name,
@@ -3032,7 +3032,7 @@ class CodexMcpAgentSession implements AgentSession {
     });
     this.emitEvent({
       type: "permission_requested",
-      provider: "codex-mcp",
+      provider: CODEX_PROVIDER,
       request,
     });
   }

@@ -409,7 +409,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -437,7 +437,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -459,7 +459,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         for await (const event of session.stream(prompt)) {
           const provider = providerFromEvent(event);
-          if (event.type === "timeline" && provider === "codex-mcp") {
+          if (event.type === "timeline" && provider === "codex") {
             if (event.item.type === "assistant_message") {
               sawAssistant = true;
             }
@@ -539,7 +539,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
         extra: {
@@ -575,7 +575,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         ].join("\n");
 
         for await (const event of session.stream(prompt)) {
-          if (event.type === "provider_event" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "provider_event" && providerFromEvent(event) === "codex") {
             const parsed = parseProviderEvent(event.raw);
             if (parsed) {
               if (parsed.type.startsWith("thread.") || parsed.type.startsWith("turn.")) {
@@ -590,7 +590,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             }
           }
 
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             timelineItems.push(event.item);
           }
 
@@ -689,7 +689,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -742,7 +742,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           ) {
             permissionResolved = true;
           }
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             if (event.item.type === "tool_call" && event.item.server !== "permission") {
               toolCalls.push(event.item);
             }
@@ -865,7 +865,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -884,7 +884,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         for await (const event of session.stream(prompt)) {
           const provider = providerFromEvent(event);
-          if (event.type === "timeline" && provider === "codex-mcp") {
+          if (event.type === "timeline" && provider === "codex") {
             if (event.item.type === "error") {
               sawErrorTimeline = true;
             }
@@ -916,7 +916,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -957,7 +957,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           history.some(
             (event) =>
               event.type === "timeline" &&
-              providerFromEvent(event) === "codex-mcp" &&
+              providerFromEvent(event) === "codex" &&
               (event.item.type === "assistant_message" ||
                 event.item.type === "user_message")
           )
@@ -993,7 +993,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -1006,7 +1006,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect(result.finalText.toLowerCase()).toContain("ready");
 
         const info = await session.getRuntimeInfo();
-        expect(info.provider).toBe("codex-mcp");
+        expect(info.provider).toBe("codex");
         expect(typeof info.sessionId).toBe("string");
         expect(info.sessionId ? info.sessionId.length : 0).toBeGreaterThan(0);
         expect(info.modeId).toBe("full-access");
@@ -1029,7 +1029,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1063,7 +1063,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           ) {
             sawPermissionResolved = true;
           }
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             timelineItems.push(event.item);
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
@@ -1106,7 +1106,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "read-only",
         approvalPolicy: "on-request",
@@ -1129,7 +1129,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             captured = event.request;
             await session.respondToPermission(captured.id, { behavior: "allow" });
           }
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             timelineItems.push(event.item);
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
@@ -1163,7 +1163,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1199,7 +1199,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           ) {
             sawPermissionDenied = true;
           }
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             timelineItems.push(event.item);
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
@@ -1235,7 +1235,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1275,7 +1275,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           ) {
             sawPermissionResolved = true;
           }
-          if (event.type === "timeline" && providerFromEvent(event) === "codex-mcp") {
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             timelineItems.push(event.item);
           }
           if (event.type === "turn_failed") {
@@ -1319,7 +1319,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",
@@ -1348,7 +1348,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
           if (
             event.type === "timeline" &&
-            providerFromEvent(event) === "codex-mcp" &&
+            providerFromEvent(event) === "codex" &&
             event.item.type === "tool_call" &&
             event.item.server === "command" &&
             isSleepCommandToolCall(event.item)
@@ -1394,7 +1394,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
       const client = new CodexMcpAgentClient();
       const config = {
-        provider: "codex-mcp",
+        provider: "codex",
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",
@@ -1423,7 +1423,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
           if (
             event.type === "timeline" &&
-            providerFromEvent(event) === "codex-mcp" &&
+            providerFromEvent(event) === "codex" &&
             event.item.type === "tool_call" &&
             event.item.server === "command"
           ) {

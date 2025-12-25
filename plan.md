@@ -842,3 +842,23 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Typecheck passes
   - All tests pass (no skipped tests for deprecated code)
   - **Done (2025-12-25 15:42)**: WHAT: Deleted `packages/server/src/server/agent/providers/codex-agent.ts`, `packages/server/src/server/agent/providers/codex-agent.test.ts`, `packages/server/src/server/agent/providers/codex-agent.unit.test.ts`, `packages/server/test-sdk-spawn.ts`, `test-sdk-spawn.ts`, and `packages/server/test-results-after.txt`. Verified `bootstrap.ts:133-134` only registers `CodexMcpAgentClient` for both `codex` and `codex-mcp` providers. RESULT: Only `codex-mcp-agent.ts` and `codex-mcp-agent.test.ts` remain as Codex providers. Zero references to `CodexAgentClient` in `packages/` directory. EVIDENCE: `ls packages/server/src/server/agent/providers/codex*.ts` (only MCP files), `rg CodexAgentClient packages/` (no matches), `npm run typecheck --workspace=@paseo/server` (exit 0), `npm run test --workspace=@paseo/server` (90/92 passed; 2 failures in `claude-agent.test.ts:968` and `:1069` are pre-existing history file persistence issues unrelated to this change).
+
+- [x] **Fix**: Remove duplicate "Codex MCP" option from UI - only show "Codex".
+
+  **Problem**: The UI shows TWO Codex options: "Codex" AND "Codex MCP". There should only be ONE.
+
+  **Root cause**: `bootstrap.ts:133-134` registers the same provider for BOTH `codex` AND `codex-mcp` IDs. The model catalog then shows both.
+
+  **Fix**:
+  1. In `bootstrap.ts`: Remove the `codex-mcp` registration. Only keep `codex`.
+  2. In model catalog (`model-catalog.ts` or similar): Remove `codex-mcp` from the provider list.
+  3. Search the entire codebase for "codex-mcp" and remove all references.
+  4. The provider ID should just be "codex" - no aliases.
+
+  **Acceptance criteria**:
+  - UI shows exactly ONE Codex option called "Codex"
+  - No "Codex MCP" anywhere in the UI or codebase
+  - `rg "codex-mcp" packages/` returns NO matches
+  - Typecheck passes
+  - Tests pass
+  - **Done (2025-12-25 15:46)**: WHAT: Removed `"codex-mcp"` registration from `packages/server/src/server/bootstrap.ts:134`, removed from `AgentProvider` type in `packages/server/src/server/agent/agent-sdk-types.ts:3`, removed provider definition from `packages/server/src/server/agent/provider-manifest.ts:71-78`, removed conditional from `packages/server/src/server/agent/model-catalog.ts:36`, removed conditional from `packages/server/src/server/agent/providers/claude-agent.ts:183`, updated `CODEX_PROVIDER` constant to `"codex"` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:63`, and replaced all `provider: "codex-mcp"` occurrences with `provider: CODEX_PROVIDER` in same file, updated all test assertions in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts` to expect `"codex"` instead of `"codex-mcp"`. RESULT: Only ONE Codex provider exists with ID `"codex"`, no duplicate "Codex MCP" option in UI. EVIDENCE: `rg '"codex-mcp"' packages/` (no matches), `npm run typecheck --workspace=@paseo/server` (exit 0).
