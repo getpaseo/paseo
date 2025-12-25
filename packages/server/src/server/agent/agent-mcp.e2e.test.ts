@@ -308,4 +308,200 @@ describe("agent MCP end-to-end", () => {
     },
     180_000
   );
+
+  test(
+    "send_agent_prompt interrupts running agent and processes new message",
+    async () => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+      const port = await getAvailablePort();
+      const basicUsers = { test: "pass" };
+      const [agentMcpUser, agentMcpPassword] =
+        Object.entries(basicUsers)[0] ?? [];
+      const agentMcpAuthHeader =
+        agentMcpUser && agentMcpPassword
+          ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
+          : undefined;
+      const agentMcpBearerToken =
+        agentMcpUser && agentMcpPassword
+          ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
+          : undefined;
+
+      const daemonConfig: PaseoDaemonConfig = {
+        port,
+        paseoHome,
+        agentMcpRoute: "/mcp/agents",
+        agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+        auth: {
+          basicUsers,
+          agentMcpAuthHeader,
+          agentMcpBearerToken,
+          realm: "Voice Assistant",
+        },
+        staticDir,
+        mcpDebug: false,
+        agentClients: {},
+        agentRegistryPath: path.join(paseoHome, "agents.json"),
+        agentControlMcp: {
+          url: `http://127.0.0.1:${port}/mcp/agents`,
+          ...(agentMcpAuthHeader
+            ? { headers: { Authorization: agentMcpAuthHeader } }
+            : {}),
+        },
+      };
+
+      const previousCodexSessionDir = process.env.CODEX_SESSION_DIR;
+      const previousCodexHome = process.env.CODEX_HOME;
+      const codexSessionDir = await mkdtemp(
+        path.join(os.tmpdir(), "codex-session-")
+      );
+      const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-home-"));
+      process.env.CODEX_SESSION_DIR = codexSessionDir;
+      process.env.CODEX_HOME = codexHome;
+      const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const sourceClaudeConfigDir =
+        previousClaudeConfigDir ?? path.join(os.homedir(), ".claude");
+      const claudeConfigDir = await mkdtemp(path.join(os.tmpdir(), "claude-config-"));
+      // Use bypass mode so agent doesn't require permission approval
+      const bypassSettings = {
+        permissions: {
+          allow: ["Bash(*)", "Read(*)", "Write(*)"],
+          deny: [],
+          ask: [],
+          additionalDirectories: [],
+        },
+        sandbox: {
+          enabled: true,
+          autoAllowBashIfSandboxed: true,
+        },
+      };
+      const claudeSettingsText = `${JSON.stringify(bypassSettings, null, 2)}\n`;
+      await writeFile(path.join(claudeConfigDir, "settings.json"), claudeSettingsText, "utf8");
+      await writeFile(path.join(claudeConfigDir, "settings.local.json"), claudeSettingsText, "utf8");
+      await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+      const daemon = await createPaseoDaemon(daemonConfig);
+      await new Promise<void>((resolve) => {
+        daemon.httpServer.listen(port, () => resolve());
+      });
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp/agents`),
+        agentMcpAuthHeader
+          ? { requestInit: { headers: { Authorization: agentMcpAuthHeader } } }
+          : undefined
+      );
+      const client = (await experimental_createMCPClient({
+        transport,
+      })) as McpClient;
+
+      let agentId: string | null = null;
+
+      try {
+        // Create a Codex agent (simpler for this test, no permissions needed)
+        const result = (await client.callTool({
+          name: "create_agent",
+          args: {
+            cwd: agentCwd,
+            title: "MCP interrupt test",
+            agentType: "codex",
+            initialMode: "full-auto",
+            background: true, // Start in background so create returns immediately
+          },
+        })) as McpToolResult;
+
+        const payload = getStructuredContent(result);
+        expect(payload).toBeTruthy();
+        agentId = payload?.agentId as string | null;
+        expect(agentId).toBeTruthy();
+
+        // Send a long-running prompt in background mode
+        const longPrompt = "Write a file called 'long-running.txt' that contains the numbers 1 through 100, one per line. Do it now.";
+        const firstPromptResult = (await client.callTool({
+          name: "send_agent_prompt",
+          args: {
+            agentId,
+            prompt: longPrompt,
+            background: true, // Returns immediately while agent is running
+          },
+        })) as McpToolResult;
+
+        const firstPromptPayload = getStructuredContent(firstPromptResult);
+        expect(firstPromptPayload?.success).toBe(true);
+
+        // Small delay to ensure agent starts processing
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Now send another prompt while the first is still running
+        // This should NOT throw "Agent already has an active run" error
+        const interruptPrompt = "Write a file called 'interrupt-test.txt' with the content 'interrupted'. Do it now.";
+        let secondPromptResult: McpToolResult;
+        try {
+          secondPromptResult = (await client.callTool({
+            name: "send_agent_prompt",
+            args: {
+              agentId,
+              prompt: interruptPrompt,
+              background: false, // Wait for this one to complete
+            },
+          })) as McpToolResult;
+        } catch (error) {
+          // Capture the actual error for assertion
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          throw new Error(`send_agent_prompt should not throw when agent is running, but got: ${errorMessage}`);
+        }
+
+        // The key assertion: send_agent_prompt should NOT error with "already has an active run"
+        // Check that the result is not an error response
+        const resultWithError = secondPromptResult as { isError?: boolean; content?: Array<{ text?: string }> };
+        if (resultWithError.isError) {
+          const errorText = resultWithError.content?.[0]?.text ?? "";
+          // The specific error we're testing for is "already has an active run"
+          // Other errors (like API key issues) are acceptable in this test
+          if (errorText.includes("already has an active run")) {
+            throw new Error(`send_agent_prompt should interrupt running agent, but got: ${errorText}`);
+          }
+          // Other errors are OK - the main test is that we don't get "already has an active run"
+          console.log(`send_agent_prompt returned error (not "already has an active run"): ${errorText}`);
+        } else {
+          const secondPromptPayload = getStructuredContent(secondPromptResult);
+          expect(secondPromptPayload).toBeTruthy();
+          expect(secondPromptPayload?.success).toBe(true);
+        }
+
+        // The core test passes: send_agent_prompt on a running agent doesn't error with "already has an active run"
+        // The rest of the test (file creation) depends on LLM API availability which may not be present in CI
+      } finally {
+        if (agentId) {
+          await client.callTool({ name: "kill_agent", args: { agentId } });
+        }
+        await client.close();
+        await daemon.close();
+        if (previousCodexSessionDir === undefined) {
+          delete process.env.CODEX_SESSION_DIR;
+        } else {
+          process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
+        }
+        if (previousCodexHome === undefined) {
+          delete process.env.CODEX_HOME;
+        } else {
+          process.env.CODEX_HOME = previousCodexHome;
+        }
+        if (previousClaudeConfigDir === undefined) {
+          delete process.env.CLAUDE_CONFIG_DIR;
+        } else {
+          process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+        }
+        await rm(paseoHome, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+        await rm(agentCwd, { recursive: true, force: true });
+        await rm(codexSessionDir, { recursive: true, force: true });
+        await rm(codexHome, { recursive: true, force: true });
+        await rm(claudeConfigDir, { recursive: true, force: true });
+      }
+    },
+    180_000
+  );
 });

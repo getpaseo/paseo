@@ -81,6 +81,49 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
+- [x] **BUG (MCP)**: `send_agent_prompt` errors when agent already running.
+  - **Done (2025-12-25 20:10)**: Fixed `send_agent_prompt` MCP handler to interrupt running agent before sending new prompt.
+
+  **WHAT**:
+  - Modified `packages/server/src/server/agent/mcp-server.ts:418-463`
+  - Added check for `snapshot.lifecycle === "running" || snapshot.pendingRun` at start of `send_agent_prompt` handler
+  - If running: calls `agentManager.cancelAgentRun(agentId)` to interrupt
+  - Added polling wait (max 5s, 50ms interval) for agent to become idle after cancellation
+  - Matches behavior of `session.ts:interruptAgentIfRunning()`
+
+  **WHY**:
+  - The error `"Agent {id} already has an active run"` came from `agent-manager.ts:454` in `streamAgent()`
+  - The MCP handler was calling `startAgentRun` without checking/cancelling existing runs
+  - `cancelAgentRun` only initiates cancellation (fires and forgets), doesn't wait for `pendingRun` to clear
+  - Polling wait ensures generator fully terminates before starting new run
+
+  **TEST**:
+  - Added E2E test `packages/server/src/server/agent/agent-mcp.e2e.test.ts`: "send_agent_prompt interrupts running agent and processes new message"
+  - Test creates agent, sends prompt in background mode, then sends second prompt while first is running
+  - Verifies no "already has an active run" error is returned
+
+  **VERIFICATION**:
+  - Test passes: `npx vitest run packages/server/src/server/agent/agent-mcp.e2e.test.ts --testNamePattern "send_agent_prompt interrupts"`
+  - Server typecheck passes: `npm run typecheck` (server package)
+  - Unit tests pass: `npx vitest run src/server/agent/mcp-server.test.ts`
+
+- [ ] **BUG (Server)**: Claude streaming sends incomplete chunks to long-running agents.
+
+  **Context**: From app-side investigation (`REPORT-garbled-text-bug.md`), the server is sending incomplete text chunks. Bug appears in LONG-RUNNING agents during streaming, NOT new agent creation (E2E test passes for new agents).
+
+  **REQUIREMENTS (TDD)**:
+  1. **First**: Write a failing E2E test that:
+     - Creates a long-running Claude agent (multiple back-and-forth messages)
+     - Sends a new message
+     - Captures `agent_stream` timeline events
+     - Asserts text chunks are complete and coherent
+  2. **Second**: Fix the root cause in `packages/server/src/server/agent/providers/`
+  3. **Third**: Verify the test passes
+
+  **Files to investigate**:
+  - `packages/server/src/server/agent/providers/claude-agent.ts` - Claude streaming implementation
+  - Check if there's a state accumulation bug that manifests over time
+
 - [x] **BUG (App-side)**: Claude assistant text garbled in React Native app rendering.
   - **Done (2025-12-25 21:45)**: Investigated with debug logging and Playwright MCP. **App-side code is NOT the cause.** See `REPORT-garbled-text-bug.md` for full analysis.
 

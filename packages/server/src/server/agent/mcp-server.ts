@@ -416,6 +416,51 @@ export async function createAgentMcpServer(
       },
     },
     async ({ agentId, prompt, sessionMode, background = false }) => {
+      // Check if agent is running and interrupt if necessary (matches app behavior)
+      const snapshot = agentManager.getAgent(agentId);
+      if (!snapshot) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+
+      if (snapshot.lifecycle === "running" || snapshot.pendingRun) {
+        console.log(
+          `[Agent MCP] Interrupting active run for ${agentId} before sending new prompt`
+        );
+        try {
+          const cancelled = await agentManager.cancelAgentRun(agentId);
+          if (!cancelled) {
+            console.warn(
+              `[Agent MCP] Agent ${agentId} reported running but no active run was cancelled`
+            );
+          }
+          // Also cancel any pending wait_for_agent calls for this agent
+          waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
+
+          // Wait for the agent to become idle after cancellation
+          // Poll until the agent is no longer running and has no pending run
+          // This is necessary because cancelAgentRun only initiates cancellation
+          // and doesn't wait for the generator to fully terminate
+          const maxWaitMs = 5000;
+          const pollIntervalMs = 50;
+          const startTime = Date.now();
+          while (Date.now() - startTime < maxWaitMs) {
+            const current = agentManager.getAgent(agentId);
+            if (!current) {
+              throw new Error(`Agent ${agentId} not found during cancellation wait`);
+            }
+            if (current.lifecycle !== "running" && !current.pendingRun) {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+          }
+        } catch (error) {
+          console.error(
+            `[Agent MCP] Failed to interrupt agent ${agentId}:`,
+            error
+          );
+          throw error;
+        }
+      }
 
       if (sessionMode) {
         await agentManager.setAgentMode(agentId, sessionMode);
@@ -455,11 +500,12 @@ export async function createAgentMcpServer(
 
 
       // Return immediately if background=true
-      const snapshot = agentManager.getAgent(agentId);
+      // Re-fetch snapshot since the state may have changed
+      const currentSnapshot = agentManager.getAgent(agentId);
 
       const responseData = {
         success: true,
-        status: snapshot?.lifecycle ?? "idle",
+        status: currentSnapshot?.lifecycle ?? "idle",
         lastMessage: null,
         permission: null,
       };
