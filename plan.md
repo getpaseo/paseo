@@ -31,6 +31,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 ## Completed Work (Compacted)
 
 ### Codex MCP Provider (2025-12-24)
+
 - ✅ Created `codex-mcp-agent.ts` with MCP stdio client, event mapping, permissions, persistence, abort handling
 - ✅ Fixed model availability (removed hardcoded gpt-4.1), permission elicitation, exit code handling
 - ✅ Fixed thread/item event mapping for file_change, mcp_tool_call, web_search, todo_list
@@ -40,18 +41,21 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - Reports: `CODEX_MCP_MISMATCH_REPORT.md`, `REPORT-codex-mcp-audit.md`
 
 ### UI/UX Fixes (2025-12-25)
+
 - ✅ Removed duplicate "Codex MCP" option - now shows only "Codex"
 - ✅ Fixed duplicate user/assistant messages (provider was emitting, but agent-manager already dispatches)
 - ✅ Fixed Codex agent-control MCP parity with Claude (added MCP servers to Codex config)
 - ✅ Fixed agent timestamp not updating on click without interaction
 
 ### DaemonClient Implementation (2025-12-25)
+
 - ✅ Created `packages/server/src/server/test-utils/daemon-client.ts` (~550 lines)
 - ✅ Created `packages/server/src/server/test-utils/daemon-test-context.ts`
 - ✅ Created `packages/server/src/server/daemon.e2e.test.ts` (25 passing tests)
 - Reports: `REPORT-daemon-client-design.md`, `REPORT-daemon-e2e-audit.md`, `REPORT-claude-permission-tests.md`
 
 **DaemonClient API:**
+
 - Connection: `connect()`, `close()`
 - Agent lifecycle: `createAgent()`, `deleteAgent()`, `listAgents()`, `listPersistedAgents()`, `resumeAgent()`
 - Agent interaction: `sendMessage()`, `cancelAgent()`, `setAgentMode()`, `initializeAgent()`, `clearAgentAttention()`
@@ -63,6 +67,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - Events: `on()`, `getMessageQueue()`, `clearMessageQueue()`
 
 **E2E Test Coverage:**
+
 - Basic flow (Codex + Claude): create agent, send message, verify response
 - Permissions (Codex + Claude): approve/deny, permission_requested/resolved cycle
 - Persistence: delete agent, resume from handle, verify conversation context
@@ -76,6 +81,20 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
-*No pending tasks. All DaemonClient surface expansion complete.*
+- [x] **BUG**: Codex MCP agent returns 0 timeline events after daemon restart.
+  - **Done (2025-12-25 19:13)**: Fixed by implementing disk-based timeline history loading in `codex-mcp-agent.ts`.
 
-*Next steps: Add more tasks to expand DaemonClient or integrate it into the app.*
+  **WHAT**: Added rollout file parsing to load persisted timeline from `~/.codex/sessions/` when `SESSION_HISTORY` is empty after daemon restart.
+
+  **CHANGES**:
+  - `codex-mcp-agent.ts:2-6`: Added imports for `fs`, `Dirent`, `os`, `path`
+  - `codex-mcp-agent.ts:2521`: Added `resumeHandle` field to store handle for async loading
+  - `codex-mcp-agent.ts:2530`: Save `resumeHandle` in constructor
+  - `codex-mcp-agent.ts:2592-2596`: Load history from disk in `connect()` when `persistedHistory.length === 0`
+  - `codex-mcp-agent.ts:2616-2628`: New `loadPersistedHistoryFromDisk()` method
+  - `codex-mcp-agent.ts:3919-4181`: New helper functions: `resolveCodexSessionRoot()`, `findRolloutFile()`, `parseRolloutFile()`, `loadCodexPersistedTimeline()`, plus rollout entry parsing functions
+
+  **TEST ADDED**:
+  - `daemon.e2e.test.ts:1638-1757`: New test "Codex agent timeline survives daemon restart" that verifies timeline is preserved via `agent_stream_snapshot` message after resume
+
+  **RESULT**: E2E test passes, typecheck passes. Timeline items are loaded from rollout files when resuming an agent after daemon restart.

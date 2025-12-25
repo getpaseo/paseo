@@ -1,5 +1,9 @@
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import type { Dirent } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -1922,6 +1926,25 @@ function extractFileReadFromParsedCmd(parsedCmd: ParsedCmdItem[] | undefined): {
   return null;
 }
 
+function shouldReportCommandError(input: {
+  exitCode?: number;
+  success?: boolean;
+  status?: string;
+  error?: unknown;
+}): boolean {
+  if (input.error !== undefined) {
+    return true;
+  }
+  const statusFailed = input.status === "failed";
+  if (input.exitCode === undefined) {
+    return input.success === false || statusFailed;
+  }
+  if (input.exitCode === 0) {
+    return input.success === false || statusFailed;
+  }
+  return false;
+}
+
 function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
   if (files.length === 1) {
     return `${files[0].kind}: ${files[0].path}`;
@@ -2514,6 +2537,7 @@ class CodexMcpAgentSession implements AgentSession {
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
   private patchChangesByCallId = new Map<string, PatchFileChange[]>();
   private managedAgentId: string | null = null;
+  private resumeHandle: AgentPersistenceHandle | null = null;
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
@@ -2522,6 +2546,7 @@ class CodexMcpAgentSession implements AgentSession {
     this.pendingLocalId = `codex-${randomUUID()}`;
 
     if (resumeHandle) {
+      this.resumeHandle = resumeHandle;
       this.sessionId = resumeHandle.sessionId;
       const metadata = resumeHandle.metadata;
       if (metadata) {
@@ -2538,9 +2563,11 @@ class CodexMcpAgentSession implements AgentSession {
           this.conversationId = this.sessionId;
         }
       }
+      // Try in-memory history first (for same-process resume)
       const history = this.sessionId ? SESSION_HISTORY.get(this.sessionId) : undefined;
       this.persistedHistory = history ? [...history] : [];
       this.historyPending = this.persistedHistory.length > 0;
+      // Note: If SESSION_HISTORY is empty (daemon restarted), we load from disk in connect()
     }
 
     this.client = new Client(
@@ -2581,6 +2608,12 @@ class CodexMcpAgentSession implements AgentSession {
   async connect(): Promise<void> {
     if (this.connected) return;
 
+    // If resuming with no in-memory history, load from rollout file on disk
+    // This handles the case where the daemon restarted and SESSION_HISTORY was lost
+    if (this.resumeHandle && this.sessionId && this.persistedHistory.length === 0) {
+      await this.loadPersistedHistoryFromDisk();
+    }
+
     const mcpCommand = getCodexMcpCommand();
     const env: Record<string, string> = {};
     for (const key of Object.keys(process.env)) {
@@ -2597,6 +2630,20 @@ class CodexMcpAgentSession implements AgentSession {
 
     await this.client.connect(this.transport);
     this.connected = true;
+  }
+
+  private async loadPersistedHistoryFromDisk(): Promise<void> {
+    if (!this.sessionId) {
+      return;
+    }
+
+    const timeline = await loadCodexPersistedTimeline(this.sessionId);
+    if (timeline.length > 0) {
+      this.persistedHistory = timeline;
+      this.historyPending = true;
+      // Also populate SESSION_HISTORY so future in-process resumes work
+      SESSION_HISTORY.set(this.sessionId, [...timeline]);
+    }
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -3372,7 +3419,13 @@ class CodexMcpAgentSession implements AgentSession {
           parsedEvent.status === "failed" ||
           parsedEvent.error !== undefined ||
           (resolvedExitCode !== undefined && resolvedExitCode !== 0);
-        if (failed) {
+        const shouldReportError = shouldReportCommandError({
+          exitCode: resolvedExitCode,
+          status: parsedEvent.status,
+          success: parsedEvent.success,
+          error: parsedEvent.error,
+        });
+        if (shouldReportError) {
           this.turnState && (this.turnState.sawError = true);
         }
         const fileRead = extractFileReadFromParsedCmd(parsedEvent.parsedCmd);
@@ -3432,7 +3485,7 @@ class CodexMcpAgentSession implements AgentSession {
             }),
           });
         }
-        if (failed) {
+        if (shouldReportError) {
           const errorMessage =
             resolvedExitCode !== undefined
               ? `Command failed with exit code ${resolvedExitCode}`
@@ -3640,12 +3693,13 @@ class CodexMcpAgentSession implements AgentSession {
               resolvedExitCode = 0;
             }
           }
-          const hasError =
-            event.item.success === false ||
-            event.item.status === "failed" ||
-            event.item.error !== undefined ||
-            (resolvedExitCode !== undefined && resolvedExitCode !== 0);
-          if (hasError) {
+          const shouldReportError = shouldReportCommandError({
+            exitCode: resolvedExitCode,
+            status: event.item.status,
+            success: event.item.success,
+            error: event.item.error,
+          });
+          if (shouldReportError) {
             this.turnState && (this.turnState.sawError = true);
             const errorMessage =
               resolvedExitCode !== undefined
@@ -3909,5 +3963,245 @@ export class CodexMcpAgentClient implements AgentClient {
     const session = new CodexMcpAgentSession(sessionConfig, handle);
     await session.connect();
     return session;
+  }
+}
+
+// ============================================================================
+// Rollout file parsing for persisted timeline history
+// ============================================================================
+
+const MAX_ROLLOUT_SEARCH_DEPTH = 4;
+const PERSISTED_TIMELINE_LIMIT = 100;
+
+function resolveCodexSessionRoot(): string | null {
+  if (process.env.CODEX_SESSION_DIR) {
+    return process.env.CODEX_SESSION_DIR;
+  }
+  const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+  return path.join(codexHome, "sessions");
+}
+
+async function findRolloutFile(
+  threadId: string,
+  root: string
+): Promise<string | null> {
+  const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+  while (stack.length > 0) {
+    const { dir, depth } = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isFile()) {
+        const matchesThread = entry.name.includes(threadId);
+        const matchesPrefix = entry.name.startsWith("rollout-");
+        const matchesExtension =
+          entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
+        if (matchesThread && matchesPrefix && matchesExtension) {
+          return entryPath;
+        }
+      } else if (entry.isDirectory() && depth < MAX_ROLLOUT_SEARCH_DEPTH) {
+        stack.push({ dir: entryPath, depth: depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+type RolloutEntry = {
+  type: "response_item" | "event_msg";
+  payload?: unknown;
+};
+
+type RolloutResponsePayload = {
+  type?: string;
+  role?: string;
+  content?: unknown;
+  name?: string;
+  call_id?: string;
+  arguments?: string;
+  output?: string;
+  summary?: Array<{ text?: string }>;
+  text?: string;
+};
+
+type RolloutEventPayload = {
+  type?: string;
+  text?: string;
+};
+
+function isRolloutEntry(value: unknown): value is RolloutEntry {
+  if (!value || typeof value !== "object" || !("type" in value)) {
+    return false;
+  }
+  const type = (value as { type?: unknown }).type;
+  return type === "response_item" || type === "event_msg";
+}
+
+function parseRolloutEntryFromLine(line: string): RolloutEntry | null {
+  if (!line) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(line);
+    if (isRolloutEntry(parsed)) {
+      return parsed;
+    }
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { output?: unknown }).output === "string"
+    ) {
+      return parseRolloutEntryFromLine((parsed as { output: string }).output);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function extractMessageText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const record = block as Record<string, unknown>;
+    const text = typeof record.text === "string" ? record.text : undefined;
+    if (text && text.trim()) {
+      parts.push(text.trim());
+      continue;
+    }
+    const message =
+      typeof record.message === "string" ? record.message : undefined;
+    if (message && message.trim()) {
+      parts.push(message.trim());
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+function isSyntheticRolloutUserMessage(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+  const lower = normalized.toLowerCase();
+  if (
+    lower.startsWith("# agents.md instructions for") &&
+    lower.includes("<instructions>")
+  ) {
+    return true;
+  }
+  if (lower.startsWith("<environment_context>")) {
+    return true;
+  }
+  return false;
+}
+
+function extractReasoningText(payload: RolloutResponsePayload): string {
+  if (Array.isArray(payload?.summary)) {
+    const text = payload.summary
+      .map((item) => (item && typeof item.text === "string" ? item.text : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof payload?.text === "string") {
+    return payload.text;
+  }
+  return "";
+}
+
+async function parseRolloutFile(
+  filePath: string
+): Promise<AgentTimelineItem[]> {
+  const content = await fs.readFile(filePath, "utf8");
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const timeline: AgentTimelineItem[] = [];
+
+  for (const line of lines) {
+    const entry = parseRolloutEntryFromLine(line);
+    if (!entry) continue;
+
+    if (entry.type === "response_item") {
+      const payload = entry.payload as RolloutResponsePayload | undefined;
+      if (!payload || typeof payload !== "object") continue;
+
+      switch (payload.type) {
+        case "message": {
+          const text = extractMessageText(payload.content);
+          if (text) {
+            if (payload.role === "assistant") {
+              timeline.push({ type: "assistant_message", text });
+            } else if (payload.role === "user") {
+              if (!isSyntheticRolloutUserMessage(text)) {
+                timeline.push({ type: "user_message", text });
+              }
+            }
+          }
+          break;
+        }
+        case "reasoning": {
+          const text = extractReasoningText(payload);
+          if (text) {
+            timeline.push({ type: "reasoning", text });
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    } else if (entry.type === "event_msg") {
+      const payload = entry.payload as RolloutEventPayload | undefined;
+      if (
+        payload &&
+        typeof payload === "object" &&
+        payload.type === "agent_reasoning" &&
+        typeof payload.text === "string"
+      ) {
+        timeline.push({ type: "reasoning", text: payload.text });
+      }
+    }
+  }
+
+  return timeline;
+}
+
+async function loadCodexPersistedTimeline(
+  sessionId: string
+): Promise<AgentTimelineItem[]> {
+  const sessionRoot = resolveCodexSessionRoot();
+  if (!sessionRoot) {
+    return [];
+  }
+
+  try {
+    const rolloutFile = await findRolloutFile(sessionId, sessionRoot);
+    if (!rolloutFile) {
+      return [];
+    }
+
+    const timeline = await parseRolloutFile(rolloutFile);
+    return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
+  } catch (error) {
+    console.warn(
+      `[CodexMcpAgentSession] Failed to load persisted timeline for ${sessionId}:`,
+      error
+    );
+    return [];
   }
 }

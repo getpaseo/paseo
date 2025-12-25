@@ -1634,4 +1634,126 @@ describe("daemon E2E", () => {
       180000 // 3 minute timeout for Claude API call
     );
   });
+
+  describe("timeline persistence across daemon restart", () => {
+    test(
+      "Codex agent timeline survives daemon restart",
+      async () => {
+        const cwd = tmpCwd();
+
+        // === Phase 1: Create agent and generate timeline items ===
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Restart Timeline Test Agent",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // Send a message to generate timeline items
+        await ctx.client.sendMessage(
+          agent.id,
+          "Say 'timeline test' and nothing else"
+        );
+
+        // Wait for agent to complete
+        const afterMessage = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(afterMessage.status).toBe("idle");
+
+        // Verify we have timeline items before restart
+        const queue = ctx.client.getMessageQueue();
+        const timelineItems: AgentTimelineItem[] = [];
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            timelineItems.push(m.payload.event.item);
+          }
+        }
+
+        // Should have at least one assistant message
+        const assistantMessages = timelineItems.filter(
+          (item) => item.type === "assistant_message"
+        );
+        expect(assistantMessages.length).toBeGreaterThan(0);
+
+        // Get persistence handle
+        const persistence = afterMessage.persistence;
+        expect(persistence).toBeTruthy();
+        expect(persistence?.provider).toBe("codex");
+        expect(persistence?.sessionId).toBeTruthy();
+
+        // Record how many timeline items we had
+        const preRestartTimelineCount = timelineItems.length;
+        expect(preRestartTimelineCount).toBeGreaterThan(0);
+
+        // === Phase 2: Restart daemon ===
+        // Cleanup old context (stops daemon)
+        await ctx.cleanup();
+
+        // Create new daemon context (starts fresh daemon)
+        ctx = await createDaemonTestContext();
+
+        // === Phase 3: Resume agent and verify timeline is preserved ===
+        const resumedAgent = await ctx.client.resumeAgent(persistence!);
+
+        expect(resumedAgent.id).toBeTruthy();
+        expect(resumedAgent.status).toBe("idle");
+        expect(resumedAgent.provider).toBe("codex");
+
+        // Wait a moment for history events to be emitted
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Get timeline items that were emitted after resume
+        // Timeline items from history are sent as agent_stream_snapshot, not individual agent_stream
+        const resumeQueue = ctx.client.getMessageQueue();
+        const resumedTimelineItems: AgentTimelineItem[] = [];
+
+        // First check for agent_stream_snapshot (batched history)
+        for (const m of resumeQueue) {
+          if (
+            m.type === "agent_stream_snapshot" &&
+            (m.payload as { agentId: string }).agentId === resumedAgent.id
+          ) {
+            const events = (m.payload as { events: Array<{ event: { type: string; item?: AgentTimelineItem } }> }).events;
+            for (const e of events) {
+              if (e.event.type === "timeline" && e.event.item) {
+                resumedTimelineItems.push(e.event.item);
+              }
+            }
+          }
+        }
+
+        // Also check for individual agent_stream events (in case they were sent that way)
+        for (const m of resumeQueue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === resumedAgent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            resumedTimelineItems.push(m.payload.event.item);
+          }
+        }
+
+        // CRITICAL ASSERTION: Timeline should NOT be empty after daemon restart
+        // This verifies that persisted history is loaded from disk (rollout files)
+        // when SESSION_HISTORY is empty due to daemon restart
+        expect(resumedTimelineItems.length).toBeGreaterThan(0);
+
+        // Verify the original messages are present
+        const resumedAssistant = resumedTimelineItems.filter(
+          (item) => item.type === "assistant_message"
+        );
+        expect(resumedAssistant.length).toBeGreaterThan(0);
+
+        // Cleanup
+        await ctx.client.deleteAgent(resumedAgent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      300000 // 5 minute timeout for restart test
+    );
+  });
 });
