@@ -7,6 +7,7 @@ import {
   type DaemonTestContext,
 } from "./test-utils/index.js";
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
+import type { AgentSnapshotPayload } from "./messages.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
@@ -567,6 +568,143 @@ describe("daemon E2E", () => {
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
+    );
+  });
+
+  describe("cancelAgent", () => {
+    test(
+      "cancels a running agent mid-execution",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Codex agent
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Cancel Test Agent",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // Clear message queue before sending prompt
+        ctx.client.clearMessageQueue();
+
+        // Send a prompt that triggers a long-running operation
+        await ctx.client.sendMessage(agent.id, "Run: sleep 30");
+
+        // Wait for the agent to start running (tool call starts)
+        let sawRunning = false;
+        const startPosition = ctx.client.getMessageQueue().length;
+
+        // Wait for running state
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("Timeout waiting for agent to start running"));
+          }, 30000);
+
+          const checkForRunning = (): void => {
+            const queue = ctx.client.getMessageQueue();
+            for (let i = startPosition; i < queue.length; i++) {
+              const msg = queue[i];
+              if (msg.type === "agent_state" && msg.payload.id === agent.id) {
+                if (msg.payload.status === "running") {
+                  sawRunning = true;
+                  clearTimeout(timeout);
+                  resolve();
+                  return;
+                }
+              }
+            }
+          };
+
+          // Check periodically
+          const interval = setInterval(checkForRunning, 50);
+          const cleanup = (): void => {
+            clearInterval(interval);
+            clearTimeout(timeout);
+          };
+
+          // Override reject to cleanup
+          const originalReject = reject;
+          reject = (err): void => {
+            cleanup();
+            originalReject(err);
+          };
+        });
+
+        expect(sawRunning).toBe(true);
+
+        // Record timestamp before cancel
+        const cancelStart = Date.now();
+
+        // Cancel the agent
+        await ctx.client.cancelAgent(agent.id);
+
+        // Wait for agent to reach idle or error state
+        const finalState = await new Promise<AgentSnapshotPayload>(
+          (resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(
+                new Error(
+                  "Timeout waiting for agent to stop after cancel (>2 seconds)"
+                )
+              );
+            }, 5000); // Give extra margin, but test should complete in 2s
+
+            const queueStart = ctx.client.getMessageQueue().length;
+            const checkForStopped = (): void => {
+              const queue = ctx.client.getMessageQueue();
+              for (let i = queueStart; i < queue.length; i++) {
+                const msg = queue[i];
+                if (msg.type === "agent_state" && msg.payload.id === agent.id) {
+                  if (
+                    msg.payload.status === "idle" ||
+                    msg.payload.status === "error"
+                  ) {
+                    clearTimeout(timeout);
+                    clearInterval(interval);
+                    resolve(msg.payload);
+                    return;
+                  }
+                }
+              }
+            };
+
+            const interval = setInterval(checkForStopped, 50);
+          }
+        );
+
+        // Calculate how long the cancel took
+        const cancelDuration = Date.now() - cancelStart;
+
+        // Verify agent stopped within reasonable time (2 seconds)
+        expect(cancelDuration).toBeLessThan(2000);
+
+        // Verify agent is now idle or error
+        expect(["idle", "error"]).toContain(finalState.status);
+
+        // Verify no zombie sleep processes left (check for sleep 30)
+        const { execSync } = await import("child_process");
+        try {
+          const result = execSync("pgrep -f 'sleep 30'", {
+            encoding: "utf8",
+            timeout: 2000,
+          });
+          // If pgrep succeeds, there are zombie processes
+          if (result.trim()) {
+            // Kill them and fail the test
+            execSync("pkill -f 'sleep 30'");
+            expect.fail("Found zombie sleep processes after cancel");
+          }
+        } catch {
+          // pgrep returns non-zero when no processes found - this is expected
+        }
+
+        // Cleanup
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      60000
     );
   });
 

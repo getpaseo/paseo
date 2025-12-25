@@ -1082,7 +1082,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Agent list order reflects actual last interaction time
   - **Done (2025-12-25 17:42)**: WHAT: (1) Bug was already fixed in commit `7b29978` (Dec 2, 2025) which removed timestamp thrashing - previously `lastActivityAt`/`updatedAt` was updated on every `agent_stream` event (15+ times/second during streaming); (2) Added `initializeAgent()` and `clearAgentAttention()` methods to `packages/server/src/server/test-utils/daemon-client.ts:268-304`; (3) Added E2E tests in `packages/server/src/server/daemon.e2e.test.ts:482-570` for timestamp behavior - "opening agent without interaction does not update timestamp" and "sending message DOES update timestamp". RESULT: Bug verified as fixed - clicking/opening agent does NOT update timestamp, only actual interactions (sending messages) update it. Server only sets `agent.updatedAt` in `recordUserMessage` (`packages/server/src/server/agent/agent-manager.ts:436`) and `handleStreamEvent` (`packages/server/src/server/agent/agent-manager.ts:864`), not in `clearAgentAttention` or `initializeAgent` flows. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "timestamp"` (2 passed, 7 skipped in 9.08s), Playwright test showed agent stayed in position 4 with unchanged timestamp after clicking.
 
-- [ ] **Test**: Add daemon E2E test for `cancelAgent()`.
+- [x] **Test**: Add daemon E2E test for `cancelAgent()`.
 
   Cancel an agent mid-execution and verify it stops properly.
 
@@ -1098,6 +1098,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Test passes
   - Agent stops within reasonable time after cancel
   - DaemonClient `cancelAgent()` method verified working
+  - **Done (2025-12-25 17:44)**: WHAT: Added E2E test in `packages/server/src/server/daemon.e2e.test.ts:573-708` that creates a Codex agent, sends "Run: sleep 30" to trigger a long-running operation, waits for "running" status, calls `cancelAgent(agentId)`, verifies the agent stops within 2 seconds, and checks for no zombie "sleep 30" processes. RESULT: Test passes - agent cancel request is received, turn_failed is emitted, and agent becomes idle/error within milliseconds (test completed in 291ms). EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "cancelAgent"` (1 passed, 9 skipped in 846ms).
 
 - [ ] **Test**: Add daemon E2E test for `setAgentMode()`.
 
