@@ -340,7 +340,7 @@ export class ClaudeAgentClient implements AgentClient {
     if (config.provider !== "claude") {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
-    return config;
+    return { ...config, provider: "claude" };
   }
 }
 
