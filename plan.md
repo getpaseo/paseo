@@ -1042,13 +1042,14 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Both parent and child agents visible in listAgents()
   - **Done (2025-12-25 17:32)**: WHAT: Added `daemon.e2e.test.ts:369-483` describe block "multi-agent orchestration" with test "parent agent creates child agent via agent-control MCP". Test creates a parent Codex agent, prompts it to call `create_agent` tool via agent-control MCP, then verifies: (1) tool call to `create_agent` with server `agent-control` exists in timeline, (2) both parent and child agent IDs are visible via `agent_state` messages, (3) child agent ID from tool output matches tracked agents. RESULT: Multi-agent orchestration verified - parent agent successfully creates child agent using agent-control MCP, both agents tracked by daemon. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (5 passed, 2 skipped in 40.8s), `npm run typecheck --workspace=@paseo/server` (exit 0).
 
-- [ ] **Review**: Audit daemon E2E test coverage.
+- [x] **Review**: Audit daemon E2E test coverage.
 
   After all phases complete:
   - Run full E2E suite
   - Identify any gaps in coverage
   - Propose additional tests if needed
   - Document what's tested vs not tested
+  - **Done (2025-12-25 18:10)**: WHAT: Ran full E2E suite and created comprehensive audit report at `REPORT-daemon-e2e-audit.md:1-163`. RESULT: 5 tests pass, 2 skipped. Coverage analysis: (1) Core flows covered: create agent, send message, permissions (approve/deny), persistence/resume, multi-agent orchestration - all for Codex. (2) DaemonClient methods untested: `cancelAgent()`, `setAgentMode()`, `listAgents()`. (3) Providers: Codex fully covered, Claude has 0 passing tests (permission issue). (4) Message types: 6/15 inbound types tested, 5/17 outbound types tested. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts` (5 passed, 2 skipped in 40.8s). Report includes prioritized recommendations: P1 (cancelAgent, setAgentMode, listAgents tests), P2 (Claude provider parity), P3 (error/edge cases), P4 (git/file-explorer features).
 
 - [ ] **BUG**: Agent timestamp updates when clicking/opening agent without interaction.
 
