@@ -106,7 +106,7 @@ export interface Agent {
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
-  parentAgentId?: string;
+  parentAgentId?: string | null;
 }
 
 export interface Command {
