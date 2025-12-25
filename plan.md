@@ -743,7 +743,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   4. Recommendations for tests that need strengthening
   - **Done (2025-12-25 16:20)**: WHAT: Ran full server test suite (`npm run test --workspace=@paseo/server`), identified 2 workarounds in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:797-805` (read_file skip) and `:819-821` (web_search output skip). Created debug scripts `scripts/codex-file-read-debug.ts` and `scripts/codex-websearch-debug.ts` to verify claims. RESULT: **Both claims are FALSE - workarounds are hiding bugs**. (1) File reads ARE exposed via `exec_command_begin/end` with `parsed_cmd[].type === "read"` containing path. (2) Web search results ARE exposed via `mcp_tool_call_end` with results in `result.Ok.content`. EVIDENCE: Full findings in `REPORT-test-audit.md:1`, raw event captures in debug script outputs show `parsed_cmd: [{"type":"read","path":"/tmp/..."}]` and `result: {"Ok":{"content":[{"text":"{\"web\":[...]}"}]}}`. Test results: codex-mcp-agent.test.ts 13/13 passed, codex-agent.test.ts 1 failed + 1 skipped (deprecated SDK).
 
-- [ ] **CRITICAL**: File reads MUST be captured in timeline.
+- [x] **CRITICAL**: File reads MUST be captured in timeline.
 
   The previous agent claimed "Codex MCP doesn't expose read_file tool" and skipped assertions. This is UNACCEPTABLE.
 
@@ -766,6 +766,7 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Test verifies this works
 
   **NO EXCUSES. If Codex reads files, we capture it.**
+  - **Done (2025-12-25 15:07)**: WHAT: Added `ParsedCmdItemSchema` and `parsed_cmd` field to `ExecCommandBeginEventSchema` and `ExecCommandEndEventSchema` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:643-668`. Added `extractFileReadFromParsedCmd` helper at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1907-1923` to detect `parsed_cmd.type === "read"` events. Updated `exec_command_begin` handler at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3222-3258` and `exec_command_end` handler at `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3260-3386` to emit `read_file` timeline items with path input and content output when file reads are detected. Updated test prompt at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:725` to allow cat-based file reads, and fixed test assertion at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:797-802` to find completed read_file calls. RESULT: File reads now appear as `read_file` timeline items with `server: "file"`, `tool: "read_file"`, `kind: "read"`, file path in input, and file content in output. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts` (13 passed, 0 failed), `npm run typecheck --workspace=@paseo/server` (0 errors).
 
 - [ ] **E2E**: Test Codex MCP in the app using Playwright.
 
