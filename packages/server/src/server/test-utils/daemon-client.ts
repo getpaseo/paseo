@@ -31,6 +31,7 @@ export interface CreateAgentOptions {
   modeId?: string;
   initialPrompt?: string;
   mcpServers?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 }
 
 export interface SendMessageOptions {
@@ -151,6 +152,7 @@ export class DaemonClient {
         model: options.model,
         modeId: options.modeId,
         mcpServers: options.mcpServers,
+        extra: options.extra,
       },
       initialPrompt: options.initialPrompt,
     });
