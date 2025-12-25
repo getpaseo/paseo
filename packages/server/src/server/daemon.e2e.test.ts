@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import {
   createDaemonTestContext,
   type DaemonTestContext,
+  useTempClaudeConfigDir,
 } from "./test-utils/index.js";
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload } from "./messages.js";
@@ -900,14 +901,19 @@ describe("daemon E2E", () => {
     );
   });
 
-  // Claude permission tests are skipped due to SDK behavior:
-  // - The sandbox config IS passed correctly to Claude SDK
-  // - Claude executes tool calls without requesting permission
-  // - This appears to be related to user/project settings or SDK behavior
-  // - The direct claude-agent.test.ts permission tests pass
-  // - Codex permission tests through the daemon work correctly
-  // TODO: Investigate Claude SDK permission behavior in daemon context
-  describe.skip("permission flow: Claude", () => {
+  describe("permission flow: Claude", () => {
+    // Use isolated Claude config to ensure permission prompts are triggered
+    // (user's real config may have allow rules that auto-approve commands)
+    let restoreClaudeConfig: () => void;
+
+    beforeAll(() => {
+      restoreClaudeConfig = useTempClaudeConfigDir();
+    });
+
+    afterAll(() => {
+      restoreClaudeConfig();
+    });
+
     test(
       "approves permission and executes command",
       async () => {

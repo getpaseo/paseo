@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { createServer } from "http";
 import { randomUUID } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -17,6 +16,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
+import { useTempClaudeConfigDir } from "../../test-utils/claude-config.js";
 import {
   hydrateStreamState,
   type StreamItem,
@@ -44,46 +44,6 @@ function tmpCwd(): string {
   } catch {
     return dir;
   }
-}
-
-function copyClaudeCredentials(sourceDir: string, targetDir: string): void {
-  const sourceCredentials = path.join(sourceDir, ".credentials.json");
-  if (!existsSync(sourceCredentials)) {
-    return;
-  }
-  copyFileSync(sourceCredentials, path.join(targetDir, ".credentials.json"));
-}
-
-function useTempClaudeConfigDir(): () => void {
-  const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const sourceConfigDir =
-    previousConfigDir ?? path.join(os.homedir(), ".claude");
-  const configDir = mkdtempSync(path.join(os.tmpdir(), "claude-config-"));
-  const settings = {
-    permissions: {
-      allow: [],
-      deny: [],
-      ask: ["Bash(rm:*)"],
-      additionalDirectories: [],
-    },
-    sandbox: {
-      enabled: true,
-      autoAllowBashIfSandboxed: false,
-    },
-  };
-  const settingsText = `${JSON.stringify(settings, null, 2)}\n`;
-  writeFileSync(path.join(configDir, "settings.json"), settingsText, "utf8");
-  writeFileSync(path.join(configDir, "settings.local.json"), settingsText, "utf8");
-  copyClaudeCredentials(sourceConfigDir, configDir);
-  process.env.CLAUDE_CONFIG_DIR = configDir;
-  return () => {
-    if (previousConfigDir === undefined) {
-      delete process.env.CLAUDE_CONFIG_DIR;
-    } else {
-      process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-    }
-    rmSync(configDir, { recursive: true, force: true });
-  };
 }
 
 async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["createSession"]>>, event: AgentStreamEvent) {

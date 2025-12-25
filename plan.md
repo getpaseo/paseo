@@ -1153,3 +1153,87 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Claude permission tests pass (or clear explanation of why they can't)
 
   - **Done (2025-12-25 19:12)**: WHAT: Analyzed permission handling differences between `claude-agent.test.ts` and `daemon.e2e.test.ts`. RESULT: Root cause identified - daemon E2E tests read the user's real `~/.claude/settings.json` which has `allow: ["Bash(rm:*)"]`, causing `rm` commands to auto-execute without permission prompts. In contrast, direct tests use `useTempClaudeConfigDir()` (`claude-agent.test.ts:57-87`) which creates a temp config dir with `ask: ["Bash(rm:*)"]` and sets `CLAUDE_CONFIG_DIR` env var. EVIDENCE: User's `~/.claude/settings.json` contains `"Bash(rm:*)"` in allow list. SDK uses `settingSources: ["user", "project"]` (`claude-agent.ts:665`) to read settings from disk. FIX: Add temp config setup to daemon tests (same pattern as direct tests) or use `settingSources: []` for SDK isolation mode. Full report: `REPORT-claude-permission-tests.md`.
+
+## DaemonClient Surface Expansion (App Parity)
+
+Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app can eventually use it instead of raw WebSocket code.
+
+- [x] **Fix**: Add temp Claude config isolation to daemon E2E tests and unskip Claude permission tests.
+
+  **Context**: Investigation found Claude permission tests fail because they read user's real `~/.claude/settings.json` which auto-allows `rm`. Direct tests use `useTempClaudeConfigDir()` for isolation.
+
+  **Implementation**:
+  1. Export `useTempClaudeConfigDir()` helper from `claude-agent.test.ts` to `test-utils/`
+  2. Update daemon test context to optionally use temp Claude config
+  3. Update Claude permission tests to use temp config
+  4. Unskip tests and verify they pass
+
+  **Acceptance criteria**:
+  - Claude permission approve/deny tests pass (not skipped)
+  - Same isolation pattern as direct claude-agent tests
+
+  - **Done (2025-12-25 18:06)**: WHAT: Created shared `useTempClaudeConfigDir()` helper in `test-utils/claude-config.ts:22-49`, exported from `test-utils/index.ts:14`. Updated `daemon.e2e.test.ts:904-915` to add beforeAll/afterAll hooks using this helper and removed `.skip` from `describe("permission flow: Claude")`. Refactored `claude-agent.test.ts:19` to import shared helper and removed duplicate local implementation. RESULT: Both daemon Claude permission tests now pass. EVIDENCE: `npx vitest run --testNamePattern="permission flow: Claude"` shows: ✓ approves permission and executes command (8424ms), ✓ denies permission and prevents execution (7945ms). Direct `claude-agent.test.ts` permission tests also pass (4 tests). Typecheck passes.
+
+- [ ] **Implement**: Add `getGitDiff()` to DaemonClient + E2E test.
+
+  **Context**: App calls `git_diff_request` to get file diffs. DaemonClient doesn't support this yet.
+
+  **Implementation**:
+  1. Add `getGitDiff(agentId: string, filepath?: string)` method to DaemonClient
+  2. Send `git_diff_request` message, wait for `git_diff_response`
+  3. Add E2E test that creates agent in a git repo, modifies a file, calls getGitDiff
+
+  **Acceptance criteria**:
+  - Method returns diff content
+  - E2E test passes
+
+- [ ] **Implement**: Add `getGitRepoInfo()` to DaemonClient + E2E test.
+
+  **Context**: App calls `git_repo_info_request` to get repo info (branch, status, etc).
+
+  **Implementation**:
+  1. Add `getGitRepoInfo(agentId: string)` method to DaemonClient
+  2. Send `git_repo_info_request` message, wait for `git_repo_info_response`
+  3. Add E2E test in a git repo
+
+  **Acceptance criteria**:
+  - Method returns repo info (branch, status, remotes)
+  - E2E test passes
+
+- [ ] **Implement**: Add `exploreFileSystem()` to DaemonClient + E2E test.
+
+  **Context**: App calls `file_explorer_request` to browse filesystem.
+
+  **Implementation**:
+  1. Add `exploreFileSystem(agentId: string, path: string)` method to DaemonClient
+  2. Send `file_explorer_request` message, wait for `file_explorer_response`
+  3. Add E2E test that lists a directory
+
+  **Acceptance criteria**:
+  - Method returns file/directory listing
+  - E2E test passes
+
+- [ ] **Implement**: Add `listProviderModels()` to DaemonClient + E2E test.
+
+  **Context**: App calls `list_provider_models_request` to get available models.
+
+  **Implementation**:
+  1. Add `listProviderModels(provider: AgentProvider)` method to DaemonClient
+  2. Send `list_provider_models_request` message, wait for `list_provider_models_response`
+  3. Add E2E test for Codex and Claude providers
+
+  **Acceptance criteria**:
+  - Method returns model list
+  - E2E test passes for at least one provider
+
+- [ ] **Implement**: Add `sendImages()` support to DaemonClient + E2E test.
+
+  **Context**: App can send messages with image attachments. DaemonClient `sendMessage()` has `images` option but it's not tested.
+
+  **Implementation**:
+  1. Add E2E test that sends a message with an image attachment
+  2. Verify agent receives and processes the image
+
+  **Acceptance criteria**:
+  - E2E test passes with image attachment
+  - Claude provider correctly receives image (multimodal support)

@@ -11,3 +11,4 @@ export {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "./daemon-test-context.js";
+export { useTempClaudeConfigDir } from "./claude-config.js";
