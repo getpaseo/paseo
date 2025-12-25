@@ -596,7 +596,8 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 - [x] **Test (E2E)**: Rerun full server tests after fixes and verify zero failures/skips.
   - **Done (2025-12-25 11:31)**: WHAT: no files changed. RESULT: full `npm run test --workspace=@paseo/server` run did not reach zero failures/skips; 1 failure in `packages/server/src/server/agent/providers/codex-agent.test.ts` (`expected undefined to be truthy` at `packages/server/src/server/agent/providers/codex-agent.test.ts:498`), 1 skip in the same file, and the run stalled in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts` (stuck at 3/13) before manual interrupt. EVIDENCE: `REPORT-e2e-rerun.md:1`.
 
-- [ ] **Typecheck**: Rerun `npm run typecheck --workspace=@paseo/server` after fixes and verify zero errors.
+- [x] **Typecheck**: Rerun `npm run typecheck --workspace=@paseo/server` after fixes and verify zero errors.
+  - **Done (2025-12-25 11:32)**: WHAT: updated task status and recorded typecheck output in `plan.md:599`. RESULT: typecheck failed with TS2322 in `src/server/agent/agent-projections.ts:198:3` ({} not assignable to JsonValue | undefined) and TS2322 in `src/server/agent/providers/claude-agent.ts:343:5` (AgentSessionConfig not assignable to ClaudeAgentConfig). EVIDENCE: `npm run typecheck --workspace=@paseo/server` output showing both errors.
 
 - [ ] **Review**: Is Codex MCP ready to go live? Parity and test audit.
 
