@@ -708,6 +708,118 @@ describe("daemon E2E", () => {
     );
   });
 
+  describe("setAgentMode", () => {
+    test(
+      "switches agent mode and persists across messages",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create a Codex agent with default mode ("auto")
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Mode Switch Test Agent",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // Verify initial mode is "auto" (the default)
+        expect(agent.currentModeId).toBe("auto");
+
+        // Clear message queue before mode switch
+        ctx.client.clearMessageQueue();
+        const startPosition = ctx.client.getMessageQueue().length;
+
+        // Switch to "read-only" mode
+        await ctx.client.setAgentMode(agent.id, "read-only");
+
+        // Wait for agent_state update reflecting the new mode
+        const stateAfterModeSwitch = await new Promise<AgentSnapshotPayload>(
+          (resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error("Timeout waiting for mode change in agent_state"));
+            }, 10000);
+
+            const checkForModeChange = (): void => {
+              const queue = ctx.client.getMessageQueue();
+              for (let i = startPosition; i < queue.length; i++) {
+                const msg = queue[i];
+                if (
+                  msg.type === "agent_state" &&
+                  msg.payload.id === agent.id &&
+                  msg.payload.currentModeId === "read-only"
+                ) {
+                  clearTimeout(timeout);
+                  clearInterval(interval);
+                  resolve(msg.payload);
+                  return;
+                }
+              }
+            };
+
+            const interval = setInterval(checkForModeChange, 50);
+          }
+        );
+
+        // Verify mode changed to "read-only"
+        expect(stateAfterModeSwitch.currentModeId).toBe("read-only");
+
+        // Now verify the mode persists: send a message and check the mode is still "read-only"
+        ctx.client.clearMessageQueue();
+        await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else");
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        // Mode should still be "read-only" after the message
+        expect(finalState.currentModeId).toBe("read-only");
+
+        // Also verify runtimeInfo has the updated modeId
+        expect(finalState.runtimeInfo?.modeId).toBe("read-only");
+
+        // Switch to another mode: "full-access"
+        ctx.client.clearMessageQueue();
+        const position2 = ctx.client.getMessageQueue().length;
+
+        await ctx.client.setAgentMode(agent.id, "full-access");
+
+        // Wait for agent_state update
+        const stateAfterFullAccess = await new Promise<AgentSnapshotPayload>(
+          (resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error("Timeout waiting for full-access mode change"));
+            }, 10000);
+
+            const checkForModeChange = (): void => {
+              const queue = ctx.client.getMessageQueue();
+              for (let i = position2; i < queue.length; i++) {
+                const msg = queue[i];
+                if (
+                  msg.type === "agent_state" &&
+                  msg.payload.id === agent.id &&
+                  msg.payload.currentModeId === "full-access"
+                ) {
+                  clearTimeout(timeout);
+                  clearInterval(interval);
+                  resolve(msg.payload);
+                  return;
+                }
+              }
+            };
+
+            const interval = setInterval(checkForModeChange, 50);
+          }
+        );
+
+        expect(stateAfterFullAccess.currentModeId).toBe("full-access");
+
+        // Cleanup
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000 // 3 minute timeout
+    );
+  });
+
   // Claude permission tests are skipped due to SDK behavior:
   // - The sandbox config IS passed correctly to Claude SDK
   // - Claude executes tool calls without requesting permission

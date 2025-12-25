@@ -2763,6 +2763,13 @@ class CodexMcpAgentSession implements AgentSession {
   async setMode(modeId: string): Promise<void> {
     this.currentMode = modeId;
     this.config.modeId = modeId;
+    // Update cached runtime info to reflect mode change
+    if (this.cachedRuntimeInfo) {
+      this.cachedRuntimeInfo = {
+        ...this.cachedRuntimeInfo,
+        modeId,
+      };
+    }
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
