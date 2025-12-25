@@ -14,15 +14,29 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import ReanimatedAnimated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import ReanimatedAnimated, {
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MoreVertical, GitBranch, Folder, RotateCcw, PlusCircle, Download, Users, ChevronRight } from "lucide-react-native";
+import {
+  MoreVertical,
+  GitBranch,
+  Folder,
+  RotateCcw,
+  Plus,
+  Download,
+  Users,
+  ChevronRight,
+  PlusIcon,
+} from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentList } from "@/components/agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
-import { CreateAgentModal, ImportAgentModal, type CreateAgentInitialValues } from "@/components/create-agent-modal";
+import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
+import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -51,7 +65,10 @@ type BranchStatus = "idle" | "loading" | "ready" | "error";
 
 export default function AgentScreen() {
   const router = useRouter();
-  const { serverId, agentId } = useLocalSearchParams<{ serverId: string; agentId: string }>();
+  const { serverId, agentId } = useLocalSearchParams<{
+    serverId: string;
+    agentId: string;
+  }>();
   const resolvedAgentId = typeof agentId === "string" ? agentId : undefined;
   const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
   const { connectionStates } = useDaemonConnections();
@@ -62,10 +79,14 @@ export default function AgentScreen() {
   );
 
   const connectionServerId = resolvedServerId ?? null;
-  const connection = connectionServerId ? connectionStates.get(connectionServerId) : null;
-  const serverLabel = connection?.daemon.label ?? connectionServerId ?? "Selected host";
+  const connection = connectionServerId
+    ? connectionStates.get(connectionServerId)
+    : null;
+  const serverLabel =
+    connection?.daemon.label ?? connectionServerId ?? "Selected host";
   const isUnknownDaemon = Boolean(connectionServerId && !connection);
-  const connectionStatus = connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
+  const connectionStatus =
+    connection?.status ?? (isUnknownDaemon ? "offline" : "idle");
   const connectionStatusLabel = formatConnectionStatus(connectionStatus);
   const lastConnectionError = connection?.lastError ?? null;
 
@@ -100,7 +121,10 @@ export default function AgentScreen() {
       if (!resolvedAgentId || !focusServerId) {
         return;
       }
-      const navigationKey = buildAgentNavigationKey(focusServerId, resolvedAgentId);
+      const navigationKey = buildAgentNavigationKey(
+        focusServerId,
+        resolvedAgentId
+      );
       endNavigationTiming(navigationKey, {
         screen: "agent",
         status: navigationStatus,
@@ -139,28 +163,39 @@ type AgentScreenContentProps = {
 const SIDEBAR_WIDTH = 280;
 const LARGE_SCREEN_BREAKPOINT = 768;
 
-function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentProps) {
+function AgentScreenContent({
+  serverId,
+  agentId,
+  onBack,
+}: AgentScreenContentProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isLargeScreen = windowWidth >= LARGE_SCREEN_BREAKPOINT;
 
-  const { agents: aggregatedAgents, isRevalidating, refreshAll } = useAggregatedAgents();
+  const {
+    agents: aggregatedAgents,
+    isRevalidating,
+    refreshAll,
+  } = useAggregatedAgents();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
   const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
   const [showImportAgentModal, setShowImportAgentModal] = useState(false);
-  const [createAgentInitialValues, setCreateAgentInitialValues] =
-    useState<CreateAgentInitialValues | undefined>();
+  const [createAgentInitialValues, setCreateAgentInitialValues] = useState<
+    CreateAgentInitialValues | undefined
+  >();
 
   const resolvedAgentId = agentId;
 
   // Select only the specific agent
   const agent = useSessionStore((state) =>
-    resolvedAgentId ? state.sessions[serverId]?.agents?.get(resolvedAgentId) : undefined
+    resolvedAgentId
+      ? state.sessions[serverId]?.agents?.get(resolvedAgentId)
+      : undefined
   );
 
   // Get parent agent ID for back navigation
@@ -184,7 +219,9 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   }, [parentAgentId, router, serverId, onBack]);
 
   // Select the agents Map directly - this is a stable reference that only changes when agents are added/removed
-  const allAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
+  const allAgents = useSessionStore(
+    (state) => state.sessions[serverId]?.agents
+  );
 
   // Derive child agents in useMemo to avoid creating new references on every store update
   // This prevents infinite loops caused by useShallow not doing deep equality on object arrays
@@ -198,7 +235,12 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     }> = [];
     for (const [id, a] of allAgents) {
       if (a.parentAgentId === resolvedAgentId) {
-        children.push({ id, title: a.title, createdAt: a.createdAt, status: a.status });
+        children.push({
+          id,
+          title: a.title,
+          createdAt: a.createdAt,
+          status: a.status,
+        });
       }
     }
     children.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -207,18 +249,23 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
 
   // Select only the specific stream state - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
-    resolvedAgentId ? state.sessions[serverId]?.agentStreamState?.get(resolvedAgentId) : undefined
+    resolvedAgentId
+      ? state.sessions[serverId]?.agentStreamState?.get(resolvedAgentId)
+      : undefined
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
 
   // Select only the specific initializing state
   const isInitializingFromMap = useSessionStore((state) =>
-    resolvedAgentId ? (state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ?? false) : false
+    resolvedAgentId
+      ? state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ??
+        false
+      : false
   );
 
   // Select raw pending permissions - filter with useMemo to avoid new Map on every render
-  const allPendingPermissions = useSessionStore((state) =>
-    state.sessions[serverId]?.pendingPermissions
+  const allPendingPermissions = useSessionStore(
+    (state) => state.sessions[serverId]?.pendingPermissions
   );
   const pendingPermissions = useMemo(() => {
     if (!allPendingPermissions || !resolvedAgentId) return new Map();
@@ -288,16 +335,17 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
       message.payload.error ? new Error(message.payload.error) : null,
     keepPreviousData: false,
   });
-  const { execute: fetchGitRepoInfo, reset: resetGitRepoInfo } = gitRepoInfoRequest;
+  const { execute: fetchGitRepoInfo, reset: resetGitRepoInfo } =
+    gitRepoInfoRequest;
   const branchStatus: BranchStatus = !agent?.cwd
     ? "idle"
     : gitRepoInfoRequest.status === "loading"
-      ? "loading"
-      : gitRepoInfoRequest.status === "error"
-        ? "error"
-        : gitRepoInfoRequest.status === "success"
-          ? "ready"
-          : "idle";
+    ? "loading"
+    : gitRepoInfoRequest.status === "error"
+    ? "error"
+    : gitRepoInfoRequest.status === "success"
+    ? "ready"
+    : "idle";
   const branchLabel = gitRepoInfoRequest.data?.currentBranch ?? null;
   const branchError = gitRepoInfoRequest.error?.message ?? null;
   const branchDisplayValue =
@@ -325,7 +373,9 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     };
   }, [resolvedAgentId, setFocusedAgentId]);
 
-  const isInitializing = resolvedAgentId ? isInitializingFromMap !== false : false;
+  const isInitializing = resolvedAgentId
+    ? isInitializingFromMap !== false
+    : false;
 
   // Track which agent we've already triggered initialization for
   const initializedAgentRef = useRef<string | null>(null);
@@ -366,6 +416,26 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
     document.title = title;
   }, [agent?.title]);
 
+  // Track previous agent status to detect completion while viewing
+  const previousStatusRef = useRef<string | null>(null);
+
+  // Clear attention when agent finishes while user is viewing this screen
+  useEffect(() => {
+    if (!resolvedAgentId || !agent || !ws) {
+      return;
+    }
+
+    const previousStatus = previousStatusRef.current;
+    const currentStatus = agent.status;
+    previousStatusRef.current = currentStatus;
+
+    // If agent transitioned from running to idle while we're viewing,
+    // immediately clear attention since user witnessed the completion
+    if (previousStatus === "running" && currentStatus === "idle") {
+      ws.clearAgentAttention(resolvedAgentId);
+    }
+  }, [resolvedAgentId, agent?.status, ws]);
+
   const recalculateMenuPosition = useCallback(
     (onMeasured?: () => void) => {
       requestAnimationFrame(() => {
@@ -383,7 +453,10 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
           const horizontalMargin = 16;
           const desiredLeft = x + width - DROPDOWN_WIDTH;
           const maxLeft = windowWidth - DROPDOWN_WIDTH - horizontalMargin;
-          const clampedLeft = Math.min(Math.max(desiredLeft, horizontalMargin), maxLeft);
+          const clampedLeft = Math.min(
+            Math.max(desiredLeft, horizontalMargin),
+            maxLeft
+          );
 
           // Position menu below button using the raw coordinates from measureInWindow
           const buttonBottom = y + height;
@@ -392,9 +465,10 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
           // If menu would go off screen, clamp to visible area
           const bottomEdge = top + menuContentHeight;
           const maxBottom = windowHeight - horizontalMargin;
-          const clampedTop = bottomEdge > maxBottom
-            ? Math.max(verticalOffset, maxBottom - menuContentHeight)
-            : top;
+          const clampedTop =
+            bottomEdge > maxBottom
+              ? Math.max(verticalOffset, maxBottom - menuContentHeight)
+              : top;
 
           setMenuPosition({
             top: clampedTop,
@@ -477,14 +551,21 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
       return;
     }
     handleCloseMenu();
-    setCreateAgentInitialValues({
-      workingDir: agent.cwd,
-      provider: agent.provider,
-      modeId: agent.currentModeId,
-      model: agentModel ?? undefined,
-    });
-    setShowCreateAgentModal(true);
-  }, [agent, agentModel, handleCloseMenu]);
+    const params: Record<string, string> = { serverId };
+    if (agent.cwd) {
+      params.workingDir = agent.cwd;
+    }
+    if (agent.provider) {
+      params.provider = agent.provider;
+    }
+    if (agent.currentModeId) {
+      params.modeId = agent.currentModeId;
+    }
+    if (agentModel) {
+      params.model = agentModel;
+    }
+    router.push({ pathname: "/agent/new", params });
+  }, [agent, agentModel, handleCloseMenu, router, serverId]);
 
   const handleCloseCreateAgentModal = useCallback(() => {
     setShowCreateAgentModal(false);
@@ -548,10 +629,31 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
   return (
     <>
       <View style={styles.container}>
-        <View style={[styles.mainLayout, isLargeScreen && styles.mainLayoutRow]}>
+        <View
+          style={[styles.mainLayout, isLargeScreen && styles.mainLayoutRow]}
+        >
           {/* Sidebar - only on large screens */}
           {isLargeScreen && (
             <View style={[styles.sidebar, { width: SIDEBAR_WIDTH }]}>
+              <View style={styles.sidebarHeader}>
+                <Pressable
+                  style={[
+                    styles.newAgentButton,
+                    { backgroundColor: theme.colors.primary },
+                  ]}
+                  onPress={handleCreateNewAgent}
+                >
+                  <Plus size={18} color={theme.colors.primaryForeground} />
+                  <Text
+                    style={[
+                      styles.newAgentButtonText,
+                      { color: theme.colors.primaryForeground },
+                    ]}
+                  >
+                    New Agent
+                  </Text>
+                </Pressable>
+              </View>
               <AgentList
                 agents={aggregatedAgents}
                 isRefreshing={isRevalidating}
@@ -578,10 +680,15 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
 
             {/* Content Area with Keyboard Animation */}
             <View style={styles.contentContainer}>
-              <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
+              <ReanimatedAnimated.View
+                style={[styles.content, animatedKeyboardStyle]}
+              >
                 {isInitializing ? (
                   <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={theme.colors.primary} />
+                    <ActivityIndicator
+                      size="large"
+                      color={theme.colors.primary}
+                    />
                     <Text style={styles.loadingText}>Loading agent...</Text>
                   </View>
                 ) : (
@@ -656,13 +763,17 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                           size="small"
                           color={theme.colors.mutedForeground}
                         />
-                        <Text style={styles.menuMetaPendingText}>Fetching…</Text>
+                        <Text style={styles.menuMetaPendingText}>
+                          Fetching…
+                        </Text>
                       </>
                     ) : (
                       <Text
                         style={[
                           styles.menuMetaValue,
-                          branchStatus === "error" ? styles.menuMetaValueError : null,
+                          branchStatus === "error"
+                            ? styles.menuMetaValueError
+                            : null,
                         ]}
                         numberOfLines={1}
                         ellipsizeMode="middle"
@@ -707,7 +818,10 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
                           {child.status === "running" ? (
                             <View style={styles.menuSubAgentDot} />
                           ) : null}
-                          <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                          <ChevronRight
+                            size={16}
+                            color={theme.colors.mutedForeground}
+                          />
                         </View>
                       </Pressable>
                     ))}
@@ -718,19 +832,19 @@ function AgentScreenContent({ serverId, agentId, onBack }: AgentScreenContentPro
               <View style={styles.menuDivider} />
 
               <Pressable onPress={handleViewChanges} style={styles.menuItem}>
-                  <GitBranch size={16} color={theme.colors.foreground} />
+                <GitBranch size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>View Changes</Text>
               </Pressable>
               <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
-                  <Folder size={16} color={theme.colors.foreground} />
+                <Folder size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Browse Files</Text>
               </Pressable>
               <Pressable onPress={handleImportAgent} style={styles.menuItem}>
-                  <Download size={16} color={theme.colors.foreground} />
+                <Download size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Import Agent</Text>
               </Pressable>
               <Pressable onPress={handleCreateNewAgent} style={styles.menuItem}>
-                  <PlusCircle size={16} color={theme.colors.foreground} />
+                <PlusIcon size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>New Agent</Text>
               </Pressable>
               <Pressable
@@ -784,10 +898,12 @@ function AgentSessionUnavailableState({
         <BackHeader title="Agent" onBack={onBack} />
         <View style={styles.centerState}>
           <Text style={styles.errorText}>
-            Cannot open this agent because {serverLabel} is not configured on this device.
+            Cannot open this agent because {serverLabel} is not configured on
+            this device.
           </Text>
           <Text style={styles.statusText}>
-            Add the host in Settings or open an agent on a configured server to continue.
+            Add the host in Settings or open an agent on a configured server to
+            continue.
           </Text>
         </View>
       </View>
@@ -803,8 +919,12 @@ function AgentSessionUnavailableState({
         {isConnecting ? (
           <>
             <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Connecting to {serverLabel}...</Text>
-            <Text style={styles.statusText}>We will show this agent once the host is online.</Text>
+            <Text style={styles.loadingText}>
+              Connecting to {serverLabel}...
+            </Text>
+            <Text style={styles.statusText}>
+              We will show this agent once the host is online.
+            </Text>
           </>
         ) : (
           <>
@@ -812,9 +932,12 @@ function AgentSessionUnavailableState({
               {serverLabel} is currently {connectionStatusLabel.toLowerCase()}.
             </Text>
             <Text style={styles.offlineDescription}>
-              We'll reconnect automatically and show this agent as soon as the host comes back online.
+              We'll reconnect automatically and show this agent as soon as the
+              host comes back online.
             </Text>
-            {lastError ? <Text style={styles.offlineDetails}>{lastError}</Text> : null}
+            {lastError ? (
+              <Text style={styles.offlineDetails}>{lastError}</Text>
+            ) : null}
           </>
         )}
       </View>
@@ -836,6 +959,23 @@ const styles = StyleSheet.create((theme) => ({
   sidebar: {
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
+  },
+  sidebarHeader: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
+  },
+  newAgentButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+  },
+  newAgentButtonText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
   },
   agentPanel: {
     flex: 1,
