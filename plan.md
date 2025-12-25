@@ -81,6 +81,33 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
+- [ ] **BUG (CRITICAL)**: Claude agent race condition in `forwardPromptEvents` causes garbled text.
+
+  **ROOT CAUSE**: Race condition in `claude-agent.ts` when `stream()` calls overlap.
+
+  **The Bug** (3 factors):
+  1. **Fire-and-forget async** (`claude-agent.ts:480`): `this.forwardPromptEvents(...).catch(...)` NOT awaited
+  2. **Shared mutable state** (`claude-agent.ts:368-369`): `streamedAssistantTextThisTurn` and `streamedReasoningThisTurn` are instance variables
+  3. **Flag corruption**: Turn 2 resets flags (line 769-770) while Turn 1 is still reading them (line 824-825)
+
+  **Why E2E Tests Pass**: Sequential messages, each awaited. App/agent-control sends rapid overlapping messages.
+
+  **TDD REQUIREMENTS**:
+  1. **TEST FIRST**: Write E2E test in `daemon.e2e.test.ts`:
+     - Create Claude agent
+     - Send message 1 (long prompt like "Write a 500 word essay")
+     - IMMEDIATELY send message 2 WITHOUT waiting for message 1 (this should interrupt)
+     - Capture `assistant_message` chunks from message 2
+     - Assert: chunks are coherent, no garbled/missing text
+     - This test MUST FAIL before the fix
+  2. **FIX**: Move flags from instance vars to local vars in `forwardPromptEvents()`:
+     - Delete lines 368-369 (instance vars)
+     - Add local vars at start of `forwardPromptEvents()` (line ~769)
+     - Pass flags through to suppression logic (line 824-825)
+  3. **VERIFY**: Test passes, typecheck passes, manual verification in app
+
+  **Files**: `packages/server/src/server/agent/providers/claude-agent.ts:368-369, 480, 769-770, 824-825, 1123, 1138, 1149`
+
 - [x] **BUG (MCP)**: `send_agent_prompt` errors when agent already running.
   - **Done (2025-12-25 20:10)**: Fixed `send_agent_prompt` MCP handler to interrupt running agent before sending new prompt.
 
@@ -186,32 +213,63 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
   **NOTE**: Two flaky tests ("maps thread/item events..." and "captures tool call inputs/outputs...") also failed before this change - they depend on LLM choosing to call MCP tools/web search which is non-deterministic.
 
-- [ ] **REVIEW (App)**: New agent page (`/agent/new`) is missing features from old modal.
+- [x] **REVIEW (App)**: New agent page (`/agent/new`) is missing features from old modal.
+  - **Done (2025-12-25 23:45)**: Completed comprehensive review. See `REPORT-new-agent-page-review.md` for full analysis.
 
-  **Context**: A new agent creation flow was added at `packages/app/src/app/agent/new.tsx`. Compared to the old `create-agent-modal.tsx`, it's missing critical functionality:
+  **WHAT REVIEWED**:
+  - `packages/app/src/app/agent/new.tsx` (560 lines) - New agent creation page
+  - `packages/app/src/components/create-agent-modal.tsx` (~2700 lines) - Old modal with full features
+  - `packages/app/src/components/home-footer.tsx` - Entry points for agent creation
+  - `packages/app/src/components/agent-input-area.tsx` - Already has dictation + image support
 
-  **MISSING FEATURES**:
-  1. **Git options section** - The old modal has `GitOptionsSection` with:
-     - Base branch selection dropdown
-     - "Create new branch" toggle + branch name input
-     - "Create worktree" toggle + worktree slug input
-     - Git validation errors display
-     - Dirty working directory warning
-  2. **Dictation support** - Old modal has full `useDictation` integration for voice input
-  3. **Image attachments** - Old modal handles images, new page returns early if images present (line 216-218)
-  4. **Error message display** - Old modal shows `errorMessage` state to user
-  5. **Loading state** - Old modal has `isLoading` state during agent creation
-  6. **Daemon availability error handling** - Old modal checks if daemon is online and shows appropriate errors
-  7. **Import flow** - Old modal supports `flow: "create" | "import"`, new page is create-only
+  **KEY FINDINGS**:
 
-  **FILES**:
-  - `packages/app/src/app/agent/new.tsx` - New page (incomplete)
-  - `packages/app/src/components/create-agent-modal.tsx` - Old modal (complete)
-  - `packages/app/src/components/home-footer.tsx:167` - Routes to `/agent/new`
+  1. **CRITICAL BUG** (`new.tsx:216-218`): Image attachments silently fail - early return without error:
+     ```typescript
+     if (images && images.length > 0) { return; }  // BROKEN!
+     ```
+     Fix: Remove early return, include images in `createAgent()` call.
 
-  **CURRENT STATE**:
-  - "New Agent" button → navigates to `/agent/new` (incomplete new page)
-  - "Import" button → opens `ImportAgentModal` (old modal, still works)
-  - `CreateAgentModal` in `home-footer.tsx:206-209` is **DEAD CODE** - `showCreateModal` is never set to `true`
+  2. **CRITICAL BUG** (`new.tsx:269-271`): Creation failures silently ignored:
+     ```typescript
+     if (payload.status === "agent_create_failed") {
+       pendingRequestIdRef.current = null;
+       return;  // No error shown to user!
+     }
+     ```
+     Fix: Add `setErrorMessage(payload.error)`.
 
-  **ACTION NEEDED**: Complete the new `/agent/new` page with all missing features, then remove dead `CreateAgentModal` code from home-footer.
+  3. **Missing error state**: No `errorMessage` state, no UI to display errors.
+
+  4. **Missing loading state**: No `isLoading` state, button doesn't disable during creation.
+
+  5. **Missing daemon offline handling**: No error shown when daemon is unavailable.
+
+  6. **Missing Git Options Section** (~200 lines in old modal):
+     - Base branch selection
+     - Create new branch toggle + input
+     - Create worktree toggle + input
+     - Git validation errors
+     - Dirty directory warnings
+
+  7. **Dictation/Images already work**: `AgentInputArea` component has full `useDictation` integration and image picker - just needs image support wired in.
+
+  8. **Dead code in home-footer.tsx**:
+     - Line 25: `showCreateModal` state never set to `true`
+     - Lines 206-209: `CreateAgentModal` rendered but never shown
+
+  **IMPLEMENTATION PRIORITY**:
+  | Priority | Item | Effort |
+  |----------|------|--------|
+  | P0 | Fix image attachments | 5 lines |
+  | P0 | Fix creation failure display | 2 lines |
+  | P0 | Add error message state | 20 lines |
+  | P1 | Add loading state | 15 lines |
+  | P1 | Add daemon offline handling | 20 lines |
+  | P2 | Git Options Section | ~200 lines |
+
+  **FOLLOW-UP TASKS NEEDED**:
+  - [ ] **FIX (App)**: New agent page - fix image attachments (remove early return, wire images to createAgent)
+  - [ ] **FIX (App)**: New agent page - add error/loading states and failure display
+  - [ ] **FEATURE (App)**: New agent page - add Git Options Section
+  - [ ] **CLEANUP (App)**: Remove dead CreateAgentModal code from home-footer.tsx
