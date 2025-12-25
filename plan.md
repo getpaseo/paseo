@@ -534,3 +534,63 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Remove multi-key permission/call-id normalization by defining canonical permission event schemas and updating tests/emitters accordingly.
   - Re-evaluate `Record<string, unknown>` usage in `agent-sdk-types.ts` and replace with explicit types where possible.
   - **Done (2025-12-25 01:03)**: WHAT: added exclusive-key validation helpers and normalized read_file/mcp_tool_call/web_search/permission/patch parsing in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:132`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:223`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:927`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1015`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1229`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1436`; removed conversation_id metadata writes in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2077`; replaced Record metadata types with `AgentMetadata` in `packages/server/src/server/agent/agent-sdk-types.ts:5`; enforced exclusive output parsing helpers in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:113`. RESULT: Codex MCP schemas/tests now fail on ambiguous multi-key payloads while emitting canonical fields and agent types no longer use Record-based metadata. EVIDENCE: `rg -n "resolveExclusiveValue|resolveExclusiveString|normalizePatchChangeDetails|PermissionParamsSchema|ReadFileItemSchema|McpToolCallItemSchema|WebSearchItemSchema" packages/server/src/server/agent/providers/codex-mcp-agent.ts` and `rg -n "AgentMetadata" packages/server/src/server/agent/agent-sdk-types.ts`.
+
+- [x] **Verify**: Full refactor validation and test suite audit.
+
+  **Part 1 - Verify refactor quality:**
+  - Run: `rg -n "as \{|as Record|Record<string, unknown>" packages/server/src/server/agent/`
+  - Run: `rg -n "\?\?" packages/server/src/server/agent/providers/codex-mcp-agent.ts`
+  - If ANY matches found, add fix tasks with exact file:line references
+  - Check that Zod schemas exist for ALL event types, not just some
+
+  **Part 2 - Run ALL tests (no skips allowed):**
+  - Run: `npm run test --workspace=@paseo/server 2>&1 | tee test-output.txt`
+  - Capture FULL output including any skipped tests
+  - Run: `grep -E "skip|Skip|SKIP|todo|TODO" test-output.txt` to find skipped tests
+  - If ANY tests are skipped, add fix tasks to unskip and fix them
+
+  **Part 3 - Verify test results:**
+  - All tests must PASS (not skip, not timeout)
+  - Report exact failure count and which tests failed
+  - If failures exist, add specific fix tasks with error messages
+
+  **Part 4 - Run typecheck:**
+  - Run: `npm run typecheck --workspace=@paseo/server`
+  - Zero errors required
+  - If errors, add fix tasks with exact error messages
+
+  **Acceptance criteria:**
+  - Zero `as` casts in codex-mcp-agent files
+  - Zero skipped tests
+  - All tests pass
+  - Typecheck passes
+  - If any criteria fail, add follow-up fix tasks
+  - **Done (2025-12-25 10:44)**: WHAT: captured refactor/test/typecheck audit in `REPORT-refactor-validation-test-audit.md:1` and stored full test output in `test-output.txt:1`; updated task status and follow-up tasks in `plan.md:538`. RESULT: found remaining `Record<string, unknown>` usage across agent files, 1 failing test + 1 skipped test before suite halted with MCP JSONRPC error, and 5 typecheck errors in `codex-mcp-agent.ts`. EVIDENCE: `rg -n "as \\{|as Record|Record<string, unknown>" packages/server/src/server/agent/`, `rg -n "\\?\\?" packages/server/src/server/agent/providers/codex-mcp-agent.ts`, `npm run test --workspace=@paseo/server 2>&1 | tee test-output.txt`, `grep -E "skip|Skip|SKIP|todo|TODO" test-output.txt`, `npm run typecheck --workspace=@paseo/server`.
+
+- [ ] **Fix**: Remove `Record<string, unknown>`/`as` usage in `packages/server/src/server/agent/agent-mcp.e2e.test.ts` at lines 13, 14, 18, 62, 71.
+
+- [ ] **Fix**: Remove `Record<string, unknown>`/`as` usage in core agent files:
+  - `packages/server/src/server/agent/model-catalog.ts:180`
+  - `packages/server/src/server/agent/activity-curator.ts:72`, `packages/server/src/server/agent/activity-curator.ts:73`, `packages/server/src/server/agent/activity-curator.ts:85`, `packages/server/src/server/agent/activity-curator.ts:86`
+  - `packages/server/src/server/agent/agent-projections.ts:186`, `packages/server/src/server/agent/agent-projections.ts:187`
+  - `packages/server/src/server/agent/stt-openai.ts:127`
+
+- [ ] **Fix**: Remove `Record<string, unknown>`/`as` usage in Claude agent files:
+  - `packages/server/src/server/agent/providers/claude-agent.test.ts:99`, `packages/server/src/server/agent/providers/claude-agent.test.ts:109`, `packages/server/src/server/agent/providers/claude-agent.test.ts:110`, `packages/server/src/server/agent/providers/claude-agent.test.ts:456`, `packages/server/src/server/agent/providers/claude-agent.test.ts:463`, `packages/server/src/server/agent/providers/claude-agent.test.ts:1279`
+  - `packages/server/src/server/agent/providers/claude-agent.ts:159`, `packages/server/src/server/agent/providers/claude-agent.ts:164`, `packages/server/src/server/agent/providers/claude-agent.ts:784`, `packages/server/src/server/agent/providers/claude-agent.ts:785`, `packages/server/src/server/agent/providers/claude-agent.ts:874`, `packages/server/src/server/agent/providers/claude-agent.ts:1120`, `packages/server/src/server/agent/providers/claude-agent.ts:1138`, `packages/server/src/server/agent/providers/claude-agent.ts:1162`, `packages/server/src/server/agent/providers/claude-agent.ts:1163`, `packages/server/src/server/agent/providers/claude-agent.ts:1249`, `packages/server/src/server/agent/providers/claude-agent.ts:1343`, `packages/server/src/server/agent/providers/claude-agent.ts:1347`, `packages/server/src/server/agent/providers/claude-agent.ts:1350`, `packages/server/src/server/agent/providers/claude-agent.ts:1364`, `packages/server/src/server/agent/providers/claude-agent.ts:1375`, `packages/server/src/server/agent/providers/claude-agent.ts:1392`
+
+- [ ] **Fix**: Remove `Record<string, unknown>`/`as` usage in Codex agent files:
+  - `packages/server/src/server/agent/providers/codex-agent.test.ts:190`, `packages/server/src/server/agent/providers/codex-agent.test.ts:337`, `packages/server/src/server/agent/providers/codex-agent.test.ts:980`, `packages/server/src/server/agent/providers/codex-agent.test.ts:1043`, `packages/server/src/server/agent/providers/codex-agent.test.ts:1054`, `packages/server/src/server/agent/providers/codex-agent.test.ts:1065`
+  - `packages/server/src/server/agent/providers/codex-agent.ts:136`, `packages/server/src/server/agent/providers/codex-agent.ts:143`, `packages/server/src/server/agent/providers/codex-agent.ts:167`, `packages/server/src/server/agent/providers/codex-agent.ts:234`, `packages/server/src/server/agent/providers/codex-agent.ts:250`, `packages/server/src/server/agent/providers/codex-agent.ts:886`, `packages/server/src/server/agent/providers/codex-agent.ts:1092`, `packages/server/src/server/agent/providers/codex-agent.ts:1093`, `packages/server/src/server/agent/providers/codex-agent.ts:1171`, `packages/server/src/server/agent/providers/codex-agent.ts:1237`, `packages/server/src/server/agent/providers/codex-agent.ts:1244`, `packages/server/src/server/agent/providers/codex-agent.ts:1452`, `packages/server/src/server/agent/providers/codex-agent.ts:1454`, `packages/server/src/server/agent/providers/codex-agent.ts:1456`, `packages/server/src/server/agent/providers/codex-agent.ts:1481`, `packages/server/src/server/agent/providers/codex-agent.ts:1483`, `packages/server/src/server/agent/providers/codex-agent.ts:1495`, `packages/server/src/server/agent/providers/codex-agent.ts:1503`, `packages/server/src/server/agent/providers/codex-agent.ts:1794`, `packages/server/src/server/agent/providers/codex-agent.ts:1963`, `packages/server/src/server/agent/providers/codex-agent.ts:2045`, `packages/server/src/server/agent/providers/codex-agent.ts:2053`, `packages/server/src/server/agent/providers/codex-agent.ts:2143`, `packages/server/src/server/agent/providers/codex-agent.ts:2155`, `packages/server/src/server/agent/providers/codex-agent.ts:2156`, `packages/server/src/server/agent/providers/codex-agent.ts:2204`, `packages/server/src/server/agent/providers/codex-agent.ts:2222`, `packages/server/src/server/agent/providers/codex-agent.ts:2233`, `packages/server/src/server/agent/providers/codex-agent.ts:2238`, `packages/server/src/server/agent/providers/codex-agent.ts:2239`
+
+- [ ] **Fix**: Codex SDK persistence hydration failure in `packages/server/src/server/agent/providers/codex-agent.test.ts:441` ("hydrates persisted shell_command tool calls with completed status" → expected undefined to be truthy).
+
+- [ ] **Fix**: Unskip and repair Codex SDK permission request test at `packages/server/src/server/agent/providers/codex-agent.test.ts:705` (`test.skip` for approvals).
+
+- [ ] **Fix**: Investigate MCP JSONRPC error during tests: `permission call_id provided multiple times (codex_call_id, codex_mcp_tool_call_id, codex_event_id)` (codex_mcp_server error logged during `npm run test --workspace=@paseo/server`).
+
+- [ ] **Fix**: Resolve typecheck errors in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:348`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:1674`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2945`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2959`, `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2970`.
+
+- [ ] **Test (E2E)**: Rerun full server tests after fixes and verify zero failures/skips.
+
+- [ ] **Typecheck**: Rerun `npm run typecheck --workspace=@paseo/server` after fixes and verify zero errors.
