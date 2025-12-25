@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import fs, { promises as fsPromises } from "node:fs";
+import fs from "node:fs";
+import { promises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   query,
   type AgentDefinition,
   type CanUseTool,
-  type McpServerConfig as ClaudeMcpServerConfig,
-  type Options as ClaudeOptions,
+  type McpServerConfig,
+  type Options,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
@@ -22,6 +23,7 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentMetadata,
   AgentMode,
   AgentPermissionRequest,
   AgentPermissionResponse,
@@ -40,6 +42,8 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
+
+const fsPromises = promises;
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -82,6 +86,9 @@ type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
 
+type ClaudeMcpServerConfig = McpServerConfig;
+type ClaudeOptions = Options;
+
 type ClaudeAgentClientOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
 };
@@ -102,9 +109,7 @@ function appendCallerAgentId(url: string, agentId: string): string {
   }
 }
 
-export function extractUserMessageText(
-  content: string | ClaudeContentChunk[]
-): string | null {
+export function extractUserMessageText(content: unknown): string | null {
   if (typeof content === "string") {
     const normalized = content.trim();
     return normalized.length > 0 ? normalized : null;
@@ -156,17 +161,127 @@ type ToolUseCacheEntry = {
   started: boolean;
   commandText?: string;
   files?: { path: string; kind: string }[];
-  input?: Record<string, unknown> | null;
+  input?: AgentMetadata | null;
 };
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
 }
 
+function isPermissionMode(value: string | undefined): value is PermissionMode {
+  return typeof value === "string" && VALID_CLAUDE_MODES.has(value);
+}
+
+function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
+  if (!isMetadata(metadata)) {
+    return {};
+  }
+
+  const result: Partial<AgentSessionConfig> = {};
+  if (metadata.provider === "claude" || metadata.provider === "codex" || metadata.provider === "codex-mcp") {
+    result.provider = metadata.provider;
+  }
+  if (typeof metadata.cwd === "string") {
+    result.cwd = metadata.cwd;
+  }
+  if (typeof metadata.modeId === "string") {
+    result.modeId = metadata.modeId;
+  }
+  if (typeof metadata.model === "string") {
+    result.model = metadata.model;
+  }
+  if (typeof metadata.title === "string" || metadata.title === null) {
+    result.title = metadata.title;
+  }
+  if (typeof metadata.approvalPolicy === "string") {
+    result.approvalPolicy = metadata.approvalPolicy;
+  }
+  if (typeof metadata.sandboxMode === "string") {
+    result.sandboxMode = metadata.sandboxMode;
+  }
+  if (typeof metadata.networkAccess === "boolean") {
+    result.networkAccess = metadata.networkAccess;
+  }
+  if (typeof metadata.webSearch === "boolean") {
+    result.webSearch = metadata.webSearch;
+  }
+  if (typeof metadata.reasoningEffort === "string") {
+    result.reasoningEffort = metadata.reasoningEffort;
+  }
+  if (isMetadata(metadata.agentControlMcp)) {
+    const url = metadata.agentControlMcp.url;
+    const headers = metadata.agentControlMcp.headers;
+    if (typeof url === "string") {
+      const agentControlMcp: AgentSessionConfig["agentControlMcp"] = { url };
+      if (isMetadata(headers)) {
+        const normalizedHeaders: { [key: string]: string } = {};
+        for (const [key, value] of Object.entries(headers)) {
+          if (typeof value === "string") {
+            normalizedHeaders[key] = value;
+          }
+        }
+        if (Object.keys(normalizedHeaders).length > 0) {
+          agentControlMcp.headers = normalizedHeaders;
+        }
+      }
+      result.agentControlMcp = agentControlMcp;
+    }
+  }
+  if (isMetadata(metadata.extra)) {
+    const extra: AgentSessionConfig["extra"] = {};
+    if (isMetadata(metadata.extra.codex)) {
+      extra.codex = metadata.extra.codex;
+    }
+    if (isClaudeExtra(metadata.extra.claude)) {
+      extra.claude = metadata.extra.claude;
+    }
+    if (extra.codex || extra.claude) {
+      result.extra = extra;
+    }
+  }
+  if (isMetadata(metadata.mcpServers)) {
+    result.mcpServers = metadata.mcpServers;
+  }
+  if (typeof metadata.parentAgentId === "string") {
+    result.parentAgentId = metadata.parentAgentId;
+  }
+
+  return result;
+}
+
+function isClaudeMcpServerConfig(value: unknown): value is ClaudeMcpServerConfig {
+  if (!isMetadata(value)) {
+    return false;
+  }
+  return typeof value.type === "string" || typeof value.command === "string" || typeof value.url === "string";
+}
+
+function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
+  return isMetadata(value) && typeof value.type === "string";
+}
+
+function isClaudeExtra(value: unknown): value is Partial<ClaudeOptions> {
+  return isMetadata(value);
+}
+
+function isPermissionUpdate(value: AgentPermissionUpdate): value is PermissionUpdate {
+  if (!isMetadata(value)) {
+    return false;
+  }
+  const type = value.type;
+  if (type !== "addRules" && type !== "replaceRules" && type !== "removeRules") {
+    return false;
+  }
+  const rules = value.rules;
+  const behavior = value.behavior;
+  const destination = value.destination;
+  return Array.isArray(rules) && typeof behavior === "string" && typeof destination === "string";
+}
+
 export class ClaudeAgentClient implements AgentClient {
-  readonly provider = "claude" as const;
+  readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
@@ -186,12 +301,12 @@ export class ClaudeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>
   ): Promise<AgentSession> {
-    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
-    const merged = { ...metadata, ...overrides } as Partial<AgentSessionConfig>;
+    const metadata = coerceSessionMetadata(handle.metadata);
+    const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
     if (!merged.cwd) {
       throw new Error("Claude resume requires the original working directory in metadata");
     }
-    const mergedConfig = { ...merged, provider: "claude" } as AgentSessionConfig;
+    const mergedConfig: AgentSessionConfig = { ...merged, provider: "claude", cwd: merged.cwd };
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -225,12 +340,12 @@ export class ClaudeAgentClient implements AgentClient {
     if (config.provider !== "claude") {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
-    return config as ClaudeAgentConfig;
+    return config;
   }
 }
 
 class ClaudeAgentSession implements AgentSession {
-  readonly provider = "claude" as const;
+  readonly provider: "claude" = "claude";
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly config: ClaudeAgentConfig;
@@ -276,7 +391,7 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    this.currentMode = (config.modeId as PermissionMode) ?? "default";
+    this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
     if (this.claudeSessionId) {
       this.loadPersistedHistory(this.claudeSessionId);
     }
@@ -420,7 +535,7 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
-    const normalized = modeId as PermissionMode;
+    const normalized = isPermissionMode(modeId) ? modeId : "default";
     const query = await this.ensureQuery();
     await query.setPermissionMode(normalized);
     this.currentMode = normalized;
@@ -602,9 +717,8 @@ class ClaudeAgentSession implements AgentSession {
     }
     const result: Record<string, ClaudeMcpServerConfig> = {};
     for (const [name, config] of Object.entries(servers)) {
-      if (!isRecord(config)) continue;
-      if ("type" in config || "command" in config || "url" in config) {
-        result[name] = config as ClaudeMcpServerConfig;
+      if (isClaudeMcpServerConfig(config)) {
+        result[name] = config;
       }
     }
     return Object.keys(result).length ? result : undefined;
@@ -692,11 +806,11 @@ class ClaudeAgentSession implements AgentSession {
     switch (message.type) {
       case "system":
         if (message.subtype === "init") {
-          this.handleSystemMessage(message as SDKSystemMessage);
+          this.handleSystemMessage(message);
         }
         break;
       case "user": {
-        const content = (message as SDKUserMessage).message?.content;
+        const content = message.message?.content;
         if (Array.isArray(content)) {
           const timelineItems = this.mapBlocksToTimeline(content);
           for (const item of timelineItems) {
@@ -781,10 +895,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const requestId = `permission-${randomUUID()}`;
-    const metadata: Record<string, unknown> = {};
-    const permissionOptions = options as { toolUseID?: string } | undefined;
-    if (permissionOptions?.toolUseID) {
-      metadata.toolUseId = permissionOptions.toolUseID;
+    const metadata: AgentMetadata = {};
+    if (options.toolUseID) {
+      metadata.toolUseId = options.toolUseID;
     }
     if (toolName === "ExitPlanMode" && typeof input.plan === "string") {
       metadata.planText = input.plan;
@@ -796,7 +909,7 @@ class ClaudeAgentSession implements AgentSession {
       name: toolName,
       kind: toolName === "ExitPlanMode" ? "plan" : "tool",
       input,
-      suggestions: options?.suggestions as AgentPermissionUpdate[] | undefined,
+      suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
@@ -871,7 +984,7 @@ class ClaudeAgentSession implements AgentSession {
     });
   };
 
-  private emitPlanTodoItems(input: Record<string, unknown>) {
+  private emitPlanTodoItems(input: AgentMetadata) {
     const planText = typeof input.plan === "string" ? input.plan : JSON.stringify(input);
     const todoItems = planText
       .split("\n")
@@ -931,7 +1044,8 @@ class ClaudeAgentSession implements AgentSession {
     if (!updates || updates.length === 0) {
       return undefined;
     }
-    return updates as PermissionUpdate[];
+    const normalized = updates.filter(isPermissionUpdate);
+    return normalized.length > 0 ? normalized : undefined;
   }
 
   private rejectAllPendingPermissions(error: Error) {
@@ -1092,7 +1206,7 @@ class ClaudeAgentSession implements AgentSession {
     const tool = entry?.name ?? block.tool_name ?? "tool";
     const status = block.is_error ? "failed" : "completed";
 
-    // Extract output from block.content (SDK always returns content as string)
+    // Extract output from block.content (SDK always returns content in string form)
     const output = this.buildToolOutput(block, entry);
 
     this.pushToolCall(
@@ -1117,7 +1231,7 @@ class ClaudeAgentSession implements AgentSession {
   private buildToolOutput(
     block: ClaudeContentChunk,
     entry: ToolUseCacheEntry | undefined
-  ): Record<string, unknown> | undefined {
+  ): AgentMetadata | undefined {
     if (block.is_error) {
       return undefined;
     }
@@ -1135,14 +1249,14 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     // Fallback format - try to parse JSON first
-    const result: Record<string, unknown> = {};
+    const result: AgentMetadata = {};
 
     if (content.length > 0) {
       try {
         // If content is a JSON string, parse it
         result.output = JSON.parse(content);
       } catch {
-        // If not JSON, return as-is (no extra wrapping)
+        // If not JSON, return unchanged (no extra wrapping)
         result.output = content;
       }
     }
@@ -1159,8 +1273,8 @@ class ClaudeAgentSession implements AgentSession {
     server: string,
     tool: string,
     output: string,
-    input?: Record<string, unknown> | null
-  ): Record<string, unknown> | undefined {
+    input?: AgentMetadata | null
+  ): AgentMetadata | undefined {
     const normalizedServer = server.toLowerCase();
     const normalizedTool = tool.toLowerCase();
 
@@ -1239,15 +1353,19 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private mapPartialEvent(event: SDKPartialAssistantMessage["event"]): AgentTimelineItem[] {
-    if (event.type === "content_block_start" && (event.content_block as ClaudeContentChunk | undefined)?.type === "tool_use") {
-      const block = event.content_block as ClaudeContentChunk;
-      if (typeof event.index === "number" && typeof block?.id === "string") {
+    if (event.type === "content_block_start") {
+      const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
+      if (block?.type === "tool_use" && typeof event.index === "number" && typeof block.id === "string") {
         this.toolUseIndexToId.set(event.index, block.id);
         this.toolUseInputBuffers.delete(block.id);
       }
-    } else if (event.type === "content_block_delta" && (event.delta as ClaudeContentChunk | undefined)?.type === "input_json_delta") {
-      this.handleToolInputDelta(event.index, (event.delta as { partial_json?: string })?.partial_json);
-      return [];
+    } else if (event.type === "content_block_delta") {
+      const delta = isClaudeContentChunk(event.delta) ? event.delta : null;
+      if (delta?.type === "input_json_delta") {
+        const partialJson = typeof delta.partial_json === "string" ? delta.partial_json : undefined;
+        this.handleToolInputDelta(event.index, partialJson);
+        return [];
+      }
     } else if (event.type === "content_block_stop" && typeof event.index === "number") {
       const toolId = this.toolUseIndexToId.get(event.index);
       if (toolId) {
@@ -1258,9 +1376,11 @@ class ClaudeAgentSession implements AgentSession {
 
     switch (event.type) {
       case "content_block_start":
-        return this.mapBlocksToTimeline([event.content_block as ClaudeContentChunk]);
+        return isClaudeContentChunk(event.content_block)
+          ? this.mapBlocksToTimeline([event.content_block])
+          : [];
       case "content_block_delta":
-        return this.mapBlocksToTimeline([event.delta as ClaudeContentChunk]);
+        return isClaudeContentChunk(event.delta) ? this.mapBlocksToTimeline([event.delta]) : [];
       default:
         return [];
     }
@@ -1340,14 +1460,14 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  private normalizeToolInput(input: unknown): Record<string, unknown> | null {
-    if (!input || typeof input !== "object") {
+  private normalizeToolInput(input: unknown): AgentMetadata | null {
+    if (!isMetadata(input)) {
       return null;
     }
-    return input as Record<string, unknown>;
+    return input;
   }
 
-  private applyToolInput(entry: ToolUseCacheEntry, input: Record<string, unknown>): void {
+  private applyToolInput(entry: ToolUseCacheEntry, input: AgentMetadata): void {
     entry.input = input;
     if (this.isCommandTool(entry.name, input)) {
       entry.classification = "command";
@@ -1361,7 +1481,7 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private isCommandTool(name: string, input: Record<string, unknown>): boolean {
+  private isCommandTool(name: string, input: AgentMetadata): boolean {
     const normalized = name.toLowerCase();
     if (normalized.includes("bash") || normalized.includes("shell") || normalized.includes("terminal") || normalized.includes("command")) {
       return true;
@@ -1372,7 +1492,7 @@ class ClaudeAgentSession implements AgentSession {
     return false;
   }
 
-  private extractCommandText(input: Record<string, unknown>): string | undefined {
+  private extractCommandText(input: AgentMetadata): string | undefined {
     const command = input.command;
     if (typeof command === "string" && command.length > 0) {
       return command;
@@ -1389,7 +1509,7 @@ class ClaudeAgentSession implements AgentSession {
     return undefined;
   }
 
-  private extractFileChanges(input: Record<string, unknown>): { path: string; kind: string }[] | undefined {
+  private extractFileChanges(input: AgentMetadata): { path: string; kind: string }[] | undefined {
     if (typeof input.file_path === "string" && input.file_path.length > 0) {
       const relative = this.relativizePath(input.file_path);
       if (relative) {
@@ -1473,14 +1593,13 @@ function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
   return type.includes("tool");
 }
 
-function normalizeHistoryBlocks(
-  content: string | ClaudeContentChunk[]
-): ClaudeContentChunk[] | null {
+function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   if (Array.isArray(content)) {
-    return content;
+    const blocks = content.filter((entry) => isClaudeContentChunk(entry));
+    return blocks.length > 0 ? blocks : null;
   }
-  if (content && typeof content === "object") {
-    return [content as ClaudeContentChunk];
+  if (isClaudeContentChunk(content)) {
+    return [content];
   }
   return null;
 }
@@ -1494,8 +1613,12 @@ export function convertClaudeHistoryEntry(
     return [];
   }
 
-  const content = message.content as string | ClaudeContentChunk[];
+  const content = message.content;
   const normalizedBlocks = normalizeHistoryBlocks(content);
+  const contentValue =
+    typeof content === "string"
+      ? content
+      : normalizedBlocks;
   const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
   const timeline: AgentTimelineItem[] = [];
 
@@ -1510,7 +1633,7 @@ export function convertClaudeHistoryEntry(
   }
 
   if (hasToolBlock && normalizedBlocks) {
-    const mapped = mapBlocks(Array.isArray(content) ? content : normalizedBlocks);
+    const mapped = mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
       const toolItems = mapped.filter((item) => item.type === "tool_call");
       return timeline.length ? [...timeline, ...toolItems] : toolItems;
@@ -1518,8 +1641,8 @@ export function convertClaudeHistoryEntry(
     return mapped;
   }
 
-  if (entry.type === "assistant" && content) {
-    return mapBlocks(content);
+  if (entry.type === "assistant" && contentValue) {
+    return mapBlocks(contentValue);
   }
 
   return timeline;
@@ -1527,7 +1650,7 @@ export function convertClaudeHistoryEntry(
 
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
-  private resolvers: ((value: IteratorResult<T>) => void)[] = [];
+  private resolvers: Array<(value: IteratorResult<T, void>) => void> = [];
   private closed = false;
 
   push(item: T) {
@@ -1546,21 +1669,23 @@ class Pushable<T> implements AsyncIterable<T> {
     this.closed = true;
     while (this.resolvers.length > 0) {
       const resolve = this.resolvers.shift()!;
-      resolve({ value: undefined as any, done: true });
+      resolve({ value: undefined, done: true });
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<T> {
+  [Symbol.asyncIterator](): AsyncIterator<T, void> {
     return {
-      next: (): Promise<IteratorResult<T>> => {
+      next: (): Promise<IteratorResult<T, void>> => {
         if (this.queue.length > 0) {
-          const value = this.queue.shift()!;
-          return Promise.resolve({ value, done: false });
+          const value = this.queue.shift();
+          if (value !== undefined) {
+            return Promise.resolve({ value, done: false });
+          }
         }
         if (this.closed) {
-          return Promise.resolve({ value: undefined as any, done: true });
+          return Promise.resolve({ value: undefined, done: true });
         }
-        return new Promise<IteratorResult<T>>((resolve) => {
+        return new Promise<IteratorResult<T, void>>((resolve) => {
           this.resolvers.push(resolve);
         });
       },
