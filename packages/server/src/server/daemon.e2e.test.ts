@@ -2026,4 +2026,212 @@ describe("daemon E2E", () => {
       300000 // 5 minute timeout for multiple Claude API calls
     );
   });
+
+  describe("Claude agent overlapping stream() calls race condition", () => {
+    test(
+      "interrupting message should produce coherent text without garbling from race condition",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Claude agent with bypassPermissions mode
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Overlapping Streams Race Condition Test",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.provider).toBe("claude");
+
+        // === MESSAGE 1: Start a long-running prompt that will be interrupted ===
+        console.log("[RACE CONDITION TEST] Sending message 1 (will be interrupted)...");
+
+        // Record queue position BEFORE message 1 to find the cutoff point later
+        const msg1StartPosition = ctx.client.getMessageQueue().length;
+
+        // Use sendMessage but don't await waitForAgentIdle - let it run
+        await ctx.client.sendMessage(
+          agent.id,
+          "Write a very detailed 500 word essay about the history of computing, starting from the earliest mechanical computers through modern quantum computing. Include specific dates, inventors, and technological milestones."
+        );
+
+        // Wait a short time for Turn 1 to start streaming (but not finish)
+        // This ensures forwardPromptEvents() is actively running
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // === MESSAGE 2: Immediately send another message to interrupt ===
+        // This triggers the race condition where Turn 2's forwardPromptEvents
+        // resets streamedAssistantTextThisTurn while Turn 1 is still reading it
+        console.log("[RACE CONDITION TEST] Sending message 2 (interrupting turn 1)...");
+
+        // Record queue position BEFORE message 2 to find message 2 chunks
+        const msg2StartPosition = ctx.client.getMessageQueue().length;
+        console.log("[RACE CONDITION TEST] Queue position before msg2:", msg2StartPosition);
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "Stop. Just say exactly: 'Hello world from interrupted message'"
+        );
+
+        // Wait for Turn 2 to complete - use a manual polling approach
+        // We need to wait for: running -> idle (after msg2's user_message)
+        console.log("[RACE CONDITION TEST] Waiting for agent to become idle after msg2...");
+        const maxWaitMs = 120000;
+        const pollIntervalMs = 500;
+        const startTime = Date.now();
+        let lastState: AgentSnapshotPayload | null = null;
+
+        while (Date.now() - startTime < maxWaitMs) {
+          // Check agent_state messages in the queue
+          const queue = ctx.client.getMessageQueue();
+
+          // Look for pattern: user_message (msg2) -> ... -> running -> ... -> idle/error
+          let sawMsg2UserMessage = false;
+          let sawRunningAfterMsg2 = false;
+          let sawIdleAfterRunning = false;
+
+          for (let i = msg2StartPosition; i < queue.length; i++) {
+            const msg = queue[i];
+            if (
+              msg.type === "agent_stream" &&
+              msg.payload.agentId === agent.id &&
+              msg.payload.event.type === "timeline"
+            ) {
+              const item = msg.payload.event.item;
+              if (item.type === "user_message" && (item.text as string)?.includes("Hello world")) {
+                sawMsg2UserMessage = true;
+              }
+            }
+            if (msg.type === "agent_state" && msg.payload.id === agent.id) {
+              if (sawMsg2UserMessage && msg.payload.status === "running") {
+                sawRunningAfterMsg2 = true;
+              }
+              if (sawRunningAfterMsg2 && (msg.payload.status === "idle" || msg.payload.status === "error")) {
+                sawIdleAfterRunning = true;
+                lastState = msg.payload;
+              }
+            }
+          }
+
+          if (sawIdleAfterRunning) {
+            console.log("[RACE CONDITION TEST] Agent became idle/error after msg2:", lastState?.status);
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+        }
+
+        expect(lastState).not.toBeNull();
+        expect(lastState!.status).toBe("idle");
+        expect(lastState!.lastError).toBeUndefined();
+        console.log("[RACE CONDITION TEST] Message 2 complete");
+
+        // Collect assistant_message chunks from message 2 only (after msg2StartPosition)
+        const queue = ctx.client.getMessageQueue();
+        const assistantChunks: string[] = [];
+
+        // Debug: dump all events from queue
+        console.log("[RACE CONDITION TEST] Full queue dump (all events):");
+        for (let i = 0; i < queue.length; i++) {
+          const m = queue[i];
+          if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
+            const event = m.payload.event;
+            if (event.type === "timeline") {
+              const item = event.item;
+              console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): timeline/${item.type}`, item.type === "assistant_message" || item.type === "user_message" ? JSON.stringify((item as any).text?.substring(0, 50)) : "");
+            } else {
+              console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): ${event.type}`, (event as any).error || "");
+            }
+          } else if (m.type === "agent_state" && m.payload.id === agent.id) {
+            console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): agent_state -> ${m.payload.status}`, m.payload.lastError || "");
+          }
+        }
+
+        // Find the user_message for message 2 to mark the boundary
+        let foundMsg2UserMessage = false;
+
+        for (let i = msg2StartPosition; i < queue.length; i++) {
+          const m = queue[i];
+
+          // Look for our user message to mark the start of message 2 context
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "user_message" && (item.text as string)?.includes("Hello world")) {
+              foundMsg2UserMessage = true;
+              console.log("[RACE CONDITION TEST] Found message 2 user prompt");
+            }
+            // Collect assistant messages after we found the user message
+            if (foundMsg2UserMessage && item.type === "assistant_message" && item.text) {
+              assistantChunks.push(item.text);
+            }
+          }
+        }
+
+        console.log("[RACE CONDITION TEST] Collected", assistantChunks.length, "chunks");
+        console.log("[RACE CONDITION TEST] Chunks:");
+        for (let i = 0; i < assistantChunks.length; i++) {
+          console.log(`  [${i}]: ${JSON.stringify(assistantChunks[i])}`);
+        }
+
+        // Should have received at least one assistant message chunk
+        expect(assistantChunks.length).toBeGreaterThan(0);
+
+        // Concatenate all chunks
+        const fullResponse = assistantChunks.join("");
+        console.log("[RACE CONDITION TEST] Full response:", JSON.stringify(fullResponse));
+
+        // CRITICAL ASSERTION: Response should contain coherent text
+        // If there's a race condition with flag corruption, we might get:
+        // - Missing chunks (suppression applied incorrectly)
+        // - Duplicate chunks (suppression NOT applied when it should be)
+        // - Garbled/mixed text from Turn 1 and Turn 2
+
+        // Check for basic coherence - should have recognizable words
+        const wordPattern = /\b[a-zA-Z]+\b/g;
+        const words = fullResponse.match(wordPattern) || [];
+        console.log("[RACE CONDITION TEST] Words found:", words.length);
+        expect(words.length).toBeGreaterThan(0);
+
+        // Check for UTF-8 corruption
+        for (const chunk of assistantChunks) {
+          expect(chunk).not.toMatch(/\x00/); // No null bytes
+          expect(chunk).not.toMatch(/\uFFFD/); // No replacement characters
+        }
+
+        // Check for suspiciously long "words" that indicate missing spaces/garbling
+        const suspiciouslyLongWords = words.filter(w => w.length > 30);
+        if (suspiciouslyLongWords.length > 0) {
+          console.log("[RACE CONDITION TEST] Suspiciously long words:", suspiciouslyLongWords);
+        }
+        expect(suspiciouslyLongWords.length).toBe(0);
+
+        // CRITICAL: Verify the response is for message 2, not message 1
+        // Message 2 asked for "Hello world from interrupted message"
+        // If we see extensive content about "history of computing", that's race condition corruption
+        const lowerResponse = fullResponse.toLowerCase();
+        const containsComputingContent =
+          lowerResponse.includes("mechanical") ||
+          lowerResponse.includes("quantum") ||
+          lowerResponse.includes("inventor") ||
+          lowerResponse.includes("eniac") ||
+          lowerResponse.includes("babbage");
+
+        if (containsComputingContent) {
+          console.log("[RACE CONDITION TEST] ERROR: Response contains content from message 1!");
+          console.log("[RACE CONDITION TEST] This indicates the race condition: message 2 was sent but message 1's response was returned");
+        }
+        // This MUST fail if we got message 1's response instead of message 2's
+        expect(containsComputingContent).toBe(false);
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000 // 3 minute timeout
+    );
+  });
 });

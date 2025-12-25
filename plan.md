@@ -81,32 +81,63 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 ## Tasks
 
-- [ ] **BUG (CRITICAL)**: Claude agent race condition in `forwardPromptEvents` causes garbled text.
+- [x] **BUG (CRITICAL)**: Claude agent race condition in `forwardPromptEvents` causes garbled text.
+  - **Done (2025-12-25 20:42)**: Fixed race condition by moving instance-level streaming flags to turn-local context.
 
-  **ROOT CAUSE**: Race condition in `claude-agent.ts` when `stream()` calls overlap.
+  **WHAT**:
+  1. Created `TurnContext` interface (`claude-agent.ts:48-56`) to track per-turn streaming state
+  2. Removed instance variables `streamedAssistantTextThisTurn` and `streamedReasoningThisTurn` (`claude-agent.ts:368-369`)
+  3. Modified `forwardPromptEvents()` (`claude-agent.ts:779-785`) to create a turn-local context
+  4. Updated `translateMessageToEvents()` (`claude-agent.ts:818`) to accept and pass `TurnContext`
+  5. Updated `mapBlocksToTimeline()` (`claude-agent.ts:1122-1132`) to use `turnContext` for flag tracking
+  6. Updated `mapPartialEvent()` (`claude-agent.ts:1373`) to pass `turnContext` through
 
-  **The Bug** (3 factors):
-  1. **Fire-and-forget async** (`claude-agent.ts:480`): `this.forwardPromptEvents(...).catch(...)` NOT awaited
-  2. **Shared mutable state** (`claude-agent.ts:368-369`): `streamedAssistantTextThisTurn` and `streamedReasoningThisTurn` are instance variables
-  3. **Flag corruption**: Turn 2 resets flags (line 769-770) while Turn 1 is still reading them (line 824-825)
+  **ALSO FIXED**:
+  - `session.ts:341-385`: `interruptAgentIfRunning()` now waits for agent to become fully idle (not just cancelled) before starting new run - mirrors fix from MCP handler
 
-  **Why E2E Tests Pass**: Sequential messages, each awaited. App/agent-control sends rapid overlapping messages.
+  **TEST**:
+  - Added E2E test `daemon.e2e.test.ts:2030-2233` "interrupting message should produce coherent text"
+  - Test sends message 1 (500 word essay), immediately interrupts with message 2 ("Hello world")
+  - Before fix: Test failed - message 2 got message 1's response due to flag corruption
+  - After fix: Test passes - message 2 correctly responds with "Hello world from interrupted message"
 
-  **TDD REQUIREMENTS**:
-  1. **TEST FIRST**: Write E2E test in `daemon.e2e.test.ts`:
-     - Create Claude agent
-     - Send message 1 (long prompt like "Write a 500 word essay")
-     - IMMEDIATELY send message 2 WITHOUT waiting for message 1 (this should interrupt)
-     - Capture `assistant_message` chunks from message 2
-     - Assert: chunks are coherent, no garbled/missing text
-     - This test MUST FAIL before the fix
-  2. **FIX**: Move flags from instance vars to local vars in `forwardPromptEvents()`:
-     - Delete lines 368-369 (instance vars)
-     - Add local vars at start of `forwardPromptEvents()` (line ~769)
-     - Pass flags through to suppression logic (line 824-825)
-  3. **VERIFY**: Test passes, typecheck passes, manual verification in app
+  **VERIFICATION**:
+  - `npm run typecheck` passes
+  - All 29 daemon E2E tests pass
+  - Race condition E2E test specifically validates interrupt handling
 
-  **Files**: `packages/server/src/server/agent/providers/claude-agent.ts:368-369, 480, 769-770, 824-825, 1123, 1138, 1149`
+- [ ] **FIX (App)**: Complete new agent page (`/agent/new`) - fix bugs, add missing features, test with Playwright.
+
+  **Context**: New agent page replaced old modal but left incomplete. Critical bugs and missing features.
+
+  **CRITICAL BUGS** (from `REPORT-new-agent-page-review.md`):
+  1. Image attachments silently fail (`new.tsx:216-218`) - remove early return, wire images to createAgent
+  2. Creation failures silently ignored (`new.tsx:269-271`) - add error display
+  3. No error/loading states - add errorMessage and isLoading states
+
+  **MISSING FEATURES**:
+  - Git Options Section (~200 lines in old modal): base branch, new branch, worktree
+  - Daemon offline error handling
+
+  **CLEANUP**:
+  - Remove dead `CreateAgentModal` code from `home-footer.tsx` (lines 25, 206-209)
+
+  **TDD WITH PLAYWRIGHT**:
+  1. Write Playwright tests FIRST in `packages/app/e2e/` that verify:
+     - Agent creation with text prompt works
+     - Agent creation with image attachment works
+     - Error message shows when creation fails
+     - Loading state disables button during creation
+     - Git options appear for git directory
+  2. Run tests - should FAIL initially
+  3. Fix bugs and add features
+  4. Run tests - should PASS
+  5. Compare with `create-agent-modal.tsx` for feature parity
+
+  **Files**:
+  - `packages/app/src/app/agent/new.tsx` - Fix this
+  - `packages/app/src/components/create-agent-modal.tsx` - Reference
+  - `packages/app/src/components/home-footer.tsx` - Dead code cleanup
 
 - [x] **BUG (MCP)**: `send_agent_prompt` errors when agent already running.
   - **Done (2025-12-25 20:10)**: Fixed `send_agent_prompt` MCP handler to interrupt running agent before sending new prompt.
