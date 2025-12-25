@@ -364,6 +364,32 @@ export class DaemonClient {
   }
 
   // ============================================================================
+  // Git Operations
+  // ============================================================================
+
+  async getGitDiff(
+    agentId: string
+  ): Promise<{ diff: string; error: string | null }> {
+    const startPosition = this.messageQueue.length;
+
+    this.send({ type: "git_diff_request", agentId });
+
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "git_diff_response" &&
+          msg.payload.agentId === agentId
+        ) {
+          return { diff: msg.payload.diff, error: msg.payload.error };
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  // ============================================================================
   // Permissions
   // ============================================================================
 

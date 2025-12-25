@@ -1174,7 +1174,7 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
 
   - **Done (2025-12-25 18:06)**: WHAT: Created shared `useTempClaudeConfigDir()` helper in `test-utils/claude-config.ts:22-49`, exported from `test-utils/index.ts:14`. Updated `daemon.e2e.test.ts:904-915` to add beforeAll/afterAll hooks using this helper and removed `.skip` from `describe("permission flow: Claude")`. Refactored `claude-agent.test.ts:19` to import shared helper and removed duplicate local implementation. RESULT: Both daemon Claude permission tests now pass. EVIDENCE: `npx vitest run --testNamePattern="permission flow: Claude"` shows: ✓ approves permission and executes command (8424ms), ✓ denies permission and prevents execution (7945ms). Direct `claude-agent.test.ts` permission tests also pass (4 tests). Typecheck passes.
 
-- [ ] **Implement**: Add `getGitDiff()` to DaemonClient + E2E test.
+- [x] **Implement**: Add `getGitDiff()` to DaemonClient + E2E test.
 
   **Context**: App calls `git_diff_request` to get file diffs. DaemonClient doesn't support this yet.
 
@@ -1186,6 +1186,8 @@ Goal: Expand DaemonClient to cover all daemon WebSocket capabilities so the app 
   **Acceptance criteria**:
   - Method returns diff content
   - E2E test passes
+
+  - **Done (2025-12-25 19:33)**: WHAT: Added `getGitDiff(agentId: string)` method to `packages/server/src/server/test-utils/daemon-client.ts:370-390`. Added 3 E2E tests in `packages/server/src/server/daemon.e2e.test.ts:1102-1217`: (1) "returns diff for modified file in git repo" - creates temp git repo, commits file, modifies it, verifies diff contains expected content; (2) "returns empty diff when no changes" - creates clean repo, verifies empty diff; (3) "returns error for non-git directory" - verifies error message for non-git cwd. RESULT: All 3 tests pass. Method returns `{diff: string, error: string | null}` matching the server's `git_diff_response` payload structure. EVIDENCE: `npm run test --workspace=@paseo/server -- daemon.e2e.test.ts -t "getGitDiff"` shows 3 passed (12 skipped).
 
 - [ ] **Implement**: Add `getGitRepoInfo()` to DaemonClient + E2E test.
 
