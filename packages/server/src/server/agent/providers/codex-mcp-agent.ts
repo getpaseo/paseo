@@ -2596,11 +2596,9 @@ class CodexMcpAgentSession implements AgentSession {
     this.currentAbortController = abortController;
 
     const promptText = toPromptText(prompt);
-    this.emitEvent({
-      type: "timeline",
-      provider: CODEX_PROVIDER,
-      item: { type: "user_message", text: promptText },
-    });
+    // NOTE: user_message is NOT emitted here because the agent-manager's
+    // recordUserMessage() already handles emitting the user message timeline
+    // event before calling stream(). Emitting here would cause duplicates.
 
     void this.forwardPrompt(promptText, options, abortController.signal).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
