@@ -372,15 +372,28 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - `packages/app/src/app/agent/new.tsx` (+371 lines)
   - `packages/app/src/components/agent-form/agent-form-dropdowns.tsx` (+290 lines)
 
-- [ ] **BUG (App)**: Agent shows "requires attention" even when user was viewing it when it finished.
+- [x] **BUG (App)**: Agent shows "requires attention" even when user was viewing it when it finished.
+  - **Done (2025-12-25 22:55)**: Fixed by auto-clearing attention when agent finishes while user is viewing.
 
-  **Problem**: If user is actively viewing an agent screen when the agent finishes running, pressing back shows the agent as "requires attention" / finished notification. This is wrong - the user was already looking at the agent, they don't need to be notified.
+  **WHAT**:
+  1. Added `previousStatusRef` ref to track previous agent status (`[agentId].tsx:420`)
+  2. Added `useEffect` that watches `agent.status` changes (`[agentId].tsx:423-437`)
+  3. When status transitions from "running" to "idle", calls `ws.clearAgentAttention(resolvedAgentId)`
 
-  **Expected**: If user is on the agent screen when it transitions to idle/finished, that should clear the "requires attention" state since they witnessed it.
+  **ROOT CAUSE**:
+  - Server sets `requiresAttention: true` when agent transitions running→idle (`agent-manager.ts:937-945`)
+  - This happened regardless of whether user was viewing the agent
+  - The `clearAgentAttention` was only called when user clicked on agent from list (`agent-list.tsx:50`)
 
-  **Investigate**:
-  1. Find where "requires attention" state is set (likely on agent lifecycle change to idle)
-  2. Find where it's cleared (likely `clearAgentAttention` call)
-  3. Check if viewing the agent screen should auto-clear attention when agent finishes
-  4. Fix: Either clear attention when agent finishes while user is viewing, or don't set attention if user is already on that agent's screen
+  **FIX LOGIC**:
+  - Track previous status in a ref to detect state transitions
+  - When `agent.status` changes from "running" to "idle" while user is on the agent screen, immediately clear attention
+  - User witnessed the completion, so no notification needed
+
+  **VERIFICATION**:
+  - `npm run typecheck` passes
+  - Code logic matches existing pattern for clearing attention in `agent-list.tsx:50`
+
+  **FILES CHANGED**:
+  - `packages/app/src/app/agent/[serverId]/[agentId].tsx:419-437`
 
