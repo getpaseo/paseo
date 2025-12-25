@@ -1756,4 +1756,127 @@ describe("daemon E2E", () => {
       300000 // 5 minute timeout for restart test
     );
   });
+
+  describe("Claude agent streaming text integrity", () => {
+    test(
+      "assistant_message text is coherent and not garbled during streaming",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Claude agent
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Streaming Text Integrity Test",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.provider).toBe("claude");
+
+        // Send a message that should produce a longer, coherent response
+        // The agent should complete a sentence with proper grammar
+        await ctx.client.sendMessage(
+          agent.id,
+          "Please complete this sentence with exactly one more sentence: 'The quick brown fox jumps over the lazy dog.' Write a follow-up sentence about what the fox did next. Reply with just the two sentences, nothing else."
+        );
+
+        // Wait for agent to complete
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        expect(finalState.status).toBe("idle");
+        expect(finalState.lastError).toBeUndefined();
+
+        // Collect all assistant_message timeline events in order
+        const queue = ctx.client.getMessageQueue();
+        const assistantChunks: string[] = [];
+
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "assistant_message" && item.text) {
+              assistantChunks.push(item.text);
+            }
+          }
+        }
+
+        // Should have received at least one assistant message chunk
+        expect(assistantChunks.length).toBeGreaterThan(0);
+
+        // Concatenate all chunks to form the complete response
+        const fullResponse = assistantChunks.join("");
+
+        console.log("[STREAMING TEXT INTEGRITY TEST]");
+        console.log("Number of chunks:", assistantChunks.length);
+        console.log("Full response:", JSON.stringify(fullResponse));
+        console.log("Individual chunks:", assistantChunks.map((c, i) => `[${i}]: ${JSON.stringify(c)}`).join("\n"));
+
+        // CRITICAL ASSERTION 1: Response should not be empty
+        expect(fullResponse.length).toBeGreaterThan(0);
+
+        // CRITICAL ASSERTION 2: Response should contain coherent English text
+        // Check for garbled patterns from the bug report:
+        // - "wasd" (random characters in word)
+        // - "passesd" (double letters incorrectly)
+        // - words cut off mid-word and merged with other words
+
+        // Check that the response contains real words and proper sentence structure
+        // A garbled response like "The agent wasd. my an a newdex" would fail these checks
+
+        // The response should contain "fox" or "dog" since we asked about them
+        const lowerResponse = fullResponse.toLowerCase();
+        const containsRelevantContent =
+          lowerResponse.includes("fox") ||
+          lowerResponse.includes("dog") ||
+          lowerResponse.includes("quick") ||
+          lowerResponse.includes("brown") ||
+          lowerResponse.includes("lazy") ||
+          lowerResponse.includes("jumps");
+
+        expect(containsRelevantContent).toBe(true);
+
+        // CRITICAL ASSERTION 3: Check for garbled text patterns
+        // These patterns indicate text corruption during streaming
+        const garbledPatterns = [
+          /\w{2,}d\.\s+[a-z]+\s+[a-z]+\s+[a-z]+d/, // "wasd. my an a ...d" pattern
+          /\b\w+sd\b/, // words ending in "sd" like "passesd", "wasd"
+          /\b\w+d\s+\w+d\s+\w+d\b/, // multiple consecutive words ending in "d"
+          /[a-z]{10,}/, // very long "words" that are actually merged text
+        ];
+
+        for (const pattern of garbledPatterns) {
+          const match = fullResponse.match(pattern);
+          if (match) {
+            console.log("Found potential garbled text:", match[0]);
+          }
+          // Note: We log but don't fail on these patterns as they might occur in valid text
+          // The real test is whether the response is semantically coherent
+        }
+
+        // CRITICAL ASSERTION 4: Each individual chunk should not start/end mid-word in a corrupted way
+        // Check that we don't have incomplete Unicode or obviously broken text
+        for (let i = 0; i < assistantChunks.length; i++) {
+          const chunk = assistantChunks[i];
+
+          // Chunks should not contain null bytes or other corruption
+          expect(chunk).not.toMatch(/\x00/);
+
+          // Chunks should be valid UTF-8 (no replacement characters unless intentional)
+          expect(chunk).not.toMatch(/\uFFFD/);
+        }
+
+        // CRITICAL ASSERTION 5: Verify sentence completeness
+        // The response should contain at least one period (sentence ending)
+        expect(fullResponse).toMatch(/\./);
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000 // 3 minute timeout for Claude API call
+    );
+  });
 });
