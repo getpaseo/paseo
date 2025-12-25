@@ -402,7 +402,7 @@ function getConversationIdFromMetadata(metadata: unknown): string | undefined {
 
 describe("CodexMcpAgentClient (MCP integration)", () => {
   test(
-    "emits exactly one user_message and one assistant_message per turn",
+    "provider does not emit user_message (agent-manager handles that), emits exactly one assistant_message",
     async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
@@ -422,7 +422,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       try {
         session = await client.createSession(config);
 
-        // Simple prompt that should result in exactly one user message and one assistant message
+        // Simple prompt that should result in exactly one assistant message
+        // NOTE: user_message is NOT emitted by the provider - that's the agent-manager's job
         const prompt = "Say hello";
 
         for await (const event of session.stream(prompt)) {
@@ -440,10 +441,9 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           }
         }
 
-        // CRITICAL: There should be exactly ONE user_message event
-        expect(userMessages.length).toBe(1);
-        expect(userMessages[0].type).toBe("user_message");
-        expect(userMessages[0].text).toBe(prompt);
+        // Provider should NOT emit user_message - that's handled by agent-manager.recordUserMessage()
+        // This prevents duplicate user messages when running through the full stack.
+        expect(userMessages.length).toBe(0);
 
         // CRITICAL: There should be exactly ONE assistant_message event (not duplicated)
         expect(assistantMessages.length).toBe(1);
