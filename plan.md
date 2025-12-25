@@ -718,7 +718,23 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - If new issues found, add fix tasks and repeat
   - **Done (2025-12-25 13:10)**: WHAT: updated task status and recorded verification results in `plan.md:719`. RESULT: `npm run typecheck --workspace=@paseo/server` succeeded with no errors; `npm run test --workspace=@paseo/server` reported a deprecated Codex SDK failure (`expected undefined to be truthy` at `packages/server/src/server/agent/providers/codex-agent.test.ts:498`) plus the skipped permission test in the same file, and the run was interrupted after 227s while `codex-mcp-agent.test.ts` was still executing (stalled at the third test "maps thread/item events for file changes, MCP tools, web search, and todo lists" at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:532`, then progressed to the fourth test "captures tool call inputs/outputs..." at `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:682` with no additional failure output). EVIDENCE: `npm run typecheck --workspace=@paseo/server` (exit 0) and `npm run test --workspace=@paseo/server` output showing the failure summary + `codex-mcp-agent.test.ts 4/13` progress before interrupt.
 
-- [ ] **Wire up**: Replace old Codex SDK provider with Codex MCP provider.
+- [ ] **Fix**: 3 remaining Codex MCP test failures (10/13 pass, 3 fail).
+
+  Run `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts` to see failures:
+
+  1. `captures tool call inputs/outputs` - expected '' to contain 'tool-create.txt'
+     - File change output is empty - need to capture file path in output
+
+  2. `emits error timeline item` - expected 0 to be greater than 0
+     - No error timeline items emitted on failed turns
+
+  3. `persists session metadata and resumes` - conversation ID mismatch
+     - '019b541c-bc73-...' to be '019b541c-a9e8-...'
+     - Resume creates new conversation instead of reusing
+
+  Fix each one. Run individual tests with `-t "test name"` to verify.
+
+- [x] **Wire up**: Replace old Codex SDK provider with Codex MCP provider.
 
   - Change the `"codex"` provider ID to use `codex-mcp-agent.ts` instead of `codex-agent.ts`
   - Find where providers are registered/loaded (likely `agent-manager.ts` or similar)
@@ -726,3 +742,4 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Keep `"codex-mcp"` as an alias if needed for backwards compatibility
   - Remove or deprecate the old `codex-agent.ts` import
   - This allows testing the new MCP provider in the app with the existing "codex" provider name
+  - **Done (2025-12-25 14:21)**: WHAT: swapped Codex client wiring to MCP by importing `CodexMcpAgentClient` and registering it for `codex` and `codex-mcp` in `packages/server/src/server/bootstrap.ts:15` and `packages/server/src/server/bootstrap.ts:133`. RESULT: the app now instantiates Codex MCP for the default `"codex"` provider while keeping the `"codex-mcp"` alias. EVIDENCE: `sed -n '1,220p' packages/server/src/server/bootstrap.ts`.

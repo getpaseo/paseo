@@ -12,7 +12,7 @@ import { listConversations, deleteConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
-import { CodexAgentClient } from "./agent/providers/codex-agent.js";
+import { CodexMcpAgentClient } from "./agent/providers/codex-mcp-agent.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -130,7 +130,8 @@ export async function createPaseoDaemon(
   const agentManager = new AgentManager({
     clients: {
       claude: new ClaudeAgentClient(),
-      codex: new CodexAgentClient(),
+      codex: new CodexMcpAgentClient(),
+      "codex-mcp": new CodexMcpAgentClient(),
       ...config.agentClients,
     },
     registry: agentRegistry,
