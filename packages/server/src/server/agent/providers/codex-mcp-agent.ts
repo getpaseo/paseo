@@ -2395,7 +2395,14 @@ class CodexMcpAgentSession implements AgentSession {
         const parsed = SessionIdentifiersSchema.parse(metadata);
         if (parsed.conversationId) {
           this.conversationId = parsed.conversationId;
-          this.lockConversationId = true;
+        }
+      }
+      // Always lock conversation ID on resume to preserve the original
+      // Even if metadata didn't have conversationId, we'll use sessionId as fallback
+      if (this.sessionId) {
+        this.lockConversationId = true;
+        if (!this.conversationId) {
+          this.conversationId = this.sessionId;
         }
       }
       const history = this.sessionId ? SESSION_HISTORY.get(this.sessionId) : undefined;
@@ -3304,6 +3311,7 @@ class CodexMcpAgentSession implements AgentSession {
             callId,
             displayName: buildFileChangeSummary(summaryFiles),
             kind: "edit",
+            input: { files: summaryFiles },
             output,
           }),
         });
@@ -3529,6 +3537,7 @@ class CodexMcpAgentSession implements AgentSession {
         callId: item.callId,
         displayName: buildFileChangeSummary(summaryFiles),
         kind: "edit",
+        input: { files: summaryFiles },
         output: { files: changes },
       });
     }
