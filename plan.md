@@ -292,7 +292,47 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   | P2 | Git Options Section | ~200 lines |
 
   **FOLLOW-UP TASKS NEEDED**:
-  - [ ] **FIX (App)**: New agent page - fix image attachments (remove early return, wire images to createAgent)
-  - [ ] **FIX (App)**: New agent page - add error/loading states and failure display
-  - [ ] **FEATURE (App)**: New agent page - add Git Options Section
-  - [ ] **CLEANUP (App)**: Remove dead CreateAgentModal code from home-footer.tsx
+- [x] **REVIEW (App)**: Deep comparison of new agent page vs old modal - produce specific fix tasks.
+  - **Done (2025-12-25 23:59)**: Completed deep comparison. See `REPORT-new-agent-page-deep-comparison.md` for full analysis.
+
+  **FINDINGS**:
+  1. **Loading state**: Has `isLoading` state but NO visual feedback (no spinner, button doesn't change)
+  2. **Input area styling**: ✅ MATCHES - Both use same `AgentInputArea` component, verified with Playwright screenshots
+  3. **Git options**: ❌ MISSING - Entire Git section (~200 lines) absent: base branch, new branch, worktree
+  4. **Error handling**: ✅ FIXED - Validates all inputs, shows creation failures, daemon offline errors
+  5. **Visual parity**: ✅ GOOD - Config rows styled well, input area identical to agent screen
+
+  **PREVIOUS FIXES VERIFIED** (from task above):
+  - Image attachments: Fixed (early return removed, warning logged)
+  - Error/loading states: Fixed (errorMessage state, isLoading state)
+  - Creation failure display: Fixed (setErrorMessage on agent_create_failed)
+  - Dead code cleanup: Fixed (CreateAgentModal removed from home-footer.tsx)
+
+  **FILES REVIEWED**:
+  - `packages/app/src/app/agent/new.tsx:122-123, 228-252, 289-292, 461-472`
+  - `packages/app/src/components/create-agent-modal.tsx:448-454, 1388-1401, 1653-1707, 1936-1993, 2015-2024`
+  - `packages/app/src/app/agent/[serverId]/[agentId].tsx:687-688`
+  - Playwright screenshots: `new-agent-page.png`, `existing-agent-screen.png`
+
+- [ ] **FIX (App)**: New agent page - add visual loading indicator during creation
+  - Location: `new.tsx`
+  - Issue: Has `isLoading` state (line 123) but no visual feedback
+  - Fix: When `isLoading` is true:
+    1. Show `<ActivityIndicator>` in submit button area
+    2. Change submit icon/text to indicate loading
+    3. Disable submit button visually (opacity, non-clickable)
+  - Reference: `create-agent-modal.tsx:2015-2024` for loading button pattern
+
+- [ ] **FEATURE (App)**: New agent page - add Git Options Section
+  - Location: `new.tsx`
+  - Issue: Missing ~200 lines of git configuration from old modal
+  - What's missing:
+    - State: baseBranch, createNewBranch, branchName, createWorktree, worktreeSlug
+    - UI: `GitOptionsSection` component with toggles and inputs
+    - Validation: `gitBlockingError` logic for branch names, dirty directories
+    - Request: `useDaemonRequest` for `git_repo_info_request`
+  - Reference files:
+    - UI: `create-agent-modal.tsx:1936-1993`
+    - Validation: `create-agent-modal.tsx:1653-1707`
+    - State: `create-agent-modal.tsx:448-454`
+    - createAgent call: `create-agent-modal.tsx:1388-1401`
