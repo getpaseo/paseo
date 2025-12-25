@@ -1,0 +1,478 @@
+import WebSocket from "ws";
+import { nanoid } from "nanoid";
+import type {
+  SessionInboundMessage,
+  SessionOutboundMessage,
+  AgentSnapshotPayload,
+  AgentStreamEventPayload,
+  PersistedAgentDescriptorPayload,
+} from "../messages.js";
+import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentPersistenceHandle,
+  AgentProvider,
+} from "../agent/agent-sdk-types.js";
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+export interface DaemonClientConfig {
+  url: string;
+  authHeader?: string;
+}
+
+export interface CreateAgentOptions {
+  provider: AgentProvider;
+  cwd: string;
+  title?: string;
+  model?: string;
+  modeId?: string;
+  initialPrompt?: string;
+  mcpServers?: Record<string, unknown>;
+}
+
+export interface SendMessageOptions {
+  messageId?: string;
+  images?: Array<{ data: string; mimeType: string }>;
+}
+
+// ============================================================================
+// Event Types
+// ============================================================================
+
+export type DaemonEvent =
+  | { type: "agent_state"; agentId: string; payload: AgentSnapshotPayload }
+  | {
+      type: "agent_stream";
+      agentId: string;
+      event: AgentStreamEventPayload;
+      timestamp: string;
+    }
+  | { type: "session_state"; agents: AgentSnapshotPayload[] }
+  | { type: "status"; payload: { status: string } }
+  | { type: "agent_deleted"; agentId: string }
+  | { type: "agent_permission_request"; agentId: string; request: AgentPermissionRequest }
+  | {
+      type: "agent_permission_resolved";
+      agentId: string;
+      requestId: string;
+      resolution: AgentPermissionResponse;
+    }
+  | { type: "error"; message: string };
+
+export type DaemonEventHandler = (event: DaemonEvent) => void;
+
+// ============================================================================
+// DaemonClient
+// ============================================================================
+
+export class DaemonClient {
+  private ws: WebSocket | null = null;
+  private messageQueue: SessionOutboundMessage[] = [];
+  private eventListeners: Set<DaemonEventHandler> = new Set();
+  private messageListeners: Set<() => void> = new Set();
+
+  constructor(private config: DaemonClientConfig) {}
+
+  // ============================================================================
+  // Connection
+  // ============================================================================
+
+  async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const headers: Record<string, string> = {};
+      if (this.config.authHeader) {
+        headers["Authorization"] = this.config.authHeader;
+      }
+
+      this.ws = new WebSocket(this.config.url, { headers });
+
+      const onOpen = (): void => {
+        cleanup();
+        resolve();
+      };
+
+      const onError = (err: Error): void => {
+        cleanup();
+        reject(err);
+      };
+
+      const onMessage = (data: WebSocket.RawData): void => {
+        try {
+          const parsed = JSON.parse(data.toString()) as {
+            type: string;
+            message?: SessionOutboundMessage;
+          };
+          if (parsed.type === "pong") return;
+          if (parsed.type === "session" && parsed.message) {
+            this.handleSessionMessage(parsed.message);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      const cleanup = (): void => {
+        this.ws?.off("open", onOpen);
+        this.ws?.off("error", onError);
+      };
+
+      this.ws.on("open", onOpen);
+      this.ws.on("error", onError);
+      this.ws.on("message", onMessage);
+    });
+  }
+
+  async close(): Promise<void> {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.messageQueue = [];
+    this.eventListeners.clear();
+    this.messageListeners.clear();
+  }
+
+  // ============================================================================
+  // Agent Lifecycle
+  // ============================================================================
+
+  async createAgent(options: CreateAgentOptions): Promise<AgentSnapshotPayload> {
+    const requestId = nanoid();
+    this.send({
+      type: "create_agent_request",
+      requestId,
+      config: {
+        provider: options.provider,
+        cwd: options.cwd,
+        title: options.title,
+        model: options.model,
+        modeId: options.modeId,
+        mcpServers: options.mcpServers,
+      },
+      initialPrompt: options.initialPrompt,
+    });
+
+    // First get the agent ID from the initial state
+    let agentId: string | null = null;
+    await this.waitFor((msg) => {
+      if (msg.type === "agent_state") {
+        agentId = msg.payload.id;
+        return msg.payload;
+      }
+      return null;
+    }, 10000);
+
+    if (!agentId) {
+      throw new Error("Failed to get agent ID from create response");
+    }
+
+    // Wait for the agent to be idle
+    return this.waitFor((msg) => {
+      if (
+        msg.type === "agent_state" &&
+        msg.payload.id === agentId &&
+        msg.payload.status === "idle"
+      ) {
+        return msg.payload;
+      }
+      return null;
+    }, 60000); // 60 second timeout for initialization
+  }
+
+  async deleteAgent(agentId: string): Promise<void> {
+    this.send({ type: "delete_agent_request", agentId });
+    await this.waitFor((msg) => {
+      if (msg.type === "agent_deleted" && msg.payload.agentId === agentId) {
+        return true;
+      }
+      return null;
+    });
+  }
+
+  async listAgents(): Promise<AgentSnapshotPayload[]> {
+    // session_state is sent on connection, or we can wait for it
+    return this.waitFor((msg) => {
+      if (msg.type === "session_state") {
+        return msg.payload.agents;
+      }
+      return null;
+    });
+  }
+
+  async listPersistedAgents(): Promise<PersistedAgentDescriptorPayload[]> {
+    this.send({ type: "list_persisted_agents_request" });
+    return this.waitFor((msg) => {
+      if (msg.type === "list_persisted_agents_response") {
+        return msg.payload.items;
+      }
+      return null;
+    });
+  }
+
+  async resumeAgent(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<CreateAgentOptions>
+  ): Promise<AgentSnapshotPayload> {
+    const requestId = nanoid();
+    this.send({
+      type: "resume_agent_request",
+      requestId,
+      handle,
+      overrides: overrides as Record<string, unknown>,
+    });
+
+    return this.waitFor((msg) => {
+      if (msg.type === "agent_state") {
+        return msg.payload;
+      }
+      return null;
+    });
+  }
+
+  // ============================================================================
+  // Agent Interaction
+  // ============================================================================
+
+  async sendMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions
+  ): Promise<void> {
+    this.send({
+      type: "send_agent_message",
+      agentId,
+      text,
+      messageId: options?.messageId,
+      images: options?.images,
+    });
+  }
+
+  async cancelAgent(agentId: string): Promise<void> {
+    this.send({ type: "cancel_agent_request", agentId });
+  }
+
+  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+    this.send({ type: "set_agent_mode", agentId, modeId });
+  }
+
+  // ============================================================================
+  // Permissions
+  // ============================================================================
+
+  async respondToPermission(
+    agentId: string,
+    requestId: string,
+    response: AgentPermissionResponse
+  ): Promise<void> {
+    this.send({
+      type: "agent_permission_response",
+      agentId,
+      requestId,
+      response,
+    });
+  }
+
+  // ============================================================================
+  // Waiting / Streaming
+  // ============================================================================
+
+  async waitForAgentIdle(
+    agentId: string,
+    timeout = 60000
+  ): Promise<AgentSnapshotPayload> {
+    // Record the current queue position so we only check messages from NOW
+    const startPosition = this.messageQueue.length;
+
+    // First, wait for the agent to go to "running" state (or already be running)
+    // This ensures we don't return on an old "idle" state from before the message
+    let sawRunning = false;
+
+    return this.waitFor(
+      (msg) => {
+        if (msg.type === "agent_state" && msg.payload.id === agentId) {
+          const status = msg.payload.status;
+          if (status === "running") {
+            sawRunning = true;
+          }
+          // Only return idle/error AFTER we've seen running
+          if (sawRunning && (status === "idle" || status === "error")) {
+            return msg.payload;
+          }
+        }
+        return null;
+      },
+      timeout,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  async waitForPermission(
+    agentId: string,
+    timeout = 30000
+  ): Promise<AgentPermissionRequest> {
+    return this.waitFor((msg) => {
+      // Check direct permission request message
+      if (
+        msg.type === "agent_permission_request" &&
+        msg.payload.agentId === agentId
+      ) {
+        return msg.payload.request;
+      }
+      // Check stream event
+      if (msg.type === "agent_stream" && msg.payload.agentId === agentId) {
+        if (msg.payload.event.type === "permission_requested") {
+          return msg.payload.event.request;
+        }
+      }
+      return null;
+    }, timeout);
+  }
+
+  // ============================================================================
+  // Event Subscription
+  // ============================================================================
+
+  on(handler: DaemonEventHandler): () => void {
+    this.eventListeners.add(handler);
+    return () => this.eventListeners.delete(handler);
+  }
+
+  // ============================================================================
+  // Internals
+  // ============================================================================
+
+  private send(message: SessionInboundMessage): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocket not connected");
+    }
+    this.ws.send(JSON.stringify({ type: "session", message }));
+  }
+
+  private handleSessionMessage(msg: SessionOutboundMessage): void {
+    this.messageQueue.push(msg);
+
+    // Notify message listeners (for waitFor) - just signal, they'll check the queue
+    for (const listener of this.messageListeners) {
+      listener();
+    }
+
+    // Notify event listeners
+    const event = this.toEvent(msg);
+    if (event) {
+      for (const handler of this.eventListeners) {
+        handler(event);
+      }
+    }
+  }
+
+  private toEvent(msg: SessionOutboundMessage): DaemonEvent | null {
+    switch (msg.type) {
+      case "agent_state":
+        return {
+          type: "agent_state",
+          agentId: msg.payload.id,
+          payload: msg.payload,
+        };
+      case "agent_stream":
+        return {
+          type: "agent_stream",
+          agentId: msg.payload.agentId,
+          event: msg.payload.event,
+          timestamp: msg.payload.timestamp,
+        };
+      case "session_state":
+        return { type: "session_state", agents: msg.payload.agents };
+      case "status":
+        return { type: "status", payload: msg.payload };
+      case "agent_deleted":
+        return { type: "agent_deleted", agentId: msg.payload.agentId };
+      case "agent_permission_request":
+        return {
+          type: "agent_permission_request",
+          agentId: msg.payload.agentId,
+          request: msg.payload.request,
+        };
+      case "agent_permission_resolved":
+        return {
+          type: "agent_permission_resolved",
+          agentId: msg.payload.agentId,
+          requestId: msg.payload.requestId,
+          resolution: msg.payload.resolution,
+        };
+      default:
+        return null;
+    }
+  }
+
+  private async waitFor<T>(
+    predicate: (msg: SessionOutboundMessage) => T | null,
+    timeout = 30000,
+    options?: { skipQueue?: boolean; skipQueueBefore?: number }
+  ): Promise<T> {
+    // Record the starting queue length so we can track new messages
+    const startQueueLength = options?.skipQueueBefore ?? this.messageQueue.length;
+
+    // Check queued messages first (unless skipped or with position offset)
+    if (!options?.skipQueue && options?.skipQueueBefore === undefined) {
+      for (const msg of this.messageQueue) {
+        const result = predicate(msg);
+        if (result !== null) return result;
+      }
+    }
+
+    // Wait for new messages only
+    return new Promise((resolve, reject) => {
+      // Track which messages we've already checked
+      let checkedCount = startQueueLength;
+
+      const checkNewMessages = (): boolean => {
+        // Check any messages added since we last checked
+        while (checkedCount < this.messageQueue.length) {
+          const msg = this.messageQueue[checkedCount];
+          checkedCount++;
+          const result = predicate(msg);
+          if (result !== null) {
+            cleanup();
+            resolve(result);
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const listener = (): void => {
+        checkNewMessages();
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timeout waiting for message (${timeout}ms)`));
+      }, timeout);
+
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.messageListeners.delete(listener);
+      };
+
+      this.messageListeners.add(listener);
+
+      // Check any messages that arrived between startQueueLength and now
+      checkNewMessages();
+    });
+  }
+
+  // ============================================================================
+  // Debug / Utilities
+  // ============================================================================
+
+  getMessageQueue(): readonly SessionOutboundMessage[] {
+    return this.messageQueue;
+  }
+
+  clearMessageQueue(): void {
+    this.messageQueue = [];
+  }
+}
