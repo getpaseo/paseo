@@ -735,6 +735,46 @@ const PatchApplyEndEventSchema = z
     stderr: data.stderr,
   }));
 
+const McpToolCallInvocationSchema = z
+  .object({
+    server: z.string(),
+    tool: z.string(),
+    arguments: z.unknown().optional(),
+  })
+  .passthrough();
+
+const McpToolCallBeginEventSchema = z
+  .object({
+    type: z.literal("mcp_tool_call_begin"),
+    call_id: CallIdSchema,
+    invocation: McpToolCallInvocationSchema,
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: data.call_id,
+    server: data.invocation.server,
+    tool: data.invocation.tool,
+    input: data.invocation.arguments,
+  }));
+
+const McpToolCallEndEventSchema = z
+  .object({
+    type: z.literal("mcp_tool_call_end"),
+    call_id: CallIdSchema,
+    invocation: McpToolCallInvocationSchema,
+    result: z.unknown().optional(),
+  })
+  .passthrough()
+  .transform((data) => ({
+    type: data.type,
+    callId: data.call_id,
+    server: data.invocation.server,
+    tool: data.invocation.tool,
+    input: data.invocation.arguments,
+    result: data.result,
+  }));
+
 const AgentMessageEventSchema = z
   .object({
     type: z.literal("agent_message"),
@@ -1667,6 +1707,8 @@ const CodexEventSchema = z.union([
   ExecCommandEndEventSchema,
   PatchApplyBeginEventSchema,
   PatchApplyEndEventSchema,
+  McpToolCallBeginEventSchema,
+  McpToolCallEndEventSchema,
   ThreadStartedEventSchema,
   TurnStartedEventSchema,
   TurnCompletedEventSchema,
@@ -1876,6 +1918,10 @@ function normalizeStructuredPayload(value: unknown): unknown {
   }
 }
 
+function isKeyedObject(value: unknown): value is { [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
+}
+
 function normalizeToolName(toolName: string): string {
   if (!toolName.startsWith("mcp__")) {
     return toolName;
@@ -1887,6 +1933,44 @@ function normalizeToolName(toolName: string): string {
   const serverName = parts[1];
   const toolParts = parts.slice(2);
   return `${serverName}.${toolParts.join("__")}`;
+}
+
+function extractMcpToolResultPayload(result: unknown): {
+  output: unknown;
+  success: boolean;
+} {
+  let success = true;
+  let payload = result;
+
+  if (isKeyedObject(result)) {
+    if ("Ok" in result) {
+      payload = result.Ok;
+      success = true;
+    } else if ("ok" in result) {
+      payload = result.ok;
+      success = true;
+    } else if ("Err" in result) {
+      payload = result.Err;
+      success = false;
+    } else if ("err" in result) {
+      payload = result.err;
+      success = false;
+    }
+  }
+
+  if (isKeyedObject(payload)) {
+    if ("structuredContent" in payload && payload.structuredContent !== undefined) {
+      return { output: payload.structuredContent, success };
+    }
+    if ("structured_content" in payload && payload.structured_content !== undefined) {
+      return { output: payload.structured_content, success };
+    }
+    if ("content" in payload && payload.content !== undefined) {
+      return { output: payload.content, success };
+    }
+  }
+
+  return { output: payload, success };
 }
 
 function extractWebSearchQuery(
@@ -3188,6 +3272,46 @@ class CodexMcpAgentSession implements AgentSession {
         if (!parsedEvent.success) {
           this.turnState && (this.turnState.sawError = true);
         }
+        return;
+      }
+      case "mcp_tool_call_begin": {
+        const input = normalizeStructuredPayload(parsedEvent.input);
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: createToolCallTimelineItem({
+            server: parsedEvent.server,
+            tool: parsedEvent.tool,
+            status: "running",
+            callId: parsedEvent.callId,
+            displayName: `${parsedEvent.server}.${parsedEvent.tool}`,
+            kind: "tool",
+            input,
+          }),
+        });
+        return;
+      }
+      case "mcp_tool_call_end": {
+        const input = normalizeStructuredPayload(parsedEvent.input);
+        const { output, success } = extractMcpToolResultPayload(parsedEvent.result);
+        const normalizedOutput = normalizeStructuredPayload(output);
+        if (!success) {
+          this.turnState && (this.turnState.sawError = true);
+        }
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: createToolCallTimelineItem({
+            server: parsedEvent.server,
+            tool: parsedEvent.tool,
+            status: success ? "completed" : "failed",
+            callId: parsedEvent.callId,
+            displayName: `${parsedEvent.server}.${parsedEvent.tool}`,
+            kind: "tool",
+            input,
+            output: normalizedOutput,
+          }),
+        });
         return;
       }
     }
