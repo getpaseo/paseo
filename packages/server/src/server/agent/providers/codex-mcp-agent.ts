@@ -3191,20 +3191,13 @@ class CodexMcpAgentSession implements AgentSession {
       case "error":
         this.handleThreadEvent(parsedEvent);
         return;
+      // NOTE: agent_message and agent_reasoning events are handled via item.completed
+      // events in handleThreadEvent. We skip them here to avoid duplicate emissions.
+      // The item.completed path provides the complete text after all deltas are received.
       case "agent_message":
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: { type: "assistant_message", text: parsedEvent.text },
-        });
-        return;
       case "agent_reasoning":
       case "agent_reasoning_delta":
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: { type: "reasoning", text: parsedEvent.text },
-        });
+        // Skip - handled via item.completed in handleThreadEvent
         return;
       case "task_started":
         this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
@@ -3618,14 +3611,24 @@ class CodexMcpAgentSession implements AgentSession {
     item: ThreadItem,
     eventType?: "item.started" | "item.updated" | "item.completed"
   ): AgentTimelineItem | null {
+    // IMPORTANT: user_message is emitted directly in stream() at turn start.
+    // Skip user_message items from Codex MCP events to avoid duplicates.
+    if (isThreadItemType(item, "user_message")) {
+      return null;
+    }
+    // For agent_message and reasoning, only emit on item.completed to avoid duplicates.
+    // Codex MCP sends item.started, item.updated, and item.completed for these.
     if (isThreadItemType(item, "agent_message")) {
+      if (eventType && eventType !== "item.completed") {
+        return null;
+      }
       return { type: "assistant_message", text: item.text };
     }
     if (isThreadItemType(item, "reasoning")) {
+      if (eventType && eventType !== "item.completed") {
+        return null;
+      }
       return { type: "reasoning", text: item.text };
-    }
-    if (isThreadItemType(item, "user_message")) {
-      return { type: "user_message", text: item.text };
     }
     if (isThreadItemType(item, "command_execution")) {
       const command = normalizeCommand(item.command);

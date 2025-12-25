@@ -862,3 +862,40 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   - Typecheck passes
   - Tests pass
   - **Done (2025-12-25 15:46)**: WHAT: Removed `"codex-mcp"` registration from `packages/server/src/server/bootstrap.ts:134`, removed from `AgentProvider` type in `packages/server/src/server/agent/agent-sdk-types.ts:3`, removed provider definition from `packages/server/src/server/agent/provider-manifest.ts:71-78`, removed conditional from `packages/server/src/server/agent/model-catalog.ts:36`, removed conditional from `packages/server/src/server/agent/providers/claude-agent.ts:183`, updated `CODEX_PROVIDER` constant to `"codex"` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:63`, and replaced all `provider: "codex-mcp"` occurrences with `provider: CODEX_PROVIDER` in same file, updated all test assertions in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts` to expect `"codex"` instead of `"codex-mcp"`. RESULT: Only ONE Codex provider exists with ID `"codex"`, no duplicate "Codex MCP" option in UI. EVIDENCE: `rg '"codex-mcp"' packages/` (no matches), `npm run typecheck --workspace=@paseo/server` (exit 0).
+
+- [x] **BUG**: Codex provider shows quadrupled user messages and duplicated agent messages.
+
+  **Symptom**: When sending "hello" to Codex provider:
+  - User message "hello" appears 4 times
+  - Agent response appears 2 times (concatenated: "Hi! What can I help with...Hi! What can I help with...")
+
+  **CRITICAL: Write a FAILING TEST FIRST. No ad-hoc fixes.**
+
+  This bug proves our test coverage is inadequate. The fix must:
+
+  1. **First**: Write a test in `codex-mcp-agent.test.ts` that:
+     - Sends a simple message to the Codex provider
+     - Collects ALL emitted events (user_message, agent_message, etc.)
+     - Asserts: exactly ONE user_message event
+     - Asserts: exactly ONE agent_message event (or text_delta events that concatenate to ONE message)
+     - This test MUST FAIL with current code
+
+  2. **Second**: Investigate the root cause:
+     - Why are events being emitted multiple times?
+     - Is it in event handlers? In the MCP client? In message processing?
+     - Add debug logging to trace where duplication occurs
+
+  3. **Third**: Fix the root cause (not symptoms)
+
+  4. **Fourth**: Verify the test passes
+
+  **DO NOT**:
+  - Add deduplication logic (that hides the bug)
+  - Skip the test
+  - Fix without understanding why
+
+  **Acceptance criteria**:
+  - New test exists that would have caught this bug
+  - Test passes after fix
+  - No duplicate messages in UI
+  - **Done (2025-12-25 15:58)**: WHAT: (1) Added test "emits exactly one user_message and one assistant_message per turn" in `packages/server/src/server/agent/providers/codex-mcp-agent.test.ts:404-483` that verifies exactly 1 user_message and 1 assistant_message per turn. (2) Fixed `threadItemToTimeline` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3621-3639` to skip `user_message` items (since we emit directly in stream()) and only emit `agent_message`/`reasoning` on `item.completed` (not on item.started/item.updated). (3) Fixed `handleMcpEvent` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:3194-3201` to skip `agent_message`, `agent_reasoning`, and `agent_reasoning_delta` events since they're now handled via `item.completed` path to avoid duplicates. ROOT CAUSE: Codex MCP sends BOTH direct events (agent_message, agent_reasoning_delta) AND item events (item.started, item.updated, item.completed) for the same message. User messages were emitted once by us in stream() AND again 3 times from Codex MCP's item.started/updated/completed events. Agent messages were emitted from both the agent_message direct event AND the item.completed event. RESULT: All 14 Codex MCP tests pass; typecheck passes. EVIDENCE: `npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts` (14 passed, 0 failed).

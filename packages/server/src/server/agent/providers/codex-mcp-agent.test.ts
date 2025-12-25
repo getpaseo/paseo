@@ -402,6 +402,74 @@ function getConversationIdFromMetadata(metadata: unknown): string | undefined {
 
 describe("CodexMcpAgentClient (MCP integration)", () => {
   test(
+    "emits exactly one user_message and one assistant_message per turn",
+    async () => {
+      const cwd = tmpCwd();
+      const restoreSessionDir = useTempCodexSessionDir();
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const config = {
+        provider: "codex",
+        cwd,
+        modeId: "full-access",
+      } satisfies AgentSessionConfig;
+
+      let session: AgentSession | null = null;
+      const userMessages: AgentTimelineItem[] = [];
+      const assistantMessages: AgentTimelineItem[] = [];
+      const allEvents: AgentStreamEvent[] = [];
+
+      try {
+        session = await client.createSession(config);
+
+        // Simple prompt that should result in exactly one user message and one assistant message
+        const prompt = "Say hello";
+
+        for await (const event of session.stream(prompt)) {
+          allEvents.push(event);
+          if (event.type === "timeline" && providerFromEvent(event) === "codex") {
+            if (event.item.type === "user_message") {
+              userMessages.push(event.item);
+            }
+            if (event.item.type === "assistant_message") {
+              assistantMessages.push(event.item);
+            }
+          }
+          if (event.type === "turn_completed" || event.type === "turn_failed") {
+            break;
+          }
+        }
+
+        // CRITICAL: There should be exactly ONE user_message event
+        expect(userMessages.length).toBe(1);
+        expect(userMessages[0].type).toBe("user_message");
+        expect(userMessages[0].text).toBe(prompt);
+
+        // CRITICAL: There should be exactly ONE assistant_message event (not duplicated)
+        expect(assistantMessages.length).toBe(1);
+        expect(assistantMessages[0].type).toBe("assistant_message");
+        expect(typeof assistantMessages[0].text).toBe("string");
+
+        // The assistant message should NOT be duplicated/concatenated
+        const text = assistantMessages[0].text;
+        if (text.length > 20) {
+          // Check that the message doesn't repeat itself
+          const firstHalf = text.slice(0, Math.floor(text.length / 2));
+          const secondHalf = text.slice(Math.floor(text.length / 2));
+          // If duplicated, the message would be something like "Hello!Hello!"
+          // which means firstHalf === secondHalf
+          expect(firstHalf).not.toBe(secondHalf);
+        }
+      } finally {
+        await session?.close();
+        rmSync(cwd, { recursive: true, force: true });
+        restoreSessionDir();
+      }
+    },
+    180_000
+  );
+
+  test(
     "responds with text",
     async () => {
       const cwd = tmpCwd();
