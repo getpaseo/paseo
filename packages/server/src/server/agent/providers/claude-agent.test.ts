@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { createServer as createHTTPServer } from "http";
+import { createServer } from "http";
 import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
@@ -34,6 +34,8 @@ import type {
 import { AgentManager } from "../agent-manager.js";
 import { AgentRegistry } from "../agent-registry.js";
 import { createAgentMcpServer } from "../mcp-server.js";
+
+const createHTTPServer = createServer;
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
@@ -92,11 +94,21 @@ async function autoApprove(session: Awaited<ReturnType<ClaudeAgentClient["create
 
 type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
+type KeyValueObject = { [key: string]: unknown };
+
+function isKeyValueObject(value: unknown): value is KeyValueObject {
+  return typeof value === "object" && value !== null;
+}
+
+function isFileWriteResult(value: unknown): value is { type: "file_write"; filePath: string } {
+  return isKeyValueObject(value) && value.type === "file_write" && typeof value.filePath === "string";
+}
+
 function extractCommandText(input: unknown): string | null {
-  if (!input || typeof input !== "object") {
+  if (!isKeyValueObject(input)) {
     return null;
   }
-  const command = (input as { command?: unknown }).command;
+  const command = input.command;
   if (typeof command === "string" && command.length > 0) {
     return command;
   }
@@ -106,8 +118,8 @@ function extractCommandText(input: unknown): string | null {
       return tokens.join(" ");
     }
   }
-  if (typeof (input as { description?: string }).description === "string") {
-    const description = (input as { description?: string }).description as string;
+  if (typeof input.description === "string") {
+    const description = input.description;
     if (description.length > 0) {
       return description;
     }
@@ -218,7 +230,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         transport = await createAgentMcpTransport(callerAgentId);
       }
 
-      await transport.handleRequest(req as any, res as any, req.body);
+      await transport.handleRequest(req, res, req.body);
     } catch (error) {
       console.error("[Agent MCP] Failed to handle request:", error);
       if (!res.headersSent) {
@@ -452,15 +464,15 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       );
       const fileChangeEvent = toolCalls.find((item) => {
         // Check for file changes in structured output.files array
-        if (item.output && typeof item.output === "object") {
-          const files = (item.output as Record<string, unknown>).files;
+        if (isKeyValueObject(item.output)) {
+          const files = item.output.files;
           if (Array.isArray(files) && files.some((file) => typeof file?.path === "string" && file.path.includes("tool-test.txt"))) {
             return true;
           }
         }
         // Also check for file path in output structure (write/edit tools)
-        if (item.output && typeof item.output === "object") {
-          const output = item.output as Record<string, unknown>;
+        if (isKeyValueObject(item.output)) {
+          const output = item.output;
           if (output.type === "file_write" || output.type === "file_edit") {
             const filePath = output.filePath;
             if (typeof filePath === "string" && filePath.includes("tool-test.txt")) {
@@ -989,9 +1001,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           editTool!,
           hydratedMap,
           (data) =>
-            (data.result as any)?.type === "file_write" &&
-            typeof (data.result as any)?.filePath === "string" &&
-            ((data.result as any).filePath as string).includes("hydrate-proof.txt"),
+            isFileWriteResult(data.result) &&
+            data.result.filePath.includes("hydrate-proof.txt"),
           ({ live, hydrated }) => {
             const liveDiff = JSON.stringify(live.result ?? {});
             const hydratedDiff = JSON.stringify(hydrated.result ?? {});
@@ -1104,7 +1115,7 @@ describe("convertClaudeHistoryEntry", () => {
         server: "editor",
         tool: "read_file",
         status: "completed",
-      } as AgentTimelineItem,
+      },
     ];
 
     const mapBlocks = vi.fn().mockReturnValue(stubTimeline);
@@ -1147,9 +1158,12 @@ function recordTimelineUpdate(target: StreamHydrationUpdate[], event: AgentStrea
   if (event.type !== "timeline") {
     return;
   }
-  const payload = event as Extract<AgentStreamEvent, { type: "timeline" }>;
   target.push({
-    event: payload as StreamHydrationUpdate["event"],
+    event: {
+      type: "timeline",
+      provider: event.provider,
+      item: event.item,
+    },
     timestamp: new Date(),
   });
 }
@@ -1275,8 +1289,8 @@ function rawContainsText(raw: unknown, text: string, depth = 0): boolean {
   if (Array.isArray(raw)) {
     return raw.some((entry) => rawContainsText(entry, text, depth + 1));
   }
-  if (typeof raw === "object") {
-    return Object.values(raw as Record<string, unknown>).some((value) =>
+  if (isKeyValueObject(raw)) {
+    return Object.values(raw).some((value) =>
       rawContainsText(value, text, depth + 1)
     );
   }
