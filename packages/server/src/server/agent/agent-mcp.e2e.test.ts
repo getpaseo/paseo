@@ -9,13 +9,15 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 
+type StructuredContent = { [key: string]: unknown };
+
 type McpToolResult = {
-  structuredContent?: Record<string, unknown>;
-  content?: Array<{ structuredContent?: Record<string, unknown> } | Record<string, unknown>>;
+  structuredContent?: StructuredContent;
+  content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
 };
 
 type McpClient = {
-  callTool: (input: { name: string; args?: Record<string, unknown> }) => Promise<unknown>;
+  callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
   close: () => Promise<void>;
 };
 
@@ -59,7 +61,11 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
-function getStructuredContent(result: McpToolResult): Record<string, unknown> | null {
+function isStructuredContent(value: unknown): value is StructuredContent {
+  return typeof value === "object" && value !== null;
+}
+
+function getStructuredContent(result: McpToolResult): StructuredContent | null {
   if (result.structuredContent && typeof result.structuredContent === "object") {
     return result.structuredContent;
   }
@@ -67,8 +73,8 @@ function getStructuredContent(result: McpToolResult): Record<string, unknown> | 
   if (content && "structuredContent" in content && content.structuredContent) {
     return content.structuredContent;
   }
-  if (content && typeof content === "object") {
-    return content as Record<string, unknown>;
+  if (isStructuredContent(content)) {
+    return content;
   }
   return null;
 }
