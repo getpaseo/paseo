@@ -185,3 +185,33 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **RESULT**: Typecheck passes. Persistence E2E test "persists session metadata and resumes with history" passes (8.3s). The test now exercises disk loading since there's no global Map to provide in-memory history. Net change: -12 lines.
 
   **NOTE**: Two flaky tests ("maps thread/item events..." and "captures tool call inputs/outputs...") also failed before this change - they depend on LLM choosing to call MCP tools/web search which is non-deterministic.
+
+- [ ] **REVIEW (App)**: New agent page (`/agent/new`) is missing features from old modal.
+
+  **Context**: A new agent creation flow was added at `packages/app/src/app/agent/new.tsx`. Compared to the old `create-agent-modal.tsx`, it's missing critical functionality:
+
+  **MISSING FEATURES**:
+  1. **Git options section** - The old modal has `GitOptionsSection` with:
+     - Base branch selection dropdown
+     - "Create new branch" toggle + branch name input
+     - "Create worktree" toggle + worktree slug input
+     - Git validation errors display
+     - Dirty working directory warning
+  2. **Dictation support** - Old modal has full `useDictation` integration for voice input
+  3. **Image attachments** - Old modal handles images, new page returns early if images present (line 216-218)
+  4. **Error message display** - Old modal shows `errorMessage` state to user
+  5. **Loading state** - Old modal has `isLoading` state during agent creation
+  6. **Daemon availability error handling** - Old modal checks if daemon is online and shows appropriate errors
+  7. **Import flow** - Old modal supports `flow: "create" | "import"`, new page is create-only
+
+  **FILES**:
+  - `packages/app/src/app/agent/new.tsx` - New page (incomplete)
+  - `packages/app/src/components/create-agent-modal.tsx` - Old modal (complete)
+  - `packages/app/src/components/home-footer.tsx:167` - Routes to `/agent/new`
+
+  **CURRENT STATE**:
+  - "New Agent" button → navigates to `/agent/new` (incomplete new page)
+  - "Import" button → opens `ImportAgentModal` (old modal, still works)
+  - `CreateAgentModal` in `home-footer.tsx:206-209` is **DEAD CODE** - `showCreateModal` is never set to `true`
+
+  **ACTION NEEDED**: Complete the new `/agent/new` page with all missing features, then remove dead `CreateAgentModal` code from home-footer.
