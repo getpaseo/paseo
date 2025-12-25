@@ -906,3 +906,41 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
 
 - [x] **BUG**: Codex agent doesn't see agent-control MCP - Claude does.
   - **Done (2025-12-25 22:45)**: WHAT: Fixed `buildCodexMcpConfig()` in `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2337-2429` to include MCP servers in the Codex tool call. Added `CodexMcpServerConfig` and `CodexConfigPayload` types at lines 2324-2335. Added `managedAgentId` parameter to append caller agent ID to agent-control URL. Built MCP servers config including: (1) `agent-control` HTTP MCP with URL and `http_headers` (using Codex's field name, not `headers`), (2) `playwright` STDIO MCP server, (3) user-provided MCP servers from `config.mcpServers`. Added `managedAgentId` property to `CodexMcpAgentSession` class at line 2516. Updated `setManagedAgentId()` at lines 2907-2909 to store the ID. Updated all 3 call sites of `buildCodexMcpConfig()` at lines 2924, 2962, 2985 to pass `this.managedAgentId`. ROOT CAUSE: Claude provider at lines 672-699 builds MCP servers config and passes to Claude SDK. Codex MCP provider at line 2360 only passed `config.extra.codex` - completely ignoring `config.agentControlMcp` and `config.mcpServers`. Codex CLI expects MCP servers in `config.mcp_servers` field with `http_headers` (not `headers`) for HTTP servers. RESULT: Codex agents now receive agent-control and playwright MCP servers in tool call config. EVIDENCE: Typecheck passes (`npm run typecheck --workspace=@paseo/server`), unit test passes (`npm run test --workspace=@paseo/server -- codex-mcp-agent.test.ts -t "responds with text"`), quick verification script shows MCP config includes `agent-control` with URL and headers.
+
+- [x] **Plan**: Design daemon client for E2E testing.
+
+  **Objective**: Create a daemon client that enables full E2E testing of the daemon WITHOUT Playwright. Test the daemon directly via WebSocket, ensure correctness, and UI correctness follows.
+
+  **Requirements**:
+
+  1. **DaemonClient class**:
+     - Constructor takes WebSocket URL (e.g., `ws://localhost:6767`)
+     - All WebSocket code isolated to this client - no WS code elsewhere in tests
+     - Methods for all daemon operations:
+       - `createAgent(config)` → returns agent ID
+       - `listAgents()` → returns agent list
+       - `sendMessage(agentId, message)` → streams response events
+       - `getAgentState(agentId)` → returns current state
+       - `deleteAgent(agentId)`
+       - `respondToPermission(agentId, callId, decision)`
+       - etc.
+
+  2. **Test infrastructure**:
+     - Launch daemon in-process for tests
+     - Use temp directory for `PASEO_HOME` (isolate from real agents.json)
+     - Clean up after tests
+
+  3. **E2E test examples to enable**:
+     - Create agent → send message → verify response
+     - Create agent → trigger tool call → approve permission → verify execution
+     - Create agent → persist → reload → verify state restored
+     - Multi-agent: create agent A → have A launch agent B → verify both work
+
+  **Output of this task**:
+  - Propose 2-3 architectural approaches for the DaemonClient
+  - Identify key files that need changes
+  - Estimate scope for each approach
+  - Recommend best approach with rationale
+
+  **DO NOT implement yet - just plan and propose options.**
+  - **Done (2025-12-25 23:15)**: WHAT: Authored comprehensive design report in `REPORT-daemon-client-design.md:1` covering 3 architectural approaches (Simple WebSocket Wrapper, Reactive Event Store, Hybrid), with full type definitions, implementation sketches, and example E2E tests. RESULT: Recommended Approach 1 (Simple WebSocket Wrapper) for ~300-400 lines of code, leveraging existing `messages.ts` Zod schemas and `test-utils/paseo-daemon.ts` infrastructure. Key files identified: `daemon-client.ts` (new), `daemon-test-context.ts` (new), `daemon.e2e.test.ts` (new E2E suite). EVIDENCE: `REPORT-daemon-client-design.md` contains: (1) 3 approaches with pros/cons, (2) full TypeScript interface for DaemonClient, (3) implementation code for core methods (connect, createAgent, sendMessage, waitForAgentIdle, respondToPermission), (4) test context helper, (5) 5 example E2E tests (basic flow, permission approve/deny, persistence/resume, multi-agent), (6) scope estimate of ~550-650 total lines, (7) 5-phase migration path.
