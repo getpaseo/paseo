@@ -2321,16 +2321,30 @@ function getCodexMcpCommand(): string {
   }
 }
 
+type CodexMcpServerConfig = {
+  url?: string;
+  http_headers?: Record<string, string>;  // Static HTTP headers for HTTP servers
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+type CodexConfigPayload = {
+  mcp_servers?: Record<string, CodexMcpServerConfig>;
+  [key: string]: unknown;
+};
+
 function buildCodexMcpConfig(
   config: AgentSessionConfig,
   prompt: string,
-  modeId: string
+  modeId: string,
+  managedAgentId?: string
 ): {
   prompt: string;
   cwd?: string;
   "approval-policy": string;
   sandbox: string;
-  config?: unknown;
+  config?: CodexConfigPayload;
   model?: string;
 } {
   const preset =
@@ -2343,22 +2357,71 @@ function buildCodexMcpConfig(
       : preset.approvalPolicy;
   const sandbox =
     config.sandboxMode !== undefined ? config.sandboxMode : preset.sandbox;
-  const extra = config.extra ? config.extra.codex : undefined;
+
+  // Build the config payload with MCP servers
+  const innerConfig: CodexConfigPayload = {};
+
+  // Add extra codex config if provided
+  if (config.extra?.codex) {
+    Object.assign(innerConfig, config.extra.codex);
+  }
+
+  // Build MCP servers configuration
+  const mcpServers: Record<string, CodexMcpServerConfig> = {};
+
+  // Add agent-control MCP server (HTTP-based) if configured
+  if (config.agentControlMcp) {
+    let agentControlUrl = config.agentControlMcp.url;
+    // Append caller agent ID to URL if this is a managed agent
+    if (managedAgentId) {
+      const separator = agentControlUrl.includes("?") ? "&" : "?";
+      agentControlUrl = `${agentControlUrl}${separator}callerAgentId=${encodeURIComponent(managedAgentId)}`;
+    }
+    mcpServers["agent-control"] = {
+      url: agentControlUrl,
+      ...(config.agentControlMcp.headers ? { http_headers: config.agentControlMcp.headers } : {}),
+    };
+  }
+
+  // Add playwright MCP server (same as Claude provider)
+  mcpServers["playwright"] = {
+    command: "npx",
+    args: ["@playwright/mcp", "--headless", "--isolated"],
+  };
+
+  // Merge user-provided MCP servers (they take precedence)
+  if (config.mcpServers) {
+    for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
+      if (typeof serverConfig === "object" && serverConfig !== null) {
+        mcpServers[name] = serverConfig as CodexMcpServerConfig;
+      }
+    }
+  }
+
+  // Only add mcp_servers to config if there are any
+  if (Object.keys(mcpServers).length > 0) {
+    innerConfig.mcp_servers = mcpServers;
+  }
 
   const configPayload: {
     prompt: string;
     cwd?: string;
     "approval-policy": string;
     sandbox: string;
-    config?: unknown;
+    config?: CodexConfigPayload;
     model?: string;
   } = {
     prompt,
     cwd: config.cwd,
     "approval-policy": approvalPolicy,
     sandbox,
-    config: extra,
   };
+
+  // Only include config if it has content
+  if (Object.keys(innerConfig).length > 0) {
+    configPayload.config = innerConfig;
+  }
+
   if (typeof config.model === "string" && config.model.length > 0) {
     configPayload.model = config.model;
   }
@@ -2450,6 +2513,7 @@ class CodexMcpAgentSession implements AgentSession {
   private turnState: TurnState | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
   private patchChangesByCallId = new Map<string, PatchFileChange[]>();
+  private managedAgentId: string | null = null;
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
@@ -2840,9 +2904,8 @@ class CodexMcpAgentSession implements AgentSession {
     this.conversationId = null;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  setManagedAgentId(_agentId: string): void {
-    // Codex MCP sessions do not currently use the agent-control MCP channel.
+  setManagedAgentId(agentId: string): void {
+    this.managedAgentId = agentId;
   }
 
   private async forwardPrompt(
@@ -2858,7 +2921,7 @@ class CodexMcpAgentSession implements AgentSession {
     let response: unknown;
     try {
       if (!this.sessionId) {
-        const config = buildCodexMcpConfig(this.config, prompt, this.currentMode);
+        const config = buildCodexMcpConfig(this.config, prompt, this.currentMode, this.managedAgentId ?? undefined);
         const attempt = async (arguments_: CodexToolArguments) =>
           this.client.callTool(
             { name: "codex", arguments: arguments_ },
@@ -2896,7 +2959,7 @@ class CodexMcpAgentSession implements AgentSession {
           );
           if (isMissingConversationIdResponse(response)) {
             const replayPrompt = this.buildResumePrompt(prompt);
-            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
+            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode, this.managedAgentId ?? undefined);
             const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
@@ -2919,7 +2982,7 @@ class CodexMcpAgentSession implements AgentSession {
         } catch (error) {
           if (isMissingConversationIdError(error)) {
             const replayPrompt = this.buildResumePrompt(prompt);
-            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
+            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode, this.managedAgentId ?? undefined);
             const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
