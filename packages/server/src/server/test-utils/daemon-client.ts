@@ -433,6 +433,63 @@ export class DaemonClient {
   }
 
   // ============================================================================
+  // File Explorer
+  // ============================================================================
+
+  async exploreFileSystem(
+    agentId: string,
+    path: string,
+    mode: "list" | "file" = "list"
+  ): Promise<{
+    path: string;
+    mode: "list" | "file";
+    directory: {
+      path: string;
+      entries: Array<{
+        name: string;
+        path: string;
+        kind: "file" | "directory";
+        size: number;
+        modifiedAt: string;
+      }>;
+    } | null;
+    file: {
+      path: string;
+      kind: "text" | "image" | "binary";
+      encoding: "utf-8" | "base64" | "none";
+      content?: string;
+      mimeType?: string;
+      size: number;
+      modifiedAt: string;
+    } | null;
+    error: string | null;
+  }> {
+    const startPosition = this.messageQueue.length;
+
+    this.send({ type: "file_explorer_request", agentId, path, mode });
+
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "file_explorer_response" &&
+          msg.payload.agentId === agentId
+        ) {
+          return {
+            path: msg.payload.path,
+            mode: msg.payload.mode,
+            directory: msg.payload.directory,
+            file: msg.payload.file,
+            error: msg.payload.error,
+          };
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  // ============================================================================
   // Permissions
   // ============================================================================
 
