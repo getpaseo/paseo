@@ -25,7 +25,6 @@ import {
   TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
@@ -36,7 +35,7 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, Check, X, ChevronDown, RefreshCcw } from "lucide-react-native";
+import { Mic, Check, X, RefreshCcw } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
@@ -47,18 +46,12 @@ import { VolumeMeter } from "@/components/volume-meter";
 import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
 import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
 import { DictationStatusNotice, type DictationToastVariant } from "./dictation-status-notice";
-import {
-  AGENT_PROVIDER_DEFINITIONS,
-  type AgentProviderDefinition,
-} from "@server/server/agent/provider-manifest";
 import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import type {
   AgentProvider,
-  AgentMode,
   AgentSessionConfig,
   AgentPersistenceHandle,
   AgentTimelineItem,
-  AgentModelDefinition,
 } from "@server/server/agent/agent-sdk-types";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/messages";
@@ -67,13 +60,18 @@ import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "@/contexts/session-context";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useSessionStore } from "@/stores/session-store";
-
-export type CreateAgentInitialValues = {
-  workingDir?: string;
-  provider?: AgentProvider;
-  modeId?: string | null;
-  model?: string | null;
-};
+import {
+  AssistantDropdown,
+  DropdownField,
+  DropdownSheet,
+  ModelDropdown,
+  PermissionsDropdown,
+  WorkingDirectoryDropdown,
+} from "@/components/agent-form/agent-form-dropdowns";
+import {
+  useAgentFormState,
+  type CreateAgentInitialValues,
+} from "@/hooks/use-agent-form-state";
 
 interface AgentFlowModalProps {
   isVisible: boolean;
@@ -119,24 +117,12 @@ type CreateAgentSessionSlice = {
     options?: { mode?: "transcribe_only" | "auto_run" }
   ) => Promise<void>;
   agents: Map<string, any>;
-  providerModels: Map<any, any>;
-  requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
 };
 
-const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
-const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
-  providerDefinitions.map((definition) => [definition.id, definition])
-);
-
-const fallbackDefinition = providerDefinitions[0];
-const DEFAULT_PROVIDER: AgentProvider = fallbackDefinition?.id ?? "claude";
-const DEFAULT_MODE_FOR_DEFAULT_PROVIDER =
-  fallbackDefinition?.defaultModeId ?? "";
 const BACKDROP_OPACITY = 0.55;
 const IMPORT_PAGE_SIZE = 20;
 const PROMPT_MIN_HEIGHT = 64;
 const PROMPT_MAX_HEIGHT = 200;
-const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 const IS_WEB = Platform.OS === "web";
 const DICTATION_AGENT_ID = "__dictation__";
 
@@ -260,7 +246,34 @@ function AgentFlowModal({
     const exists = daemonEntries.some((entry) => entry.daemon.id === serverId);
     return exists ? serverId : null;
   }, [serverId, daemonEntries]);
-  const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId);
+  const {
+    selectedServerId,
+    setSelectedServerId,
+    setSelectedServerIdFromUser,
+    selectedProvider,
+    setProviderFromUser,
+    selectedMode,
+    setModeFromUser,
+    selectedModel,
+    setModelFromUser,
+    workingDir,
+    setWorkingDirFromUser,
+    providerDefinitions,
+    providerDefinitionMap,
+    modeOptions,
+    availableModels,
+    isModelLoading,
+    modelError,
+    refreshProviderModels,
+    queueProviderModelFetch,
+    clearQueuedProviderModelRequest,
+    workingDirIsEmpty,
+  } = useAgentFormState({
+    initialServerId,
+    initialValues,
+    isVisible,
+    isCreateFlow,
+  });
 
   const sessionState = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId] : undefined
@@ -278,17 +291,9 @@ function AgentFlowModal({
       resumeAgent: sessionState.methods.resumeAgent,
       sendAgentAudio: sessionState.methods.sendAgentAudio,
       agents: sessionState.agents,
-      providerModels: sessionState.providerModels,
-      requestProviderModels: sessionState.methods.requestProviderModels,
     };
     return slice;
   }, [selectedServerId, sessionState]);
-
-  // Helper to get session state for background operations
-  // Note: This only returns state, not APIs. For calling methods, need to send WS messages directly.
-  const getSessionState = useCallback((serverId: string) => {
-    return useSessionStore.getState().sessions[serverId] ?? null;
-  }, []);
 
   useEffect(() => {
     if (selectedServerId) {
@@ -349,8 +354,6 @@ function AgentFlowModal({
   const sendAgentAudio = sessionSendAgentAudio ?? noopSendAgentAudio;
   const hasSendAgentAudio = Boolean(sessionSendAgentAudio);
   const agents = session?.agents;
-  const providerModels = session?.providerModels;
-  const requestProviderModels = session?.requestProviderModels;
   const agentWorkingDirSuggestions = useMemo(() => {
     if (!selectedServerId || !agents) {
       return [];
@@ -440,15 +443,8 @@ function AgentFlowModal({
   );
 
   const [isMounted, setIsMounted] = useState(isVisible);
-  const [workingDir, setWorkingDir] = useState("");
   const [initialPrompt, setInitialPrompt] = useState("");
   const [promptInputHeight, setPromptInputHeight] = useState(PROMPT_MIN_HEIGHT);
-  const [selectedProvider, setSelectedProvider] =
-    useState<AgentProvider>(DEFAULT_PROVIDER);
-  const [selectedMode, setSelectedMode] = useState(
-    DEFAULT_MODE_FOR_DEFAULT_PROVIDER
-  );
-  const [selectedModel, setSelectedModel] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   const [createNewBranch, setCreateNewBranch] = useState(false);
   const [branchName, setBranchName] = useState("");
@@ -476,15 +472,6 @@ function AgentFlowModal({
   const focusPromptInputRef = useRef<() => void>(() => {});
   const promptInputHeightRef = useRef(PROMPT_MIN_HEIGHT);
   const promptBaselineHeightRef = useRef<number | null>(null);
-  const formPreferencesHydratedRef = useRef(false);
-  const userEditedPreferencesRef = useRef({
-    provider: false,
-    mode: false,
-    model: false,
-    workingDir: false,
-    serverId: false,
-  });
-  const prevVisibilityRef = useRef(isVisible);
   const dictationRequestIdRef = useRef<string | null>(null);
 
   const handleDictationTranscript = useCallback(
@@ -573,9 +560,6 @@ function AgentFlowModal({
   const shouldListenForDictation =
     isCreateFlow && (isVisible || hasPendingDictation);
 
-  const providerModelRequestTimersRef = useRef<
-    Map<string, ReturnType<typeof setTimeout>>
-  >(new Map());
   const idleProviderPrefetchHandleRef = useRef<ReturnType<
     typeof InteractionManager.runAfterInteractions
   > | null>(null);
@@ -587,86 +571,6 @@ function AgentFlowModal({
   const closeDropdown = useCallback(() => {
     setOpenDropdown(null);
   }, []);
-  const clearQueuedProviderModelRequest = useCallback((serverId: string | null) => {
-    if (!serverId) {
-      return;
-    }
-    const timer = providerModelRequestTimersRef.current.get(serverId);
-    if (timer) {
-      clearTimeout(timer);
-      providerModelRequestTimersRef.current.delete(serverId);
-    }
-  }, []);
-  const queueProviderModelFetch = useCallback(
-    (
-      serverId: string | null,
-      options?: { cwd?: string; delayMs?: number }
-    ) => {
-      if (!serverId) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const sessionState = getSessionState(serverId);
-      if (!sessionState?.ws?.isConnected) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const currentState = sessionState.providerModels?.get(selectedProvider);
-      if (currentState?.models?.length || currentState?.isLoading) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const delayMs = options?.delayMs ?? 0;
-      const trigger = () => {
-        providerModelRequestTimersRef.current.delete(serverId);
-
-        // Send request directly via WebSocket
-        const requestId = generateMessageId();
-        const message: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "list_provider_models_request",
-            provider: selectedProvider,
-            ...(options?.cwd ? { cwd: options.cwd } : {}),
-            requestId,
-          },
-        };
-        sessionState.ws?.send(message);
-      };
-      clearQueuedProviderModelRequest(serverId);
-      if (delayMs > 0) {
-        providerModelRequestTimersRef.current.set(serverId, setTimeout(trigger, delayMs));
-      } else {
-        trigger();
-      }
-    },
-    [clearQueuedProviderModelRequest, selectedProvider, getSessionState]
-  );
-
-  const setProviderFromUser = useCallback((provider: AgentProvider) => {
-    userEditedPreferencesRef.current.provider = true;
-    setSelectedProvider(provider);
-    userEditedPreferencesRef.current.model = true;
-    setSelectedModel("");
-  }, []);
-
-  const setModeFromUser = useCallback((modeId: string) => {
-    userEditedPreferencesRef.current.mode = true;
-    setSelectedMode(modeId);
-  }, []);
-
-  const setModelFromUser = useCallback((modelId: string) => {
-    userEditedPreferencesRef.current.model = true;
-    setSelectedModel(modelId);
-  }, []);
-
-  const setWorkingDirFromUser = useCallback((value: string) => {
-    userEditedPreferencesRef.current.workingDir = true;
-    setWorkingDir(value);
-  }, []);
 
   const handleUserWorkingDirChange = useCallback(
     (value: string) => {
@@ -675,51 +579,6 @@ function AgentFlowModal({
     },
     [setWorkingDirFromUser]
   );
-
-  const applyInitialValues = useCallback(() => {
-    if (!isCreateFlow || !initialValues) {
-      return;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(initialValues, "workingDir")) {
-      const providedWorkingDir = initialValues.workingDir ?? "";
-      userEditedPreferencesRef.current.workingDir = true;
-      setWorkingDir(providedWorkingDir);
-    }
-
-    if (initialValues.provider && providerDefinitionMap.has(initialValues.provider)) {
-      userEditedPreferencesRef.current.provider = true;
-      setSelectedProvider(initialValues.provider);
-    }
-
-    if (typeof initialValues.modeId === "string" && initialValues.modeId.length > 0) {
-      userEditedPreferencesRef.current.mode = true;
-      setSelectedMode(initialValues.modeId);
-    }
-
-    if (typeof initialValues.model === "string" && initialValues.model.length > 0) {
-      userEditedPreferencesRef.current.model = true;
-      setSelectedModel(initialValues.model);
-    }
-  }, [initialValues, isCreateFlow]);
-
-  useEffect(() => {
-    const wasVisible = prevVisibilityRef.current;
-    if (isVisible && !wasVisible) {
-      applyInitialValues();
-    }
-    prevVisibilityRef.current = isVisible;
-  }, [applyInitialValues, isVisible]);
-
-  const refreshProviderModels = useCallback(() => {
-    if (!requestProviderModels) {
-      return;
-    }
-    const trimmed = workingDir.trim();
-    requestProviderModels(selectedProvider, {
-      cwd: trimmed.length > 0 ? trimmed : undefined,
-    });
-  }, [requestProviderModels, selectedProvider, workingDir]);
 
   const handleBaseBranchChange = useCallback(
     (value: string) => {
@@ -730,94 +589,6 @@ function AgentFlowModal({
     [setErrorMessage]
   );
 
-  useEffect(() => {
-    let isActive = true;
-    const hydratePreferences = async () => {
-      try {
-        const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
-        if (!stored || !isActive) {
-          return;
-        }
-        const parsed = JSON.parse(stored) as {
-          workingDir?: string;
-          provider?: AgentProvider;
-          mode?: string;
-          model?: string;
-          serverId?: string;
-        };
-        if (
-          parsed.provider &&
-          providerDefinitionMap.has(parsed.provider) &&
-          !userEditedPreferencesRef.current.provider
-        ) {
-          setSelectedProvider(parsed.provider);
-        }
-        if (
-          typeof parsed.mode === "string" &&
-          !userEditedPreferencesRef.current.mode
-        ) {
-          setSelectedMode(parsed.mode);
-        }
-        if (
-          typeof parsed.workingDir === "string" &&
-          !userEditedPreferencesRef.current.workingDir
-        ) {
-          setWorkingDir(parsed.workingDir);
-        }
-        if (
-          typeof parsed.model === "string" &&
-          !userEditedPreferencesRef.current.model
-        ) {
-          setSelectedModel(parsed.model);
-        }
-        if (
-          typeof parsed.serverId === "string" &&
-          !userEditedPreferencesRef.current.serverId
-        ) {
-          setSelectedServerId(parsed.serverId);
-        }
-      } catch (error) {
-        console.error(
-          "[CreateAgentModal] Failed to hydrate form preferences:",
-          error
-        );
-      } finally {
-        if (isActive) {
-          formPreferencesHydratedRef.current = true;
-        }
-      }
-    };
-    void hydratePreferences();
-    return () => {
-      isActive = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!formPreferencesHydratedRef.current) {
-      return;
-    }
-    const persist = async () => {
-      try {
-        await AsyncStorage.setItem(
-          FORM_PREFERENCES_STORAGE_KEY,
-          JSON.stringify({
-            workingDir,
-            provider: selectedProvider,
-            mode: selectedMode,
-            model: selectedModel,
-            serverId: selectedServerId,
-          })
-        );
-      } catch (error) {
-        console.error(
-          "[CreateAgentModal] Failed to persist form preferences:",
-          error
-        );
-      }
-    };
-    void persist();
-  }, [selectedMode, selectedProvider, workingDir, selectedModel, selectedServerId]);
 
   const providerFilterOptions = useMemo(
     () => [
@@ -834,36 +605,6 @@ function AgentFlowModal({
       providerDefinitionMap.get(provider)?.label ?? provider,
     []
   );
-  const agentDefinition = providerDefinitionMap.get(selectedProvider);
-  const modeOptions = agentDefinition?.modes ?? [];
-  const modelState = providerModels?.get(selectedProvider);
-  const availableModels = modelState?.models ?? [];
-  const isModelLoading = modelState?.isLoading ?? false;
-  const modelError = modelState?.error ?? null;
-
-  useEffect(() => {
-    const targetServerId = selectedServerId ?? session?.serverId ?? null;
-    if (!isVisible || !isTargetDaemonReady || !targetServerId || !session) {
-      clearQueuedProviderModelRequest(targetServerId);
-      return;
-    }
-    const trimmed = workingDir.trim();
-    queueProviderModelFetch(targetServerId, {
-      cwd: trimmed.length > 0 ? trimmed : undefined,
-      delayMs: 180,
-    });
-    return () => {
-      clearQueuedProviderModelRequest(targetServerId);
-    };
-  }, [
-    clearQueuedProviderModelRequest,
-    isTargetDaemonReady,
-    isVisible,
-    queueProviderModelFetch,
-    selectedServerId,
-    session,
-    workingDir,
-  ]);
   const setPromptHeight = useCallback((nextHeight: number) => {
     const bounded = Math.min(
       PROMPT_MAX_HEIGHT,
@@ -1020,27 +761,6 @@ function AgentFlowModal({
     importProviderFilter,
     importSearchQuery,
   ]);
-
-  useEffect(() => {
-    if (!agentDefinition) {
-      return;
-    }
-
-    if (modeOptions.length === 0) {
-      if (selectedMode !== "") {
-        setSelectedMode("");
-      }
-      return;
-    }
-
-    const availableModeIds = modeOptions.map((mode) => mode.id);
-
-    if (!availableModeIds.includes(selectedMode)) {
-      const fallbackModeId =
-        agentDefinition.defaultModeId ?? availableModeIds[0];
-      setSelectedMode(fallbackModeId);
-    }
-  }, [agentDefinition, selectedMode, modeOptions]);
 
   useLayoutEffect(() => {
     if (!IS_WEB) {
@@ -1270,10 +990,12 @@ function AgentFlowModal({
     });
   }, [router, selectedDaemonId]);
 
-  const handleSelectServer = useCallback((serverId: string) => {
-    userEditedPreferencesRef.current.serverId = true;
-    setSelectedServerId(serverId);
-  }, []);
+  const handleSelectServer = useCallback(
+    (serverId: string) => {
+      setSelectedServerIdFromUser(serverId);
+    },
+    [setSelectedServerIdFromUser]
+  );
 
   const handleCloseAnimationComplete = useCallback(() => {
     console.log("[CreateAgentModal] close animation complete – resetting form");
@@ -1388,10 +1110,6 @@ function AgentFlowModal({
 
   useEffect(() => {
     return () => {
-      providerModelRequestTimersRef.current.forEach((timer) => {
-        clearTimeout(timer);
-      });
-      providerModelRequestTimersRef.current.clear();
       idleProviderPrefetchHandleRef.current?.cancel?.();
     };
   }, []);
@@ -1486,14 +1204,6 @@ function AgentFlowModal({
   }, [isCreateFlow, isVisible, workingDir]);
 
   useEffect(() => {
-    const activeServerIds = new Set(daemonEntries.map(({ daemon }) => daemon.id));
-    providerModelRequestTimersRef.current.forEach((timer, serverId) => {
-      if (!activeServerIds.has(serverId)) {
-        clearTimeout(timer);
-        providerModelRequestTimersRef.current.delete(serverId);
-      }
-    });
-
     idleProviderPrefetchHandleRef.current?.cancel?.();
     idleProviderPrefetchHandleRef.current = InteractionManager.runAfterInteractions(() => {
       daemonEntries.forEach(({ daemon, status }) => {
@@ -1996,7 +1706,6 @@ function AgentFlowModal({
     worktreeSlug,
   ]);
 
-  const workingDirIsEmpty = !workingDir.trim();
   const promptIsEmpty = !initialPrompt.trim();
   const createDisabled =
     workingDirIsEmpty ||
@@ -2481,455 +2190,6 @@ function ModalHeader({
       <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
         <X size={20} color={defaultTheme.colors.mutedForeground} />
       </Pressable>
-    </View>
-  );
-}
-
-interface DropdownFieldProps {
-  label: string;
-  value: string;
-  placeholder: string;
-  onPress: () => void;
-  disabled?: boolean;
-  errorMessage?: string | null;
-  warningMessage?: string | null;
-  helperText?: string | null;
-}
-
-function DropdownField({
-  label,
-  value,
-  placeholder,
-  onPress,
-  disabled,
-  errorMessage,
-  warningMessage,
-  helperText,
-}: DropdownFieldProps): ReactElement {
-  return (
-    <View style={styles.formSection}>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable
-        onPress={onPress}
-        disabled={disabled}
-        style={[styles.dropdownControl, disabled && styles.dropdownControlDisabled]}
-      >
-        <Text
-          style={value ? styles.dropdownValue : styles.dropdownPlaceholder}
-          numberOfLines={1}
-        >
-          {value || placeholder}
-        </Text>
-        <ChevronDown size={16} color={defaultTheme.colors.mutedForeground} />
-      </Pressable>
-      {errorMessage ? (
-        <Text style={styles.errorText}>{errorMessage}</Text>
-      ) : null}
-      {warningMessage ? (
-        <Text style={styles.warningText}>{warningMessage}</Text>
-      ) : null}
-      {!errorMessage && helperText ? (
-        <Text style={styles.helperText}>{helperText}</Text>
-      ) : null}
-    </View>
-  );
-}
-
-interface DropdownSheetProps {
-  title: string;
-  visible: boolean;
-  onClose: () => void;
-  children: ReactNode;
-}
-
-function DropdownSheet({ title, visible, onClose, children }: DropdownSheetProps): ReactElement {
-  return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={visible}
-      onRequestClose={onClose}
-    >
-      <View style={styles.dropdownSheetOverlay}>
-        <Pressable style={styles.dropdownSheetBackdrop} onPress={onClose} />
-        <View style={styles.dropdownSheetContainer}>
-          <View style={styles.dropdownSheetHandle} />
-          <Text style={styles.dropdownSheetTitle}>{title}</Text>
-          <ScrollView
-            contentContainerStyle={styles.dropdownSheetScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-interface AssistantDropdownProps {
-  providerDefinitions: AgentProviderDefinition[];
-  selectedProvider: AgentProvider;
-  disabled: boolean;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  onSelect: (provider: AgentProvider) => void;
-}
-
-function AssistantDropdown({
-  providerDefinitions,
-  selectedProvider,
-  disabled,
-  isOpen,
-  onOpen,
-  onClose,
-  onSelect,
-}: AssistantDropdownProps): ReactElement {
-  const selectedDefinition = providerDefinitions.find(
-    (definition) => definition.id === selectedProvider
-  );
-  return (
-    <View style={styles.selectorColumn}>
-      <DropdownField
-        label="Assistant"
-        value={selectedDefinition?.label ?? ""}
-        placeholder="Select assistant"
-        onPress={onOpen}
-        disabled={disabled}
-      />
-      <DropdownSheet title="Choose Assistant" visible={isOpen} onClose={onClose}>
-        {providerDefinitions.map((definition) => {
-          const isSelected = definition.id === selectedProvider;
-          return (
-            <Pressable
-              key={definition.id}
-              style={[
-                styles.dropdownSheetOption,
-                isSelected && styles.dropdownSheetOptionSelected,
-              ]}
-              onPress={() => {
-                onSelect(definition.id);
-                onClose();
-              }}
-            >
-              <Text style={styles.dropdownSheetOptionLabel}>{definition.label}</Text>
-              {definition.description ? (
-                <Text style={styles.dropdownSheetOptionDescription}>
-                  {definition.description}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </DropdownSheet>
-    </View>
-  );
-}
-
-interface PermissionsDropdownProps {
-  modeOptions: AgentMode[];
-  selectedMode: string;
-  disabled: boolean;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  onSelect: (modeId: string) => void;
-}
-
-function PermissionsDropdown({
-  modeOptions,
-  selectedMode,
-  disabled,
-  isOpen,
-  onOpen,
-  onClose,
-  onSelect,
-}: PermissionsDropdownProps): ReactElement {
-  const hasOptions = modeOptions.length > 0;
-  const selectedModeLabel = hasOptions
-    ? modeOptions.find((mode) => mode.id === selectedMode)?.label ??
-      modeOptions[0]?.label ??
-      "Default"
-    : "Automatic";
-  return (
-    <View style={[styles.selectorColumn, styles.selectorColumnFull]}>
-      <DropdownField
-        label="Permissions"
-        value={selectedModeLabel}
-        placeholder={hasOptions ? "Select permissions" : "Automatic"}
-        onPress={hasOptions ? onOpen : () => {}}
-        disabled={disabled || !hasOptions}
-        helperText={
-          hasOptions
-            ? undefined
-            : "This assistant does not expose selectable permissions."
-        }
-      />
-      {hasOptions ? (
-        <DropdownSheet title="Permissions" visible={isOpen} onClose={onClose}>
-          {modeOptions.map((mode) => {
-            const isSelected = mode.id === selectedMode;
-            return (
-              <Pressable
-                key={mode.id}
-                style={[
-                  styles.dropdownSheetOption,
-                  isSelected && styles.dropdownSheetOptionSelected,
-                ]}
-                onPress={() => {
-                  onSelect(mode.id);
-                  onClose();
-                }}
-              >
-                <Text style={styles.dropdownSheetOptionLabel}>{mode.label}</Text>
-                {mode.description ? (
-                  <Text style={styles.dropdownSheetOptionDescription}>
-                    {mode.description}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </DropdownSheet>
-      ) : null}
-    </View>
-  );
-}
-
-interface ModelDropdownProps {
-  models: AgentModelDefinition[];
-  selectedModel: string;
-  isLoading: boolean;
-  error: string | null;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  onSelect: (modelId: string) => void;
-  onClear: () => void;
-  onRefresh: () => void;
-}
-
-function ModelDropdown({
-  models,
-  selectedModel,
-  isLoading,
-  error,
-  isOpen,
-  onOpen,
-  onClose,
-  onSelect,
-  onClear,
-  onRefresh,
-}: ModelDropdownProps): ReactElement {
-  const selectedLabel = selectedModel
-    ? models.find((model) => model.id === selectedModel)?.label ?? selectedModel
-    : "Automatic";
-  const placeholder = isLoading && models.length === 0 ? "Loading..." : "Automatic";
-  const helperText = error
-    ? undefined
-    : isLoading
-      ? "Fetching available models..."
-      : models.length === 0
-        ? "This assistant did not expose selectable models."
-        : undefined;
-
-  return (
-    <View style={styles.selectorColumn}>
-      <DropdownField
-        label="Model"
-        value={selectedLabel}
-        placeholder={placeholder}
-        onPress={onOpen}
-        disabled={false}
-        errorMessage={error ?? undefined}
-        helperText={helperText}
-      />
-      <DropdownSheet title="Model" visible={isOpen} onClose={onClose}>
-        <Pressable
-          style={styles.dropdownSheetOption}
-          onPress={() => {
-            onClear();
-            onClose();
-          }}
-        >
-          <Text style={styles.dropdownSheetOptionLabel}>Automatic (provider default)</Text>
-          <Text style={styles.dropdownSheetOptionDescription}>
-            Let the assistant pick the recommended model.
-          </Text>
-        </Pressable>
-        {models.map((model) => {
-          const isSelected = model.id === selectedModel;
-          return (
-            <Pressable
-              key={model.id}
-              style={[
-                styles.dropdownSheetOption,
-                isSelected && styles.dropdownSheetOptionSelected,
-              ]}
-              onPress={() => {
-                onSelect(model.id);
-                onClose();
-              }}
-            >
-              <Text style={styles.dropdownSheetOptionLabel}>{model.label}</Text>
-              {model.description ? (
-                <Text style={styles.dropdownSheetOptionDescription}>
-                  {model.description}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-        <Pressable
-          style={styles.dropdownSheetOption}
-          onPress={() => {
-            onRefresh();
-          }}
-        >
-          <Text style={styles.dropdownSheetOptionLabel}>Refresh models</Text>
-          <Text style={styles.dropdownSheetOptionDescription}>
-            Request the latest catalog from the provider.
-          </Text>
-        </Pressable>
-        {isLoading ? (
-          <View style={styles.dropdownSheetLoading}>
-            <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
-          </View>
-        ) : null}
-      </DropdownSheet>
-    </View>
-  );
-}
-
-interface WorkingDirectoryDropdownProps {
-  workingDir: string;
-  errorMessage: string;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  disabled: boolean;
-  suggestedPaths: string[];
-  onSelectPath: (value: string) => void;
-}
-
-function WorkingDirectoryDropdown({
-  workingDir,
-  errorMessage,
-  isOpen,
-  onOpen,
-  onClose,
-  disabled,
-  suggestedPaths,
-  onSelectPath,
-}: WorkingDirectoryDropdownProps): ReactElement {
-  const inputRef = useRef<TextInput | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-
-  useEffect(() => {
-    if (isOpen) {
-      setSearchQuery("");
-      inputRef.current?.focus();
-    }
-  }, [isOpen]);
-
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const filteredPaths = useMemo(() => {
-    if (!normalizedSearch) {
-      return suggestedPaths;
-    }
-    return suggestedPaths.filter((path) =>
-      path.toLowerCase().includes(normalizedSearch)
-    );
-  }, [suggestedPaths, normalizedSearch]);
-
-  const hasSuggestedPaths = suggestedPaths.length > 0;
-  const hasMatches = filteredPaths.length > 0;
-  const sanitizedSearchValue = searchQuery.trim();
-  const showCustomOption = sanitizedSearchValue.length > 0;
-
-  const handleSelect = useCallback(
-    (path: string) => {
-      onSelectPath(path);
-      onClose();
-    },
-    [onClose, onSelectPath]
-  );
-
-  return (
-    <View style={styles.formSection}>
-      <DropdownField
-        label="Working Directory"
-        value={workingDir}
-        placeholder="/path/to/project"
-        onPress={onOpen}
-        disabled={disabled}
-        errorMessage={errorMessage || undefined}
-        helperText={
-          hasSuggestedPaths
-            ? "Search directories from existing agents or paste a new path."
-            : "No agent directories yet - search to add one."
-        }
-      />
-      <DropdownSheet title="Working Directory" visible={isOpen} onClose={onClose}>
-        <TextInput
-          ref={inputRef}
-          style={styles.dropdownSearchInput}
-          placeholder="/path/to/project"
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {!hasSuggestedPaths && !showCustomOption ? (
-          <Text style={styles.helperText}>
-            We'll suggest directories from agents on this host once they exist.
-          </Text>
-        ) : null}
-        {showCustomOption ? (
-          <View style={styles.dropdownSheetList}>
-            <Pressable
-              key="working-dir-custom-option"
-              style={styles.dropdownSheetOption}
-              onPress={() => handleSelect(sanitizedSearchValue)}
-            >
-              <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
-                {`Use "${sanitizedSearchValue}"`}
-              </Text>
-              <Text style={styles.dropdownSheetOptionDescription}>
-                Launch the agent in this directory
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {hasMatches ? (
-          <View style={styles.dropdownSheetList}>
-            {filteredPaths.map((path) => {
-              const isActive = path === workingDir;
-              return (
-                <Pressable
-                  key={path}
-                  style={[
-                    styles.dropdownSheetOption,
-                    isActive && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => handleSelect(path)}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
-                    {path}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : hasSuggestedPaths ? (
-          <Text style={styles.helperText}>
-            No agent directories match your search.
-          </Text>
-        ) : null}
-      </DropdownSheet>
     </View>
   );
 }

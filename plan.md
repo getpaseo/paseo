@@ -453,3 +453,51 @@ Build a new Codex MCP provider side‑by‑side with the existing Codex SDK prov
   **NOT DONE** (out of scope for layout refactor):
   - Mode selector below input area: Requires significant AgentInputArea refactoring; current mode is inside Agent dropdown which is acceptable UX
 
+- [x] **BUG (CRITICAL)**: Codex agent history not loading after daemon restart.
+
+  **SYMPTOM**: User restarts daemon, opens existing Codex agent, history is EMPTY. This is broken RIGHT NOW despite tests claiming to pass.
+
+  **YOUR JOB**: Fix it. Not write more tests. Not add logging. FIX THE ACTUAL BUG.
+
+  **RULES**:
+  1. If the E2E tests pass but the feature is broken, THE TESTS ARE WRONG. Do not trust them.
+  2. Do NOT add `.skip` or any test workarounds.
+  3. Do NOT report "investigation complete" without a working fix.
+  4. Do NOT blame "flaky tests" or "non-deterministic behavior".
+
+  **DEBUGGING APPROACH**:
+  1. Start fresh: restart daemon, create Codex agent, send messages, verify they appear
+  2. Restart daemon again
+  3. Resume the agent - does history load? If not, WHY?
+  4. Trace the ACTUAL code path:
+     - `codex-mcp-agent.ts`: `loadPersistedHistoryFromDisk()` - is it called? Does it find the file?
+     - What's in `~/.paseo/agents/{id}/history.jsonl`? Does the file exist? Is it populated?
+     - Is `conversationId` being persisted and restored correctly?
+     - Is `historyPending` flag being set correctly on resume?
+  5. Add console.logs if needed to trace execution
+  6. Find the ROOT CAUSE and fix the code
+
+  **SUCCESS CRITERIA**:
+  - Create Codex agent, send 3 messages, get responses
+  - Restart daemon
+  - Resume agent - ALL 3 messages and responses visible
+  - This must work MANUALLY, not just in tests
+
+  **FILES TO INVESTIGATE**:
+  - `packages/server/src/server/agent/providers/codex-mcp-agent.ts`: `loadPersistedHistoryFromDisk`, `recordHistory`, `flushPendingHistory`, constructor resume logic
+  - `packages/server/src/server/agent/agent-manager.ts`: how agents are resumed
+  - Check persistence file location and format
+
+  - **Done (2025-12-25 22:11)**: Fixed Codex history resume to fall back to the default Codex session root when metadata points at an empty session dir, and to accept conversationId when sessionId is missing.
+
+    **WHAT**:
+    1. `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2631-2647` now loads history by sessionId or conversationId and honors metadata rollout/session hints.
+    2. `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2891-2914` persists codexSessionDir alongside conversationId for resume hints.
+    3. `packages/server/src/server/agent/providers/codex-mcp-agent.ts:4184-4267` adds rollout-path loading and default-root fallback when metadata root is empty.
+    4. Reported investigation notes in `REPORT-codex-history-bug.md`.
+
+    **RESULT**:
+    - Manual restart now rehydrates Codex history (snapshot includes prior user/assistant messages).
+
+    **EVIDENCE**:
+    - Manual run: `node --import tsx /tmp/manual-codex-history.ts` → `History events after restart: 12`.

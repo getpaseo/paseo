@@ -8,7 +8,7 @@ import { useRealtime } from "@/contexts/realtime-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import { RealtimeControls } from "./realtime-controls";
-import { CreateAgentModal, ImportAgentModal } from "./create-agent-modal";
+import { ImportAgentModal } from "./create-agent-modal";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -22,7 +22,6 @@ export function HomeFooter() {
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { connectionStates } = useDaemonConnections();
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showRealtimeHostPicker, setShowRealtimeHostPicker] = useState(false);
   // Guard Reanimated entry/exit transitions on Android to avoid ViewGroup.dispatchDraw crashes
@@ -164,7 +163,7 @@ export function HomeFooter() {
             <Pressable
               onPress={() => {
                 console.log("[HomeFooter] New Agent button pressed");
-                setShowCreateModal(true);
+                router.push("/agent/new");
               }}
               style={({ pressed }) => [
                 styles.footerButton,
@@ -203,10 +202,6 @@ export function HomeFooter() {
         </View>
       </Animated.View>
 
-      <CreateAgentModal
-        isVisible={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-      />
       <ImportAgentModal
         isVisible={showImportModal}
         onClose={() => setShowImportModal(false)}

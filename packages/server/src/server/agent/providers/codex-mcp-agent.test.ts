@@ -926,7 +926,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
   );
 
   test(
-    "emits an error timeline item for failed MCP turns",
+    "does not emit error timeline items for non-zero command exits",
     async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
@@ -940,7 +940,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
       let session: AgentSession | null = null;
       let sawErrorTimeline = false;
-      const errorEvents: AgentStreamEvent[] = [];
+      let sawTurnFailed = false;
+      let sawTurnCompleted = false;
 
       try {
         session = await client.createSession(config);
@@ -958,15 +959,19 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             }
           }
           if (event.type === "turn_failed") {
-            errorEvents.push(event);
+            sawTurnFailed = true;
+          }
+          if (event.type === "turn_completed") {
+            sawTurnCompleted = true;
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
           }
         }
 
-        expect(sawErrorTimeline).toBe(true);
-        expect(errorEvents.length).toBeGreaterThan(0);
+        expect(sawErrorTimeline).toBe(false);
+        expect(sawTurnFailed).toBe(false);
+        expect(sawTurnCompleted).toBe(true);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });

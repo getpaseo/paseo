@@ -2348,6 +2348,7 @@ type CodexMcpServerConfig = {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  tool_timeout_sec?: number;  // Override the default 60s per-tool timeout
 };
 
 type CodexConfigPayload = {
@@ -2400,6 +2401,7 @@ function buildCodexMcpConfig(
     }
     mcpServers["agent-control"] = {
       url: agentControlUrl,
+      tool_timeout_sec: 600, // 10 min timeout for child agents
       ...(config.agentControlMcp.headers ? { http_headers: config.agentControlMcp.headers } : {}),
     };
   }
@@ -2627,11 +2629,18 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private async loadPersistedHistoryFromDisk(): Promise<void> {
-    if (!this.sessionId) {
+    const historyId = this.sessionId ?? this.conversationId;
+    if (!historyId) {
       return;
     }
-
-    const timeline = await loadCodexPersistedTimeline(this.sessionId);
+    const metadata =
+      this.resumeHandle && this.resumeHandle.metadata
+        ? this.resumeHandle.metadata
+        : undefined;
+    const timeline = await loadCodexPersistedTimeline(historyId, {
+      rolloutPath: resolveCodexRolloutPath(metadata),
+      sessionRoot: resolveCodexSessionRootFromMetadata(metadata),
+    });
     if (timeline.length > 0) {
       this.persistedHistory = timeline;
       this.historyPending = true;
@@ -2884,20 +2893,23 @@ class CodexMcpAgentSession implements AgentSession {
       this.updatePersistenceConversationId();
       return this.persistence;
     }
-    if (!this.sessionId) {
+    const persistenceId = this.sessionId ?? this.conversationId;
+    if (!persistenceId) {
       return null;
     }
     const { model: _ignoredModel, ...restConfig } = this.config;
     const conversationId = this.conversationId
       ? this.conversationId
-      : this.sessionId;
+      : persistenceId;
+    const codexSessionDir = resolveCodexSessionRoot();
     this.persistence = {
       provider: CODEX_PROVIDER,
-      sessionId: this.sessionId,
-      nativeHandle: this.sessionId,
+      sessionId: persistenceId,
+      nativeHandle: persistenceId,
       metadata: {
         ...restConfig,
         conversationId,
+        ...(codexSessionDir ? { codexSessionDir } : {}),
       },
     };
     this.updatePersistenceConversationId();
@@ -4169,16 +4181,45 @@ async function parseRolloutFile(
   return timeline;
 }
 
+type CodexPersistedTimelineOptions = {
+  sessionRoot?: string | null;
+  rolloutPath?: string | null;
+};
+
 async function loadCodexPersistedTimeline(
-  sessionId: string
+  sessionId: string,
+  options?: CodexPersistedTimelineOptions
 ): Promise<AgentTimelineItem[]> {
-  const sessionRoot = resolveCodexSessionRoot();
-  if (!sessionRoot) {
-    return [];
+  const rolloutPath = options?.rolloutPath ?? null;
+  if (rolloutPath) {
+    try {
+      const stat = await fs.stat(rolloutPath);
+      if (stat.isFile()) {
+        const timeline = await parseRolloutFile(rolloutPath);
+        if (timeline.length > 0) {
+          return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
+        }
+      }
+    } catch {
+      // Fall back to session root scan.
+    }
   }
 
   try {
-    const rolloutFile = await findRolloutFile(sessionId, sessionRoot);
+    const preferredRoot = options?.sessionRoot ?? resolveCodexSessionRoot();
+    const fallbackRoot = resolveCodexSessionRoot();
+    let rolloutFile: string | null = null;
+
+    if (preferredRoot) {
+      rolloutFile = await findRolloutFile(sessionId, preferredRoot);
+    }
+    if (
+      !rolloutFile &&
+      fallbackRoot &&
+      fallbackRoot !== preferredRoot
+    ) {
+      rolloutFile = await findRolloutFile(sessionId, fallbackRoot);
+    }
     if (!rolloutFile) {
       return [];
     }
@@ -4192,4 +4233,36 @@ async function loadCodexPersistedTimeline(
     );
     return [];
   }
+}
+
+function resolveCodexSessionRootFromMetadata(
+  metadata?: Record<string, unknown>
+): string | null {
+  const metadataDir = readCodexMetadataString(metadata, "codexSessionDir");
+  if (metadataDir) {
+    return metadataDir;
+  }
+  return resolveCodexSessionRoot();
+}
+
+function resolveCodexRolloutPath(
+  metadata?: Record<string, unknown>
+): string | null {
+  const metadataPath = readCodexMetadataString(metadata, "codexRolloutPath");
+  return metadataPath ? metadataPath : null;
+}
+
+function readCodexMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): string | null {
+  if (!metadata) {
+    return null;
+  }
+  const value = metadata[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
