@@ -378,6 +378,10 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     await agent.session.setMode(modeId);
     agent.currentModeId = modeId;
+    // Update runtimeInfo to reflect the new mode
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = { ...agent.runtimeInfo, modeId };
+    }
     this.emitState(agent);
   }
 

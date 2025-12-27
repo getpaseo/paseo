@@ -1,7 +1,6 @@
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import type { Dirent } from "node:fs";
+import { promises as fs, readdirSync, statSync, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -2360,7 +2359,8 @@ function buildCodexMcpConfig(
   config: AgentSessionConfig,
   prompt: string,
   modeId: string,
-  managedAgentId?: string
+  managedAgentId?: string,
+  experimentalResume?: string | null
 ): {
   prompt: string;
   cwd?: string;
@@ -2386,6 +2386,11 @@ function buildCodexMcpConfig(
   // Add extra codex config if provided
   if (config.extra?.codex) {
     Object.assign(innerConfig, config.extra.codex);
+  }
+
+  // Add experimental_resume if we're resuming from a previous session
+  if (experimentalResume) {
+    innerConfig.experimental_resume = experimentalResume;
   }
 
   // Build MCP servers configuration
@@ -2466,6 +2471,55 @@ function isMissingConversationIdResponse(response: unknown): boolean {
   return !!text && text.includes("Session not found for conversation_id");
 }
 
+/**
+ * Find the Codex session transcript file for a given sessionId.
+ * Codex stores session transcripts at ~/.codex/sessions/**\/*-{sessionId}.jsonl
+ */
+function findCodexResumeFile(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  try {
+    const codexHomeDir = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    const rootDir = path.join(codexHomeDir, "sessions");
+
+    // Recursively collect all files under the sessions directory
+    function collectFilesRecursive(dir: string, acc: string[] = []): string[] {
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return acc;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          collectFilesRecursive(full, acc);
+        } else if (entry.isFile()) {
+          acc.push(full);
+        }
+      }
+      return acc;
+    }
+
+    const candidates = collectFilesRecursive(rootDir)
+      .filter((full) => full.endsWith(`-${sessionId}.jsonl`))
+      .filter((full) => {
+        try {
+          return statSync(full).isFile();
+        } catch {
+          return false;
+        }
+      })
+      .sort((a, b) => {
+        const sa = statSync(a).mtimeMs;
+        const sb = statSync(b).mtimeMs;
+        return sb - sa; // newest first
+      });
+    return candidates[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
   private resolvers: ((value: IteratorResult<T>) => void)[] = [];
@@ -2538,6 +2592,7 @@ class CodexMcpAgentSession implements AgentSession {
   private patchChangesByCallId = new Map<string, PatchFileChange[]>();
   private managedAgentId: string | null = null;
   private resumeHandle: AgentPersistenceHandle | null = null;
+  private pendingResumeFile: string | null = null;
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
     this.config = config;
@@ -2762,6 +2817,23 @@ class CodexMcpAgentSession implements AgentSession {
       });
       this.eventQueue.end();
     }
+
+    // Find the Codex transcript file for the current session before clearing.
+    // This will be used with experimental_resume on the next message.
+    if (this.sessionId) {
+      this.pendingResumeFile = findCodexResumeFile(this.sessionId);
+    }
+
+    // Clear session IDs to force the next message to create a new Codex session.
+    // After an abort, Codex MCP cannot reliably continue with codex-reply.
+    this.sessionId = null;
+    this.conversationId = null;
+    if (this.cachedRuntimeInfo) {
+      this.cachedRuntimeInfo = {
+        ...this.cachedRuntimeInfo,
+        sessionId: null,
+      };
+    }
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -2811,6 +2883,12 @@ class CodexMcpAgentSession implements AgentSession {
   async setMode(modeId: string): Promise<void> {
     this.currentMode = modeId;
     this.config.modeId = modeId;
+
+    // Interrupt any running operation and prepare for resume.
+    // This finds the Codex transcript file and clears session IDs,
+    // so the next message will start a fresh session with experimental_resume.
+    await this.interrupt();
+
     // Update cached runtime info to reflect mode change
     if (this.cachedRuntimeInfo) {
       this.cachedRuntimeInfo = {
@@ -2979,7 +3057,17 @@ class CodexMcpAgentSession implements AgentSession {
     let response: unknown;
     try {
       if (!this.sessionId) {
-        const config = buildCodexMcpConfig(this.config, prompt, this.currentMode, this.managedAgentId ?? undefined);
+        // Starting a new session - use experimental_resume if we have a pending resume file
+        const resumeFile = this.pendingResumeFile;
+        this.pendingResumeFile = null; // consume once
+
+        const config = buildCodexMcpConfig(
+          this.config,
+          prompt,
+          this.currentMode,
+          this.managedAgentId ?? undefined,
+          resumeFile
+        );
         const attempt = async (arguments_: CodexToolArguments) =>
           this.client.callTool(
             { name: "codex", arguments: arguments_ },
