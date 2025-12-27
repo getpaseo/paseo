@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { readFile, mkdir, writeFile } from "fs/promises";
+import { readFile, mkdir, writeFile, stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify, inspect } from "util";
 import { join } from "path";
@@ -1273,6 +1273,24 @@ export class Session {
     );
 
     try {
+      // Validate that the working directory exists
+      const resolvedCwd = expandTilde(config.cwd);
+      try {
+        const stats = await stat(resolvedCwd);
+        if (!stats.isDirectory()) {
+          throw new Error(
+            `Working directory is not a directory: ${config.cwd}`
+          );
+        }
+      } catch (statError: any) {
+        if (statError.code === "ENOENT") {
+          throw new Error(
+            `Working directory does not exist: ${config.cwd}`
+          );
+        }
+        throw statError;
+      }
+
       const sessionConfig = await this.buildAgentSessionConfig(
         config,
         git,

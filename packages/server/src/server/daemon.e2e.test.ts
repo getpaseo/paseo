@@ -82,6 +82,19 @@ describe("daemon E2E", () => {
     expect(hasAssistantMessage).toBe(true);
   }, 180000); // 3 minute timeout for E2E test
 
+  test("fails to create agent with non-existent cwd", async () => {
+    const nonExistentCwd = "/this/path/does/not/exist/12345";
+
+    const result = await ctx.client.createAgentExpectFail({
+      provider: "codex",
+      cwd: nonExistentCwd,
+      title: "Should Fail Agent",
+    });
+
+    expect(result.error).toContain("Working directory does not exist");
+    expect(result.error).toContain(nonExistentCwd);
+  });
+
   describe("permission flow: Codex", () => {
     test(
       "approves permission and executes command",

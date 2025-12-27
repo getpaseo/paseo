@@ -244,6 +244,9 @@ export default function DraftAgentScreen() {
   const isNonGitDirectory =
     repoRequestStatus === "error" &&
     /not in a git repository/i.test(repoRequestError?.message ?? "");
+  const isDirectoryNotExists =
+    repoRequestStatus === "error" &&
+    /does not exist|no such file or directory|ENOENT/i.test(repoRequestError?.message ?? "");
   const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
     ? "idle"
     : repoAvailabilityError
@@ -490,6 +493,10 @@ export default function DraftAgentScreen() {
         setErrorMessage("Working directory is required");
         throw new Error("Working directory is required");
       }
+      if (isDirectoryNotExists) {
+        setErrorMessage("Working directory does not exist on the selected host");
+        throw new Error("Working directory does not exist on the selected host");
+      }
       if (!trimmedPrompt) {
         setErrorMessage("Initial prompt is required");
         throw new Error("Initial prompt is required");
@@ -562,6 +569,7 @@ export default function DraftAgentScreen() {
       createNewBranch,
       createWorktree,
       gitBlockingError,
+      isDirectoryNotExists,
       isLoading,
       isNonGitDirectory,
       modeOptions,
@@ -692,6 +700,13 @@ export default function DraftAgentScreen() {
                 wrapInContainer={false}
                 renderTrigger={renderDropdownTrigger}
               />
+              {isDirectoryNotExists && (
+                <View style={styles.warningContainer}>
+                  <Text style={styles.warningText}>
+                    Directory does not exist on the selected host
+                  </Text>
+                </View>
+              )}
               {renderConfigRow({
                 label: "Agent",
                 value: `${providerDefinitions.find((p) => p.id === selectedProvider)?.label ?? selectedProvider} · ${selectedModel || "auto"}`,
@@ -1036,6 +1051,17 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.destructiveForeground,
     fontSize: theme.fontSize.sm,
+  },
+  warningContainer: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.palette.yellow[400],
+  },
+  warningText: {
+    color: "#000000",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
   hostBadge: {
     flexDirection: "row",
