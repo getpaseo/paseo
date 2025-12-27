@@ -2273,11 +2273,7 @@ describe("daemon E2E", () => {
   });
 
   describe("external Codex session import", () => {
-    // TODO: Codex MCP's experimental_resume feature doesn't properly load
-    // conversation context. The config is passed correctly but Codex starts
-    // a fresh session instead of resuming. This works with `codex exec resume <sessionId>`
-    // but not via the MCP tool with experimental_resume file path.
-    test.skip(
+    test(
       "imports external codex exec session and preserves conversation context",
       async () => {
         const cwd = tmpCwd();
@@ -2530,6 +2526,122 @@ describe("daemon E2E", () => {
         rmSync(cwd, { recursive: true, force: true });
       },
       120000 // 2 minute timeout
+    );
+  });
+
+  describe("Claude session persistence", () => {
+    test(
+      "persists and resumes Claude agent with conversation history (remembers number)",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Use a memorable number that we'll ask about later
+        const magicNumber = 69;
+
+        // === STEP 1: Create Claude agent and have it remember a number ===
+        console.log("[CLAUDE PERSISTENCE TEST] Creating Claude agent...");
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Claude Persistence Test",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+        expect(agent.provider).toBe("claude");
+        console.log("[CLAUDE PERSISTENCE TEST] Created agent:", agent.id);
+
+        // === STEP 2: Ask it to remember the number ===
+        console.log("[CLAUDE PERSISTENCE TEST] Asking to remember number...");
+        await ctx.client.sendMessage(
+          agent.id,
+          `Remember this number: ${magicNumber}. Just confirm you've remembered it and reply with a single short sentence.`
+        );
+
+        const afterRemember = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(afterRemember.status).toBe("idle");
+        expect(afterRemember.lastError).toBeUndefined();
+
+        // Verify we got a confirmation response
+        let queue = ctx.client.getMessageQueue();
+        const confirmationMessages: string[] = [];
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "assistant_message" && item.text) {
+              confirmationMessages.push(item.text);
+            }
+          }
+        }
+        const confirmationResponse = confirmationMessages.join("");
+        console.log("[CLAUDE PERSISTENCE TEST] Confirmation response:", JSON.stringify(confirmationResponse));
+        expect(confirmationResponse.length).toBeGreaterThan(0);
+
+        // === STEP 3: Get persistence handle and delete agent ===
+        expect(afterRemember.persistence).toBeTruthy();
+        const persistence = afterRemember.persistence;
+        expect(persistence?.provider).toBe("claude");
+        expect(persistence?.sessionId).toBeTruthy();
+        console.log("[CLAUDE PERSISTENCE TEST] Got persistence handle:", persistence?.sessionId);
+
+        // Delete the agent
+        await ctx.client.deleteAgent(agent.id);
+        console.log("[CLAUDE PERSISTENCE TEST] Deleted agent");
+
+        // === STEP 4: Resume the agent using persistence handle ===
+        console.log("[CLAUDE PERSISTENCE TEST] Resuming agent...");
+        ctx.client.clearMessageQueue();
+        const resumedAgent = await ctx.client.resumeAgent(persistence!);
+
+        expect(resumedAgent.id).toBeTruthy();
+        expect(resumedAgent.status).toBe("idle");
+        expect(resumedAgent.provider).toBe("claude");
+        console.log("[CLAUDE PERSISTENCE TEST] Resumed agent:", resumedAgent.id);
+
+        // === STEP 5: Ask about the remembered number ===
+        console.log("[CLAUDE PERSISTENCE TEST] Asking about remembered number...");
+        ctx.client.clearMessageQueue();
+        await ctx.client.sendMessage(
+          resumedAgent.id,
+          "What was the number I asked you to remember earlier? Reply with just the number and nothing else."
+        );
+
+        const afterRecall = await ctx.client.waitForAgentIdle(resumedAgent.id, 120000);
+        expect(afterRecall.status).toBe("idle");
+        expect(afterRecall.lastError).toBeUndefined();
+
+        // === STEP 6: Verify the response contains the magic number ===
+        queue = ctx.client.getMessageQueue();
+        const recallMessages: string[] = [];
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === resumedAgent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "assistant_message" && item.text) {
+              recallMessages.push(item.text);
+            }
+          }
+        }
+        const fullResponse = recallMessages.join("");
+        console.log("[CLAUDE PERSISTENCE TEST] Recall response:", JSON.stringify(fullResponse));
+
+        // CRITICAL ASSERTION: The response should contain the magic number
+        // This proves the Claude agent successfully preserved conversation context
+        expect(fullResponse).toContain(String(magicNumber));
+
+        // Cleanup
+        await ctx.client.deleteAgent(resumedAgent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      300000 // 5 minute timeout for multiple Claude API calls
     );
   });
 

@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { promises as fs, readdirSync, statSync, type Dirent } from "node:fs";
+import { promises as fs, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -2383,14 +2383,21 @@ function buildCodexMcpConfig(
   // Build the config payload with MCP servers
   const innerConfig: CodexConfigPayload = {};
 
-  // Add extra codex config if provided
+  // Add extra codex config if provided (but filter out experimental_resume since it's deprecated)
   if (config.extra?.codex) {
-    Object.assign(innerConfig, config.extra.codex);
+    const { experimental_resume: _, ...codexConfig } = config.extra.codex as Record<string, unknown>;
+    Object.assign(innerConfig, codexConfig);
   }
 
-  // Add experimental_resume if we're resuming from a previous session
+  // Parse and inject conversation history if resuming from a previous session
+  // Note: experimental_resume was deprecated/removed from Codex MCP server.
+  // Instead, we parse the rollout file and inject history as developer instructions.
+  let developerInstructions: string | undefined;
   if (experimentalResume) {
-    innerConfig.experimental_resume = experimentalResume;
+    const history = parseRolloutHistory(experimentalResume);
+    if (history) {
+      developerInstructions = history;
+    }
   }
 
   // Build MCP servers configuration
@@ -2438,6 +2445,7 @@ function buildCodexMcpConfig(
     sandbox: string;
     config?: CodexConfigPayload;
     model?: string;
+    "developer-instructions"?: string;
   } = {
     prompt,
     cwd: config.cwd,
@@ -2453,6 +2461,12 @@ function buildCodexMcpConfig(
   if (typeof config.model === "string" && config.model.length > 0) {
     configPayload.model = config.model;
   }
+
+  // Add developer instructions for session resume context
+  if (developerInstructions) {
+    configPayload["developer-instructions"] = developerInstructions;
+  }
+
   return configPayload;
 }
 
@@ -2515,6 +2529,57 @@ function findCodexResumeFile(sessionId: string | null): string | null {
         return sb - sa; // newest first
       });
     return candidates[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a Codex rollout JSONL file and extract the conversation history.
+ * Returns a formatted string with the previous conversation that can be
+ * injected as context into a new session.
+ */
+function parseRolloutHistory(rolloutPath: string): string | null {
+  try {
+    const content = readFileSync(rolloutPath, "utf-8");
+    const lines = content.split("\n").filter((line) => line.trim());
+
+    const messages: { role: "user" | "assistant"; text: string }[] = [];
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+
+        // Extract user and assistant messages from response_item entries
+        if (entry.type === "response_item" && entry.payload?.type === "message") {
+          const role = entry.payload.role as "user" | "assistant";
+          const contentItems = entry.payload.content;
+
+          if (Array.isArray(contentItems)) {
+            for (const item of contentItems) {
+              // User messages have input_text, assistant messages have output_text
+              const text = item.text || item.input_text || item.output_text;
+              if (text && (role === "user" || role === "assistant")) {
+                // Skip environment context messages
+                if (text.includes("<environment_context>")) continue;
+                messages.push({ role, text });
+              }
+            }
+          }
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    if (messages.length === 0) return null;
+
+    // Format as conversation history
+    const formatted = messages
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
+      .join("\n\n");
+
+    return `<previous_conversation>\nThis is a continuation of a previous session. Here is the conversation history:\n\n${formatted}\n</previous_conversation>`;
   } catch {
     return null;
   }
@@ -2620,6 +2685,12 @@ class CodexMcpAgentSession implements AgentSession {
       }
       // Mark history as pending; actual loading happens in connect() from disk
       this.historyPending = true;
+    }
+
+    // Check for external session import via extra.codex.experimental_resume
+    const extraCodex = config.extra?.codex as Record<string, unknown> | undefined;
+    if (extraCodex?.experimental_resume && typeof extraCodex.experimental_resume === "string") {
+      this.pendingResumeFile = extraCodex.experimental_resume;
     }
 
     this.client = new Client(
