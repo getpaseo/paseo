@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync } from "fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import {
@@ -2269,6 +2269,267 @@ describe("daemon E2E", () => {
         rmSync(cwd, { recursive: true, force: true });
       },
       300000 // 5 minute timeout for multiple Claude API calls
+    );
+  });
+
+  describe("external Codex session import", () => {
+    // TODO: Codex MCP's experimental_resume feature doesn't properly load
+    // conversation context. The config is passed correctly but Codex starts
+    // a fresh session instead of resuming. This works with `codex exec resume <sessionId>`
+    // but not via the MCP tool with experimental_resume file path.
+    test.skip(
+      "imports external codex exec session and preserves conversation context",
+      async () => {
+        const cwd = tmpCwd();
+        const { execSync, spawn } = await import("child_process");
+
+        // Initialize git repo (Codex requires a trusted directory)
+        execSync("git init", { cwd, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+        execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+        writeFileSync(path.join(cwd, "README.md"), "# Test\n");
+        execSync("git add .", { cwd, stdio: "pipe" });
+        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+
+        // === STEP 1: Run external codex exec with a memorable number ===
+        // We use spawn so we can send input and capture output
+        console.log("[EXTERNAL SESSION TEST] Spawning external codex exec...");
+
+        // Use a memorable number that we'll ask about later
+        const magicNumber = 69;
+        const prompt = `Remember this number: ${magicNumber}. Just confirm you've remembered it and reply with a single short sentence.`;
+
+        // Spawn codex exec and capture stdout to get session ID
+        let sessionId: string | null = null;
+        let codexOutput = "";
+
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            codexProcess.kill();
+            reject(new Error("Codex exec timeout after 120 seconds"));
+          }, 120000);
+
+          const codexProcess = spawn("codex", ["exec", prompt], {
+            cwd,
+            env: {
+              ...process.env,
+              // Ensure full-access mode to avoid permission prompts
+              CODEX_SANDBOX: "danger-full-access",
+              CODEX_APPROVAL_POLICY: "never",
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+
+          codexProcess.stdout.on("data", (data: Buffer) => {
+            const text = data.toString();
+            codexOutput += text;
+            console.log("[EXTERNAL SESSION TEST] stdout:", text);
+
+            // Look for session ID in output
+            // Format: "session id: 019b5ea3-25d5-7202-bd06-6b1db405e505"
+            const match = text.match(/session id:\s*([0-9a-f-]+)/i);
+            if (match) {
+              sessionId = match[1];
+              console.log("[EXTERNAL SESSION TEST] Captured session ID:", sessionId);
+            }
+          });
+
+          codexProcess.stderr.on("data", (data: Buffer) => {
+            const text = data.toString();
+            console.log("[EXTERNAL SESSION TEST] stderr:", text);
+
+            // Session ID might also appear in stderr
+            const match = text.match(/session id:\s*([0-9a-f-]+)/i);
+            if (match && !sessionId) {
+              sessionId = match[1];
+              console.log("[EXTERNAL SESSION TEST] Captured session ID from stderr:", sessionId);
+            }
+          });
+
+          codexProcess.on("close", (code) => {
+            clearTimeout(timeout);
+            console.log("[EXTERNAL SESSION TEST] codex exec exited with code:", code);
+            if (code === 0 || sessionId) {
+              resolve();
+            } else {
+              reject(new Error(`codex exec failed with code ${code}`));
+            }
+          });
+
+          codexProcess.on("error", (err) => {
+            clearTimeout(timeout);
+            reject(err);
+          });
+        });
+
+        console.log("[EXTERNAL SESSION TEST] Full output:", codexOutput);
+
+        // Verify we captured the session ID
+        expect(sessionId).not.toBeNull();
+        expect(sessionId).toMatch(/^[0-9a-f-]+$/);
+        console.log("[EXTERNAL SESSION TEST] Session ID:", sessionId);
+
+        // === STEP 2: Find the transcript file for this session ===
+        // Codex stores transcripts at ~/.codex/sessions/**/*-{sessionId}.jsonl
+        const codexHome = process.env.CODEX_HOME || path.join(tmpdir(), "..", "..", "home", process.env.USER || "", ".codex");
+        const actualCodexHome = path.join(process.env.HOME || "", ".codex");
+        const sessionsDir = path.join(actualCodexHome, "sessions");
+
+        console.log("[EXTERNAL SESSION TEST] Looking for transcript in:", sessionsDir);
+
+        // Find the transcript file
+        function findTranscriptFile(dir: string, targetSessionId: string): string | null {
+          try {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                const found = findTranscriptFile(fullPath, targetSessionId);
+                if (found) return found;
+              } else if (entry.isFile() && fullPath.endsWith(`-${targetSessionId}.jsonl`)) {
+                return fullPath;
+              }
+            }
+          } catch {
+            // Directory doesn't exist or not readable
+          }
+          return null;
+        }
+
+        const transcriptFile = findTranscriptFile(sessionsDir, sessionId!);
+        console.log("[EXTERNAL SESSION TEST] Found transcript file:", transcriptFile);
+
+        // Verify transcript file exists
+        expect(transcriptFile).not.toBeNull();
+        expect(existsSync(transcriptFile!)).toBe(true);
+
+        // Read and verify transcript has content
+        const transcriptContent = readFileSync(transcriptFile!, "utf-8");
+        console.log("[EXTERNAL SESSION TEST] Transcript size:", transcriptContent.length, "bytes");
+        expect(transcriptContent.length).toBeGreaterThan(0);
+
+        // === STEP 3: Import this session into the daemon ===
+        console.log("[EXTERNAL SESSION TEST] Creating daemon agent with experimental_resume...");
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "External Session Import Test",
+          modeId: "full-access",
+          extra: {
+            codex: {
+              experimental_resume: transcriptFile,
+            },
+          },
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+        console.log("[EXTERNAL SESSION TEST] Created agent:", agent.id);
+
+        // === STEP 4: Ask the daemon agent about the number ===
+        console.log("[EXTERNAL SESSION TEST] Asking about the remembered number...");
+        ctx.client.clearMessageQueue();
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "What was the number I asked you to remember earlier? Reply with just the number and nothing else."
+        );
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        expect(finalState.status).toBe("idle");
+        expect(finalState.lastError).toBeUndefined();
+
+        // === STEP 5: Verify the response contains the magic number ===
+        const queue = ctx.client.getMessageQueue();
+        const assistantMessages: string[] = [];
+
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "assistant_message" && item.text) {
+              assistantMessages.push(item.text);
+            }
+          }
+        }
+
+        const fullResponse = assistantMessages.join("");
+        console.log("[EXTERNAL SESSION TEST] Agent response:", JSON.stringify(fullResponse));
+
+        // CRITICAL ASSERTION: The response should contain the magic number
+        // This proves the daemon agent successfully loaded the external session's context
+        expect(fullResponse).toContain(String(magicNumber));
+
+        // === STEP 6: Verify history was present when importing ===
+        // Check that we received history timeline items (from the external session)
+        // These would be in agent_stream_snapshot if history was replayed
+
+        // Note: The experimental_resume feature loads history directly into Codex,
+        // so we may not see individual history items streamed back. The key test
+        // is that the agent can recall the number, which proves context was preserved.
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      300000 // 5 minute timeout for external session test
+    );
+
+    test(
+      "fails gracefully when resuming non-existent external session",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Try to create agent with a non-existent transcript file
+        const fakeTranscriptFile = path.join(cwd, "non-existent-session.jsonl");
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Non-existent Session Test",
+          modeId: "full-access",
+          extra: {
+            codex: {
+              experimental_resume: fakeTranscriptFile,
+            },
+          },
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+
+        // The agent should still work, just without the resume context
+        // Send a simple message to verify it's functional
+        ctx.client.clearMessageQueue();
+        await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else.");
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 60000);
+
+        // Agent should complete (possibly with Codex warning about missing file,
+        // but should still function)
+        expect(["idle", "error"]).toContain(finalState.status);
+
+        // Verify we got some response
+        const queue = ctx.client.getMessageQueue();
+        const hasResponse = queue.some(
+          (m) =>
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline" &&
+            m.payload.event.item.type === "assistant_message"
+        );
+        expect(hasResponse).toBe(true);
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      120000 // 2 minute timeout
     );
   });
 
