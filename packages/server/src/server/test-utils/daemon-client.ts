@@ -197,6 +197,50 @@ export class DaemonClient {
     ); // 60 second timeout for initialization
   }
 
+  /**
+   * Create an agent and expect it to fail.
+   * Returns the error message from the failure.
+   */
+  async createAgentExpectFail(
+    options: CreateAgentOptions
+  ): Promise<{ error: string }> {
+    const requestId = nanoid();
+
+    // Record the current queue position so we only check NEW messages
+    const startPosition = this.messageQueue.length;
+
+    this.send({
+      type: "create_agent_request",
+      requestId,
+      config: {
+        provider: options.provider,
+        cwd: options.cwd,
+        title: options.title,
+        model: options.model,
+        modeId: options.modeId,
+        mcpServers: options.mcpServers,
+        extra: options.extra,
+      },
+      initialPrompt: options.initialPrompt,
+    });
+
+    // Wait for either agent_create_failed status or timeout
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "status" &&
+          msg.payload.status === "agent_create_failed" &&
+          msg.payload.requestId === requestId
+        ) {
+          return { error: String(msg.payload.error ?? "Unknown error") };
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
   async deleteAgent(agentId: string): Promise<void> {
     this.send({ type: "delete_agent_request", agentId });
     await this.waitFor((msg) => {
