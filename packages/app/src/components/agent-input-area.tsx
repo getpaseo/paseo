@@ -52,6 +52,8 @@ interface AgentInputAreaProps {
   }) => Promise<void>;
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  value?: string;
+  onChangeText?: (text: string) => void;
 }
 
 const MIN_INPUT_HEIGHT = 50;
@@ -96,6 +98,8 @@ export function AgentInputArea({
   serverId,
   onSubmitMessage,
   isSubmitLoading = false,
+  value,
+  onChangeText,
 }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -146,7 +150,9 @@ export function AgentInputArea({
   const wsOrInert = ws ?? inertWebSocket;
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
   
-  const [userInput, setUserInput] = useState("");
+  const [internalInput, setInternalInput] = useState("");
+  const userInput = value ?? internalInput;
+  const setUserInput = onChangeText ?? setInternalInput;
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedImages, setSelectedImages] = useState<Array<{ uri: string; mimeType: string }>>([]);
@@ -367,8 +373,11 @@ export function AgentInputArea({
 
     const message = userInput.trim();
     const imageAttachments = selectedImages.length > 0 ? selectedImages : undefined;
-    
-    setUserInput("");
+
+    const isControlled = value !== undefined;
+    if (!isControlled) {
+      setUserInput("");
+    }
     setSelectedImages([]);
     setInputHeight(MIN_INPUT_HEIGHT);
     setIsProcessing(true);
@@ -377,6 +386,11 @@ export function AgentInputArea({
       await submitMessage(message, imageAttachments);
     } catch (error) {
       console.error("[AgentInput] Failed to send message:", error);
+      // Restore input on error so user doesn't lose their message
+      setUserInput(message);
+      if (imageAttachments) {
+        setSelectedImages(imageAttachments);
+      }
     } finally {
       setIsProcessing(false);
     }

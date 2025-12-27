@@ -122,6 +122,7 @@ export default function DraftAgentScreen() {
   >(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [promptText, setPromptText] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
   // Isolation mode: "none" | "branch" | "worktree"
   const [isolationMode, setIsolationMode] = useState<"none" | "branch" | "worktree">("none");
@@ -487,27 +488,27 @@ export default function DraftAgentScreen() {
       const trimmedPrompt = text.trim();
       if (!trimmedPath) {
         setErrorMessage("Working directory is required");
-        return;
+        throw new Error("Working directory is required");
       }
       if (!trimmedPrompt) {
         setErrorMessage("Initial prompt is required");
-        return;
+        throw new Error("Initial prompt is required");
       }
       if (!selectedServerId) {
         setErrorMessage("No host selected");
-        return;
+        throw new Error("No host selected");
       }
       if (gitBlockingError) {
         setErrorMessage(gitBlockingError);
-        return;
+        throw new Error(gitBlockingError);
       }
       if (isLoading) {
-        return;
+        throw new Error("Already loading");
       }
       const createAgent = sessionMethods?.createAgent;
       if (!createAgent) {
         setErrorMessage("Host is not connected");
-        return;
+        throw new Error("Host is not connected");
       }
       const modeId =
         modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
@@ -608,6 +609,7 @@ export default function DraftAgentScreen() {
       }
       pendingRequestIdRef.current = null;
       setIsLoading(false);
+      setPromptText("");
       router.push({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
@@ -905,6 +907,8 @@ export default function DraftAgentScreen() {
             serverId={selectedServerId ?? ""}
             onSubmitMessage={handleCreateFromInput}
             isSubmitLoading={isLoading}
+            value={promptText}
+            onChangeText={setPromptText}
           />
         </View>
       </View>

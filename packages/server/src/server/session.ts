@@ -1503,10 +1503,6 @@ export class Session {
       };
     }
 
-    if (!normalized.createWorktree) {
-      await this.ensureCleanWorkingTree(cwd);
-    }
-
     if (normalized.createWorktree) {
       const targetBranch = normalized.createNewBranch
         ? normalized.newBranchName
@@ -1751,6 +1747,7 @@ export class Session {
       return;
     }
 
+    await this.ensureCleanWorkingTree(cwd);
     await execAsync(`git checkout ${branch}`, { cwd });
   }
 
@@ -1773,6 +1770,7 @@ export class Session {
       throw new Error(`Branch already exists: ${newBranchName}`);
     }
 
+    await this.ensureCleanWorkingTree(cwd);
     await execAsync(`git checkout -b ${newBranchName} ${baseBranch}`, {
       cwd,
     });
