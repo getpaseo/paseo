@@ -20,7 +20,7 @@ Improvements to the new agent screen in the app.
     - Update the trigger label to include the mode.
     - **Done (2025-12-28 23:37)**: WHAT: `packages/app/src/app/agent/new.tsx:634-643` adds computed labels for provider/mode and `packages/app/src/app/agent/new.tsx:729` appends the permissions mode in the agent trigger value. RESULT: agent selector trigger now shows provider, model, and permissions mode. EVIDENCE: Not run (not requested).
 
-- [ ] agent=claude **Test 1**: Test config persistence via Playwright MCP.
+- [x] agent=claude **Test 1**: Test config persistence via Playwright MCP.
 
     - Navigate to new agent screen at `http://localhost:8081/agent/new`.
     - Select a non-default config (e.g., Codex provider, specific model, Plan mode).
@@ -28,6 +28,7 @@ Improvements to the new agent screen in the app.
     - Navigate back to new agent screen.
     - Verify the previously selected config is pre-populated.
     - If not working, add a fix task with debugging feedback.
+    - **Done (2025-12-28 23:53)**: WHAT: Tested via Playwright MCP at `http://localhost:8081/agent/new`. RESULT: Config persistence working correctly. EVIDENCE: (1) Navigated to new agent screen, (2) Selected Codex provider, gpt-5.1-codex-max model, Full Access mode, (3) Created agent with "hello test" message, agent ID `16354a01-377b-42a5-bf85-b01bbc4c8adc`, (4) Navigated back to `/agent/new`, (5) Verified trigger label shows "Codex · gpt-5.1-codex-max · Full Access" - all settings persisted correctly.
 
 - [ ] agent=claude **Test 2**: Test permissions mode display in agent selector via Playwright MCP.
 
