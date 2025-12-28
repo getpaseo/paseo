@@ -82,7 +82,6 @@ export default function GitDiffScreen() {
     <GitDiffContent
       serverId={session.serverId}
       agentId={agentId}
-      serverLabel={serverLabel}
     />
   );
 }
@@ -90,11 +89,9 @@ export default function GitDiffScreen() {
 function GitDiffContent({
   serverId,
   agentId,
-  serverLabel,
 }: {
   serverId: string;
   agentId?: string;
-  serverLabel: string;
 }) {
   const [isLoading, setIsLoading] = useState(true);
   const hasRequestedRef = useRef<string | null>(null);
@@ -143,7 +140,6 @@ function GitDiffContent({
     return (
       <View style={styles.container}>
         <BackHeader title="Changes" />
-        <Text style={styles.metaText}>Host: {serverLabel}</Text>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Agent not found</Text>
         </View>
@@ -158,7 +154,6 @@ function GitDiffContent({
   return (
     <View style={styles.container}>
       <BackHeader title="Changes" />
-      <Text style={styles.metaText}>Host: {serverLabel}</Text>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         {isLoading ? (
@@ -232,7 +227,6 @@ function SessionUnavailableState({
   return (
     <View style={styles.container}>
       <BackHeader title="Changes" />
-      <Text style={styles.metaText}>Host: {serverLabel}</Text>
       <View style={styles.sessionStateContainer}>
         {isConnecting ? (
           <>
@@ -268,12 +262,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[16],
     paddingHorizontal: theme.spacing[6],
     gap: theme.spacing[3],
-  },
-  metaText: {
-    paddingHorizontal: theme.spacing[6],
-    marginBottom: theme.spacing[2],
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
   },
   scrollView: {
     flex: 1,

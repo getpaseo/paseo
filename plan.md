@@ -88,10 +88,11 @@ Improvements to the new agent screen in the app.
     - Fix to handle both absolute and relative paths correctly.
     - **Done (2025-12-29 00:15)**: WHAT: `packages/app/src/components/agent-stream-view.tsx:118` now normalizes inline paths using the agent cwd; `packages/app/src/components/agent-stream-view.tsx:455` adds path normalization helpers to convert absolute paths within the cwd to relative form before file explorer navigation. RESULT: absolute paths pointing at the agent cwd resolve to the correct directory/file in the explorer. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 9**: Remove host label from git diff screen.
+- [x] **Iteration 9**: Remove host label from git diff screen.
 
     - The host label is shown on the git diff screen but it's not relevant there.
     - Remove it from the UI.
+    - **Done (2025-12-29 00:16)**: WHAT: `packages/app/src/app/git-diff.tsx:81-210` removes the Host label from the git diff header and error state; `packages/app/src/app/git-diff.tsx:253-307` drops the unused `metaText` style. RESULT: git diff screen no longer shows the host label. EVIDENCE: Not run (not requested).
 
 - [ ] **Checkpoint**: Run typecheck and review code quality.
 
