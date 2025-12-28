@@ -30,13 +30,14 @@ Improvements to the new agent screen in the app.
     - If not working, add a fix task with debugging feedback.
     - **Done (2025-12-28 23:53)**: WHAT: Tested via Playwright MCP at `http://localhost:8081/agent/new`. RESULT: Config persistence working correctly. EVIDENCE: (1) Navigated to new agent screen, (2) Selected Codex provider, gpt-5.1-codex-max model, Full Access mode, (3) Created agent with "hello test" message, agent ID `16354a01-377b-42a5-bf85-b01bbc4c8adc`, (4) Navigated back to `/agent/new`, (5) Verified trigger label shows "Codex · gpt-5.1-codex-max · Full Access" - all settings persisted correctly.
 
-- [ ] agent=claude **Test 2**: Test permissions mode display in agent selector via Playwright MCP.
+- [x] agent=claude **Test 2**: Test permissions mode display in agent selector via Playwright MCP.
 
     - Navigate to new agent screen at `http://localhost:8081/agent/new`.
     - Open the agent selector dropdown.
     - Select a specific mode (e.g., "Plan").
     - Verify the trigger label shows provider, model, AND mode (e.g., "Claude · auto · Plan").
     - If not working, add a fix task with debugging feedback.
+    - **Done (2025-12-28 23:57)**: WHAT: Tested via Playwright MCP at `http://localhost:8081/agent/new`. RESULT: Permissions mode display working correctly. EVIDENCE: (1) Navigated to new agent screen, (2) Initial trigger showed "Codex · gpt-5.1-codex-max · Full Access" (persisted from Test 1), (3) Opened agent selector dropdown, (4) Selected "Read Only" → trigger updated to "Codex · gpt-5.1-codex-max · Read Only", (5) Selected "Auto" → trigger updated to "Codex · gpt-5.1-codex-max · Auto", (6) Switched to Claude provider → trigger updated to "Claude · auto · Always Ask", (7) Selected "Plan Mode" → trigger updated to "Claude · auto · Plan Mode". All mode changes correctly reflected in the trigger label.
 
 - [ ] **Iteration 3**: Filter out internal messages when importing Claude agents.
 
@@ -49,3 +50,16 @@ Improvements to the new agent screen in the app.
     - Codex import screen currently displays no content.
     - Investigate and fix the issue.
     - Add daemon-level E2E test to verify import works correctly.
+
+- [ ] **Iteration 5**: Fix gallery 15s timeout causing full-screen error crash.
+
+    - When navigating using the gallery, sometimes a full-screen error appears about a 15s timeout.
+    - This appears to be an image loading timeout.
+    - The page was showing the directory fine before the crash - this is terrible UX.
+    - Fix: Don't crash the page on image timeout. Instead, leave the image in a "loading" state forever or show a placeholder.
+    - Image timeouts should never crash the entire view.
+
+- [ ] **Iteration 6**: Fix spurious loader showing at top of gallery even when directory has loaded.
+
+    - Sometimes the loader at the top of the gallery keeps showing even when the directory content has clearly loaded.
+    - Investigate the loading state management and fix the race condition.
