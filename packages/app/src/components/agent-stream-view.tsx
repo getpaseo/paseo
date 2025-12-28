@@ -121,7 +121,7 @@ export function AgentStreamView({
         return;
       }
 
-      const normalized = normalizeInlinePath(target.path);
+      const normalized = normalizeInlinePath(target.path, agent.cwd);
       if (!normalized) {
         return;
       }
@@ -147,7 +147,14 @@ export function AgentStreamView({
         },
       });
     },
-    [agentId, requestDirectoryListingOrInert, requestFilePreviewOrInert, resolvedServerId, router]
+    [
+      agent.cwd,
+      agentId,
+      requestDirectoryListingOrInert,
+      requestFilePreviewOrInert,
+      resolvedServerId,
+      router,
+    ]
   );
 
   const handleScroll = useCallback(
@@ -445,21 +452,26 @@ export function AgentStreamView({
   );
 }
 
-function normalizeInlinePath(rawPath: string):
+function normalizeInlinePath(
+  rawPath: string,
+  cwd?: string
+):
   | { directory: string; file?: string }
   | null {
   if (!rawPath) {
     return null;
   }
 
-  let value = rawPath.trim();
-  value = value.replace(/^['"`]/, "").replace(/['"`]$/, "");
-  if (!value) {
+  const normalizedInput = normalizePathInput(rawPath);
+  if (!normalizedInput) {
     return null;
   }
 
-  let normalized = value.replace(/\\/g, "/");
-  normalized = normalized.replace(/\/{2,}/g, "/");
+  let normalized = normalizedInput;
+  const cwdRelative = resolvePathAgainstCwd(normalized, cwd);
+  if (cwdRelative) {
+    normalized = cwdRelative;
+  }
 
   if (normalized.startsWith("./")) {
     normalized = normalized.slice(2) || ".";
@@ -485,6 +497,50 @@ function normalizeInlinePath(rawPath: string):
     directory: directory.length > 0 ? directory : ".",
     file: normalized,
   };
+}
+
+function normalizePathInput(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim().replace(/^['"`]/, "").replace(/['"`]$/, "");
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+}
+
+function resolvePathAgainstCwd(pathValue: string, cwd?: string): string | null {
+  const normalizedCwd = normalizePathInput(cwd);
+  if (!normalizedCwd || !isAbsolutePath(pathValue) || !isAbsolutePath(normalizedCwd)) {
+    return null;
+  }
+
+  const normalizedCwdBase = normalizedCwd.replace(/\/+$/, "") || "/";
+  const comparePath = normalizePathForCompare(pathValue);
+  const compareCwd = normalizePathForCompare(normalizedCwdBase);
+  const prefix = normalizedCwdBase === "/" ? "/" : `${normalizedCwdBase}/`;
+  const comparePrefix = normalizePathForCompare(prefix);
+
+  if (comparePath === compareCwd) {
+    return ".";
+  }
+
+  if (comparePath.startsWith(comparePrefix)) {
+    return pathValue.slice(prefix.length) || ".";
+  }
+
+  return null;
+}
+
+function normalizePathForCompare(value: string): string {
+  return /^[A-Za-z]:/.test(value) ? value.toLowerCase() : value;
+}
+
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
 }
 
 function WorkingIndicator() {

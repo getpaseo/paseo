@@ -80,12 +80,13 @@ Improvements to the new agent screen in the app.
     - Investigate the loading state management and fix the race condition.
     - **Done (2025-12-29 00:10)**: WHAT: `packages/app/src/contexts/session-context.tsx:1588-1645` routes back-navigation directory listings through the request helper and clears `pendingRequest`/`isLoading` on response. RESULT: gallery header loader no longer sticks after navigating back to cached directories. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 8**: Review and fix file/directory auto-linking logic.
+- [x] **Iteration 8**: Review and fix file/directory auto-linking logic.
 
     - Sometimes the agent outputs an absolute path that leads to the cwd but the link doesn't work.
     - It appears the linking logic only accepts relative paths.
     - Review the path detection and linking logic.
     - Fix to handle both absolute and relative paths correctly.
+    - **Done (2025-12-29 00:15)**: WHAT: `packages/app/src/components/agent-stream-view.tsx:118` now normalizes inline paths using the agent cwd; `packages/app/src/components/agent-stream-view.tsx:455` adds path normalization helpers to convert absolute paths within the cwd to relative form before file explorer navigation. RESULT: absolute paths pointing at the agent cwd resolve to the correct directory/file in the explorer. EVIDENCE: Not run (not requested).
 
 - [ ] **Iteration 9**: Remove host label from git diff screen.
 
