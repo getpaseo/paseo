@@ -35,7 +35,7 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, Check, X, RefreshCcw } from "lucide-react-native";
+import { Mic, Check, X, RefreshCcw, Monitor } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
@@ -169,7 +169,13 @@ type ImportCandidate = {
 };
 
 type ProviderFilter = "all" | AgentProvider;
-type DropdownKey = "assistant" | "permissions" | "model" | "workingDir" | "baseBranch";
+type DropdownKey =
+  | "assistant"
+  | "permissions"
+  | "model"
+  | "workingDir"
+  | "baseBranch"
+  | "host";
 
 type RepoInfoState = {
   cwd: string;
@@ -426,6 +432,7 @@ function AgentFlowModal({
     "Selected host";
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
   const hasSelectedDaemon = Boolean(selectedServerId);
+  const hostBadgeLabel = hasSelectedDaemon ? selectedDaemonLabel : "Select host";
   const selectedDaemonIsOffline = selectedDaemonStatus !== "online";
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
   const daemonAvailabilityError = !hasSelectedDaemon
@@ -1787,6 +1794,23 @@ function AgentFlowModal({
               paddingRight={horizontalPaddingRight}
               onClose={handleClose}
               title={modalTitle}
+              rightContent={
+                isImportFlow ? (
+                  <Pressable
+                    style={styles.hostBadge}
+                    onPress={() => openDropdownSheet("host")}
+                  >
+                    <Monitor size={14} color={defaultTheme.colors.mutedForeground} />
+                    <Text style={styles.hostBadgeLabel}>{hostBadgeLabel}</Text>
+                    <View
+                      style={[
+                        styles.hostStatusDot,
+                        selectedDaemonStatus === "online" && styles.hostStatusDotOnline,
+                      ]}
+                    />
+                  </Pressable>
+                ) : undefined
+              }
             />
             {isCreateFlow ? (
               <>
@@ -2133,6 +2157,40 @@ function AgentFlowModal({
                 )}
               </View>
             )}
+            <DropdownSheet
+              title="Host"
+              visible={openDropdown === "host"}
+              onClose={closeDropdown}
+            >
+              {daemonEntries.length === 0 ? (
+                <Text style={styles.helperText}>No hosts available yet.</Text>
+              ) : (
+                <View style={styles.dropdownSheetList}>
+                  {daemonEntries.map(({ daemon, status }) => {
+                    const isSelected = daemon.id === selectedServerId;
+                    const label = daemon.label ?? daemon.wsUrl ?? daemon.id;
+                    return (
+                      <Pressable
+                        key={daemon.id}
+                        style={[
+                          styles.dropdownSheetOption,
+                          isSelected && styles.dropdownSheetOptionSelected,
+                        ]}
+                        onPress={() => {
+                          setSelectedServerIdFromUser(daemon.id);
+                          closeDropdown();
+                        }}
+                      >
+                        <Text style={styles.dropdownSheetOptionLabel}>{label}</Text>
+                        <Text style={styles.dropdownSheetOptionDescription}>
+                          {formatConnectionStatus(status)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </DropdownSheet>
           </View>
         </Animated.View>
       </View>
@@ -2175,6 +2233,7 @@ interface ModalHeaderProps {
   paddingRight: number;
   onClose: () => void;
   title: string;
+  rightContent?: ReactNode;
 }
 
 function ModalHeader({
@@ -2183,13 +2242,17 @@ function ModalHeader({
   paddingRight,
   onClose,
   title,
+  rightContent,
 }: ModalHeaderProps): ReactElement {
   return (
     <View style={[styles.header, { paddingTop, paddingLeft, paddingRight }]}>
       <Text style={styles.headerTitle}>{title}</Text>
-      <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
-        <X size={20} color={defaultTheme.colors.mutedForeground} />
-      </Pressable>
+      <View style={styles.headerActions}>
+        {rightContent}
+        <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
+          <X size={20} color={defaultTheme.colors.mutedForeground} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -2652,11 +2715,39 @@ const styles = StyleSheet.create(((theme: any) => ({
     fontSize: theme.fontSize["2xl"],
     fontWeight: theme.fontWeight.semibold,
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
   closeButton: {
     padding: theme.spacing[2],
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
+  },
+  hostBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.full,
+  },
+  hostBadgeLabel: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  hostStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.mutedForeground,
+  },
+  hostStatusDotOnline: {
+    backgroundColor: theme.colors.palette.green[500],
   },
   scroll: {
     flex: 1,
