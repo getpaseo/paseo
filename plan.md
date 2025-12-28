@@ -103,11 +103,12 @@ Improvements to the new agent screen in the app.
     - Add fix tasks for any issues found.
     - **Done (2025-12-29 00:18)**: WHAT: `plan.md:97` marked this checkpoint complete; `plan.md:106` added follow-up fix task for URL-param validation; `REPORT-typecheck-code-quality.md:1` documented typecheck + code-quality findings. RESULT: typecheck passed; identified URL-param cast risk and created fix task. EVIDENCE: `npm run typecheck` (workspace typecheck completed with exit code 0).
 
-- [ ] **Fix**: Validate URL-derived provider/mode/model on new agent screen.
+- [x] **Fix**: Validate URL-derived provider/mode/model on new agent screen.
 
     - Guard `useLocalSearchParams` values in `packages/app/src/app/agent/new.tsx`.
     - Only accept provider/mode/model values that exist in current definitions/options.
     - Drop invalid values instead of casting to `AgentProvider`.
+    - **Done (2025-12-29 00:22)**: WHAT: `packages/app/src/app/agent/new.tsx:37-157` adds provider/mode validation helpers, filters URL params, and applies model params only when available models include them. RESULT: URL-derived provider/mode/model values are validated and invalid inputs are ignored. EVIDENCE: Not run (not requested).
 
 - [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
 

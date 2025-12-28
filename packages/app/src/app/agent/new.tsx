@@ -29,10 +29,14 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "@server/server/agent/agent-sdk-types";
+import { AGENT_PROVIDER_DEFINITIONS } from "@server/server/agent/provider-manifest";
 
 const SIDEBAR_WIDTH = 280;
 const LARGE_SCREEN_BREAKPOINT = 768;
 const DRAFT_AGENT_ID = "__new_agent__";
+const PROVIDER_DEFINITION_MAP = new Map(
+  AGENT_PROVIDER_DEFINITIONS.map((definition) => [definition.id, definition])
+);
 
 function getParamValue(value: string | string[] | undefined) {
   if (typeof value === "string") {
@@ -40,6 +44,27 @@ function getParamValue(value: string | string[] | undefined) {
     return trimmed.length > 0 ? trimmed : undefined;
   }
   return undefined;
+}
+
+function getValidProvider(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  return PROVIDER_DEFINITION_MAP.has(value as AgentProvider)
+    ? (value as AgentProvider)
+    : undefined;
+}
+
+function getValidMode(
+  provider: AgentProvider | undefined,
+  value: string | undefined
+) {
+  if (!provider || !value) {
+    return undefined;
+  }
+  const definition = PROVIDER_DEFINITION_MAP.get(provider);
+  const modes = definition?.modes ?? [];
+  return modes.some((mode) => mode.id === value) ? value : undefined;
 }
 
 type DraftAgentParams = {
@@ -69,8 +94,8 @@ export default function DraftAgentScreen() {
   const params = useLocalSearchParams<DraftAgentParams>();
 
   const resolvedServerId = getParamValue(params.serverId);
-  const resolvedProvider = getParamValue(params.provider);
-  const resolvedMode = getParamValue(params.modeId);
+  const resolvedProvider = getValidProvider(getParamValue(params.provider));
+  const resolvedMode = getValidMode(resolvedProvider, getParamValue(params.modeId));
   const resolvedModel = getParamValue(params.model);
   const resolvedWorkingDir = getParamValue(params.workingDir);
 
@@ -80,16 +105,13 @@ export default function DraftAgentScreen() {
       values.workingDir = resolvedWorkingDir;
     }
     if (resolvedProvider) {
-      values.provider = resolvedProvider as AgentProvider;
+      values.provider = resolvedProvider;
     }
     if (resolvedMode) {
       values.modeId = resolvedMode;
     }
-    if (resolvedModel) {
-      values.model = resolvedModel;
-    }
     return values;
-  }, [resolvedMode, resolvedModel, resolvedProvider, resolvedWorkingDir]);
+  }, [resolvedMode, resolvedProvider, resolvedWorkingDir]);
   const {
     selectedServerId,
     setSelectedServerIdFromUser,
@@ -108,12 +130,31 @@ export default function DraftAgentScreen() {
     modelError,
     refreshProviderModels,
     persistFormPreferences,
+    userEditedPreferencesRef,
   } = useAgentFormState({
     initialServerId: resolvedServerId ?? null,
     initialValues,
     isVisible: true,
     isCreateFlow: true,
   });
+  const hasAppliedModelParamRef = useRef(false);
+  useEffect(() => {
+    if (!resolvedModel || hasAppliedModelParamRef.current) {
+      return;
+    }
+    if (availableModels.length === 0) {
+      return;
+    }
+    const isValidModel = availableModels.some((model) => model.id === resolvedModel);
+    hasAppliedModelParamRef.current = true;
+    if (!isValidModel) {
+      return;
+    }
+    if (userEditedPreferencesRef.current.model) {
+      return;
+    }
+    setModelFromUser(resolvedModel);
+  }, [availableModels, resolvedModel, setModelFromUser, userEditedPreferencesRef]);
   const hostEntry = selectedServerId
     ? connectionStates.get(selectedServerId)
     : undefined;
