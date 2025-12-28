@@ -51,11 +51,12 @@ Improvements to the new agent screen in the app.
     - Add daemon-level E2E test to verify filtering.
     - **Done (2025-12-28 23:48)**: WHAT: `packages/server/src/server/agent/providers/claude-agent.ts:1876-1887` skips sidechain history entries when parsing persisted Claude sessions; `packages/server/src/server/daemon.e2e.test.ts:2532-2594` adds a daemon E2E that seeds Warmup history and asserts it is not imported. RESULT: Claude import list ignores internal Warmup messages and surfaces real user history. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 4**: Fix Codex import screen showing nothing.
+- [x] **Iteration 4**: Fix Codex import screen showing nothing.
 
     - Codex import screen currently displays no content.
     - Investigate and fix the issue.
     - Add daemon-level E2E test to verify import works correctly.
+    - **Done (2025-12-28 23:58)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:4133-4476` adds Codex persisted session listing from rollout files plus JSON/JSONL timeline parsing and session metadata extraction; `packages/server/src/server/daemon.e2e.test.ts:2597-2662` adds Codex persisted agent import E2E coverage. RESULT: Codex import list now populates from on-disk rollouts with timeline previews and is covered by a daemon E2E. EVIDENCE: Not run (not requested).
 
 - [ ] **Iteration 5**: Fix gallery 15s timeout causing full-screen error crash.
 
@@ -81,6 +82,14 @@ Improvements to the new agent screen in the app.
 
     - The host label is shown on the git diff screen but it's not relevant there.
     - Remove it from the UI.
+
+- [ ] **Checkpoint**: Run typecheck and review code quality.
+
+    - Run `npm run typecheck` and fix any errors.
+    - Review all code changes made in this plan (Iterations 1-8).
+    - Look for brittle TypeScript: `as` casts, `any` types, weakly typed code.
+    - Ensure proper type inference and type safety.
+    - Add fix tasks for any issues found.
 
 - [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
 
