@@ -1603,6 +1603,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         pendingRequest: { path: targetPath, mode: "list" },
         currentPath: targetPath,
         history: nextHistory,
+        lastVisitedPath: targetPath,
       };
     });
 
@@ -1610,18 +1611,38 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       return null;
     }
 
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "file_explorer_request",
-        agentId,
-        path: targetPath,
-        mode: "list",
-      },
-    };
-    ws.send(msg);
+    directoryListingRequest
+      .execute({ agentId, path: targetPath })
+      .then((payload) => {
+        updateExplorerState(agentId, (state: any) => {
+          const nextState: any = {
+            ...state,
+            isLoading: false,
+            lastError: payload.error ?? null,
+            pendingRequest: null,
+            directories: state.directories,
+            files: state.files,
+          };
+
+          if (!payload.error && payload.directory) {
+            const directories = new Map(state.directories);
+            directories.set(payload.directory.path, payload.directory);
+            nextState.directories = directories;
+          }
+
+          return nextState;
+        });
+      })
+      .catch((error) => {
+        updateExplorerState(agentId, (state: any) => ({
+          ...state,
+          isLoading: false,
+          lastError: error.message,
+          pendingRequest: null,
+        }));
+      });
     return targetPath;
-  }, [updateExplorerState, ws]);
+  }, [directoryListingRequest, updateExplorerState]);
 
   const refreshSession = useCallback(() => {
     console.log(`[Session] Manual refresh requested for ${serverId}`);

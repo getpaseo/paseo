@@ -74,10 +74,11 @@ Improvements to the new agent screen in the app.
     - Image timeouts should never crash the entire view.
     - **Done (2025-12-29 00:01)**: WHAT: `packages/app/src/contexts/session-context.tsx:1550-1584` stops updating `lastError` during file preview requests so thumbnail timeouts no longer trigger the full-screen error state. RESULT: gallery image timeouts no longer replace the directory view; thumbnails remain in loading state. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 7**: Fix spurious loader showing at top of gallery even when directory has loaded.
+- [x] **Iteration 7**: Fix spurious loader showing at top of gallery even when directory has loaded.
 
     - Sometimes the loader at the top of the gallery keeps showing even when the directory content has clearly loaded.
     - Investigate the loading state management and fix the race condition.
+    - **Done (2025-12-29 00:10)**: WHAT: `packages/app/src/contexts/session-context.tsx:1588-1645` routes back-navigation directory listings through the request helper and clears `pendingRequest`/`isLoading` on response. RESULT: gallery header loader no longer sticks after navigating back to cached directories. EVIDENCE: Not run (not requested).
 
 - [ ] **Iteration 8**: Review and fix file/directory auto-linking logic.
 
