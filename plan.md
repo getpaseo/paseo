@@ -110,10 +110,11 @@ Improvements to the new agent screen in the app.
     - Drop invalid values instead of casting to `AgentProvider`.
     - **Done (2025-12-29 00:22)**: WHAT: `packages/app/src/app/agent/new.tsx:37-157` adds provider/mode validation helpers, filters URL params, and applies model params only when available models include them. RESULT: URL-derived provider/mode/model values are validated and invalid inputs are ignored. EVIDENCE: Not run (not requested).
 
-- [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
+- [x] **Checkpoint**: Review daemon test coverage for fixes in this plan.
 
     - Review all fixes made in this plan (Iterations 3-9).
     - Determine which fixes need daemon-level E2E tests.
     - No mocks, simple tests only.
     - E2E when possible but no browser tests.
     - Add any missing test tasks to the plan.
+    - **Done (2025-02-10 08:56)**: WHAT: `REPORT-daemon-test-coverage.md:1` documents daemon test coverage review for Iterations 3-9. RESULT: No missing daemon-level E2E tests identified; no new tasks required. EVIDENCE: Review documented in report.
