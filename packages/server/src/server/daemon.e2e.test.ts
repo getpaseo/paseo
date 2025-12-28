@@ -2594,6 +2594,74 @@ describe("daemon E2E", () => {
     });
   });
 
+  describe("Codex persisted agent import", () => {
+    test("lists Codex sessions from rollout files", async () => {
+      const previousCodexSessionDir = process.env.CODEX_SESSION_DIR;
+      const codexSessionDir = mkdtempSync(path.join(tmpdir(), "codex-session-"));
+      process.env.CODEX_SESSION_DIR = codexSessionDir;
+
+      const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const cwd = "/tmp/codex-import-test";
+      const now = new Date().toISOString();
+      const rolloutPath = path.join(codexSessionDir, `rollout-${sessionId}.jsonl`);
+      const lines = [
+        JSON.stringify({
+          timestamp: now,
+          type: "session_meta",
+          payload: { id: sessionId, timestamp: now, cwd },
+        }),
+        JSON.stringify({
+          timestamp: now,
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Import this Codex session" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: now,
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Codex import ready" }],
+          },
+        }),
+      ];
+      writeFileSync(rolloutPath, `${lines.join("\n")}\n`, "utf8");
+
+      try {
+        const persisted = await ctx.client.listPersistedAgents();
+        const codexEntry = persisted.find(
+          (item) => item.provider === "codex" && item.sessionId === sessionId
+        );
+
+        expect(codexEntry).toBeTruthy();
+        expect(codexEntry?.cwd).toBe(cwd);
+
+        const timelineTexts = (codexEntry?.timeline ?? [])
+          .map((item) => {
+            if (item.type === "user_message" || item.type === "assistant_message") {
+              return item.text;
+            }
+            return null;
+          })
+          .filter((text): text is string => typeof text === "string");
+
+        expect(timelineTexts).toContain("Import this Codex session");
+        expect(timelineTexts).toContain("Codex import ready");
+      } finally {
+        if (previousCodexSessionDir === undefined) {
+          delete process.env.CODEX_SESSION_DIR;
+        } else {
+          process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
+        }
+        rmSync(codexSessionDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("Claude session persistence", () => {
     test(
       "persists and resumes Claude agent with conversation history (remembers number)",
