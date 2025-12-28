@@ -1882,6 +1882,9 @@ async function parseClaudeSessionDescriptor(
     } catch {
       continue;
     }
+    if (entry?.isSidechain) {
+      continue;
+    }
     if (!sessionId && typeof entry.sessionId === "string") {
       sessionId = entry.sessionId;
     }

@@ -2529,6 +2529,71 @@ describe("daemon E2E", () => {
     );
   });
 
+  describe("Claude persisted agent import", () => {
+    test("filters internal warmup entries from persisted Claude history", async () => {
+      const previousHome = process.env.HOME;
+      const previousUserProfile = process.env.USERPROFILE;
+      const homeDir = mkdtempSync(path.join(tmpdir(), "claude-home-"));
+      process.env.HOME = homeDir;
+      process.env.USERPROFILE = homeDir;
+
+      const projectDir = path.join(homeDir, ".claude", "projects", "test-project");
+      mkdirSync(projectDir, { recursive: true });
+
+      const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const cwd = "/tmp/claude-import-test";
+      const historyLines = [
+        JSON.stringify({
+          type: "user",
+          isSidechain: true,
+          sessionId,
+          cwd,
+          message: { role: "user", content: "Warmup" },
+        }),
+        JSON.stringify({
+          type: "user",
+          sessionId,
+          cwd,
+          message: { role: "user", content: "Real task prompt" },
+        }),
+      ];
+      const historyPath = path.join(projectDir, `${sessionId}.jsonl`);
+      writeFileSync(historyPath, `${historyLines.join("\n")}\n`, "utf8");
+
+      try {
+        const persisted = await ctx.client.listPersistedAgents();
+        const claudeEntry = persisted.find((item) => item.sessionId === sessionId);
+
+        expect(claudeEntry).toBeTruthy();
+        expect(claudeEntry?.title).toBe("Real task prompt");
+
+        const timelineTexts = (claudeEntry?.timeline ?? [])
+          .map((item) => {
+            if (item.type === "user_message" || item.type === "assistant_message") {
+              return item.text;
+            }
+            return null;
+          })
+          .filter((text): text is string => typeof text === "string");
+
+        expect(timelineTexts).toContain("Real task prompt");
+        expect(timelineTexts).not.toContain("Warmup");
+      } finally {
+        if (previousHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = previousHome;
+        }
+        if (previousUserProfile === undefined) {
+          delete process.env.USERPROFILE;
+        } else {
+          process.env.USERPROFILE = previousUserProfile;
+        }
+        rmSync(homeDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("Claude session persistence", () => {
     test(
       "persists and resumes Claude agent with conversation history (remembers number)",

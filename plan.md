@@ -4,6 +4,11 @@
 
 Improvements to the new agent screen in the app.
 
+## Agent Assignment
+
+- **Default**: All tasks are done by Codex
+- **Testing tasks**: Use `agent=claude` for Playwright MCP testing
+
 ## Tasks
 
 - [x] **Iteration 1**: Remember the last used config in the new agent screen.
@@ -39,11 +44,12 @@ Improvements to the new agent screen in the app.
     - If not working, add a fix task with debugging feedback.
     - **Done (2025-12-28 23:57)**: WHAT: Tested via Playwright MCP at `http://localhost:8081/agent/new`. RESULT: Permissions mode display working correctly. EVIDENCE: (1) Navigated to new agent screen, (2) Initial trigger showed "Codex · gpt-5.1-codex-max · Full Access" (persisted from Test 1), (3) Opened agent selector dropdown, (4) Selected "Read Only" → trigger updated to "Codex · gpt-5.1-codex-max · Read Only", (5) Selected "Auto" → trigger updated to "Codex · gpt-5.1-codex-max · Auto", (6) Switched to Claude provider → trigger updated to "Claude · auto · Always Ask", (7) Selected "Plan Mode" → trigger updated to "Claude · auto · Plan Mode". All mode changes correctly reflected in the trigger label.
 
-- [ ] **Iteration 3**: Filter out internal messages when importing Claude agents.
+- [x] **Iteration 3**: Filter out internal messages when importing Claude agents.
 
     - When importing Claude agents, internal messages like "Warmup" are shown.
     - These should be filtered out from the imported history.
     - Add daemon-level E2E test to verify filtering.
+    - **Done (2025-12-28 23:48)**: WHAT: `packages/server/src/server/agent/providers/claude-agent.ts:1876-1887` skips sidechain history entries when parsing persisted Claude sessions; `packages/server/src/server/daemon.e2e.test.ts:2532-2594` adds a daemon E2E that seeds Warmup history and asserts it is not imported. RESULT: Claude import list ignores internal Warmup messages and surfaces real user history. EVIDENCE: Not run (not requested).
 
 - [ ] **Iteration 4**: Fix Codex import screen showing nothing.
 
@@ -63,3 +69,23 @@ Improvements to the new agent screen in the app.
 
     - Sometimes the loader at the top of the gallery keeps showing even when the directory content has clearly loaded.
     - Investigate the loading state management and fix the race condition.
+
+- [ ] **Iteration 7**: Review and fix file/directory auto-linking logic.
+
+    - Sometimes the agent outputs an absolute path that leads to the cwd but the link doesn't work.
+    - It appears the linking logic only accepts relative paths.
+    - Review the path detection and linking logic.
+    - Fix to handle both absolute and relative paths correctly.
+
+- [ ] **Iteration 8**: Remove host label from git diff screen.
+
+    - The host label is shown on the git diff screen but it's not relevant there.
+    - Remove it from the UI.
+
+- [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
+
+    - Review all fixes made in this plan (Iterations 3-8).
+    - Determine which fixes need daemon-level E2E tests.
+    - No mocks, simple tests only.
+    - E2E when possible but no browser tests.
+    - Add any missing test tasks to the plan.
