@@ -58,27 +58,34 @@ Improvements to the new agent screen in the app.
     - Add daemon-level E2E test to verify import works correctly.
     - **Done (2025-12-28 23:58)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:4133-4476` adds Codex persisted session listing from rollout files plus JSON/JSONL timeline parsing and session metadata extraction; `packages/server/src/server/daemon.e2e.test.ts:2597-2662` adds Codex persisted agent import E2E coverage. RESULT: Codex import list now populates from on-disk rollouts with timeline previews and is covered by a daemon E2E. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 5**: Fix gallery 15s timeout causing full-screen error crash.
+- [ ] **Iteration 5**: Add host selector to import agent screen.
+
+    - When importing an agent, user should be able to choose which host to import to.
+    - Use the same UI pattern as the new agent screen: host selector in the header.
+    - Reference the new agent screen implementation for consistency.
+
+- [x] **Iteration 6**: Fix gallery 15s timeout causing full-screen error crash.
 
     - When navigating using the gallery, sometimes a full-screen error appears about a 15s timeout.
     - This appears to be an image loading timeout.
     - The page was showing the directory fine before the crash - this is terrible UX.
     - Fix: Don't crash the page on image timeout. Instead, leave the image in a "loading" state forever or show a placeholder.
     - Image timeouts should never crash the entire view.
+    - **Done (2025-12-29 00:01)**: WHAT: `packages/app/src/contexts/session-context.tsx:1550-1584` stops updating `lastError` during file preview requests so thumbnail timeouts no longer trigger the full-screen error state. RESULT: gallery image timeouts no longer replace the directory view; thumbnails remain in loading state. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 6**: Fix spurious loader showing at top of gallery even when directory has loaded.
+- [ ] **Iteration 7**: Fix spurious loader showing at top of gallery even when directory has loaded.
 
     - Sometimes the loader at the top of the gallery keeps showing even when the directory content has clearly loaded.
     - Investigate the loading state management and fix the race condition.
 
-- [ ] **Iteration 7**: Review and fix file/directory auto-linking logic.
+- [ ] **Iteration 8**: Review and fix file/directory auto-linking logic.
 
     - Sometimes the agent outputs an absolute path that leads to the cwd but the link doesn't work.
     - It appears the linking logic only accepts relative paths.
     - Review the path detection and linking logic.
     - Fix to handle both absolute and relative paths correctly.
 
-- [ ] **Iteration 8**: Remove host label from git diff screen.
+- [ ] **Iteration 9**: Remove host label from git diff screen.
 
     - The host label is shown on the git diff screen but it's not relevant there.
     - Remove it from the UI.
@@ -86,14 +93,14 @@ Improvements to the new agent screen in the app.
 - [ ] **Checkpoint**: Run typecheck and review code quality.
 
     - Run `npm run typecheck` and fix any errors.
-    - Review all code changes made in this plan (Iterations 1-8).
+    - Review all code changes made in this plan (Iterations 1-9).
     - Look for brittle TypeScript: `as` casts, `any` types, weakly typed code.
     - Ensure proper type inference and type safety.
     - Add fix tasks for any issues found.
 
 - [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
 
-    - Review all fixes made in this plan (Iterations 3-8).
+    - Review all fixes made in this plan (Iterations 3-9).
     - Determine which fixes need daemon-level E2E tests.
     - No mocks, simple tests only.
     - E2E when possible but no browser tests.

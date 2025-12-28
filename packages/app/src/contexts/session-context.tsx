@@ -1552,7 +1552,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     updateExplorerState(agentId, (state: any) => ({
       ...state,
       isLoading: true,
-      lastError: null,
       pendingRequest: { path: normalizedPath, mode: "file" },
     }));
 
@@ -1563,7 +1562,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           const nextState: any = {
             ...state,
             isLoading: false,
-            lastError: payload.error ?? null,
             pendingRequest: null,
             directories: state.directories,
             files: state.files,
@@ -1582,7 +1580,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         updateExplorerState(agentId, (state: any) => ({
           ...state,
           isLoading: false,
-          lastError: error.message,
           pendingRequest: null,
         }));
       });
