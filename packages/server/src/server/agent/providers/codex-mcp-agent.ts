@@ -2856,7 +2856,11 @@ class CodexMcpAgentSession implements AgentSession {
     try {
       for await (const event of queue) {
         yield event;
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
+        if (
+          event.type === "turn_completed" ||
+          event.type === "turn_failed" ||
+          event.type === "turn_canceled"
+        ) {
           break;
         }
       }

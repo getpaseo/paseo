@@ -379,6 +379,10 @@ class ClaudeAgentSession implements AgentSession {
   // These flags are now tracked per-turn via TurnContext to prevent race conditions
   // when multiple stream() calls overlap (e.g., interrupt + new message)
   private cancelCurrentTurn: (() => void) | null = null;
+  // Track the current turn ID and active turn promise to serialize concurrent stream() calls
+  // and prevent race conditions where two processPrompt() loops run against the same query
+  private currentTurnId = 0;
+  private activeTurnPromise: Promise<void> | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private managedAgentId: string | null = null;
@@ -464,6 +468,35 @@ class ClaudeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     _options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
+    // Increment turn ID to invalidate any in-flight processPrompt() loops from previous turns.
+    // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
+    const turnId = ++this.currentTurnId;
+
+    // Actively cancel the previous turn if one exists - don't just suppress output.
+    // This ensures the SDK query is interrupted and side effects are stopped.
+    if (this.cancelCurrentTurn) {
+      this.cancelCurrentTurn();
+    }
+
+    // Wait briefly for any active turn to complete after cancellation.
+    // Use a timeout to prevent hangs if the old turn is stuck on query.next().
+    if (this.activeTurnPromise) {
+      const TURN_HANDOFF_TIMEOUT_MS = 500;
+      try {
+        await Promise.race([
+          this.activeTurnPromise,
+          new Promise<void>((resolve) => setTimeout(resolve, TURN_HANDOFF_TIMEOUT_MS)),
+        ]);
+      } catch {
+        // Ignore errors from the previous turn - we just need it to finish or timeout
+      }
+      // Clear stale promise to prevent accumulation of stuck turns
+      this.activeTurnPromise = null;
+    }
+
+    // Reset cancel flag at the start of each turn to prevent stale state from previous turns
+    this.turnCancelRequested = false;
+
     const sdkMessage = this.toSdkUserMessage(prompt);
     const queue = new Pushable<AgentStreamEvent>();
     this.eventQueue = queue;
@@ -478,6 +511,12 @@ class ClaudeAgentSession implements AgentSession {
       this.interruptActiveTurn().catch((error) => {
         console.warn("[ClaudeAgentSession] Failed to interrupt during cancel:", error);
       });
+      // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
+      queue.push({
+        type: "turn_canceled",
+        provider: "claude",
+        reason: "Interrupted",
+      });
       queue.end();
     };
     this.cancelCurrentTurn = requestCancel;
@@ -488,14 +527,22 @@ class ClaudeAgentSession implements AgentSession {
       this.historyPending = false;
       this.persistedHistory = [];
     }
-    this.forwardPromptEvents(sdkMessage, queue).catch((error) => {
+
+    // Start forwarding events and track the promise so future turns can wait for completion
+    const forwardPromise = this.forwardPromptEvents(sdkMessage, queue, turnId);
+    this.activeTurnPromise = forwardPromise;
+    forwardPromise.catch((error) => {
       console.error("[ClaudeAgentSession] Unexpected error in forwardPromptEvents:", error);
     });
 
     try {
       for await (const event of queue) {
         yield event;
-        if (event.type === "turn_completed" || event.type === "turn_failed") {
+        if (
+          event.type === "turn_completed" ||
+          event.type === "turn_failed" ||
+          event.type === "turn_canceled"
+        ) {
           finishedNaturally = true;
           break;
         }
@@ -509,6 +556,10 @@ class ClaudeAgentSession implements AgentSession {
       }
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
+      }
+      // Clear the active turn promise if it's still ours
+      if (this.activeTurnPromise === forwardPromise) {
+        this.activeTurnPromise = null;
       }
     }
   }
@@ -752,7 +803,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async *processPrompt(
-    sdkMessage: SDKUserMessage
+    sdkMessage: SDKUserMessage,
+    turnId: number
   ): AsyncGenerator<SDKMessage, void, undefined> {
     const query = await this.ensureQuery();
     if (!this.input) {
@@ -762,6 +814,12 @@ class ClaudeAgentSession implements AgentSession {
     this.input.push(sdkMessage);
 
     while (true) {
+      // Check if this turn has been superseded by a new one.
+      // This prevents stale events from an interrupted turn from being yielded.
+      if (this.currentTurnId !== turnId) {
+        break;
+      }
+
       const { value, done } = await query.next();
       if (done) {
         break;
@@ -769,6 +827,12 @@ class ClaudeAgentSession implements AgentSession {
       if (!value) {
         continue;
       }
+
+      // Double-check turn ID after awaiting, in case a new turn started while we waited
+      if (this.currentTurnId !== turnId) {
+        break;
+      }
+
       yield value;
       if (value.type === "result") {
         break;
@@ -776,22 +840,34 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private async forwardPromptEvents(message: SDKUserMessage, queue: Pushable<AgentStreamEvent>) {
+  private async forwardPromptEvents(
+    message: SDKUserMessage,
+    queue: Pushable<AgentStreamEvent>,
+    turnId: number
+  ) {
     // Create a turn-local context to track streaming state.
     // This prevents race conditions when a new stream() call interrupts a running one.
     const turnContext: TurnContext = {
       streamedAssistantTextThisTurn: false,
       streamedReasoningThisTurn: false,
     };
+    let completedNormally = false;
     try {
-      for await (const sdkEvent of this.processPrompt(message)) {
+      for await (const sdkEvent of this.processPrompt(message, turnId)) {
+        // Check if this turn has been superseded before pushing events
+        if (this.currentTurnId !== turnId) {
+          break;
+        }
         const events = this.translateMessageToEvents(sdkEvent, turnContext);
         for (const event of events) {
           queue.push(event);
+          if (event.type === "turn_completed") {
+            completedNormally = true;
+          }
         }
       }
     } catch (error) {
-      if (!this.turnCancelRequested) {
+      if (!this.turnCancelRequested && this.currentTurnId === turnId) {
         queue.push({
           type: "turn_failed",
           provider: "claude",
@@ -799,6 +875,17 @@ class ClaudeAgentSession implements AgentSession {
         });
       }
     } finally {
+      // Emit terminal event for superseded turns so consumers get proper lifecycle signals.
+      // Use turn_canceled (not turn_failed) to distinguish intentional interruption from errors.
+      // Only emit if not already emitted by requestCancel() (indicated by turnCancelRequested).
+      const wasSuperseded = this.currentTurnId !== turnId;
+      if (wasSuperseded && !completedNormally && !this.turnCancelRequested) {
+        queue.push({
+          type: "turn_canceled",
+          provider: "claude",
+          reason: "Interrupted by new message",
+        });
+      }
       this.turnCancelRequested = false;
       queue.end();
     }

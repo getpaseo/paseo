@@ -403,6 +403,7 @@ export class AgentManager {
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
     let usage: AgentUsage | undefined;
+    let canceled = false;
 
     for await (const event of events) {
       if (event.type === "timeline") {
@@ -414,6 +415,8 @@ export class AgentManager {
         usage = event.usage;
       } else if (event.type === "turn_failed") {
         throw new Error(event.error);
+      } else if (event.type === "turn_canceled") {
+        canceled = true;
       }
     }
 
@@ -423,6 +426,7 @@ export class AgentManager {
       finalText,
       usage,
       timeline,
+      canceled,
     };
   }
 
@@ -734,6 +738,11 @@ export class AgentManager {
               hasStarted = true;
               finish(null);
             }
+            if (event.event.type === "turn_canceled") {
+              currentStatus = "idle";
+              hasStarted = true;
+              finish(null);
+            }
           }
         },
         { agentId, replayState: true }
@@ -888,6 +897,10 @@ export class AgentManager {
         break;
       case "turn_failed":
         agent.lastError = event.error;
+        break;
+      case "turn_canceled":
+        // Cancellation is not an error, just clear any previous error
+        agent.lastError = undefined;
         break;
       case "permission_requested":
         agent.pendingPermissions.set(event.request.id, event.request);

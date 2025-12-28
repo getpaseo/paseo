@@ -188,6 +188,11 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       error: z.string(),
     }),
     z.object({
+      type: z.literal("turn_canceled"),
+      provider: AgentProviderSchema,
+      reason: z.string(),
+    }),
+    z.object({
       type: z.literal("timeline"),
       provider: AgentProviderSchema,
       item: AgentTimelineItemPayloadSchema,

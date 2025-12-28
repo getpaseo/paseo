@@ -1256,3 +1256,7 @@ function rawContainsText(raw: unknown, text: string, depth = 0): boolean {
   }
   return false;
 }
+
+// NOTE: Turn handoff integration tests are covered by the daemon E2E test:
+// "interrupting message should produce coherent text without garbling from race condition"
+// in daemon.e2e.test.ts which exercises the full flow through the WebSocket API.

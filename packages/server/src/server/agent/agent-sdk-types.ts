@@ -75,6 +75,7 @@ export type AgentStreamEvent =
   | { type: "turn_started"; provider: AgentProvider }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage }
   | { type: "turn_failed"; provider: AgentProvider; error: string }
+  | { type: "turn_canceled"; provider: AgentProvider; reason: string }
   | { type: "timeline"; item: AgentTimelineItem; provider: AgentProvider }
   | { type: "provider_event"; provider: AgentProvider; raw: unknown }
   | { type: "permission_requested"; provider: AgentProvider; request: AgentPermissionRequest }
@@ -124,6 +125,7 @@ export type AgentRunResult = {
   finalText: string;
   usage?: AgentUsage;
   timeline: AgentTimelineItem[];
+  canceled?: boolean;
 };
 
 export type AgentRuntimeInfo = {

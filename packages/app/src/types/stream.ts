@@ -819,6 +819,7 @@ export function reduceStreamUpdate(
     case "turn_started":
     case "turn_completed":
     case "turn_failed":
+    case "turn_canceled":
     case "permission_requested":
     case "permission_resolved":
     case "attention_required":
