@@ -58,11 +58,12 @@ Improvements to the new agent screen in the app.
     - Add daemon-level E2E test to verify import works correctly.
     - **Done (2025-12-28 23:58)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:4133-4476` adds Codex persisted session listing from rollout files plus JSON/JSONL timeline parsing and session metadata extraction; `packages/server/src/server/daemon.e2e.test.ts:2597-2662` adds Codex persisted agent import E2E coverage. RESULT: Codex import list now populates from on-disk rollouts with timeline previews and is covered by a daemon E2E. EVIDENCE: Not run (not requested).
 
-- [ ] **Iteration 5**: Add host selector to import agent screen.
+- [x] **Iteration 5**: Add host selector to import agent screen.
 
     - When importing an agent, user should be able to choose which host to import to.
     - Use the same UI pattern as the new agent screen: host selector in the header.
     - Reference the new agent screen implementation for consistency.
+    - **Done (2025-12-29 00:05)**: WHAT: `packages/app/src/components/create-agent-modal.tsx:172-2193` adds a host dropdown key, renders the header host badge in the import flow, and adds a host selection sheet; `packages/app/src/components/create-agent-modal.tsx:2718-2751` adds host badge/header action styles. RESULT: import agent modal now lets users pick the target host from the header selector. EVIDENCE: Not run (not requested).
 
 - [x] **Iteration 6**: Fix gallery 15s timeout causing full-screen error crash.
 
