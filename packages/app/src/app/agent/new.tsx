@@ -20,7 +20,7 @@ import {
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { SessionOutboundMessage } from "@server/server/messages";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
-import { useAgentFormState } from "@/hooks/use-agent-form-state";
+import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
@@ -74,17 +74,22 @@ export default function DraftAgentScreen() {
   const resolvedModel = getParamValue(params.model);
   const resolvedWorkingDir = getParamValue(params.workingDir);
 
-  const initialValues = useMemo(
-    () => ({
-      workingDir: resolvedWorkingDir,
-      provider: resolvedProvider
-        ? (resolvedProvider as AgentProvider)
-        : undefined,
-      modeId: resolvedMode ?? null,
-      model: resolvedModel ?? null,
-    }),
-    [resolvedMode, resolvedModel, resolvedProvider, resolvedWorkingDir]
-  );
+  const initialValues = useMemo(() => {
+    const values: CreateAgentInitialValues = {};
+    if (resolvedWorkingDir) {
+      values.workingDir = resolvedWorkingDir;
+    }
+    if (resolvedProvider) {
+      values.provider = resolvedProvider as AgentProvider;
+    }
+    if (resolvedMode) {
+      values.modeId = resolvedMode;
+    }
+    if (resolvedModel) {
+      values.model = resolvedModel;
+    }
+    return values;
+  }, [resolvedMode, resolvedModel, resolvedProvider, resolvedWorkingDir]);
   const {
     selectedServerId,
     setSelectedServerIdFromUser,
@@ -102,6 +107,7 @@ export default function DraftAgentScreen() {
     isModelLoading,
     modelError,
     refreshProviderModels,
+    persistFormPreferences,
   } = useAgentFormState({
     initialServerId: resolvedServerId ?? null,
     initialValues,
@@ -553,6 +559,8 @@ export default function DraftAgentScreen() {
             }
           : undefined;
 
+      void persistFormPreferences();
+
       const requestId = generateMessageId();
       pendingRequestIdRef.current = requestId;
       setIsLoading(true);
@@ -573,6 +581,7 @@ export default function DraftAgentScreen() {
       isLoading,
       isNonGitDirectory,
       modeOptions,
+      persistFormPreferences,
       selectedMode,
       selectedModel,
       selectedProvider,

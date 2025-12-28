@@ -63,6 +63,7 @@ type UseAgentFormStateResult = {
   ) => void;
   clearQueuedProviderModelRequest: (serverId: string | null) => void;
   workingDirIsEmpty: boolean;
+  persistFormPreferences: () => Promise<void>;
 };
 
 const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
@@ -305,6 +306,55 @@ export function useAgentFormState(
     void persist();
   }, [selectedMode, selectedProvider, workingDir, selectedModel, selectedServerId]);
 
+  const persistFormPreferences = useCallback(async () => {
+    const payload: {
+      workingDir?: string;
+      provider?: AgentProvider;
+      mode?: string;
+      model?: string;
+      serverId?: string;
+    } = {};
+
+    if (typeof workingDir === "string") {
+      payload.workingDir = workingDir;
+    }
+    if (selectedProvider) {
+      payload.provider = selectedProvider;
+    }
+    if (typeof selectedMode === "string") {
+      payload.mode = selectedMode;
+    }
+    if (typeof selectedModel === "string") {
+      payload.model = selectedModel;
+    }
+    if (selectedServerId) {
+      payload.serverId = selectedServerId;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      return;
+    }
+
+    try {
+      const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
+      const parsed = stored
+        ? (JSON.parse(stored) as Record<string, unknown>)
+        : {};
+      await AsyncStorage.setItem(
+        FORM_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({
+          ...parsed,
+          ...payload,
+        })
+      );
+    } catch (error) {
+      console.error(
+        "[useAgentFormState] Failed to persist form preferences:",
+        error
+      );
+    }
+  }, [selectedMode, selectedModel, selectedProvider, selectedServerId, workingDir]);
+
   const clearQueuedProviderModelRequest = useCallback((serverId: string | null) => {
     if (!serverId) {
       return;
@@ -449,6 +499,7 @@ export function useAgentFormState(
       queueProviderModelFetch,
       clearQueuedProviderModelRequest,
       workingDirIsEmpty,
+      persistFormPreferences,
     }),
     [
       agentDefinition,
@@ -469,6 +520,7 @@ export function useAgentFormState(
       setModelFromUser,
       workingDir,
       workingDirIsEmpty,
+      persistFormPreferences,
     ]
   );
 }
