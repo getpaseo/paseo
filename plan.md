@@ -94,13 +94,20 @@ Improvements to the new agent screen in the app.
     - Remove it from the UI.
     - **Done (2025-12-29 00:16)**: WHAT: `packages/app/src/app/git-diff.tsx:81-210` removes the Host label from the git diff header and error state; `packages/app/src/app/git-diff.tsx:253-307` drops the unused `metaText` style. RESULT: git diff screen no longer shows the host label. EVIDENCE: Not run (not requested).
 
-- [ ] **Checkpoint**: Run typecheck and review code quality.
+- [x] **Checkpoint**: Run typecheck and review code quality.
 
     - Run `npm run typecheck` and fix any errors.
     - Review all code changes made in this plan (Iterations 1-9).
     - Look for brittle TypeScript: `as` casts, `any` types, weakly typed code.
     - Ensure proper type inference and type safety.
     - Add fix tasks for any issues found.
+    - **Done (2025-12-29 00:18)**: WHAT: `plan.md:97` marked this checkpoint complete; `plan.md:106` added follow-up fix task for URL-param validation; `REPORT-typecheck-code-quality.md:1` documented typecheck + code-quality findings. RESULT: typecheck passed; identified URL-param cast risk and created fix task. EVIDENCE: `npm run typecheck` (workspace typecheck completed with exit code 0).
+
+- [ ] **Fix**: Validate URL-derived provider/mode/model on new agent screen.
+
+    - Guard `useLocalSearchParams` values in `packages/app/src/app/agent/new.tsx`.
+    - Only accept provider/mode/model values that exist in current definitions/options.
+    - Drop invalid values instead of casting to `AgentProvider`.
 
 - [ ] **Checkpoint**: Review daemon test coverage for fixes in this plan.
 
