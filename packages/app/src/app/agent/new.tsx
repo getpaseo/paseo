@@ -641,6 +641,16 @@ export default function DraftAgentScreen() {
     };
   }, [router, selectedServerId, sessionWs]);
 
+  const selectedProviderLabel =
+    providerDefinitions.find((provider) => provider.id === selectedProvider)?.label ??
+    selectedProvider;
+  const selectedModeLabel =
+    modeOptions.length > 0
+      ? modeOptions.find((mode) => mode.id === selectedMode)?.label ??
+        modeOptions[0]?.label ??
+        "Default"
+      : "Automatic";
+
   return (
     <View style={styles.container}>
       <View style={[styles.mainLayout, isLargeScreen && styles.mainLayoutRow]}>
@@ -718,7 +728,7 @@ export default function DraftAgentScreen() {
               )}
               {renderConfigRow({
                 label: "Agent",
-                value: `${providerDefinitions.find((p) => p.id === selectedProvider)?.label ?? selectedProvider} · ${selectedModel || "auto"}`,
+                value: `${selectedProviderLabel} · ${selectedModel || "auto"} · ${selectedModeLabel}`,
                 onPress: () => openDropdownSheet("agent"),
               })}
               {/* Git section - only show for git repos */}
