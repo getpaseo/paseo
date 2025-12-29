@@ -19,7 +19,7 @@ import type {
 import type {
   AgentPermissionRequest,
 } from "@server/server/agent/agent-sdk-types";
-import * as FileSystem from "expo-file-system";
+import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -1329,9 +1329,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
               });
               return base64;
             }
-            return await FileSystem.readAsStringAsync(uri, {
-              encoding: "base64",
-            });
+            const file = new File(uri);
+            return await file.base64();
           })();
           return {
             data,
@@ -1473,10 +1472,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   }, [ws]);
 
   const createAgent = useCallback(async ({ config, initialPrompt, images, git, worktreeName, requestId }: { config: any; initialPrompt: string; images?: Array<{ uri: string; mimeType?: string }>; git?: any; worktreeName?: string; requestId?: string }) => {
+    console.log("[Session] createAgent called with images:", images?.length ?? 0, images);
     const trimmedPrompt = initialPrompt.trim();
     let imagesData: Array<{ data: string; mimeType: string }> | undefined;
     try {
       imagesData = await encodeImages(images);
+      console.log("[Session] encodeImages result:", imagesData?.length ?? 0, imagesData?.map(img => ({ dataLength: img.data?.length ?? 0, mimeType: img.mimeType })));
     } catch (error) {
       console.error("[Session] Failed to prepare images for agent creation:", error);
     }
@@ -1492,6 +1493,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         ...(requestId ? { requestId } : {}),
       },
     };
+    console.log("[Session] createAgent message has images:", 'images' in msg.message, (msg.message as any).images?.length);
     ws.send(msg);
   }, [encodeImages, ws]);
 
