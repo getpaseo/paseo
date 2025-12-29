@@ -2314,7 +2314,18 @@ function toPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
   }
-  return prompt.map((chunk) => chunk.text).join("");
+  const parts: string[] = [];
+  for (const chunk of prompt) {
+    if (chunk.type === "text") {
+      parts.push(chunk.text);
+      continue;
+    }
+    if (chunk.type === "image") {
+      const dataUrl = `data:${chunk.mimeType};base64,${chunk.data}`;
+      parts.push(`![user image](${dataUrl})`);
+    }
+  }
+  return parts.join("\n\n");
 }
 
 function getCodexMcpCommand(): string {

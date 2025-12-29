@@ -146,8 +146,9 @@ Improvements to the new agent screen in the app.
     - Test on web, iOS, and Android
     - **Done (2025-12-29 09:09)**: WHAT: `packages/app/src/contexts/session-context.tsx:1288-1334` adds web-specific image base64 conversion using fetch + FileReader (including data URI handling) and keeps native `FileSystem.readAsStringAsync` for non-web. RESULT: web image attachments are encoded without relying on `expo-file-system` web support. EVIDENCE: Not run (not requested).
 
-- [ ] **Fix**: Implement multimodal prompt building on server
+- [x] **Fix**: Implement multimodal prompt building on server
     - Modify `buildAgentPrompt` in `session.ts:316-334` to return structured content with images
     - Update `AgentPromptInput` type to support content blocks
     - Implement Claude-specific image content blocks
     - Implement Codex/OpenAI image handling
+    - **Done (2025-12-29 09:14)**: WHAT: `packages/server/src/server/agent/agent-sdk-types.ts:39-43` adds `AgentPromptContentBlock` and extends `AgentPromptInput` to include image blocks; `packages/server/src/server/session.ts:317-333` now builds prompt blocks with text + image data; `packages/server/src/server/agent/providers/claude-agent.ts:790-820` maps prompt blocks to Claude SDK image/text content; `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2313-2328` renders image blocks as data URLs in prompt text. RESULT: server prompts now carry image data for Claude and include image payloads for Codex/OpenAI flows instead of a text-only summary. EVIDENCE: Not run (not requested).

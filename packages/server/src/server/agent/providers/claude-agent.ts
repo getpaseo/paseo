@@ -29,6 +29,7 @@ import type {
   AgentPermissionResponse,
   AgentPermissionUpdate,
   AgentPersistenceHandle,
+  AgentPromptContentBlock,
   AgentPromptInput,
   AgentRunOptions,
   AgentRunResult,
@@ -787,15 +788,32 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
-    const text = Array.isArray(prompt)
-      ? prompt.map((chunk) => chunk.text).join("\n\n")
-      : prompt;
+    const content = Array.isArray(prompt)
+      ? prompt.flatMap((chunk: AgentPromptContentBlock) => {
+          if (chunk.type === "text") {
+            return [{ type: "text", text: chunk.text }];
+          }
+          if (chunk.type === "image") {
+            return [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: chunk.mimeType,
+                  data: chunk.data,
+                },
+              },
+            ];
+          }
+          return [];
+        })
+      : [{ type: "text", text: prompt }];
 
     return {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text }],
+        content,
       },
       parent_tool_use_id: null,
       session_id: this.claudeSessionId ?? this.pendingLocalId,
