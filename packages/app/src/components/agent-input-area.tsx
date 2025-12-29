@@ -190,8 +190,13 @@ export function AgentInputArea({
       const shouldPad = current.length > 0 && !/\s$/.test(current);
       const nextValue = `${current}${shouldPad ? " " : ""}${text}`;
       setUserInput(nextValue);
+      if (IS_WEB && typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          measureWebInputHeight("dictation");
+        });
+      }
     },
-    [setUserInput, userInput]
+    [setUserInput, userInput, measureWebInputHeight]
   );
 
   const handleDictationError = useCallback((error: Error) => {
@@ -632,16 +637,6 @@ export function AgentInputArea({
     });
   }
 
-  const handleNativeSizerLayout = useCallback(
-    (event: { nativeEvent: { layout: { height: number } } }) => {
-      if (IS_WEB) {
-        return;
-      }
-      applyMeasuredHeight(event.nativeEvent.layout.height, "native-sizer");
-    },
-    [applyMeasuredHeight]
-  );
-
   const isAgentRunning = agent?.status === "running";
   const hasText = userInput.trim().length > 0;
   const hasImages = selectedImages.length > 0;
@@ -982,14 +977,6 @@ export function AgentInputArea({
             editable={!isDictating && wsOrInert.isConnected}
             onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
           />
-          {!IS_WEB && (
-            <View pointerEvents="none" style={styles.textInputSizerContainer}>
-              <Text style={styles.textInputSizer} onLayout={handleNativeSizerLayout}>
-                {userInput.length > 0 ? userInput : " "}
-              </Text>
-            </View>
-          )}
-
           {/* Button row below input */}
           <View style={styles.buttonRow}>
             {/* Left button group */}
@@ -1104,6 +1091,7 @@ const styles = StyleSheet.create(((theme: any) => ({
   container: {
     flexDirection: "column",
     position: "relative",
+    backgroundColor: theme.colors.background,
   },
   borderSeparator: {
     height: theme.borderWidth[1],
@@ -1118,6 +1106,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     alignItems: "center",
     width: "100%",
     overflow: "hidden",
+    backgroundColor: theme.colors.background,
   },
   inputAreaContent: {
     width: "100%",
@@ -1185,20 +1174,6 @@ const styles = StyleSheet.create(((theme: any) => ({
           outlineColor: "transparent",
         }
       : {}),
-  },
-  textInputSizerContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    opacity: 0,
-    zIndex: -1,
-  },
-  textInputSizer: {
-    width: "100%",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    fontSize: theme.fontSize.lg,
-    lineHeight: theme.fontSize.lg * 1.4,
   },
   buttonRow: {
     flexDirection: "row",
