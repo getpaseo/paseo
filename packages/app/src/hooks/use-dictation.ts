@@ -320,6 +320,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       pendingRequestIdRef.current = null;
       setPendingRequestId(null);
       setIsProcessing(false);
+      setDuration(0);
       setStatus("idle");
       setRetryAttempt(0);
       setRetryInfo(null);
@@ -493,7 +494,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
     setError(null);
     stopDurationTracking();
-    setDuration(0);
     setIsProcessing(true);
     setRetryInfo(null);
     setRetryAttempt(0);
@@ -566,6 +566,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     pendingRequestIdRef.current = null;
     setPendingRequestId(null);
     setIsProcessing(false);
+    setDuration(0);
     setFailedRecording(null);
     setStatus("idle");
     setRetryAttempt(0);

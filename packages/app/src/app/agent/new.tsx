@@ -972,14 +972,16 @@ export default function DraftAgentScreen() {
               </View>
             ) : null}
           </ScrollView>
-          <AgentInputArea
-            agentId={DRAFT_AGENT_ID}
-            serverId={selectedServerId ?? ""}
-            onSubmitMessage={handleCreateFromInput}
-            isSubmitLoading={isLoading}
-            value={promptText}
-            onChangeText={setPromptText}
-          />
+          <View style={styles.inputAreaWrapper}>
+            <AgentInputArea
+              agentId={DRAFT_AGENT_ID}
+              serverId={selectedServerId ?? ""}
+              onSubmitMessage={handleCreateFromInput}
+              isSubmitLoading={isLoading}
+              value={promptText}
+              onChangeText={setPromptText}
+            />
+          </View>
         </View>
       </View>
     </View>
@@ -1023,6 +1025,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentContainer: {
     flex: 1,
+  },
+  inputAreaWrapper: {
+    backgroundColor: theme.colors.background,
   },
   configScrollContent: {
     flexGrow: 1,

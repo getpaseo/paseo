@@ -171,10 +171,6 @@ export function AgentInputArea({
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef(sendAgentMessage);
   const onSubmitMessageRef = useRef(onSubmitMessage);
-  const agentStatusRef = useRef<string | undefined>(undefined);
-  const updateQueueRef = useRef<
-    ((updater: (current: QueuedMessage[]) => QueuedMessage[]) => void) | null
-  >(null);
   const submitMessage = useCallback(
     async (text: string, images?: Array<{ uri: string; mimeType: string }>) => {
       if (onSubmitMessageRef.current) {
@@ -190,33 +186,12 @@ export function AgentInputArea({
       if (!text) {
         return;
       }
-      const shouldQueue = agentStatusRef.current === "running";
-      if (shouldQueue) {
-        updateQueueRef.current?.((current) => [
-          ...current,
-          {
-            id: generateMessageId(),
-            text,
-          },
-        ]);
-        return;
-      }
-      void (async () => {
-        try {
-          await submitMessage(text);
-        } catch (error) {
-          console.error("[AgentInput] Failed to send transcribed message:", error);
-          updateQueueRef.current?.((current) => [
-            ...current,
-            {
-              id: generateMessageId(),
-              text,
-            },
-          ]);
-        }
-      })();
+      const current = userInput;
+      const shouldPad = current.length > 0 && !/\s$/.test(current);
+      const nextValue = `${current}${shouldPad ? " " : ""}${text}`;
+      setUserInput(nextValue);
     },
-    [submitMessage]
+    [setUserInput, userInput]
   );
 
   const handleDictationError = useCallback((error: Error) => {
@@ -225,24 +200,24 @@ export function AgentInputArea({
 
   const canStartDictation = useCallback(() => {
     const socketConnected = wsOrInert.getConnectionState ? wsOrInert.getConnectionState().isConnected : wsOrInert.isConnected;
-    const allowed = !isRealtimeMode && socketConnected && Boolean(agent);
+    const allowed = !isRealtimeMode && socketConnected && (Boolean(agent) || Boolean(onSubmitMessage));
     console.log("[AgentInput] canStartDictation", {
       allowed,
       isRealtimeMode,
       wsConnected: socketConnected,
     });
     return allowed;
-  }, [agent, isRealtimeMode, wsOrInert]);
+  }, [agent, isRealtimeMode, onSubmitMessage, wsOrInert]);
 
   const canConfirmDictation = useCallback(() => {
     const socketConnected = wsOrInert.getConnectionState ? wsOrInert.getConnectionState().isConnected : wsOrInert.isConnected;
-    const allowed = socketConnected && Boolean(agent);
+    const allowed = socketConnected && (Boolean(agent) || Boolean(onSubmitMessage));
     console.log("[AgentInput] canConfirmDictation", {
       allowed,
       wsConnected: socketConnected,
     });
     return allowed;
-  }, [agent, wsOrInert]);
+  }, [agent, onSubmitMessage, wsOrInert]);
 
   const {
     isRecording: isDictating,
@@ -657,13 +632,22 @@ export function AgentInputArea({
     });
   }
 
+  const handleNativeSizerLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      if (IS_WEB) {
+        return;
+      }
+      applyMeasuredHeight(event.nativeEvent.layout.height, "native-sizer");
+    },
+    [applyMeasuredHeight]
+  );
+
   const isAgentRunning = agent?.status === "running";
-  agentStatusRef.current = agent?.status;
   const hasText = userInput.trim().length > 0;
   const hasImages = selectedImages.length > 0;
   const hasSendableContent = hasText || hasImages;
   const shouldShowSendButton = !isAgentRunning && hasSendableContent;
-  const shouldShowVoiceControls = !hasSendableContent;
+  const shouldShowVoiceControls = true;
   const shouldHandleDesktopSubmit = IS_WEB;
 
   const updateQueue = useCallback(
@@ -676,11 +660,6 @@ export function AgentInputArea({
     },
     [agentId, serverId, setQueuedMessages],
   );
-  useEffect(() => {
-    updateQueueRef.current = updateQueue;
-  }, [updateQueue]);
-
-
   useLayoutEffect(() => {
     if (!IS_WEB) {
       return;
@@ -1003,6 +982,13 @@ export function AgentInputArea({
             editable={!isDictating && wsOrInert.isConnected}
             onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
           />
+          {!IS_WEB && (
+            <View pointerEvents="none" style={styles.textInputSizerContainer}>
+              <Text style={styles.textInputSizer} onLayout={handleNativeSizerLayout}>
+                {userInput.length > 0 ? userInput : " "}
+              </Text>
+            </View>
+          )}
 
           {/* Button row below input */}
           <View style={styles.buttonRow}>
@@ -1058,27 +1044,30 @@ export function AgentInputArea({
                     )}
                   </Pressable>
                 </>
-              ) : shouldShowSendButton ? (
-                <Pressable
-                  onPress={handleSendMessage}
-                  disabled={!wsOrInert.isConnected || isProcessing || isSubmitLoading}
-                style={[
-                  styles.sendButton as any,
-                  (!wsOrInert.isConnected || isProcessing || isSubmitLoading ? styles.buttonDisabled : undefined) as any,
-                ]}
-                >
-                  {isSubmitLoading ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <ArrowUp size={20} color="white" />
+              ) : (
+                <>
+                  {shouldShowSendButton && (
+                    <Pressable
+                      onPress={handleSendMessage}
+                      disabled={!wsOrInert.isConnected || isProcessing || isSubmitLoading}
+                      style={[
+                        styles.sendButton as any,
+                        (!wsOrInert.isConnected || isProcessing || isSubmitLoading
+                          ? styles.buttonDisabled
+                          : undefined) as any,
+                      ]}
+                    >
+                      {isSubmitLoading ? (
+                        <ActivityIndicator size="small" color="white" />
+                      ) : (
+                        <ArrowUp size={20} color="white" />
+                      )}
+                    </Pressable>
                   )}
-                </Pressable>
-                  ) : shouldShowVoiceControls ? (
-                    <>
-                      {voiceButton}
-                      {realtimeButton}
-                    </>
-                  ) : null}
+                  {shouldShowVoiceControls && voiceButton}
+                  {realtimeButton}
+                </>
+              )}
             </View>
           </View>
           </Animated.View>
@@ -1196,6 +1185,20 @@ const styles = StyleSheet.create(((theme: any) => ({
           outlineColor: "transparent",
         }
       : {}),
+  },
+  textInputSizerContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    opacity: 0,
+    zIndex: -1,
+  },
+  textInputSizer: {
+    width: "100%",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    fontSize: theme.fontSize.lg,
+    lineHeight: theme.fontSize.lg * 1.4,
   },
   buttonRow: {
     flexDirection: "row",
