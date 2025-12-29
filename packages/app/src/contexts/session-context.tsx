@@ -1,4 +1,5 @@
 import { createContext, useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
+import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
@@ -18,7 +19,7 @@ import type {
 import type {
   AgentPermissionRequest,
 } from "@server/server/agent/agent-sdk-types";
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -1293,9 +1294,45 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     const encodedImages = await Promise.all(
       images.map(async ({ uri, mimeType }) => {
         try {
-          const data = await FileSystem.readAsStringAsync(uri, {
-            encoding: "base64",
-          });
+          const data = await (async () => {
+            if (Platform.OS === "web") {
+              if (uri.startsWith("data:")) {
+                const [, base64] = uri.split(",", 2);
+                if (!base64) {
+                  throw new Error("Malformed data URI for image.");
+                }
+                return base64;
+              }
+              const response = await fetch(uri);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch image: ${response.status}`);
+              }
+              const blob = await response.blob();
+              const base64 = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  if (typeof reader.result !== "string") {
+                    reject(new Error("Unexpected FileReader result type."));
+                    return;
+                  }
+                  const [, resultBase64] = reader.result.split(",", 2);
+                  if (!resultBase64) {
+                    reject(new Error("Failed to read image data as base64."));
+                    return;
+                  }
+                  resolve(resultBase64);
+                };
+                reader.onerror = () => {
+                  reject(reader.error ?? new Error("Failed to read image data."));
+                };
+                reader.readAsDataURL(blob);
+              });
+              return base64;
+            }
+            return await FileSystem.readAsStringAsync(uri, {
+              encoding: "base64",
+            });
+          })();
           return {
             data,
             mimeType: mimeType ?? "image/jpeg",

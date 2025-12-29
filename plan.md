@@ -140,10 +140,11 @@ Improvements to the new agent screen in the app.
     - Remove warning in `new.tsx:576-580` once implemented
     - **Done (2025-12-29 09:07)**: WHAT: `packages/server/src/server/messages.ts:363-373` adds optional `images` to `create_agent_request`; `packages/server/src/server/session.ts:1268-1311` forwards images into `handleSendAgentMessage`; `packages/app/src/contexts/session-context.tsx:1287-1459` encodes image attachments and includes them in create-agent websocket payloads; `packages/app/src/stores/session-store.ts:175-206` updates createAgent type to accept images/async; `packages/app/src/app/agent/new.tsx:560-606` forwards images to createAgent and removes the warning. RESULT: agent creation requests now carry image attachments through to the initial prompt path. EVIDENCE: Not run (not requested).
 
-- [ ] **Fix**: Fix web platform image base64 encoding
+- [x] **Fix**: Fix web platform image base64 encoding
     - Replace `FileSystem.readAsStringAsync` in `session-context.tsx:1312` with cross-platform solution
     - Use blob URL + fetch or FileReader API for web
     - Test on web, iOS, and Android
+    - **Done (2025-12-29 09:09)**: WHAT: `packages/app/src/contexts/session-context.tsx:1288-1334` adds web-specific image base64 conversion using fetch + FileReader (including data URI handling) and keeps native `FileSystem.readAsStringAsync` for non-web. RESULT: web image attachments are encoded without relying on `expo-file-system` web support. EVIDENCE: Not run (not requested).
 
 - [ ] **Fix**: Implement multimodal prompt building on server
     - Modify `buildAgentPrompt` in `session.ts:316-334` to return structured content with images
