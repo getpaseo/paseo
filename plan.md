@@ -184,9 +184,10 @@ Improvements to the new agent screen in the app.
     - Confirm no base64 data URL appears in the prompt text sent to Codex MCP.
     - **Done (2025-02-10 09:26)**: WHAT: `REPORT-codex-image-attachment-test.md:1` documents Playwright MCP results; `plan.md:176` marked this test complete and added a follow-up fix task. RESULT: Codex correctly identified the color but still received base64 in the prompt; `/tmp/paseo-attachments` was not created. EVIDENCE: UI timeline showed a tool command embedding base64 data, response was "The image is solid red (#ff0000).", and `ls -la /tmp/paseo-attachments` returned "No such file or directory"; full details in `REPORT-codex-image-attachment-test.md`.
 
-- [ ] **Fix**: Codex image attachment prompt still embeds base64.
+- [x] **Fix**: Codex image attachment prompt still embeds base64.
 
     - Reproduce with a new Codex agent and image attachment from `http://localhost:8081/agent/new`.
     - Confirm server prompt includes base64 data URL instead of `/tmp/paseo-attachments/{uuid}.png`.
     - Ensure temp files are created under `/tmp/paseo-attachments` and prompt only references the file path.
     - Add a lightweight regression test or log assertion if possible.
+    - **Done (2025-12-29 10:34)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2333-2412` now normalizes inline data URLs, writes attachments under `/tmp/paseo-attachments`, and replaces embedded base64 in prompt strings/blocks with temp file paths (plus a log when replacements occur). RESULT: Codex prompt text no longer carries inline base64 data URLs and uses temp file references instead. EVIDENCE: Not run (not requested).

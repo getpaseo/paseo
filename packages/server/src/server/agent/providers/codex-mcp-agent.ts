@@ -2330,19 +2330,67 @@ function getImageExtension(mimeType: string): string {
   }
 }
 
+type ImageDataPayload = { mimeType: string; data: string };
+
+function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
+  if (data.startsWith("data:")) {
+    const match = data.match(/^data:([^;]+);base64,(.*)$/);
+    if (match) {
+      return { mimeType: match[1], data: match[2] };
+    }
+  }
+  return { mimeType, data };
+}
+
 async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
-  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
+  const tmpRoot = process.platform === "win32" ? os.tmpdir() : "/tmp";
+  const attachmentsDir = path.join(tmpRoot, CODEX_IMAGE_ATTACHMENT_DIR);
   await fs.mkdir(attachmentsDir, { recursive: true });
-  const extension = getImageExtension(mimeType);
+  const normalized = normalizeImageData(mimeType, data);
+  const extension = getImageExtension(normalized.mimeType);
   const filename = `${randomUUID()}.${extension}`;
   const filePath = path.join(attachmentsDir, filename);
-  await fs.writeFile(filePath, Buffer.from(data, "base64"));
+  await fs.writeFile(filePath, Buffer.from(normalized.data, "base64"));
   return filePath;
+}
+
+async function replaceInlineImageData(promptText: string): Promise<string> {
+  const dataUrlRegex =
+    /data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
+  const matches = Array.from(promptText.matchAll(dataUrlRegex));
+  if (matches.length === 0) {
+    return promptText;
+  }
+  console.info(
+    `[CodexAgentSession] Replacing ${matches.length} inline image data URL(s) with temp files.`
+  );
+  let output = "";
+  let lastIndex = 0;
+  for (const match of matches) {
+    const matchIndex = match.index ?? 0;
+    const fullMatch = match[0];
+    const mimeType = match[1];
+    const data = match[2];
+    output += promptText.slice(lastIndex, matchIndex);
+    try {
+      const filePath = await writeImageAttachment(mimeType, data);
+      output += filePath;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[CodexAgentSession] Failed to replace inline image data URL: ${message}`
+      );
+      output += fullMatch;
+    }
+    lastIndex = matchIndex + fullMatch.length;
+  }
+  output += promptText.slice(lastIndex);
+  return output;
 }
 
 async function toPromptText(prompt: AgentPromptInput): Promise<string> {
   if (typeof prompt === "string") {
-    return prompt;
+    return await replaceInlineImageData(prompt);
   }
   const parts: string[] = [];
   for (const chunk of prompt) {
@@ -2360,7 +2408,8 @@ async function toPromptText(prompt: AgentPromptInput): Promise<string> {
       }
     }
   }
-  return parts.join("\n\n");
+  const joined = parts.join("\n\n");
+  return await replaceInlineImageData(joined);
 }
 
 function getCodexMcpCommand(): string {
