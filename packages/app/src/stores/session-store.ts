@@ -199,10 +199,11 @@ export interface SessionState {
     createAgent: (options: {
       config: any;
       initialPrompt: string;
+      images?: Array<{ uri: string; mimeType?: string }>;
       git?: any;
       worktreeName?: string;
       requestId?: string;
-    }) => void;
+    }) => Promise<void>;
     resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
     setAgentMode: (agentId: string, modeId: string) => void;
     respondToPermission: (agentId: string, requestId: string, response: any) => void;

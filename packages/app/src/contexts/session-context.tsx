@@ -1284,6 +1284,34 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     ws.send(msg);
   }, [serverId, ws, setProviderModels]);
 
+  const encodeImages = useCallback(async (
+    images?: Array<{ uri: string; mimeType?: string }>
+  ) => {
+    if (!images || images.length === 0) {
+      return undefined;
+    }
+    const encodedImages = await Promise.all(
+      images.map(async ({ uri, mimeType }) => {
+        try {
+          const data = await FileSystem.readAsStringAsync(uri, {
+            encoding: "base64",
+          });
+          return {
+            data,
+            mimeType: mimeType ?? "image/jpeg",
+          };
+        } catch (error) {
+          console.error("[Session] Failed to convert image:", error);
+          return null;
+        }
+      })
+    );
+    const validImages = encodedImages.filter(
+      (entry): entry is { data: string; mimeType: string } => entry !== null
+    );
+    return validImages.length > 0 ? validImages : undefined;
+  }, []);
+
   const sendAgentMessage = useCallback(async (
     agentId: string,
     message: string,
@@ -1304,31 +1332,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       return updated;
     });
 
-    let imagesData: Array<{ data: string; mimeType: string }> | undefined;
-    if (images && images.length > 0) {
-      const encodedImages = await Promise.all(
-        images.map(async ({ uri, mimeType }) => {
-          try {
-            const data = await FileSystem.readAsStringAsync(uri, {
-              encoding: "base64",
-            });
-            return {
-              data,
-              mimeType: mimeType ?? "image/jpeg",
-            };
-          } catch (error) {
-            console.error("[Session] Failed to convert image:", error);
-            return null;
-          }
-        })
-      );
-      const validImages = encodedImages.filter(
-        (entry): entry is { data: string; mimeType: string } => entry !== null
-      );
-      if (validImages.length > 0) {
-        imagesData = validImages;
-      }
-    }
+    const imagesData = await encodeImages(images);
 
     const msg: WSInboundMessage = {
       type: "session",
@@ -1341,7 +1345,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       },
     };
     ws.send(msg);
-  }, [serverId, ws, setAgentStreamState]);
+  }, [encodeImages, serverId, ws, setAgentStreamState]);
 
   const cancelAgentRun = useCallback((agentId: string) => {
     const msg: WSInboundMessage = {
@@ -1431,21 +1435,28 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     }
   }, [ws]);
 
-  const createAgent = useCallback(({ config, initialPrompt, git, worktreeName, requestId }: { config: any; initialPrompt: string; git?: any; worktreeName?: string; requestId?: string }) => {
+  const createAgent = useCallback(async ({ config, initialPrompt, images, git, worktreeName, requestId }: { config: any; initialPrompt: string; images?: Array<{ uri: string; mimeType?: string }>; git?: any; worktreeName?: string; requestId?: string }) => {
     const trimmedPrompt = initialPrompt.trim();
+    let imagesData: Array<{ data: string; mimeType: string }> | undefined;
+    try {
+      imagesData = await encodeImages(images);
+    } catch (error) {
+      console.error("[Session] Failed to prepare images for agent creation:", error);
+    }
     const msg: WSInboundMessage = {
       type: "session",
       message: {
         type: "create_agent_request",
         config,
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
+        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
         ...(git ? { git } : {}),
         ...(worktreeName ? { worktreeName } : {}),
         ...(requestId ? { requestId } : {}),
       },
     };
     ws.send(msg);
-  }, [ws]);
+  }, [encodeImages, ws]);
 
   const resumeAgent = useCallback(({ handle, overrides, requestId }: { handle: any; overrides?: any; requestId?: string }) => {
     const msg: WSInboundMessage = {

@@ -134,10 +134,11 @@ Improvements to the new agent screen in the app.
     - If broken, add fix tasks with debugging details.
     - **Done (2025-12-29 09:13)**: WHAT: Tested image attachments via Playwright MCP; traced code in `packages/app/src/app/agent/new.tsx:576-580`, `packages/app/src/contexts/session-context.tsx:1307-1331`, `packages/server/src/server/session.ts:316-334`. RESULT: Image attachments are BROKEN - three issues found: (1) Agent creation silently drops images with console warning, (2) Web platform fails to base64 encode images due to `expo-file-system.readAsStringAsync` not working, (3) Server `buildAgentPrompt` only creates text summary, never passes actual image bytes to LLM. EVIDENCE: Console logs `[WARNING] [DraftAgentScreen] Image attachments on agent creation not yet supported` and `[ERROR] [Session] Failed to convert image: Error: Method readAsStringAsync imported from "expo-file-system"...`; agent responses consistently state "I don't see any image attached". Full report in `REPORT-image-attachment-investigation.md`.
 
-- [ ] **Fix**: Add image support to agent creation API
+- [x] **Fix**: Add image support to agent creation API
     - Extend `create_agent_request` to accept images array
     - Pass images to `handleSendAgentMessage` after agent creation
     - Remove warning in `new.tsx:576-580` once implemented
+    - **Done (2025-12-29 09:07)**: WHAT: `packages/server/src/server/messages.ts:363-373` adds optional `images` to `create_agent_request`; `packages/server/src/server/session.ts:1268-1311` forwards images into `handleSendAgentMessage`; `packages/app/src/contexts/session-context.tsx:1287-1459` encodes image attachments and includes them in create-agent websocket payloads; `packages/app/src/stores/session-store.ts:175-206` updates createAgent type to accept images/async; `packages/app/src/app/agent/new.tsx:560-606` forwards images to createAgent and removes the warning. RESULT: agent creation requests now carry image attachments through to the initial prompt path. EVIDENCE: Not run (not requested).
 
 - [ ] **Fix**: Fix web platform image base64 encoding
     - Replace `FileSystem.readAsStringAsync` in `session-context.tsx:1312` with cross-platform solution

@@ -1265,7 +1265,7 @@ export class Session {
   private async handleCreateAgentRequest(
     msg: Extract<SessionInboundMessage, { type: "create_agent_request" }>
   ): Promise<void> {
-    const { config, worktreeName, requestId, initialPrompt, git } = msg;
+    const { config, worktreeName, requestId, initialPrompt, git, images } = msg;
     console.log(
       `[Session ${this.clientId}] Creating agent in ${config.cwd} (${config.provider})${
         worktreeName ? ` with worktree ${worktreeName}` : ""
@@ -1306,7 +1306,8 @@ export class Session {
           await this.handleSendAgentMessage(
             snapshot.id,
             trimmedPrompt,
-            uuidv4()
+            uuidv4(),
+            images
           );
         } catch (promptError) {
           console.error(

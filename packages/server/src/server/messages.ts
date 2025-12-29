@@ -365,6 +365,10 @@ export const CreateAgentRequestMessageSchema = z.object({
   config: AgentSessionConfigSchema,
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
+  images: z.array(z.object({
+    data: z.string(), // base64 encoded image
+    mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+  })).optional(),
   git: GitSetupOptionsSchema.optional(),
   requestId: z.string().optional(),
 });

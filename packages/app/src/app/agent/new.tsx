@@ -573,12 +573,6 @@ export default function DraftAgentScreen() {
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
       };
-      // TODO: Images in initial agent creation are not yet supported by the server API.
-      // For now we log a warning. Images can be sent after agent creation via sendAgentMessage.
-      if (images && images.length > 0) {
-        console.warn("[DraftAgentScreen] Image attachments on agent creation not yet supported");
-      }
-
       const trimmedBaseBranch = baseBranch.trim();
       const shouldIncludeBase =
         trimmedBaseBranch.length > 0 ||
@@ -608,6 +602,7 @@ export default function DraftAgentScreen() {
       createAgent({
         config,
         initialPrompt: trimmedPrompt,
+        images,
         git: gitOptions,
         requestId,
       });
