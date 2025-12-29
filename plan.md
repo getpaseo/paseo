@@ -172,3 +172,21 @@ Improvements to the new agent screen in the app.
     - Pass file path in prompt text (e.g., "User attached image: /tmp/paseo-attachments/abc123.png").
     - Codex can then use its Read tool to view the image without bloating context.
     - **Done (2025-12-29 10:12)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2314-2363` adds temp file helpers and writes image attachments under `/tmp/paseo-attachments` before emitting prompt text; `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2884` now awaits async prompt building. RESULT: Codex prompts reference temp file paths instead of base64 data URLs, avoiding context bloat. EVIDENCE: Not run (not requested).
+
+- [x] **Test**: Verify Codex image attachment fix via Playwright MCP.
+
+    - Upload a test image to Codex agent and ask "what color is this image?".
+    - Verify Codex correctly identifies the color.
+    - Check server logs or agent timeline to confirm:
+        1. Prompt contains a file path (e.g., `/tmp/paseo-attachments/{uuid}.png`) NOT base64 data.
+        2. Codex accesses the file via Read tool or Bash (e.g., `cat`, Python script with file path).
+    - Verify the temp file exists in `/tmp/paseo-attachments/` during the request.
+    - Confirm no base64 data URL appears in the prompt text sent to Codex MCP.
+    - **Done (2025-02-10 09:26)**: WHAT: `REPORT-codex-image-attachment-test.md:1` documents Playwright MCP results; `plan.md:176` marked this test complete and added a follow-up fix task. RESULT: Codex correctly identified the color but still received base64 in the prompt; `/tmp/paseo-attachments` was not created. EVIDENCE: UI timeline showed a tool command embedding base64 data, response was "The image is solid red (#ff0000).", and `ls -la /tmp/paseo-attachments` returned "No such file or directory"; full details in `REPORT-codex-image-attachment-test.md`.
+
+- [ ] **Fix**: Codex image attachment prompt still embeds base64.
+
+    - Reproduce with a new Codex agent and image attachment from `http://localhost:8081/agent/new`.
+    - Confirm server prompt includes base64 data URL instead of `/tmp/paseo-attachments/{uuid}.png`.
+    - Ensure temp files are created under `/tmp/paseo-attachments` and prompt only references the file path.
+    - Add a lightweight regression test or log assertion if possible.
