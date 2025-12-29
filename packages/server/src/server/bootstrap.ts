@@ -1,11 +1,14 @@
 import express, { type Express } from "express";
 import basicAuth from "express-basic-auth";
 import { createServer as createHTTPServer, type Server as HTTPServer } from "http";
+import { createReadStream } from "fs";
+import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
 import { initializeSTT, type STTConfig } from "./agent/stt-openai.js";
 import { initializeTTS, type TTSConfig } from "./agent/tts-openai.js";
 import { listConversations, deleteConversation } from "./persistence.js";
@@ -49,6 +52,7 @@ export type PaseoDaemonConfig = {
   agentRegistryPath: string;
   agentControlMcp: AgentControlMcpConfig;
   openai?: PaseoOpenAIConfig;
+  downloadTokenTtlMs?: number;
 };
 
 export type PaseoDaemonHandles = {
@@ -67,8 +71,11 @@ export async function createPaseoDaemon(
   const basicAuthUsers = config.auth.basicUsers;
   const staticDir = config.staticDir;
   const authRealm = config.auth.realm ?? "Voice Assistant";
+  const downloadTokenTtlMs = config.downloadTokenTtlMs ?? 60000;
 
   const agentMcpBearerToken = config.auth.agentMcpBearerToken;
+
+  const downloadTokenStore = new DownloadTokenStore({ ttlMs: downloadTokenTtlMs });
 
   const app = express();
 
@@ -121,6 +128,56 @@ export async function createPaseoDaemon(
     } catch (error) {
       console.error("[API] Failed to delete conversation:", error);
       res.status(500).json({ error: "Failed to delete conversation" });
+    }
+  });
+
+  app.get("/api/files/download", async (req, res) => {
+    const token =
+      typeof req.query.token === "string" && req.query.token.trim().length > 0
+        ? req.query.token.trim()
+        : null;
+
+    if (!token) {
+      res.status(400).json({ error: "Missing download token" });
+      return;
+    }
+
+    const entry = downloadTokenStore.consumeToken(token);
+    if (!entry) {
+      res.status(403).json({ error: "Invalid or expired token" });
+      return;
+    }
+
+    try {
+      const fileStats = await stat(entry.absolutePath);
+      if (!fileStats.isFile()) {
+        res.status(404).json({ error: "File not found" });
+        return;
+      }
+
+      const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
+      res.setHeader("Content-Type", entry.mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${safeFileName}"`
+      );
+      res.setHeader("Content-Length", entry.size.toString());
+
+      const stream = createReadStream(entry.absolutePath);
+      stream.on("error", (error) => {
+        console.error("[API] Failed to stream download:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to read file" });
+        } else {
+          res.end();
+        }
+      });
+      stream.pipe(res);
+    } catch (error) {
+      console.error("[API] Failed to download file:", error);
+      if (!res.headersSent) {
+        res.status(404).json({ error: "File not found" });
+      }
     }
   });
 
@@ -252,6 +309,7 @@ export async function createPaseoDaemon(
     httpServer,
     agentManager,
     agentRegistry,
+    downloadTokenStore,
     {
       agentMcpUrl: config.agentControlMcp.url,
       agentMcpHeaders: config.agentControlMcp.headers,

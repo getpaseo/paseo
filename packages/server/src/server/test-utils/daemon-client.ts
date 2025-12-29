@@ -534,6 +534,45 @@ export class DaemonClient {
     );
   }
 
+  async requestDownloadToken(
+    agentId: string,
+    path: string
+  ): Promise<{
+    agentId: string;
+    path: string;
+    token: string | null;
+    fileName: string | null;
+    mimeType: string | null;
+    size: number | null;
+    error: string | null;
+  }> {
+    const startPosition = this.messageQueue.length;
+
+    this.send({ type: "file_download_token_request", agentId, path });
+
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "file_download_token_response" &&
+          msg.payload.agentId === agentId
+        ) {
+          return {
+            agentId: msg.payload.agentId,
+            path: msg.payload.path,
+            token: msg.payload.token,
+            fileName: msg.payload.fileName,
+            mimeType: msg.payload.mimeType,
+            size: msg.payload.size,
+            error: msg.payload.error,
+          };
+        }
+        return null;
+      },
+      10000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
   // ============================================================================
   // Provider Models
   // ============================================================================

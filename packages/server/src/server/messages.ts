@@ -483,6 +483,12 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
 });
 
+export const FileDownloadTokenRequestSchema = z.object({
+  type: z.literal("file_download_token_request"),
+  agentId: z.string(),
+  path: z.string(),
+});
+
 export const ClearAgentAttentionMessageSchema = z.object({
   type: z.literal("clear_agent_attention"),
   agentId: z.union([z.string(), z.array(z.string())]),
@@ -511,6 +517,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   FileExplorerRequestSchema,
+  FileDownloadTokenRequestSchema,
   ListPersistedAgentsRequestMessageSchema,
   GitRepoInfoRequestMessageSchema,
   ClearAgentAttentionMessageSchema,
@@ -744,6 +751,19 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const FileDownloadTokenResponseSchema = z.object({
+  type: z.literal("file_download_token_response"),
+  payload: z.object({
+    agentId: z.string(),
+    path: z.string(),
+    token: z.string().nullable(),
+    fileName: z.string().nullable(),
+    mimeType: z.string().nullable(),
+    size: z.number().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 const GitBranchInfoSchema = z.object({
   name: z.string(),
   isCurrent: z.boolean(),
@@ -795,6 +815,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListPersistedAgentsResponseSchema,
   GitDiffResponseSchema,
   FileExplorerResponseSchema,
+  FileDownloadTokenResponseSchema,
   GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
 ]);
@@ -851,6 +872,8 @@ export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
+export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
 

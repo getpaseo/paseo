@@ -12,6 +12,7 @@ import { Session } from "./session.js";
 import { loadConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -29,16 +30,19 @@ export class VoiceAssistantWebSocketServer {
   private clientIdCounter: number = 0;
   private agentManager: AgentManager;
   private agentRegistry: AgentRegistry;
+  private downloadTokenStore: DownloadTokenStore;
   private readonly agentMcpConfig: AgentMcpClientConfig;
 
   constructor(
     server: HTTPServer,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
+    downloadTokenStore: DownloadTokenStore,
     agentMcpConfig: AgentMcpClientConfig
   ) {
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
+    this.downloadTokenStore = downloadTokenStore;
     this.agentMcpConfig = agentMcpConfig;
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
@@ -85,6 +89,7 @@ export class VoiceAssistantWebSocketServer {
       (msg) => {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
+      this.downloadTokenStore,
       this.agentManager,
       this.agentRegistry,
       this.agentMcpConfig,
