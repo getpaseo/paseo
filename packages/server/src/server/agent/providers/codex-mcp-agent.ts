@@ -66,6 +66,7 @@ type CodexToolArguments = { [key: string]: unknown };
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const CODEX_PROVIDER = "codex" as const;
+const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 
 const CODEX_MCP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -2310,7 +2311,36 @@ function normalizeEvent(raw: unknown): CodexEvent {
   return CodexEventSchema.parse(eventRecord);
 }
 
-function toPromptText(prompt: AgentPromptInput): string {
+function getImageExtension(mimeType: string): string {
+  switch (mimeType) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    case "image/bmp":
+      return "bmp";
+    case "image/tiff":
+      return "tiff";
+    default:
+      return "bin";
+  }
+}
+
+async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
+  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
+  await fs.mkdir(attachmentsDir, { recursive: true });
+  const extension = getImageExtension(mimeType);
+  const filename = `${randomUUID()}.${extension}`;
+  const filePath = path.join(attachmentsDir, filename);
+  await fs.writeFile(filePath, Buffer.from(data, "base64"));
+  return filePath;
+}
+
+async function toPromptText(prompt: AgentPromptInput): Promise<string> {
   if (typeof prompt === "string") {
     return prompt;
   }
@@ -2321,8 +2351,13 @@ function toPromptText(prompt: AgentPromptInput): string {
       continue;
     }
     if (chunk.type === "image") {
-      const dataUrl = `data:${chunk.mimeType};base64,${chunk.data}`;
-      parts.push(`![user image](${dataUrl})`);
+      try {
+        const filePath = await writeImageAttachment(chunk.mimeType, chunk.data);
+        parts.push(`User attached image: ${filePath}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        parts.push(`User attached image (failed to write temp file): ${message}`);
+      }
     }
   }
   return parts.join("\n\n");
@@ -2846,7 +2881,7 @@ class CodexMcpAgentSession implements AgentSession {
     const abortController = new AbortController();
     this.currentAbortController = abortController;
 
-    const promptText = toPromptText(prompt);
+    const promptText = await toPromptText(prompt);
     // NOTE: user_message is NOT emitted here because the agent-manager's
     // recordUserMessage() already handles emitting the user message timeline
     // event before calling stream(). Emitting here would cause duplicates.

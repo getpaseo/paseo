@@ -152,3 +152,23 @@ Improvements to the new agent screen in the app.
     - Implement Claude-specific image content blocks
     - Implement Codex/OpenAI image handling
     - **Done (2025-12-29 09:14)**: WHAT: `packages/server/src/server/agent/agent-sdk-types.ts:39-43` adds `AgentPromptContentBlock` and extends `AgentPromptInput` to include image blocks; `packages/server/src/server/session.ts:317-333` now builds prompt blocks with text + image data; `packages/server/src/server/agent/providers/claude-agent.ts:790-820` maps prompt blocks to Claude SDK image/text content; `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2313-2328` renders image blocks as data URLs in prompt text. RESULT: server prompts now carry image data for Claude and include image payloads for Codex/OpenAI flows instead of a text-only summary. EVIDENCE: Not run (not requested).
+
+- [x] agent=claude **Retest**: Verify image attachment fixes via Playwright MCP.
+
+    - Create a solid color image using ImageMagick (e.g., `convert -size 100x100 xc:red /tmp/red.png`).
+    - Navigate to `http://localhost:8081/agent/new`.
+    - Upload the red image and ask "what color is this image?".
+    - Test with Claude agent: verify it correctly identifies the color as red.
+    - Test with Codex agent: verify it correctly identifies the color as red.
+    - If still broken, add fix tasks with debugging details.
+    - **Done (2025-12-29 02:53)**: WHAT: Tested via Playwright MCP with `/tmp/red.png` (100x100 solid red image). RESULT: Both agents correctly identify the image as red. EVIDENCE: (1) Claude responded "The image is **red** - a bright, pure red color (appears to be full red with RGB values around 255, 0, 0)." (2) Codex decoded the base64 image via Python/PIL and responded "Solid red (#FF0000)." Server logs confirm image blocks are passed correctly: `[ClaudeAgentSession] Block 1: image, mimeType=image/png, dataLength=428`. NOTE: Codex works but embeds full base64 in context - needs fix below.
+
+- [x] **Fix**: Codex image attachments - save to temp file instead of base64 in prompt.
+
+    - Current implementation in `codex-mcp-agent.ts:2313-2328` embeds base64 data URL in prompt text via `toPromptText()`.
+    - This stuffs the entire image into the LLM context (e.g., 1MB image = 1.3MB base64 in prompt).
+    - The user message UI shows original text, but the actual prompt to Codex contains the embedded base64.
+    - Fix: Write image to temp file (e.g., `/tmp/paseo-attachments/{uuid}.png`).
+    - Pass file path in prompt text (e.g., "User attached image: /tmp/paseo-attachments/abc123.png").
+    - Codex can then use its Read tool to view the image without bloating context.
+    - **Done (2025-12-29 10:12)**: WHAT: `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2314-2363` adds temp file helpers and writes image attachments under `/tmp/paseo-attachments` before emitting prompt text; `packages/server/src/server/agent/providers/codex-mcp-agent.ts:2884` now awaits async prompt building. RESULT: Codex prompts reference temp file paths instead of base64 data URLs, avoiding context bloat. EVIDENCE: Not run (not requested).
