@@ -163,6 +163,39 @@ export async function readExplorerFile({
   };
 }
 
+export async function getDownloadableFileInfo({
+  root,
+  relativePath,
+}: ReadFileParams): Promise<{
+  path: string;
+  absolutePath: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}> {
+  const filePath = await resolveScopedPath({ root, relativePath });
+  const stats = await fs.stat(filePath);
+
+  if (!stats.isFile()) {
+    throw new Error("Requested path is not a file");
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = TEXT_EXTENSIONS.has(ext)
+    ? "text/plain"
+    : ext in IMAGE_MIME_TYPES
+      ? IMAGE_MIME_TYPES[ext]
+      : "application/octet-stream";
+
+  return {
+    path: normalizeRelativePath({ root, targetPath: filePath }),
+    absolutePath: filePath,
+    fileName: path.basename(filePath),
+    mimeType,
+    size: stats.size,
+  };
+}
+
 async function resolveScopedPath({
   root,
   relativePath = ".",

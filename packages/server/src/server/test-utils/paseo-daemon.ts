@@ -7,6 +7,7 @@ import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 
 type TestPaseoDaemonOptions = {
   basicUsers?: Record<string, string>;
+  downloadTokenTtlMs?: number;
 };
 
 export type TestPaseoDaemon = {
@@ -73,6 +74,7 @@ export async function createTestPaseoDaemon(
         ? { headers: { Authorization: agentMcpAuthHeader } }
         : {}),
     },
+    downloadTokenTtlMs: options.downloadTokenTtlMs,
   };
 
   const daemon = await createPaseoDaemon(config);

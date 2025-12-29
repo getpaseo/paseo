@@ -31,8 +31,10 @@ export interface DaemonTestContext {
  * });
  * ```
  */
-export async function createDaemonTestContext(): Promise<DaemonTestContext> {
-  const daemon = await createTestPaseoDaemon();
+export async function createDaemonTestContext(
+  options?: Parameters<typeof createTestPaseoDaemon>[0]
+): Promise<DaemonTestContext> {
+  const daemon = await createTestPaseoDaemon(options);
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     authHeader: daemon.agentMcpAuthHeader,

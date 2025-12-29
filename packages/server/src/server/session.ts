@@ -17,6 +17,7 @@ import {
   type SessionInboundMessage,
   type SessionOutboundMessage,
   type FileExplorerRequest,
+  type FileDownloadTokenRequest,
   type GitSetupOptions,
 } from "./messages.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
@@ -54,7 +55,9 @@ import { expandTilde } from "./terminal-mcp/tmux.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
+  getDownloadableFileInfo,
 } from "./file-explorer/service.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
 import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
@@ -238,12 +241,14 @@ export class Session {
   private agentManager: AgentManager;
   private readonly agentRegistry: AgentRegistry;
   private readonly agentMcpConfig: AgentMcpClientConfig;
+  private readonly downloadTokenStore: DownloadTokenStore;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
 
   constructor(
     clientId: string,
     onMessage: (msg: SessionOutboundMessage) => void,
+    downloadTokenStore: DownloadTokenStore,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     agentMcpConfig: AgentMcpClientConfig,
@@ -255,6 +260,7 @@ export class Session {
     this.clientId = clientId;
     this.conversationId = options?.conversationId || uuidv4();
     this.onMessage = onMessage;
+    this.downloadTokenStore = downloadTokenStore;
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
@@ -840,6 +846,10 @@ export class Session {
 
         case "file_explorer_request":
           await this.handleFileExplorerRequest(msg);
+          break;
+
+        case "file_download_token_request":
+          await this.handleFileDownloadTokenRequest(msg);
           break;
 
         case "list_persisted_agents_request":
@@ -2076,6 +2086,84 @@ export class Session {
           mode,
           directory: null,
           file: null,
+          error: error.message,
+        },
+      });
+    }
+  }
+
+  /**
+   * Handle file download token request scoped to an agent's cwd
+   */
+  private async handleFileDownloadTokenRequest(
+    request: FileDownloadTokenRequest
+  ): Promise<void> {
+    const { agentId, path: requestedPath } = request;
+
+    console.log(
+      `[Session ${this.clientId}] Handling file download token request for agent ${agentId} (${requestedPath})`
+    );
+
+    try {
+      const agents = this.agentManager.listAgents();
+      const agent = agents.find((a) => a.id === agentId);
+
+      if (!agent) {
+        this.emit({
+          type: "file_download_token_response",
+          payload: {
+            agentId,
+            path: requestedPath,
+            token: null,
+            fileName: null,
+            mimeType: null,
+            size: null,
+            error: `Agent not found: ${agentId}`,
+          },
+        });
+        return;
+      }
+
+      const info = await getDownloadableFileInfo({
+        root: agent.cwd,
+        relativePath: requestedPath,
+      });
+
+      const entry = this.downloadTokenStore.issueToken({
+        agentId,
+        path: info.path,
+        absolutePath: info.absolutePath,
+        fileName: info.fileName,
+        mimeType: info.mimeType,
+        size: info.size,
+      });
+
+      this.emit({
+        type: "file_download_token_response",
+        payload: {
+          agentId,
+          path: info.path,
+          token: entry.token,
+          fileName: entry.fileName,
+          mimeType: entry.mimeType,
+          size: entry.size,
+          error: null,
+        },
+      });
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to issue download token for agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "file_download_token_response",
+        payload: {
+          agentId,
+          path: requestedPath,
+          token: null,
+          fileName: null,
+          mimeType: null,
+          size: null,
           error: error.message,
         },
       });
