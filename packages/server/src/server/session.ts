@@ -42,6 +42,7 @@ import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
 import type {
   AgentPermissionResponse,
+  AgentPromptContentBlock,
   AgentPromptInput,
   AgentSessionConfig,
   AgentStreamEvent,
@@ -321,16 +322,14 @@ export class Session {
     if (!images || images.length === 0) {
       return normalized;
     }
-
-    const attachmentSummary = images
-      .map((image, index) => {
-        const sizeKb = Math.round((image.data.length * 0.75) / 1024);
-        return `Attachment ${index + 1}: ${image.mimeType}, ~${sizeKb}KB base64`;
-      })
-      .join("\n");
-
-    const base = normalized.length > 0 ? normalized : "User shared image attachment(s).";
-    return `${base}\n\n[Image attachments]\n${attachmentSummary}\n(Actual image bytes omitted; request a screenshot or file if needed.)`;
+    const blocks: AgentPromptContentBlock[] = [];
+    if (normalized.length > 0) {
+      blocks.push({ type: "text", text: normalized });
+    }
+    for (const image of images) {
+      blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
+    }
+    return blocks;
   }
 
   /**

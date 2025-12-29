@@ -36,7 +36,11 @@ export type AgentPersistenceHandle = {
   metadata?: AgentMetadata;
 };
 
-export type AgentPromptInput = string | { type: "text"; text: string }[];
+export type AgentPromptContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+export type AgentPromptInput = string | AgentPromptContentBlock[];
 
 export type AgentRunOptions = {
   outputSchema?: unknown;
