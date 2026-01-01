@@ -272,7 +272,6 @@ export function AgentStreamView({
             message={item.text}
             timestamp={item.timestamp.getTime()}
             onInlinePathPress={handleInlinePathPress}
-            isStreaming={streamingItemId === item.id}
           />
         );
         break;
@@ -1074,7 +1073,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: 0,
     paddingVertical: theme.spacing[1],
-    paddingLeft: theme.spacing[1],
+    paddingLeft: theme.spacing[4],
     borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
     borderWidth: 0,

@@ -98,7 +98,6 @@ export const OrchestratorMessagesView = forwardRef<ScrollView, OrchestratorMessa
           <AssistantMessage
             message={currentAssistantMessage}
             timestamp={Date.now()}
-            isStreaming={true}
           />
         )}
       </ScrollView>
