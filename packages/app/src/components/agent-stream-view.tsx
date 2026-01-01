@@ -1073,7 +1073,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: 0,
     paddingVertical: theme.spacing[1],
-    paddingLeft: theme.spacing[4],
+    paddingLeft: theme.spacing[2],
     borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
     borderWidth: 0,
