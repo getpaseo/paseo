@@ -56,6 +56,12 @@ const TEXT_EXTENSIONS = new Set([
   ".sh",
 ]);
 
+const TEXT_MIME_TYPES: Record<string, string> = {
+  ".json": "application/json",
+};
+
+const DEFAULT_TEXT_MIME_TYPE = "text/plain";
+
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -140,7 +146,7 @@ export async function readExplorerFile({
       kind: "text",
       encoding: "utf-8",
       content,
-      mimeType: "text/plain",
+      mimeType: TEXT_MIME_TYPES[ext] ?? DEFAULT_TEXT_MIME_TYPE,
     };
   }
 
@@ -182,7 +188,7 @@ export async function getDownloadableFileInfo({
 
   const ext = path.extname(filePath).toLowerCase();
   const mimeType = TEXT_EXTENSIONS.has(ext)
-    ? "text/plain"
+    ? TEXT_MIME_TYPES[ext] ?? DEFAULT_TEXT_MIME_TYPE
     : ext in IMAGE_MIME_TYPES
       ? IMAGE_MIME_TYPES[ext]
       : "application/octet-stream";

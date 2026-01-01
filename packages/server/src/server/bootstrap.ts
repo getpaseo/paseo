@@ -89,6 +89,9 @@ export async function createPaseoDaemon(
     realm: authRealm,
   });
   app.use((req, res, next) => {
+    if (req.path === "/api/files/download") {
+      return next();
+    }
     if (agentMcpBearerToken && req.path.startsWith(agentMcpRoute)) {
       const authHeader = req.header("authorization") ?? "";
       if (authHeader.startsWith("Bearer ")) {

@@ -2098,7 +2098,7 @@ export class Session {
   private async handleFileDownloadTokenRequest(
     request: FileDownloadTokenRequest
   ): Promise<void> {
-    const { agentId, path: requestedPath } = request;
+    const { agentId, path: requestedPath, requestId } = request;
 
     console.log(
       `[Session ${this.clientId}] Handling file download token request for agent ${agentId} (${requestedPath})`
@@ -2119,6 +2119,7 @@ export class Session {
             mimeType: null,
             size: null,
             error: `Agent not found: ${agentId}`,
+            ...(requestId ? { requestId } : {}),
           },
         });
         return;
@@ -2148,6 +2149,7 @@ export class Session {
           mimeType: entry.mimeType,
           size: entry.size,
           error: null,
+          ...(requestId ? { requestId } : {}),
         },
       });
     } catch (error: any) {
@@ -2165,6 +2167,7 @@ export class Session {
           mimeType: null,
           size: null,
           error: error.message,
+          ...(requestId ? { requestId } : {}),
         },
       });
     }

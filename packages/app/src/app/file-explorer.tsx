@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image as RNImage,
+  LayoutChangeEvent,
   ListRenderItemInfo,
   ViewToken,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -17,21 +21,23 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import {
-  Copy,
-  Check,
   File,
   FileText,
   Folder,
   Image as ImageIcon,
   LayoutGrid,
   List as ListIcon,
+  MoreVertical,
   X,
 } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import type { ExplorerEntry } from "@/stores/session-store";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import type { DaemonProfile } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -109,6 +115,8 @@ function FileExplorerContent({
   fileParamRaw,
 }: FileExplorerContentProps) {
   const { theme } = useUnistyles();
+  const { connectionStates } = useDaemonConnections();
+  const daemonProfile = connectionStates.get(serverId)?.daemon;
 
   const agent = useSessionStore((state) =>
     agentId && state.sessions[serverId]
@@ -125,18 +133,17 @@ function FileExplorerContent({
   const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
   const requestDirectoryListing = methods?.requestDirectoryListing;
   const requestFilePreview = methods?.requestFilePreview;
+  const requestFileDownloadToken = methods?.requestFileDownloadToken;
   const navigateExplorerBack = methods?.navigateExplorerBack;
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const pendingPathParamRef = useRef<string | null>(null);
   const pendingFileParamRef = useRef<string | null>(null);
-  const [copiedPath, setCopiedPath] = useState<string | null>(null);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listScrollRef = useRef<FlatList<ExplorerEntry> | null>(null);
   const listScrollOffsetRef = useRef(0);
   const scrollOffsetsByPathRef = useRef<Map<string, number>>(new Map());
   const pendingScrollRestoreRef = useRef<number | null>(null);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   const normalizedPathParam = normalizePathParam(getFirstParam(pathParamRaw));
   const normalizedFileParam = normalizeFileParam(getFirstParam(fileParamRaw));
@@ -196,6 +203,60 @@ function FileExplorerContent({
   }, [windowWidth]);
   const listColumns = viewMode === "grid" ? gridColumnCount : 1;
   const listKey = viewMode === "grid" ? `grid-${gridColumnCount}` : "list";
+  const [menuEntry, setMenuEntry] = useState<ExplorerEntry | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
+  const [menuHeight, setMenuHeight] = useState(0);
+  const agentIdRef = useRef(agentId);
+  const viewModeRef = useRef(viewMode);
+  const requestFilePreviewRef = useRef(requestFilePreview);
+  const explorerFilesRef = useRef(explorerState?.files);
+
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+  }, [viewMode]);
+
+  useEffect(() => {
+    requestFilePreviewRef.current = requestFilePreview;
+  }, [requestFilePreview]);
+
+  useEffect(() => {
+    explorerFilesRef.current = explorerState?.files;
+  }, [explorerState?.files]);
+
+  const handleViewableItemsChangedRef = useRef(
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+      const currentAgentId = agentIdRef.current;
+      const currentViewMode = viewModeRef.current;
+      const currentRequestFilePreview = requestFilePreviewRef.current;
+      if (!currentAgentId || currentViewMode !== "grid" || !currentRequestFilePreview) {
+        return;
+      }
+
+      viewableItems.forEach((token) => {
+        const item = token.item as ExplorerEntry | undefined;
+        if (!item) {
+          return;
+        }
+
+        if (getEntryDisplayKind(item) !== "image") {
+          return;
+        }
+
+        const hasPreview = explorerFilesRef.current?.get(item.path);
+        if (hasPreview || pendingThumbnailPathsRef.current.has(item.path)) {
+          return;
+        }
+
+        pendingThumbnailPathsRef.current.add(item.path);
+        setThumbnailLoadingMap((prev) => ({ ...prev, [item.path]: true }));
+        currentRequestFilePreview(currentAgentId, item.path);
+      });
+    }
+  );
 
   const restoreQueuedScrollOffset = useCallback(() => {
     if (pendingScrollRestoreRef.current === null) {
@@ -235,10 +296,6 @@ function FileExplorerContent({
     listScrollOffsetRef.current = savedOffset;
     queueScrollRestore(savedOffset);
   }, [activePath, queueScrollRestore]);
-
-  useEffect(() => {
-    setCopiedPath(null);
-  }, [activePath]);
 
   useEffect(() => {
     if (!agentId || !initialTargetDirectory || !requestDirectoryListing) {
@@ -303,23 +360,102 @@ function FileExplorerContent({
 
   const handleCopyPath = useCallback(async (path: string) => {
     await Clipboard.setStringAsync(path);
-    setCopiedPath(path);
-    if (copyTimeoutRef.current) {
-      clearTimeout(copyTimeoutRef.current);
-    }
-    copyTimeoutRef.current = setTimeout(() => {
-      setCopiedPath(null);
-      copyTimeoutRef.current = null;
-    }, 1500);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
+  const handleOpenMenu = useCallback((entry: ExplorerEntry, event: any) => {
+    event.stopPropagation();
+    const { pageX, pageY } = event.nativeEvent ?? {};
+    setMenuAnchor({
+      left: typeof pageX === "number" ? pageX : 0,
+      top: typeof pageY === "number" ? pageY : 0,
+    });
+    setMenuEntry(entry);
   }, []);
+
+  const handleCloseMenu = useCallback(() => {
+    setMenuEntry(null);
+    setMenuHeight(0);
+  }, []);
+
+  const handleMenuLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setMenuHeight((current) => (current === height ? current : height));
+  }, []);
+
+  const handleDownloadEntry = useCallback(
+    async (entry: ExplorerEntry) => {
+      if (!agentId || !requestFileDownloadToken || entry.kind !== "file") {
+        return;
+      }
+
+      try {
+        const tokenResponse = await requestFileDownloadToken(agentId, entry.path);
+        if (tokenResponse.error || !tokenResponse.token) {
+          throw new Error(tokenResponse.error ?? "Failed to request download token.");
+        }
+
+        const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
+        if (!downloadTarget.baseUrl) {
+          throw new Error("Download host is unavailable.");
+        }
+
+        const fileName = tokenResponse.fileName ?? entry.name;
+        const downloadUrl = buildDownloadUrl(
+          downloadTarget.baseUrl,
+          tokenResponse.token,
+          Platform.OS === "web" ? downloadTarget.authCredentials : null
+        );
+
+        if (Platform.OS === "web") {
+          triggerBrowserDownload(downloadUrl, fileName);
+          return;
+        }
+
+        const targetUri = await resolveDownloadTargetUri(fileName);
+        const downloadResult = await FileSystem.downloadAsync(
+          downloadUrl,
+          targetUri,
+          downloadTarget.authHeader
+            ? { headers: { Authorization: downloadTarget.authHeader } }
+            : undefined
+        );
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(downloadResult.uri, {
+            mimeType: tokenResponse.mimeType ?? undefined,
+            dialogTitle: fileName ? `Share ${fileName}` : "Share file",
+          });
+        } else {
+          Alert.alert("Download complete", `Saved to ${downloadResult.uri}`);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to download file.";
+        if (Platform.OS === "web") {
+          console.warn("[FileExplorer] Download failed:", message);
+          return;
+        }
+        Alert.alert("Download failed", message);
+      }
+    },
+    [agentId, daemonProfile, requestFileDownloadToken]
+  );
+
+  const menuPosition = useMemo(() => {
+    if (!menuEntry) {
+      return null;
+    }
+    const menuWidth = 180;
+    const horizontalPadding = theme.spacing[2];
+    const verticalPadding = theme.spacing[2];
+    const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
+    const maxTop = Math.max(verticalPadding, windowHeight - menuHeight - verticalPadding);
+    const left = Math.min(
+      Math.max(menuAnchor.left - menuWidth + horizontalPadding, horizontalPadding),
+      maxLeft
+    );
+    const top = Math.min(Math.max(menuAnchor.top + verticalPadding, verticalPadding), maxTop);
+    return { top, left, width: menuWidth };
+  }, [menuEntry, menuAnchor.left, menuAnchor.top, menuHeight, theme.spacing, windowHeight, windowWidth]);
 
   const handleListScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -341,6 +477,13 @@ function FileExplorerContent({
 
     router.back();
   }, [agentId, serverId]);
+
+  const handleRetryDirectory = useCallback(() => {
+    if (!agentId || !requestDirectoryListing) {
+      return;
+    }
+    requestDirectoryListing(agentId, activePath);
+  }, [agentId, requestDirectoryListing, activePath]);
 
   const handleBackNavigation = useCallback(() => {
     if (!agentId) {
@@ -429,27 +572,19 @@ function FileExplorerContent({
             </View>
           </View>
           <Pressable
-            onPress={(event) => {
-              event.stopPropagation();
-              handleCopyPath(item.path);
-            }}
+            onPress={(event) => handleOpenMenu(item, event)}
             hitSlop={8}
-            style={styles.copyButton}
+            style={styles.menuButton}
           >
-            {copiedPath === item.path ? (
-              <Check size={16} color={theme.colors.primary} />
-            ) : (
-              <Copy size={16} color={theme.colors.foreground} />
-            )}
+            <MoreVertical size={16} color={theme.colors.foreground} />
           </Pressable>
         </Pressable>
       );
     },
     [
-      copiedPath,
       explorerState?.files,
-      handleCopyPath,
       handleEntryPress,
+      handleOpenMenu,
       theme.colors,
       thumbnailLoadingMap,
       viewMode,
@@ -473,35 +608,6 @@ function FileExplorerContent({
       </View>
     );
   }, [activePath, showListLoadingBanner, viewMode]);
-
-  const handleViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-      if (!agentId || viewMode !== "grid" || !requestFilePreview) {
-        return;
-      }
-
-      viewableItems.forEach((token) => {
-        const item = token.item as ExplorerEntry | undefined;
-        if (!item) {
-          return;
-        }
-
-        if (getEntryDisplayKind(item) !== "image") {
-          return;
-        }
-
-        const hasPreview = explorerState?.files.get(item.path);
-        if (hasPreview || pendingThumbnailPathsRef.current.has(item.path)) {
-          return;
-        }
-
-        pendingThumbnailPathsRef.current.add(item.path);
-        setThumbnailLoadingMap((prev) => ({ ...prev, [item.path]: true }));
-        requestFilePreview(agentId, item.path);
-      });
-    },
-    [agentId, explorerState?.files, requestFilePreview, viewMode]
-  );
 
   useEffect(() => {
     if (!explorerState) {
@@ -607,6 +713,9 @@ function FileExplorerContent({
             {error ? (
               <View style={styles.centerState}>
                 <Text style={styles.errorText}>{error}</Text>
+                <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
               </View>
             ) : showInitialListLoading ? (
               <View style={styles.centerState}>
@@ -638,17 +747,63 @@ function FileExplorerContent({
                 onLayout={restoreQueuedScrollOffset}
                 onContentSizeChange={restoreQueuedScrollOffset}
                 ListHeaderComponent={listHeaderComponent}
-                extraData={{ copiedPath, viewMode, thumbnailLoadingMap }}
+                extraData={{ viewMode, thumbnailLoadingMap }}
                 initialNumToRender={20}
                 maxToRenderPerBatch={30}
                 windowSize={10}
-                onViewableItemsChanged={handleViewableItemsChanged}
+                onViewableItemsChanged={handleViewableItemsChangedRef.current}
                 viewabilityConfig={viewabilityConfigRef.current}
               />
             )}
           </View>
         )}
       </View>
+
+      <Modal
+        visible={Boolean(menuEntry)}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseMenu}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable style={styles.menuBackdrop} onPress={handleCloseMenu} />
+          {menuEntry && menuPosition ? (
+            <View
+              style={[
+                styles.entryMenu,
+                {
+                  position: "absolute",
+                  top: menuPosition.top,
+                  left: menuPosition.left,
+                  width: menuPosition.width,
+                },
+              ]}
+              onLayout={handleMenuLayout}
+            >
+              <Pressable
+                style={styles.entryMenuItem}
+                onPress={() => {
+                  handleCopyPath(menuEntry.path);
+                  handleCloseMenu();
+                }}
+              >
+                <Text style={styles.entryMenuText}>Copy Path</Text>
+              </Pressable>
+              {menuEntry.kind === "file" ? (
+                <Pressable
+                  style={styles.entryMenuItem}
+                  onPress={async () => {
+                    handleCloseMenu();
+                    await handleDownloadEntry(menuEntry);
+                  }}
+                >
+                  <Text style={styles.entryMenuText}>Download</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -898,6 +1053,120 @@ function getExtension(name: string): string | null {
   return name.slice(index + 1).toLowerCase();
 }
 
+type DownloadTarget = {
+  baseUrl: string | null;
+  authHeader: string | null;
+  authCredentials: { username: string; password: string } | null;
+};
+
+function resolveDaemonDownloadTarget(daemon?: DaemonProfile): DownloadTarget {
+  const rawUrl = daemon?.restUrl ?? daemon?.wsUrl;
+  if (!rawUrl) {
+    return { baseUrl: null, authHeader: null, authCredentials: null };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { baseUrl: null, authHeader: null, authCredentials: null };
+  }
+
+  if (parsed.protocol === "ws:") {
+    parsed.protocol = "http:";
+  } else if (parsed.protocol === "wss:") {
+    parsed.protocol = "https:";
+  }
+
+  let authCredentials: { username: string; password: string } | null = null;
+  if (parsed.username || parsed.password) {
+    authCredentials = {
+      username: decodeURIComponent(parsed.username),
+      password: decodeURIComponent(parsed.password),
+    };
+    parsed.username = "";
+    parsed.password = "";
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/ws\/?$/, "/");
+
+  const baseUrl = parsed.origin;
+  const authHeader = authCredentials
+    ? `Basic ${btoa(`${authCredentials.username}:${authCredentials.password}`)}`
+    : null;
+
+  return { baseUrl, authHeader, authCredentials };
+}
+
+function buildDownloadUrl(
+  baseUrl: string,
+  token: string,
+  authCredentials: { username: string; password: string } | null
+): string {
+  const url = new URL("/api/files/download", baseUrl);
+  url.searchParams.set("token", token);
+  if (authCredentials) {
+    url.username = authCredentials.username;
+    url.password = authCredentials.password;
+  }
+  return url.toString();
+}
+
+function triggerBrowserDownload(url: string, fileName: string) {
+  if (typeof document === "undefined") {
+    if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener");
+    }
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+async function resolveDownloadTargetUri(fileName: string): Promise<string> {
+  const directory = FileSystem.Paths.cache?.uri ?? FileSystem.Paths.document?.uri;
+  if (!directory) {
+    throw new Error("No download directory available.");
+  }
+
+  const safeName = sanitizeDownloadFileName(fileName);
+  const split = splitFileName(safeName);
+  let targetUri = `${directory}${safeName}`;
+  let suffix = 1;
+
+  while ((await FileSystem.getInfoAsync(targetUri)).exists) {
+    targetUri = `${directory}${split.base} (${suffix})${split.ext}`;
+    suffix += 1;
+  }
+
+  return targetUri;
+}
+
+function sanitizeDownloadFileName(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    return "download";
+  }
+  return trimmed.replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function splitFileName(fileName: string): { base: string; ext: string } {
+  const lastDot = fileName.lastIndexOf(".");
+  if (lastDot <= 0) {
+    return { base: fileName, ext: "" };
+  }
+  return {
+    base: fileName.slice(0, lastDot),
+    ext: fileName.slice(lastDot),
+  };
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -961,6 +1230,18 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
     fontSize: theme.fontSize.base,
     textAlign: "center",
+  },
+  retryButton: {
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.primary,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+  },
+  retryButtonText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
   statusText: {
     color: theme.colors.mutedForeground,
@@ -1037,12 +1318,36 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
-  copyButton: {
+  menuButton: {
     width: 36,
     height: 36,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
+  },
+  menuOverlay: {
+    flex: 1,
+  },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+  },
+  entryMenu: {
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing[1],
+  },
+  entryMenuItem: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+  },
+  entryMenuText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
   viewToggleContainer: {
     flexDirection: "row",

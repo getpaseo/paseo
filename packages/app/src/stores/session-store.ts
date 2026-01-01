@@ -18,7 +18,7 @@ import type {
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
-import type { GitSetupOptions } from "@server/server/messages";
+import type { FileDownloadTokenResponse, GitSetupOptions } from "@server/server/messages";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 // Re-export types that were in session-context
@@ -177,6 +177,7 @@ export interface SessionState {
     requestGitDiff: (agentId: string) => void;
     requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
     requestFilePreview: (agentId: string, path: string) => void;
+    requestFileDownloadToken: (agentId: string, path: string) => Promise<FileDownloadTokenResponse["payload"]>;
     navigateExplorerBack: (agentId: string) => string | null;
     requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
     restartServer: (reason?: string) => void;

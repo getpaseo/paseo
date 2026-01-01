@@ -487,6 +487,7 @@ export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal("file_download_token_request"),
   agentId: z.string(),
   path: z.string(),
+  requestId: z.string().optional(),
 });
 
 export const ClearAgentAttentionMessageSchema = z.object({
@@ -761,6 +762,7 @@ export const FileDownloadTokenResponseSchema = z.object({
     mimeType: z.string().nullable(),
     size: z.number().nullable(),
     error: z.string().nullable(),
+    requestId: z.string().optional(),
   }),
 });
 
