@@ -60,6 +60,11 @@ type FileExplorerResponseMessage = Extract<
   { type: "file_explorer_response" }
 >;
 
+type FileDownloadTokenResponseMessage = Extract<
+  SessionOutboundMessage,
+  { type: "file_download_token_response" }
+>;
+
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 
 const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
@@ -173,6 +178,7 @@ export interface SessionContextValue {
   requestGitDiff: (agentId: string) => void;
   requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
   requestFilePreview: (agentId: string, path: string) => void;
+  requestFileDownloadToken: (agentId: string, path: string) => Promise<FileDownloadTokenResponseMessage["payload"]>;
   navigateExplorerBack: (agentId: string) => string | null;
   requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
   restartServer: (reason?: string) => void;
@@ -496,6 +502,40 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       message.payload.path === context.params?.path,
     getRequestKey: (params) =>
       params ? `${params.agentId}:file:${params.path}` : "default",
+    selectData: (message) => message.payload,
+    extractError: (message) =>
+      message.payload.error ? new Error(message.payload.error) : null,
+    timeoutMs: 10000,
+    keepPreviousData: false,
+  });
+
+  const fileDownloadTokenRequest = useDaemonRequest<
+    { agentId: string; path: string },
+    FileDownloadTokenResponseMessage["payload"],
+    FileDownloadTokenResponseMessage
+  >({
+    ws,
+    responseType: "file_download_token_response",
+    buildRequest: ({ params, requestId }) => ({
+      type: "session",
+      message: {
+        type: "file_download_token_request",
+        agentId: params?.agentId ?? "",
+        path: params?.path ?? "",
+        requestId,
+      },
+    }),
+    matchResponse: (message, context) => {
+      if (message.payload.requestId) {
+        return message.payload.requestId === context.requestId;
+      }
+      return (
+        message.payload.agentId === context.params?.agentId &&
+        message.payload.path === context.params?.path
+      );
+    },
+    getRequestKey: (params) =>
+      params ? `${params.agentId}:download:${params.path}` : "default",
     selectData: (message) => message.payload,
     extractError: (message) =>
       message.payload.error ? new Error(message.payload.error) : null,
@@ -1635,6 +1675,13 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       });
   }, [filePreviewRequest, updateExplorerState]);
 
+  const requestFileDownloadToken = useCallback(
+    (agentId: string, path: string) => {
+      return fileDownloadTokenRequest.execute({ agentId, path });
+    },
+    [fileDownloadTokenRequest]
+  );
+
   const navigateExplorerBack = useCallback((agentId: string) => {
     let targetPath: string | null = null;
 
@@ -1721,6 +1768,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       requestGitDiff,
       requestDirectoryListing,
       requestFilePreview,
+      requestFileDownloadToken,
       navigateExplorerBack,
       requestProviderModels,
       restartServer,
@@ -1744,6 +1792,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       requestGitDiff,
       requestDirectoryListing,
       requestFilePreview,
+      requestFileDownloadToken,
       navigateExplorerBack,
       requestProviderModels,
       restartServer,
@@ -1769,6 +1818,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     requestGitDiff,
     requestDirectoryListing,
     requestFilePreview,
+    requestFileDownloadToken,
     navigateExplorerBack,
     requestProviderModels,
     restartServer,
@@ -1788,6 +1838,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     requestGitDiff,
     requestDirectoryListing,
     requestFilePreview,
+    requestFileDownloadToken,
     navigateExplorerBack,
     requestProviderModels,
     restartServer,
