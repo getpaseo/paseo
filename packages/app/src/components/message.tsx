@@ -144,7 +144,6 @@ export interface InlinePathTarget {
 interface AssistantMessageProps {
   message: string;
   timestamp: number;
-  isStreaming?: boolean;
   onInlinePathPress?: (target: InlinePathTarget) => void;
 }
 
@@ -153,14 +152,6 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
-  },
-  streamingIndicator: {
-    marginTop: theme.spacing[1],
-  },
-  streamingText: {
-    color: theme.colors.palette.teal[200],
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.bold,
   },
   // Used in custom markdownRules for inline code styling
   markdownCodeInline: {
@@ -326,11 +317,9 @@ function parseInlinePathToken(
 export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
-  isStreaming = false,
   onInlinePathPress,
 }: AssistantMessageProps) {
   const { theme } = useUnistyles();
-  const fadeAnim = useRef(new Animated.Value(0.3)).current;
   const lastPathRef = useRef<string | null>(null);
 
   const markdownStyles = useMemo(
@@ -467,43 +456,11 @@ export const AssistantMessage = memo(function AssistantMessage({
     };
   }, [onInlinePathPress]);
 
-  useEffect(() => {
-    if (isStreaming) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(fadeAnim, {
-            toValue: 0.3,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      fadeAnim.stopAnimation();
-      fadeAnim.setValue(1);
-    }
-  }, [isStreaming, fadeAnim]);
-
   return (
     <View style={assistantMessageStylesheet.container}>
       <Markdown style={markdownStyles} rules={markdownRules}>
         {message}
       </Markdown>
-      {isStreaming && (
-        <Animated.View
-          style={[
-            assistantMessageStylesheet.streamingIndicator,
-            { opacity: fadeAnim },
-          ]}
-        >
-          <Text style={assistantMessageStylesheet.streamingText}>...</Text>
-        </Animated.View>
-      )}
     </View>
   );
 });
