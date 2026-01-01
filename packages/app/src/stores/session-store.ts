@@ -225,6 +225,7 @@ export interface SessionState {
 
   // Stream state
   agentStreamState: Map<string, StreamItem[]>;
+  agentStreamingBuffer: Map<string, { id: string; text: string; timestamp: Date }>;
 
   // Initializing agents
   initializingAgents: Map<string, boolean>;
@@ -283,6 +284,15 @@ interface SessionStoreActions {
 
   // Stream state
   setAgentStreamState: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
+  setAgentStreamingBuffer: (
+    serverId: string,
+    state:
+      | Map<string, { id: string; text: string; timestamp: Date }>
+      | ((
+          prev: Map<string, { id: string; text: string; timestamp: Date }>
+        ) => Map<string, { id: string; text: string; timestamp: Date }>)
+  ) => void;
+  clearAgentStreamingBuffer: (serverId: string, agentId: string) => void;
 
   // Initializing agents
   setInitializingAgents: (serverId: string, state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>)) => void;
@@ -368,6 +378,7 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
     messages: [],
     currentAssistantMessage: "",
     agentStreamState: new Map(),
+    agentStreamingBuffer: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
     commands: new Map(),
@@ -546,6 +557,49 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, agentStreamState: nextState },
+          },
+        };
+      });
+    },
+
+    setAgentStreamingBuffer: (serverId, state) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        const nextState = typeof state === "function" ? state(session.agentStreamingBuffer) : state;
+        if (session.agentStreamingBuffer === nextState) {
+          return prev;
+        }
+        logSessionStoreUpdate("setAgentStreamingBuffer", serverId, { agentCount: nextState.size });
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: { ...session, agentStreamingBuffer: nextState },
+          },
+        };
+      });
+    },
+
+    clearAgentStreamingBuffer: (serverId, agentId) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        if (!session.agentStreamingBuffer.has(agentId)) {
+          return prev;
+        }
+        const nextBuffer = new Map(session.agentStreamingBuffer);
+        nextBuffer.delete(agentId);
+        logSessionStoreUpdate("clearAgentStreamingBuffer", serverId, { agentId });
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: { ...session, agentStreamingBuffer: nextBuffer },
           },
         };
       });

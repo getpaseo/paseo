@@ -841,3 +841,115 @@ export function hydrateStreamState(
 
   return finalizeActiveThoughts(hydrated);
 }
+
+export type StreamingBufferEntry = {
+  id: string;
+  text: string;
+  timestamp: Date;
+};
+
+const STREAM_COMPLETION_EVENTS = new Set<AgentStreamEventPayload["type"]>([
+  "turn_completed",
+  "turn_failed",
+  "turn_canceled",
+]);
+
+function appendCompletedAssistantMessage(
+  state: StreamItem[],
+  buffer: StreamingBufferEntry
+): StreamItem[] {
+  if (state.some((item) => item.id === buffer.id)) {
+    return state;
+  }
+
+  const entry: AssistantMessageItem = {
+    kind: "assistant_message",
+    id: buffer.id,
+    text: buffer.text,
+    timestamp: buffer.timestamp,
+  };
+
+  return [...state, entry];
+}
+
+export function applyStreamEventWithBuffer(params: {
+  state: StreamItem[];
+  buffer: StreamingBufferEntry | null;
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+}): {
+  stream: StreamItem[];
+  buffer: StreamingBufferEntry | null;
+  changedStream: boolean;
+  changedBuffer: boolean;
+} {
+  const { state, buffer, event, timestamp } = params;
+  let nextStream = state;
+  let nextBuffer = buffer;
+  let changedStream = false;
+  let changedBuffer = false;
+
+  const commitBuffer = () => {
+    if (!nextBuffer) {
+      return;
+    }
+    const next = appendCompletedAssistantMessage(nextStream, nextBuffer);
+    if (next !== nextStream) {
+      nextStream = next;
+      changedStream = true;
+    }
+    nextBuffer = null;
+    changedBuffer = true;
+  };
+
+  if (event.type === "timeline") {
+    if (event.item.type === "assistant_message") {
+      const { chunk, hasContent } = normalizeChunk(event.item.text);
+      if (!chunk) {
+        return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+      }
+      if (!hasContent && !nextBuffer) {
+        return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+      }
+      if (nextBuffer) {
+        const updatedText = `${nextBuffer.text}${chunk}`;
+        if (updatedText !== nextBuffer.text) {
+          nextBuffer = { ...nextBuffer, text: updatedText };
+          changedBuffer = true;
+        }
+      } else {
+        const idSeed = chunk.trim() || chunk;
+        nextBuffer = {
+          id: createUniqueTimelineId(nextStream, "assistant", idSeed, timestamp),
+          text: chunk,
+          timestamp,
+        };
+        changedBuffer = true;
+      }
+      return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+    }
+
+    if (nextBuffer) {
+      commitBuffer();
+    }
+
+    const reduced = reduceStreamUpdate(nextStream, event, timestamp);
+    if (reduced !== nextStream) {
+      nextStream = reduced;
+      changedStream = true;
+    }
+    return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+  }
+
+  if (STREAM_COMPLETION_EVENTS.has(event.type)) {
+    commitBuffer();
+    return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+  }
+
+  const reduced = reduceStreamUpdate(nextStream, event, timestamp);
+  if (reduced !== nextStream) {
+    nextStream = reduced;
+    changedStream = true;
+  }
+  return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
+}

@@ -79,6 +79,9 @@ export function AgentStreamView({
 
   // Get ws for connection status
   const ws = useSessionStore((state) => state.sessions[resolvedServerId]?.ws);
+  const streamingBuffer = useSessionStore((state) =>
+    state.sessions[resolvedServerId]?.agentStreamingBuffer?.get(agentId)
+  );
 
   // Get methods for file operations
   const methods = useSessionStore((state) => state.sessions[resolvedServerId]?.methods);
@@ -269,6 +272,7 @@ export function AgentStreamView({
             message={item.text}
             timestamp={item.timestamp.getTime()}
             onInlinePathPress={handleInlinePathPress}
+            isStreaming={streamingItemId === item.id}
           />
         );
         break;
@@ -350,6 +354,19 @@ export function AgentStreamView({
     [pendingPermissions, agentId]
   );
 
+  const streamingItem = useMemo<StreamItem | null>(() => {
+    if (!streamingBuffer) {
+      return null;
+    }
+    return {
+      kind: "assistant_message",
+      id: streamingBuffer.id,
+      text: streamingBuffer.text,
+      timestamp: streamingBuffer.timestamp,
+    };
+  }, [streamingBuffer]);
+
+  const streamingItemId = streamingItem?.id ?? null;
   const showWorkingIndicator = agent.status === "running";
 
   const listHeaderComponent = useMemo(() => {
@@ -379,8 +396,12 @@ export function AgentStreamView({
   }, [pendingPermissionItems, showWorkingIndicator, wsOrInert]);
 
   const flatListData = useMemo(() => {
-    return [...streamItems].reverse();
-  }, [streamItems]);
+    const reversed = [...streamItems].reverse();
+    if (streamingItem) {
+      reversed.unshift(streamingItem);
+    }
+    return reversed;
+  }, [streamItems, streamingItem]);
 
   const flatListExtraData = useMemo(
     () => ({

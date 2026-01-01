@@ -5,7 +5,11 @@ import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import { useSessionRpc } from "@/hooks/use-session-rpc";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
-import { reduceStreamUpdate, generateMessageId, hydrateStreamState } from "@/types/stream";
+import {
+  applyStreamEventWithBuffer,
+  generateMessageId,
+  hydrateStreamState,
+} from "@/types/stream";
 import type {
   ActivityLogPayload,
   AgentSnapshotPayload,
@@ -233,6 +237,8 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const setMessages = useSessionStore((state) => state.setMessages);
   const setCurrentAssistantMessage = useSessionStore((state) => state.setCurrentAssistantMessage);
   const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
+  const setAgentStreamingBuffer = useSessionStore((state) => state.setAgentStreamingBuffer);
+  const clearAgentStreamingBuffer = useSessionStore((state) => state.clearAgentStreamingBuffer);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const setHasHydratedAgents = useSessionStore((state) => state.setHasHydratedAgents);
   const setAgents = useSessionStore((state) => state.setAgents);
@@ -675,6 +681,24 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
         return changed ? next : prev;
       });
+      setAgentStreamingBuffer(serverId, (prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+
+        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        let changed = false;
+        const next = new Map(prev);
+
+        for (const agentId of prev.keys()) {
+          if (!validAgentIds.has(agentId)) {
+            next.delete(agentId);
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
+      });
       setInitializingAgents(serverId, (prev) => {
         if (prev.size === 0) {
           return prev;
@@ -736,27 +760,35 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
       console.log("[Session] agent_stream", { agentId, eventType: event.type });
 
-      setAgentStreamState(serverId, (prev) => {
-        const currentStream = prev.get(agentId) || [];
-        const lastItem = currentStream[currentStream.length - 1];
-        const lastItemText = lastItem && "text" in lastItem ? lastItem.text : "(no text)";
-        console.log(`[AGENT_STREAM BEFORE] agentId=${agentId} currentStreamLength=${currentStream.length} lastText="${lastItemText}"`);
-        console.log(`[AGENT_STREAM CHUNK] incoming type=${event.type}`);
-
-        const newStream = reduceStreamUpdate(
-          currentStream,
-          event as AgentStreamEventPayload,
-          parsedTimestamp
-        );
-
-        const newLastItem = newStream[newStream.length - 1];
-        const newLastText = newLastItem && "text" in newLastItem ? newLastItem.text : "(no text)";
-        console.log(`[AGENT_STREAM AFTER] newStreamLength=${newStream.length} newLastText="${newLastText}"`);
-
-        const next = new Map(prev);
-        next.set(agentId, newStream);
-        return next;
+      const session = useSessionStore.getState().sessions[serverId];
+      const currentStream = session?.agentStreamState.get(agentId) ?? [];
+      const currentBuffer = session?.agentStreamingBuffer.get(agentId) ?? null;
+      const { stream, buffer, changedStream, changedBuffer } = applyStreamEventWithBuffer({
+        state: currentStream,
+        buffer: currentBuffer,
+        event: event as AgentStreamEventPayload,
+        timestamp: parsedTimestamp,
       });
+
+      if (changedStream) {
+        setAgentStreamState(serverId, (prev) => {
+          const next = new Map(prev);
+          next.set(agentId, stream);
+          return next;
+        });
+      }
+
+      if (changedBuffer) {
+        setAgentStreamingBuffer(serverId, (prev) => {
+          const next = new Map(prev);
+          if (buffer) {
+            next.set(agentId, buffer);
+          } else {
+            next.delete(agentId);
+          }
+          return next;
+        });
+      }
 
       setInitializingAgents(serverId, (prev) => {
         const currentState = prev.get(agentId);
@@ -794,6 +826,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         next.set(agentId, hydrated);
         return next;
       });
+      clearAgentStreamingBuffer(serverId, agentId);
 
       setInitializingAgents(serverId, (prev) => {
         if (!prev.has(agentId)) {
@@ -1159,6 +1192,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         next.delete(agentId);
         return next;
       });
+      clearAgentStreamingBuffer(serverId, agentId);
 
       // Remove draft input
       saveDraftInput(agentId, { text: "", images: [] });
@@ -1218,7 +1252,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       unsubProviderModels();
       unsubAgentDeleted();
     };
-  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setInitializingAgents, setAgents, setAgentLastActivity, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
+  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setAgentStreamingBuffer, clearAgentStreamingBuffer, setInitializingAgents, setAgents, setAgentLastActivity, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
 
   // Auto-flush queued messages when agent transitions from running -> not running
   useEffect(() => {
@@ -1256,6 +1290,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       next.set(agentId, []);
       return next;
     });
+    clearAgentStreamingBuffer(serverId, agentId);
 
     initializeAgentRpc
       .send({ agentId })
@@ -1267,7 +1302,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           return next;
         });
       });
-  }, [serverId, initializeAgentRpc, setAgentStreamState, setInitializingAgents]);
+  }, [serverId, initializeAgentRpc, setAgentStreamState, setInitializingAgents, clearAgentStreamingBuffer]);
 
   const refreshAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     setInitializingAgents(serverId, (prev) => {
@@ -1281,6 +1316,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       next.set(agentId, []);
       return next;
     });
+    clearAgentStreamingBuffer(serverId, agentId);
 
     refreshAgentRequest
       .execute({ agentId }, { requestKeyOverride: agentId, dedupe: false })
@@ -1292,7 +1328,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           return next;
         });
       });
-  }, [serverId, refreshAgentRequest, setAgentStreamState, setInitializingAgents]);
+  }, [serverId, refreshAgentRequest, setAgentStreamState, setInitializingAgents, clearAgentStreamingBuffer]);
 
   const requestProviderModels = useCallback((provider: any, options?: { cwd?: string }) => {
     const requestId = generateMessageId();
