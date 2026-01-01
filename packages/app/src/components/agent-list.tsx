@@ -1,6 +1,6 @@
 import { View, Text, Pressable, FlatList, Modal, RefreshControl, type ListRenderItem } from "react-native";
-import { useCallback, useState, useMemo } from "react";
-import { router } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
+import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
@@ -17,6 +17,7 @@ interface AgentListProps {
 
 export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAgentId }: AgentListProps) {
   const { theme } = useUnistyles();
+  const pathname = usePathname();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
   // Sort agents with requires attention at the top
@@ -56,7 +57,9 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
         to: "agent",
         params: { serverId, agentId },
       });
-      router.push({
+      const shouldReplace = pathname.startsWith("/agent/");
+      const navigate = shouldReplace ? router.replace : router.push;
+      navigate({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
           serverId,
@@ -64,7 +67,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
         },
       });
     },
-    [isActionSheetVisible]
+    [isActionSheetVisible, pathname]
   );
 
   const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
@@ -176,8 +179,14 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
         renderItem={renderAgentItem}
+        extraData={selectedAgentId}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        initialNumToRender={12}
+        windowSize={7}
+        maxToRenderPerBatch={12}
+        updateCellsBatchingPeriod={16}
+        removeClippedSubviews={true}
         refreshControl={
           onRefresh ? (
             <RefreshControl

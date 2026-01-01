@@ -4,6 +4,7 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
+import { isPerfLoggingEnabled } from "@/utils/perf";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -66,7 +67,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
         if (agent.parentAgentId) {
           continue;
         }
-        allAgents.push({
+        const nextAgent: AggregatedAgent = {
           id: agent.id,
           serverId,
           serverLabel,
@@ -79,7 +80,8 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,
           parentAgentId: agent.parentAgentId,
-        });
+        };
+        allAgents.push(nextAgent);
       }
     }
 
@@ -138,25 +140,27 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     // isLoading: Generic loading flag (either initial or revalidating)
     const isLoading = isConnecting;
 
-    const connectionStatesArray = Array.from(connectionStates.entries()).map(([id, state]) => ({
-      id: id.substring(0, 20) + (id.length > 20 ? '...' : ''),
-      status: state.status,
-      sessionReady: state.sessionReady,
-      hasEverReceivedSessionState: state.hasEverReceivedSessionState,
-    }));
+    if (isPerfLoggingEnabled()) {
+      const connectionStatesArray = Array.from(connectionStates.entries()).map(([id, state]) => ({
+        id: id.substring(0, 20) + (id.length > 20 ? '...' : ''),
+        status: state.status,
+        sessionReady: state.sessionReady,
+        hasEverReceivedSessionState: state.hasEverReceivedSessionState,
+      }));
 
-    console.log('[useAggregatedAgents] States:', {
-      hasAnyData,
-      isConnecting,
-      isInitialLoad,
-      isRevalidating,
-      totalConnectionStates: connectionStates.size,
-      connectingReasons: connectingReasons.length > 0 ? connectingReasons : 'none',
-    });
+      console.log('[useAggregatedAgents] States:', {
+        hasAnyData,
+        isConnecting,
+        isInitialLoad,
+        isRevalidating,
+        totalConnectionStates: connectionStates.size,
+        connectingReasons: connectingReasons.length > 0 ? connectingReasons : 'none',
+      });
 
-    console.log('[useAggregatedAgents] Connection States Detail:',
-      JSON.stringify(connectionStatesArray, null, 2)
-    );
+      console.log('[useAggregatedAgents] Connection States Detail:',
+        JSON.stringify(connectionStatesArray, null, 2)
+      );
+    }
 
     return {
       agents: allAgents,

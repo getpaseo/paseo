@@ -198,6 +198,7 @@ function AgentScreenContent({
       : undefined
   );
 
+
   // Get parent agent ID for back navigation
   const parentAgentId = agent?.parentAgentId;
 
