@@ -93,17 +93,15 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   }, []);
 
   // Mobile: close sidebar when agent is selected
+  // Use a quick fade instead of slide since navigation interrupts the animation
   const handleAgentSelectMobile = useCallback(() => {
-    // Start animation immediately, don't wait for useEffect
-    translateX.value = withTiming(-windowWidth, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
+    // Fast fade out - slide animations freeze during navigation
     backdropOpacity.value = withTiming(0, {
-      duration: ANIMATION_DURATION,
+      duration: 100,
       easing: ANIMATION_EASING,
     });
-    close(); // Update state for consistency
+    translateX.value = -windowWidth; // Snap immediately
+    close();
   }, [close, translateX, backdropOpacity, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
