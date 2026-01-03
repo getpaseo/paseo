@@ -1,4 +1,4 @@
-import { Stack } from "expo-router";
+import { Stack, useLocalSearchParams, usePathname } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -6,12 +6,13 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator, Text } from "react-native";
-import { useUnistyles } from "react-native-unistyles";
+import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, useMemo } from "react";
+import { SlidingSidebar } from "@/components/sliding-sidebar";
 
 function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -32,12 +33,23 @@ function QueryProvider({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
-function AppContainer({ children }: { children: ReactNode }) {
+interface AppContainerProps {
+  children: ReactNode;
+  selectedAgentId?: string;
+}
+
+function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      {children}
+      <View style={{ flex: 1, flexDirection: "row" }}>
+        {!isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+        <View style={{ flex: 1 }}>{children}</View>
+      </View>
+      {isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
     </View>
   );
 }
@@ -56,6 +68,22 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   }
 
   return <RealtimeProvider>{children}</RealtimeProvider>;
+}
+
+function AppWithSidebar({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const params = useLocalSearchParams<{ agentId?: string }>();
+
+  const selectedAgentId = useMemo(() => {
+    if (pathname.startsWith("/agent/") && params.agentId) {
+      return params.agentId;
+    }
+    return undefined;
+  }, [pathname, params.agentId]);
+
+  return (
+    <AppContainer selectedAgentId={selectedAgentId}>{children}</AppContainer>
+  );
 }
 
 function LoadingView() {
@@ -109,7 +137,7 @@ export default function RootLayout() {
                 <DaemonConnectionsProvider>
                   <MultiDaemonSessionHost />
                   <ProvidersWrapper>
-                    <AppContainer>
+                    <AppWithSidebar>
                       <Stack
                         screenOptions={{
                           headerShown: false,
@@ -128,7 +156,7 @@ export default function RootLayout() {
                         <Stack.Screen name="git-diff" />
                         <Stack.Screen name="file-explorer" />
                       </Stack>
-                    </AppContainer>
+                    </AppWithSidebar>
                   </ProvidersWrapper>
                 </DaemonConnectionsProvider>
               </DaemonRegistryProvider>

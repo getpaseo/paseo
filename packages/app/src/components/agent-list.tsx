@@ -12,9 +12,10 @@ interface AgentListProps {
   isRefreshing?: boolean;
   onRefresh?: () => void;
   selectedAgentId?: string;
+  onAgentSelect?: () => void;
 }
 
-export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAgentId }: AgentListProps) {
+export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAgentId, onAgentSelect }: AgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
@@ -65,8 +66,9 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
           agentId,
         },
       });
+      onAgentSelect?.();
     },
-    [isActionSheetVisible, pathname]
+    [isActionSheetVisible, pathname, onAgentSelect]
   );
 
   const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {

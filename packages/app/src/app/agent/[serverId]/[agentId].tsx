@@ -24,17 +24,15 @@ import {
   GitBranch,
   Folder,
   RotateCcw,
-  Plus,
   Download,
   Users,
   ChevronRight,
   PlusIcon,
 } from "lucide-react-native";
+import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
-import { AgentList } from "@/components/agent-list";
-import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { ImportAgentModal } from "@/components/create-agent-modal";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -148,7 +146,6 @@ export default function AgentScreen() {
     <AgentScreenContent
       serverId={resolvedServerId}
       agentId={resolvedAgentId}
-      onBack={handleBackToHome}
     />
   );
 }
@@ -156,28 +153,17 @@ export default function AgentScreen() {
 type AgentScreenContentProps = {
   serverId: string;
   agentId?: string;
-  onBack: () => void;
 };
-
-const SIDEBAR_WIDTH = 280;
-const LARGE_SCREEN_BREAKPOINT = 768;
 
 function AgentScreenContent({
   serverId,
   agentId,
-  onBack,
 }: AgentScreenContentProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const isLargeScreen = windowWidth >= LARGE_SCREEN_BREAKPOINT;
 
-  const {
-    agents: aggregatedAgents,
-    isRevalidating,
-    refreshAll,
-  } = useAggregatedAgents();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
@@ -192,27 +178,6 @@ function AgentScreenContent({
       ? state.sessions[serverId]?.agents?.get(resolvedAgentId)
       : undefined
   );
-
-
-  // Get parent agent ID for back navigation
-  const parentAgentId = agent?.parentAgentId;
-
-  // Navigate to parent agent if this is a child, otherwise go to homepage
-  const handleBack = useCallback(() => {
-    if (parentAgentId) {
-      // Child agent: navigate back to parent
-      router.push({
-        pathname: "/agent/[serverId]/[agentId]",
-        params: {
-          serverId: serverId,
-          agentId: parentAgentId,
-        },
-      });
-    } else {
-      // Root agent: navigate to homepage
-      onBack();
-    }
-  }, [parentAgentId, router, serverId, onBack]);
 
   // Select the agents Map directly - this is a stable reference that only changes when agents are added/removed
   const allAgents = useSessionStore(
@@ -560,7 +525,7 @@ function AgentScreenContent({
     if (agentModel) {
       params.model = agentModel;
     }
-    router.push({ pathname: "/agent/new", params });
+    router.push({ pathname: "/", params });
   }, [agent, agentModel, handleCloseMenu, router, serverId]);
 
   const handleImportAgent = useCallback(() => {
@@ -598,7 +563,7 @@ function AgentScreenContent({
     return (
       <>
         <View style={styles.container}>
-          <BackHeader onBack={onBack} />
+          <MenuHeader title="Agent" />
           <View style={styles.errorContainer}>
             <Text style={styles.errorText}>Agent not found</Text>
           </View>
@@ -611,86 +576,47 @@ function AgentScreenContent({
   return (
     <>
       <View style={styles.container}>
-        <View
-          style={[styles.mainLayout, isLargeScreen && styles.mainLayoutRow]}
-        >
-          {/* Sidebar - only on large screens */}
-          {isLargeScreen && (
-            <View style={[styles.sidebar, { width: SIDEBAR_WIDTH }]}>
-              <View style={styles.sidebarHeader}>
-                <Pressable
-                  style={[
-                    styles.newAgentButton,
-                    { backgroundColor: theme.colors.primary },
-                  ]}
-                  onPress={handleCreateNewAgent}
-                >
-                  <Plus size={18} color={theme.colors.primaryForeground} />
-                  <Text
-                    style={[
-                      styles.newAgentButtonText,
-                      { color: theme.colors.primaryForeground },
-                    ]}
-                  >
-                    New Agent
-                  </Text>
-                </Pressable>
+        {/* Header */}
+        <MenuHeader
+          title={agent.title || "Agent"}
+          rightContent={
+            <View ref={menuButtonRef} collapsable={false}>
+              <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
+                <MoreVertical size={20} color={theme.colors.mutedForeground} />
+              </Pressable>
+            </View>
+          }
+        />
+
+        {/* Content Area with Keyboard Animation */}
+        <View style={styles.contentContainer}>
+          <ReanimatedAnimated.View
+            style={[styles.content, animatedKeyboardStyle]}
+          >
+            {isInitializing ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator
+                  size="large"
+                  color={theme.colors.primary}
+                />
+                <Text style={styles.loadingText}>Loading agent...</Text>
               </View>
-              <AgentList
-                agents={aggregatedAgents}
-                isRefreshing={isRevalidating}
-                onRefresh={refreshAll}
-                selectedAgentId={resolvedAgentId}
+            ) : (
+              <AgentStreamView
+                agentId={agent.id}
+                serverId={serverId}
+                agent={agent}
+                streamItems={streamItems}
+                pendingPermissions={pendingPermissions}
               />
-            </View>
-          )}
-
-          {/* Main agent panel */}
-          <View style={styles.agentPanel}>
-            {/* Header */}
-            <BackHeader
-              title={agent.title || "Agent"}
-              onBack={handleBack}
-              rightContent={
-                <View ref={menuButtonRef} collapsable={false}>
-                  <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                    <MoreVertical size={20} color={theme.colors.mutedForeground} />
-                  </Pressable>
-                </View>
-              }
-            />
-
-            {/* Content Area with Keyboard Animation */}
-            <View style={styles.contentContainer}>
-              <ReanimatedAnimated.View
-                style={[styles.content, animatedKeyboardStyle]}
-              >
-                {isInitializing ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator
-                      size="large"
-                      color={theme.colors.primary}
-                    />
-                    <Text style={styles.loadingText}>Loading agent...</Text>
-                  </View>
-                ) : (
-                  <AgentStreamView
-                    agentId={agent.id}
-                    serverId={serverId}
-                    agent={agent}
-                    streamItems={streamItems}
-                    pendingPermissions={pendingPermissions}
-                  />
-                )}
-              </ReanimatedAnimated.View>
-            </View>
-
-            {/* Agent Input Area */}
-            {!isInitializing && agent && resolvedAgentId && (
-              <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
             )}
-          </View>
+          </ReanimatedAnimated.View>
         </View>
+
+        {/* Agent Input Area */}
+        {!isInitializing && agent && resolvedAgentId && (
+          <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
+        )}
 
         {/* Dropdown Menu */}
         <Modal
@@ -930,36 +856,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  mainLayout: {
-    flex: 1,
-  },
-  mainLayoutRow: {
-    flexDirection: "row",
-  },
-  sidebar: {
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
-  },
-  sidebarHeader: {
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[2],
-  },
-  newAgentButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-  },
-  newAgentButtonText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-  },
-  agentPanel: {
-    flex: 1,
   },
   contentContainer: {
     flex: 1,
