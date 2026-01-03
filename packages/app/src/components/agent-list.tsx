@@ -59,6 +59,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
       });
       const shouldReplace = pathname.startsWith("/agent/");
       const navigate = shouldReplace ? router.replace : router.push;
+      onAgentSelect?.();
       navigate({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
@@ -66,7 +67,6 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
           agentId,
         },
       });
-      onAgentSelect?.();
     },
     [isActionSheetVisible, pathname, onAgentSelect]
   );
