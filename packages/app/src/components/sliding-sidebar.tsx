@@ -47,7 +47,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   useEffect(() => {
     // Don't animate if we're in the middle of a gesture
-    if (isGesturing.value) return;
+    if (isGesturing.value) {
+      return;
+    }
 
     const width = isMobile ? windowWidth : DESKTOP_SIDEBAR_WIDTH;
     translateX.value = withTiming(isOpen ? 0 : -width, {
@@ -92,8 +94,17 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   // Mobile: close sidebar when agent is selected
   const handleAgentSelectMobile = useCallback(() => {
-    close();
-  }, [close]);
+    // Start animation immediately, don't wait for useEffect
+    translateX.value = withTiming(-windowWidth, {
+      duration: ANIMATION_DURATION,
+      easing: ANIMATION_EASING,
+    });
+    backdropOpacity.value = withTiming(0, {
+      duration: ANIMATION_DURATION,
+      easing: ANIMATION_EASING,
+    });
+    close(); // Update state for consistency
+  }, [close, translateX, backdropOpacity, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
   const closeGesture = Gesture.Pan()
