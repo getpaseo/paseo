@@ -22,7 +22,7 @@ export function BackHeader({ title, rightContent, onBack }: BackHeaderProps) {
             onPress={onBack ?? (() => router.back())}
             style={styles.backButton}
           >
-            <ArrowLeft size={20} color={theme.colors.foreground} />
+            <ArrowLeft size={20} color={theme.colors.mutedForeground} />
           </Pressable>
           {title && (
             <Text style={styles.title} numberOfLines={1}>
@@ -39,16 +39,22 @@ export function BackHeader({ title, rightContent, onBack }: BackHeaderProps) {
 
 const styles = StyleSheet.create((theme) => ({
   left: {
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
   },
   backButton: {
-    padding: theme.spacing[3],
+    padding: {
+      xs: theme.spacing[3],
+      md: theme.spacing[2],
+    },
     borderRadius: theme.borderRadius.lg,
   },
   title: {
     flex: 1,
     fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: {
+      xs: theme.fontWeight.semibold,
+      md: "400",
+    },
     color: theme.colors.foreground,
   },
 }));

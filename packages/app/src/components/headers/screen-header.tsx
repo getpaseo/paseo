@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -17,10 +17,11 @@ interface ScreenHeaderProps {
 export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeaderProps) {
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
+  const topPadding = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm" ? 8 : 4;
 
   return (
     <View style={styles.header}>
-      <View style={[styles.inner, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
         <View style={styles.row}>
           <View style={[styles.left, leftStyle]}>{left}</View>
           <View style={[styles.right, rightStyle]}>{right}</View>
@@ -39,8 +40,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
+    paddingHorizontal: {
+      xs: theme.spacing[2],
+      md: theme.spacing[1],
+    },
+    paddingBottom: {
+      xs: theme.spacing[2],
+      md: theme.spacing[1],
+    },
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },

@@ -51,7 +51,10 @@ export function HomeHeader({ onCreateAgent, onImportAgent }: HomeHeaderProps) {
 
 const styles = StyleSheet.create((theme) => ({
   iconButton: {
-    padding: theme.spacing[3],
+    padding: {
+      xs: theme.spacing[3],
+      md: theme.spacing[2],
+    },
     borderRadius: theme.borderRadius.lg,
   },
 }));

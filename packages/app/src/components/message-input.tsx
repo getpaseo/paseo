@@ -7,6 +7,7 @@ import {
   TextInputKeyPressEventData,
   Image,
   Platform,
+  BackHandler,
 } from "react-native";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -57,7 +58,7 @@ export interface MessageInputProps {
   onQueue?: (payload: MessagePayload) => void;
 }
 
-const MIN_INPUT_HEIGHT = 50;
+const MIN_INPUT_HEIGHT = 30;
 const MAX_INPUT_HEIGHT = 160;
 const IS_WEB = Platform.OS === "web";
 
@@ -98,7 +99,9 @@ export function MessageInput({
 }: MessageInputProps) {
   const { theme } = useUnistyles();
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-  const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(null);
+  const textInputRef = useRef<
+    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
+  >(null);
   const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
   const baselineInputHeightRef = useRef<number | null>(null);
   const overlayTransition = useSharedValue(0);
@@ -188,8 +191,14 @@ export function MessageInput({
 
   // Animate overlay
   useEffect(() => {
-    const showOverlay = isDictating || isDictationProcessing || dictationStatus === "retrying" || dictationStatus === "failed";
-    overlayTransition.value = withTiming(showOverlay ? 1 : 0, { duration: 200 });
+    const showOverlay =
+      isDictating ||
+      isDictationProcessing ||
+      dictationStatus === "retrying" ||
+      dictationStatus === "failed";
+    overlayTransition.value = withTiming(showOverlay ? 1 : 0, {
+      duration: 200,
+    });
   }, [isDictating, isDictationProcessing, dictationStatus, overlayTransition]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => ({
@@ -234,7 +243,10 @@ export function MessageInput({
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed && images.length === 0) return;
-    const payload = { text: trimmed, images: images.length > 0 ? images : undefined };
+    const payload = {
+      text: trimmed,
+      images: images.length > 0 ? images : undefined,
+    };
     if (isAgentRunning && onQueue) {
       onQueue(payload);
     } else {
@@ -286,7 +298,10 @@ export function MessageInput({
 
     const baseline = baselineInputHeightRef.current ?? MIN_INPUT_HEIGHT;
     const rawTarget = scrollHeight > 0 ? scrollHeight : baseline;
-    const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, rawTarget));
+    const bounded = Math.max(
+      MIN_INPUT_HEIGHT,
+      Math.min(MAX_INPUT_HEIGHT, rawTarget)
+    );
 
     if (Math.abs(inputHeightRef.current - bounded) >= 1) {
       inputHeightRef.current = bounded;
@@ -297,7 +312,10 @@ export function MessageInput({
   }
 
   function setBoundedInputHeight(nextHeight: number) {
-    const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, nextHeight));
+    const bounded = Math.max(
+      MIN_INPUT_HEIGHT,
+      Math.min(MAX_INPUT_HEIGHT, nextHeight)
+    );
     if (Math.abs(inputHeightRef.current - bounded) < 1) return;
     inputHeightRef.current = bounded;
     setInputHeight(bounded);
@@ -364,9 +382,15 @@ export function MessageInput({
           <View style={styles.imagePreviewContainer}>
             {images.map((image, index) => (
               <View key={`${image.uri}-${index}`} style={styles.imagePill}>
-                <Image source={{ uri: image.uri }} style={styles.imageThumbnail} />
+                <Image
+                  source={{ uri: image.uri }}
+                  style={styles.imageThumbnail}
+                />
                 {onRemoveImage && (
-                  <Pressable onPress={() => onRemoveImage(index)} style={styles.removeImageButton}>
+                  <Pressable
+                    onPress={() => onRemoveImage(index)}
+                    style={styles.removeImageButton}
+                  >
                     <X size={16} color={theme.colors.foreground} />
                   </Pressable>
                 )}
@@ -384,14 +408,20 @@ export function MessageInput({
           placeholderTextColor={theme.colors.mutedForeground}
           style={[
             styles.textInput,
-            { height: inputHeight, minHeight: MIN_INPUT_HEIGHT, maxHeight: MAX_INPUT_HEIGHT },
+            {
+              height: inputHeight,
+              minHeight: MIN_INPUT_HEIGHT,
+              maxHeight: MAX_INPUT_HEIGHT,
+            },
           ]}
           multiline
           scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
           onContentSizeChange={handleContentSizeChange}
           editable={!isDictating && isConnected && !disabled}
-          onKeyPress={shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined}
-          autoFocus={autoFocus}
+          onKeyPress={
+            shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined
+          }
+          autoFocus={IS_WEB && autoFocus}
         />
 
         {/* Button row */}
@@ -418,10 +448,19 @@ export function MessageInput({
             {shouldShowSendButton && (
               <Pressable
                 onPress={handleSendMessage}
-                disabled={!isConnected || isSubmitDisabled || isSubmitLoading || disabled}
+                disabled={
+                  !isConnected ||
+                  isSubmitDisabled ||
+                  isSubmitLoading ||
+                  disabled
+                }
                 style={[
                   styles.sendButton,
-                  (!isConnected || isSubmitDisabled || isSubmitLoading || disabled) && styles.buttonDisabled,
+                  (!isConnected ||
+                    isSubmitDisabled ||
+                    isSubmitLoading ||
+                    disabled) &&
+                    styles.buttonDisabled,
                 ]}
               >
                 <ArrowUp size={20} color="white" />
@@ -458,8 +497,16 @@ export function MessageInput({
           onCancel={handleCancelRecording}
           onAccept={handleAcceptRecording}
           onAcceptAndSend={handleAcceptAndSendRecording}
-          onRetry={dictationStatus === "failed" ? handleRetryFailedRecording : undefined}
-          onDiscard={dictationStatus === "failed" ? handleDiscardFailedRecording : undefined}
+          onRetry={
+            dictationStatus === "failed"
+              ? handleRetryFailedRecording
+              : undefined
+          }
+          onDiscard={
+            dictationStatus === "failed"
+              ? handleDiscardFailedRecording
+              : undefined
+          }
         />
       </Animated.View>
     </View>
@@ -473,6 +520,18 @@ const styles = StyleSheet.create(((theme: any) => ({
   inputWrapper: {
     flexDirection: "column",
     gap: theme.spacing[3],
+    backgroundColor: theme.colors.muted,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.accentBorder,
+    borderRadius: theme.borderRadius["2xl"],
+    paddingVertical: {
+      xs: theme.spacing[2],
+      md: theme.spacing[4],
+    },
+    paddingHorizontal: {
+      xs: theme.spacing[3],
+      md: theme.spacing[4],
+    },
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -500,12 +559,9 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   textInput: {
     width: "100%",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.lg,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.normal,
     lineHeight: theme.fontSize.lg * 1.4,
     ...(IS_WEB
       ? {
@@ -531,16 +587,15 @@ const styles = StyleSheet.create(((theme: any) => ({
     gap: theme.spacing[2],
   },
   attachButton: {
-    width: 40,
-    height: 40,
+    width: 20,
+    height: 20,
     alignItems: "center",
     justifyContent: "center",
   },
   voiceButton: {
-    width: 40,
-    height: 40,
+    width: 34,
+    height: 34,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -548,8 +603,8 @@ const styles = StyleSheet.create(((theme: any) => ({
     backgroundColor: theme.colors.destructive,
   },
   sendButton: {
-    width: 40,
-    height: 40,
+    width: 34,
+    height: 34,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.blue[600],
     alignItems: "center",
@@ -560,8 +615,13 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   overlayContainer: {
     position: "absolute",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     top: 0,
     left: 0,
+    width: "100%",
+    height: "100%",
     right: 0,
     bottom: 0,
   },

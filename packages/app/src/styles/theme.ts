@@ -14,7 +14,9 @@ export const baseColors = {
     600: "#52525b",
     700: "#3f3f46",
     800: "#27272a",
+    850: "#1a1a1d",
     900: "#18181b",
+    950: "#121214",
   },
 
   // Gray scale
@@ -120,6 +122,7 @@ const lightSemanticColors = {
   destructive: "#ef4444",
   destructiveForeground: "#fafafa",
   border: "#e4e4e7",
+  accentBorder: "#3f3f46",
   input: "#e4e4e7",
   ring: "#18181b",
 } as const;
@@ -141,7 +144,8 @@ const darkSemanticColors = {
   accentForeground: "#fafafa",
   destructive: "#7f1d1d",
   destructiveForeground: "#fafafa",
-  border: "#27272a",
+  border: "#27272e",
+  accentBorder: "#414146",
   input: "#27272a",
   ring: "#d4d4d8",
 } as const;

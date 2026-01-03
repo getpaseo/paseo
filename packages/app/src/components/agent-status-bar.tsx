@@ -19,8 +19,8 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   );
 
   // Get the setAgentMode action (actions are stable, won't cause rerenders)
-  const setAgentMode = useSessionStore((state) =>
-    state.sessions[serverId]?.methods?.setAgentMode
+  const setAgentMode = useSessionStore(
+    (state) => state.sessions[serverId]?.methods?.setAgentMode
   );
 
   const [showModeSelector, setShowModeSelector] = useState(false);
@@ -47,7 +47,8 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
           ]}
         >
           <Text style={styles.modeBadgeText}>
-            {agent.availableModes?.find((m) => m.id === agent.currentModeId)?.label ||
+            {agent.availableModes?.find((m) => m.id === agent.currentModeId)
+              ?.label ||
               agent.currentModeId ||
               "default"}
           </Text>
@@ -75,14 +76,14 @@ const styles = StyleSheet.create((theme) => ({
   modeBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    backgroundColor: theme.colors.popover,
+    gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.full,
+    borderRadius: theme.borderRadius["2xl"],
   },
   modeBadgePressed: {
-    backgroundColor: theme.colors.accent,
+    backgroundColor: theme.colors.background,
   },
   modeBadgeText: {
     color: theme.colors.mutedForeground,
