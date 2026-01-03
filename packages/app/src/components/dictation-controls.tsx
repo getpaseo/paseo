@@ -24,7 +24,9 @@ interface DictationControlsProps {
 function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  return `${mins.toString().padStart(2, "0")}:${secs
+    .toString()
+    .padStart(2, "0")}`;
 }
 
 export function DictationControls({
@@ -122,7 +124,9 @@ export function DictationControls({
         )}
       </View>
       {retryStatusText && (isRetrying || isFailed) && (
-        <Text style={[styles.statusLabel, { color: theme.colors.mutedForeground }]}>
+        <Text
+          style={[styles.statusLabel, { color: theme.colors.mutedForeground }]}
+        >
           {retryStatusText}
         </Text>
       )}
@@ -158,7 +162,12 @@ export function DictationOverlay({
   }
 
   return (
-    <View style={[overlayStyles.container, { backgroundColor: theme.colors.palette.blue[600] }]}>
+    <View
+      style={[
+        overlayStyles.container,
+        { backgroundColor: theme.colors.palette.blue[600] },
+      ]}
+    >
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
@@ -178,7 +187,12 @@ export function DictationOverlay({
           isSpeaking={false}
           orientation="horizontal"
         />
-        <Text style={[overlayStyles.timerText, { color: theme.colors.palette.white }]}>
+        <Text
+          style={[
+            overlayStyles.timerText,
+            { color: theme.colors.palette.white },
+          ]}
+        >
           {formatDuration(duration)}
         </Text>
       </View>
@@ -186,28 +200,52 @@ export function DictationOverlay({
       <View style={overlayStyles.actionButtonsContainer}>
         {actionsDisabled ? (
           <View style={overlayStyles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.palette.white} />
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.palette.white}
+            />
           </View>
         ) : isFailed ? (
           <Pressable
             onPress={onRetry}
-            style={[overlayStyles.actionButton, { backgroundColor: theme.colors.palette.white }]}
+            style={[
+              overlayStyles.actionButton,
+              { backgroundColor: theme.colors.palette.white },
+            ]}
           >
-            <RefreshCcw size={20} color={theme.colors.palette.blue[600]} strokeWidth={2.5} />
+            <RefreshCcw
+              size={20}
+              color={theme.colors.palette.blue[600]}
+              strokeWidth={2.5}
+            />
           </Pressable>
         ) : (
           <>
             <Pressable
               onPress={onAccept}
-              style={[overlayStyles.actionButton, { backgroundColor: "rgba(255, 255, 255, 0.25)" }]}
+              style={[
+                overlayStyles.actionButton,
+                { backgroundColor: "rgba(255, 255, 255, 0.25)" },
+              ]}
             >
-              <Check size={20} color={theme.colors.palette.white} strokeWidth={2.5} />
+              <Check
+                size={20}
+                color={theme.colors.palette.white}
+                strokeWidth={2.5}
+              />
             </Pressable>
             <Pressable
               onPress={onAcceptAndSend}
-              style={[overlayStyles.actionButton, { backgroundColor: theme.colors.palette.white }]}
+              style={[
+                overlayStyles.actionButton,
+                { backgroundColor: theme.colors.palette.white },
+              ]}
             >
-              <ArrowUp size={20} color={theme.colors.palette.blue[600]} strokeWidth={2.5} />
+              <ArrowUp
+                size={20}
+                color={theme.colors.palette.blue[600]}
+                strokeWidth={2.5}
+              />
             </Pressable>
           </>
         )}
@@ -290,6 +328,8 @@ const overlayStyles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
+    width: "100%",
+    borderRadius: theme.borderRadius["2xl"],
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: OVERLAY_VERTICAL_PADDING,

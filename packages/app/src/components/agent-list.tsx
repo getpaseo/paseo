@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
-import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { buildAgentNavigationKey, startNavigationTiming } from "@/utils/navigation-timing";
@@ -89,81 +88,47 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
   const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
     ({ item: agent }) => {
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
-      const providerLabel = getAgentProviderDefinition(agent.provider).label;
       const isRunning = agent.status === "running";
       const isSelected = selectedAgentId === agent.id;
+      const statusColor = isRunning ? "#3b82f6" : agent.requiresAttention ? "#22c55e" : null;
 
       return (
         <Pressable
-          style={({ pressed }) => [
+          style={({ pressed, hovered }) => [
             styles.agentItem,
             isSelected && styles.agentItemSelected,
+            hovered && styles.agentItemHovered,
             pressed && styles.agentItemPressed,
           ]}
           onPress={() => handleAgentPress(agent.serverId, agent.id)}
           onLongPress={() => handleAgentLongPress(agent)}
         >
+          {({ hovered }) => (
           <View style={styles.agentContent}>
-            <View style={styles.titleRow}>
+            <View style={styles.row}>
+              {statusColor && (
+                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+              )}
               <Text
-                style={styles.agentTitle}
+                style={[
+                  styles.agentTitle,
+                  (isSelected || hovered) && styles.agentTitleHighlighted,
+                ]}
                 numberOfLines={1}
               >
                 {agent.title || "New Agent"}
               </Text>
-              <View style={[styles.hostBadge, { backgroundColor: theme.colors.muted }]}>
-                <Text
-                  style={[styles.hostText, { color: theme.colors.mutedForeground }]}
-                  numberOfLines={1}
-                >
-                  {agent.serverLabel}
-                </Text>
-              </View>
             </View>
 
-            <Text style={styles.agentDirectory} numberOfLines={1}>
-              {agent.cwd}
+            <Text style={styles.secondaryRow} numberOfLines={1}>
+              {agent.cwd.replace(/^\/(?:Users|home)\/[^/]+/, "~")} · {timeAgo}
             </Text>
-
-            <View style={styles.statusRow}>
-              <View style={styles.statusGroup}>
-                <View
-                  style={[styles.providerBadge, { backgroundColor: theme.colors.muted }]}
-                >
-                  <Text
-                    style={[styles.providerText, { color: theme.colors.mutedForeground }]}
-                    numberOfLines={1}
-                  >
-                    {providerLabel}
-                  </Text>
-                </View>
-
-                {isRunning ? (
-                  <View style={styles.statusBadge}>
-                    <View style={[styles.statusDot, { backgroundColor: "#3b82f6" }]} />
-                    <Text style={[styles.statusText, { color: "#3b82f6" }]}>
-                      Running
-                    </Text>
-                  </View>
-                ) : agent.requiresAttention ? (
-                  <View style={styles.statusBadge}>
-                    <View style={[styles.statusDot, { backgroundColor: "#22c55e" }]} />
-                    <Text style={[styles.statusText, { color: "#22c55e" }]}>
-                      Finished
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <Text style={styles.timeAgo}>
-                {timeAgo}
-              </Text>
-            </View>
           </View>
+          )}
         </Pressable>
       );
     },
-    [handleAgentLongPress, handleAgentPress, selectedAgentId, theme.colors.muted, theme.colors.mutedForeground, theme.colors.primary, theme.colors.primaryForeground]
+    [handleAgentLongPress, handleAgentPress, selectedAgentId]
   );
 
   const keyExtractor = useCallback(
@@ -254,88 +219,51 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
   },
   agentItem: {
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
-    borderWidth: 1,
-    borderColor: "transparent",
+    backgroundColor: theme.colors.palette.zinc[950],
   },
   agentItemSelected: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.palette.zinc[800],
+  },
+  agentItemHovered: {
+    backgroundColor: theme.colors.palette.zinc[850],
   },
   agentItemPressed: {
-    opacity: 0.7,
-    backgroundColor: theme.colors.accent,
+    backgroundColor: theme.colors.palette.zinc[800],
   },
   agentContent: {
     flex: 1,
+    gap: theme.spacing[1],
   },
-  titleRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: theme.spacing[2],
-    marginBottom: theme.spacing[1],
   },
   agentTitle: {
     flex: 1,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: {
+      xs: "400",
+      md: "300",
+    },
+    color: theme.colors.palette.zinc[200],
+  },
+  agentTitleHighlighted: {
     color: theme.colors.foreground,
   },
-  hostBadge: {
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 2,
-  },
-  hostText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-  agentDirectory: {
+  secondaryRow: {
     fontSize: theme.fontSize.sm,
+    fontWeight: "300",
     color: theme.colors.mutedForeground,
-    marginBottom: theme.spacing[1],
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  statusGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  providerBadge: {
-    borderRadius: theme.borderRadius.full,
-  },
-  providerText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "uppercase",
-  },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
   },
   statusDot: {
-    width: 6,
-    height: 6,
+    width: 8,
+    height: 8,
     borderRadius: theme.borderRadius.full,
-  },
-  statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  timeAgo: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
   },
   sheetOverlay: {
     flex: 1,

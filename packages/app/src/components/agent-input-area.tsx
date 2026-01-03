@@ -22,8 +22,13 @@ import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
-import { MessageInput, type MessagePayload, type ImageAttachment } from "./message-input";
+import {
+  MessageInput,
+  type MessagePayload,
+  type ImageAttachment,
+} from "./message-input";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import { Theme } from "@/styles/theme";
 
 type QueuedMessage = {
   id: string;
@@ -48,8 +53,12 @@ const MAX_INPUT_WIDTH = 960;
 // Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
 // entering/exiting animations (see react-native-reanimated#8422), so guard them.
 const SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS = Platform.OS === "android";
-const REALTIME_FADE_IN = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeIn.duration(250);
-const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS ? undefined : FadeOut.duration(250);
+const REALTIME_FADE_IN = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS
+  ? undefined
+  : FadeIn.duration(250);
+const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS
+  ? undefined
+  : FadeOut.duration(250);
 
 export function AgentInputArea({
   agentId,
@@ -219,7 +228,11 @@ export function AgentInputArea({
   }
 
   function handleSubmit(payload: MessagePayload) {
-    void sendMessageWithContent(payload.text, payload.images, payload.forceSend);
+    void sendMessageWithContent(
+      payload.text,
+      payload.images,
+      payload.forceSend
+    );
   }
 
   async function handlePickImage() {
@@ -262,7 +275,8 @@ export function AgentInputArea({
   useEffect(() => {
     const existing = getDraftInput(agentId);
     const isSameText = existing?.text === userInput;
-    const existingImages: ImageAttachment[] = (existing?.images ?? []) as ImageAttachment[];
+    const existingImages: ImageAttachment[] = (existing?.images ??
+      []) as ImageAttachment[];
     const isSameImages =
       existingImages.length === selectedImages.length &&
       existingImages.every((img, idx) => {
@@ -387,17 +401,16 @@ export function AgentInputArea({
     </>
   );
 
-  const leftContent = (
-    <AgentStatusBar agentId={agentId} serverId={serverId} />
-  );
+  const leftContent = <AgentStatusBar agentId={agentId} serverId={serverId} />;
 
   return (
     <Animated.View
-      style={[styles.container, { paddingBottom: insets.bottom }, keyboardAnimatedStyle]}
+      style={[
+        styles.container,
+        { paddingBottom: insets.bottom },
+        keyboardAnimatedStyle,
+      ]}
     >
-      {/* Border separator */}
-      <View style={styles.borderSeparator} />
-
       {/* Realtime controls - only when active */}
       {isRealtimeMode && (
         <Animated.View
@@ -469,11 +482,12 @@ export function AgentInputArea({
   );
 }
 
-const styles = StyleSheet.create(((theme: any) => ({
+const BUTTON_SIZE = 40;
+
+const styles = StyleSheet.create(((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
-    backgroundColor: theme.colors.background,
   },
   borderSeparator: {
     height: theme.borderWidth[1],
@@ -485,21 +499,20 @@ const styles = StyleSheet.create(((theme: any) => ({
   inputAreaContainer: {
     position: "relative",
     minHeight: FOOTER_HEIGHT,
+    marginHorizontal: "auto",
     alignItems: "center",
     width: "100%",
     overflow: "hidden",
-    backgroundColor: theme.colors.background,
+    padding: theme.spacing[4],
   },
   inputAreaContent: {
     width: "100%",
     maxWidth: MAX_INPUT_WIDTH,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
     gap: theme.spacing[3],
   },
   realtimeButton: {
-    width: 40,
-    height: 40,
+    width: 34,
+    height: 34,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.accentForeground,
     alignItems: "center",
@@ -509,8 +522,8 @@ const styles = StyleSheet.create(((theme: any) => ({
     backgroundColor: theme.colors.palette.blue[600],
   },
   cancelButton: {
-    width: 40,
-    height: 40,
+    width: BUTTON_SIZE,
+    height: BUTTON_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.red[500],
     alignItems: "center",

@@ -673,7 +673,7 @@ function AgentScreenContent({
               rightContent={
                 <View ref={menuButtonRef} collapsable={false}>
                   <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                    <MoreVertical size={20} color={theme.colors.foreground} />
+                    <MoreVertical size={20} color={theme.colors.mutedForeground} />
                   </Pressable>
                 </View>
               }
