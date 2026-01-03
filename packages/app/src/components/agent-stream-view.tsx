@@ -290,7 +290,7 @@ export function AgentStreamView({
             <ToolCall
               toolName={toolLabel}
               kind={data.kind}
-              args={undefined}
+              args={data.input}
               result={data.result}
               error={data.error}
               status={data.status as "executing" | "completed" | "failed"}
@@ -594,7 +594,7 @@ function WorkingIndicator() {
     };
   }, [dotOne, dotTwo, dotThree]);
 
-  const translateDistance = -4;
+  const translateDistance = -2;
   const dotOneStyle = useAnimatedStyle(() => ({
     opacity: 0.3 + dotOne.value * 0.7,
     transform: [{ translateY: dotOne.value * translateDistance }],
@@ -612,7 +612,6 @@ function WorkingIndicator() {
 
   return (
     <View style={stylesheet.workingIndicatorBubble}>
-      <Text style={stylesheet.workingIndicatorText}>Working</Text>
       <View style={stylesheet.workingDotsRow}>
         <Animated.View style={[stylesheet.workingDot, dotOneStyle]} />
         <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
@@ -1066,6 +1065,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingIndicatorWrapper: {
     alignItems: "flex-start",
+    paddingLeft: 3,
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
   },
   workingIndicatorBubble: {
     flexDirection: "row",
@@ -1078,11 +1080,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: "transparent",
     borderWidth: 0,
     alignSelf: "flex-start",
-  },
-  workingIndicatorText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
   workingDotsRow: {
     flexDirection: "row",
