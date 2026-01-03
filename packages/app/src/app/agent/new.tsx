@@ -663,7 +663,7 @@ export default function DraftAgentScreen() {
       pendingRequestIdRef.current = null;
       setIsLoading(false);
       setPromptText("");
-      router.push({
+      router.replace({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
           serverId: selectedServerId,
@@ -980,6 +980,7 @@ export default function DraftAgentScreen() {
               isSubmitLoading={isLoading}
               value={promptText}
               onChangeText={setPromptText}
+              autoFocus
             />
           </View>
         </View>

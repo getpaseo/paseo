@@ -706,7 +706,7 @@ function AgentScreenContent({
 
             {/* Agent Input Area */}
             {!isInitializing && agent && resolvedAgentId && (
-              <AgentInputArea agentId={resolvedAgentId} serverId={serverId} />
+              <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
             )}
           </View>
         </View>
