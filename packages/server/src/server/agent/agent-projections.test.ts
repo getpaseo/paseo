@@ -234,7 +234,6 @@ describe("toAgentPayload", () => {
     expect(payload.lastUserMessageAt).toBe(agent.lastUserMessageAt?.toISOString());
     expect(payload.title).toBe("UI Payload");
     expect(payload.model).toBe(agent.config.model);
-    expect(payload.sessionId).toBe(agent.sessionId);
     expect(payload.pendingPermissions.map((item) => item.id)).toEqual([
       "perm-a",
       "perm-b",

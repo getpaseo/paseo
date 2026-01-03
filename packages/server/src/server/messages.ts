@@ -243,7 +243,6 @@ export const AgentSnapshotPayloadSchema = z.object({
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
-  sessionId: z.string().nullable(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
@@ -340,7 +339,7 @@ export const SendAgentMessageSchema = z.object({
 
 export const SendAgentAudioSchema = z.object({
   type: z.literal("send_agent_audio"),
-  agentId: z.string(),
+  agentId: z.string().optional(), // Required for auto_run mode, optional for transcribe_only
   audio: z.string(), // base64 encoded
   format: z.string(),
   isLast: z.boolean(),

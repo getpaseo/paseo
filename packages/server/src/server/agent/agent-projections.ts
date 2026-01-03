@@ -77,7 +77,6 @@ export function toAgentPayload(
       ? agent.lastUserMessageAt.toISOString()
       : null,
     status: agent.lifecycle,
-    sessionId: agent.sessionId,
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),

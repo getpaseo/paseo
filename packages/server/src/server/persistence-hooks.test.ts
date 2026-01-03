@@ -49,7 +49,6 @@ function createManagedAgent(
     provider,
     cwd,
     session,
-    sessionId: overrides.sessionId ?? "session-123",
     capabilities:
       overrides.capabilities ??
       {

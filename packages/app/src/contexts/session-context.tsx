@@ -134,7 +134,6 @@ function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string
     updatedAt,
     lastUserMessageAt,
     lastActivityAt: updatedAt,
-    sessionId: snapshot.sessionId,
     capabilities: snapshot.capabilities,
     currentModeId: snapshot.currentModeId,
     availableModes: snapshot.availableModes ?? [],
@@ -196,7 +195,7 @@ export interface SessionContextValue {
     images?: Array<{ uri: string; mimeType?: string }>
   ) => Promise<void>;
   sendAgentAudio: (
-    agentId: string,
+    agentId: string | undefined,
     audioBlob: Blob,
     requestId?: string,
     options?: { mode?: "transcribe_only" | "auto_run" }
@@ -265,6 +264,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
   const providerModelRequestIdsRef = useRef<Map<any, string>>(new Map());
+  const sendAgentMessageRef = useRef<((agentId: string, message: string, images?: Array<{ uri: string; mimeType?: string }>) => Promise<void>) | null>(null);
   const hasHydratedSnapshotRef = useRef(false);
   const hasRequestedInitialSnapshotRef = useRef(false);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -751,6 +751,26 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         }
         return next;
       });
+
+      // Flush queued messages when agent transitions from running to not running
+      const prevStatus = previousAgentStatusRef.current.get(agent.id);
+      if (prevStatus === "running" && agent.status !== "running") {
+        const session = useSessionStore.getState().sessions[serverId];
+        const queue = session?.queuedMessages.get(agent.id);
+        if (queue && queue.length > 0) {
+          const [next, ...rest] = queue;
+          console.log("[Session] Flushing queued message for agent:", agent.id, next.text);
+          if (sendAgentMessageRef.current) {
+            void sendAgentMessageRef.current(agent.id, next.text, next.images);
+          }
+          setQueuedMessages(serverId, (prev) => {
+            const updated = new Map(prev);
+            updated.set(agent.id, rest);
+            return updated;
+          });
+        }
+      }
+      previousAgentStatusRef.current.set(agent.id, agent.status);
     });
 
     const unsubAgentStream = ws.on("agent_stream", (message) => {
@@ -1254,29 +1274,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     };
   }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setAgentStreamingBuffer, clearAgentStreamingBuffer, setInitializingAgents, setAgents, setAgentLastActivity, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
 
-  // Auto-flush queued messages when agent transitions from running -> not running
-  useEffect(() => {
-    const session = getSession(serverId);
-    if (!session) return;
-
-    for (const [agentId, agent] of session.agents.entries()) {
-      const prevStatus = previousAgentStatusRef.current.get(agentId);
-      if (prevStatus === "running" && agent.status !== "running") {
-        const queue = session.queuedMessages.get(agentId);
-        if (queue && queue.length > 0) {
-          const [next, ...rest] = queue;
-          void sendAgentMessage(agentId, next.text, next.images);
-          setQueuedMessages(serverId, (prev) => {
-            const updated = new Map(prev);
-            updated.set(agentId, rest);
-            return updated;
-          });
-        }
-      }
-      previousAgentStatusRef.current.set(agentId, agent.status);
-    }
-  }, [serverId, getSession, setQueuedMessages]);
-
   const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     console.log("[Session] initializeAgent called", { agentId, requestId });
     setInitializingAgents(serverId, (prev) => {
@@ -1459,6 +1456,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     ws.send(msg);
   }, [encodeImages, serverId, ws, setAgentStreamState]);
 
+  // Keep the ref updated so the agent_state handler can call it
+  sendAgentMessageRef.current = sendAgentMessage;
+
   const cancelAgentRun = useCallback((agentId: string) => {
     const msg: WSInboundMessage = {
       type: "session",
@@ -1493,7 +1493,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   }, [ws]);
 
   const sendAgentAudio = useCallback(async (
-    agentId: string,
+    agentId: string | undefined,
     audioBlob: Blob,
     requestId?: string,
     options?: { mode?: "transcribe_only" | "auto_run" }
@@ -1530,7 +1530,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         type: "session",
         message: {
           type: "send_agent_audio",
-          agentId,
+          ...(agentId ? { agentId } : {}),
           audio: base64Audio,
           format,
           isLast: true,
@@ -1540,7 +1540,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       };
       ws.send(msg);
 
-      console.log("[Session] Sent audio to agent:", agentId, format, audioBlob.size, "bytes", requestId ? `(requestId: ${requestId})` : "");
+      console.log("[Session] Sent audio:", agentId ?? "(no agent)", format, audioBlob.size, "bytes", requestId ? `(requestId: ${requestId})` : "");
     } catch (error) {
       console.error("[Session] Failed to send audio:", error);
       throw error;

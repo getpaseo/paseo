@@ -36,6 +36,47 @@ export interface AgentMcpServerOptions {
   callerAgentId?: string;
 }
 
+const CLAUDE_TO_CODEX_MODE: Record<string, string> = {
+  plan: "read-only",
+  default: "auto",
+  acceptEdits: "auto",
+  bypassPermissions: "full-access",
+};
+
+const CODEX_TO_CLAUDE_MODE: Record<string, string> = {
+  "read-only": "plan",
+  auto: "default",
+  "full-access": "bypassPermissions",
+};
+
+function mapModeAcrossProviders(
+  sourceMode: string,
+  sourceProvider: AgentProvider,
+  targetProvider: AgentProvider
+): string {
+  if (sourceProvider === targetProvider) {
+    return sourceMode;
+  }
+
+  if (sourceProvider === "claude" && targetProvider === "codex") {
+    const mapped = CLAUDE_TO_CODEX_MODE[sourceMode];
+    if (mapped) {
+      return mapped;
+    }
+    return "auto";
+  }
+
+  if (sourceProvider === "codex" && targetProvider === "claude") {
+    const mapped = CODEX_TO_CLAUDE_MODE[sourceMode];
+    if (mapped) {
+      return mapped;
+    }
+    return "default";
+  }
+
+  return sourceMode;
+}
+
 const AgentProviderEnum = z.enum(
   AGENT_PROVIDER_DEFINITIONS.map((definition) => definition.id) as [
     AgentProvider,
@@ -138,59 +179,91 @@ export async function createAgentMcpServer(
     version: "2.0.0",
   });
 
+  const agentToAgentInputSchema = {
+    title: z
+      .string()
+      .trim()
+      .min(1, "Title is required")
+      .max(40, "Title must be 40 characters or fewer")
+      .describe(
+        "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
+      ),
+    agentType: AgentProviderEnum.optional().describe(
+      "Optional agent implementation to spawn. Defaults to 'claude'."
+    ),
+    initialPrompt: z
+      .string()
+      .optional()
+      .describe(
+        "Optional task to start immediately after creation (non-blocking)."
+      ),
+    background: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
+      ),
+  };
+
+  const topLevelInputSchema = {
+    cwd: z
+      .string()
+      .describe(
+        "Required working directory for the agent (absolute, relative, or ~)."
+      ),
+    title: z
+      .string()
+      .trim()
+      .min(1, "Title is required")
+      .max(40, "Title must be 40 characters or fewer")
+      .describe(
+        "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
+      ),
+    agentType: AgentProviderEnum.optional().describe(
+      "Optional agent implementation to spawn. Defaults to 'claude'."
+    ),
+    initialPrompt: z
+      .string()
+      .optional()
+      .describe(
+        "Optional task to start immediately after creation (non-blocking)."
+      ),
+    initialMode: z
+      .string()
+      .describe("Required session mode to configure before the first run."),
+    worktreeName: z
+      .string()
+      .optional()
+      .describe(
+        "Optional git worktree branch name (lowercase alphanumerics + hyphen)."
+      ),
+    background: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
+      ),
+    parentAgentId: z
+      .string()
+      .optional()
+      .describe(
+        "Optional parent agent ID. When set, this agent is a child of the specified parent agent."
+      ),
+  };
+
+  const createAgentInputSchema = callerAgentId
+    ? agentToAgentInputSchema
+    : topLevelInputSchema;
+
   server.registerTool(
     "create_agent",
     {
       title: "Create Agent",
       description:
         "Create a new Claude or Codex agent tied to a working directory. Optionally run an initial prompt immediately or create a git worktree for the agent.",
-      inputSchema: {
-        cwd: z
-          .string()
-          .describe(
-            "Required working directory for the agent (absolute, relative, or ~)."
-          ),
-        title: z
-          .string()
-          .trim()
-          .min(1, "Title is required")
-          .max(40, "Title must be 40 characters or fewer")
-          .describe(
-            "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
-          ),
-        agentType: AgentProviderEnum.optional().describe(
-          "Optional agent implementation to spawn. Defaults to 'claude'."
-        ),
-        initialPrompt: z
-          .string()
-          .optional()
-          .describe(
-            "Optional task to start immediately after creation (non-blocking)."
-          ),
-        initialMode: z
-          .string()
-          .optional()
-          .describe("Optional session mode to configure before the first run."),
-        worktreeName: z
-          .string()
-          .optional()
-          .describe(
-            "Optional git worktree branch name (lowercase alphanumerics + hyphen)."
-          ),
-        background: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe(
-            "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
-          ),
-        parentAgentId: z
-          .string()
-          .optional()
-          .describe(
-            "Optional parent agent ID. When set, this agent is a child of the specified parent agent."
-          ),
-      },
+      inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
         type: AgentProviderEnum,
@@ -208,35 +281,79 @@ export async function createAgentMcpServer(
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
       },
     },
-    async ({
-      cwd,
-      agentType,
-      initialPrompt,
-      initialMode,
-      worktreeName,
-      background = false,
-      title,
-      parentAgentId,
-    }) => {
-      let resolvedCwd = expandPath(cwd);
+    async (args) => {
+      const {
+        agentType,
+        initialPrompt,
+        background = false,
+        title,
+      } = args as {
+        cwd?: string;
+        agentType?: AgentProvider;
+        initialPrompt?: string;
+        initialMode?: string;
+        worktreeName?: string;
+        background?: boolean;
+        title: string;
+        parentAgentId?: string;
+      };
 
-      if (worktreeName) {
-        const worktree = await createWorktree({
-          branchName: worktreeName,
-          cwd: resolvedCwd,
-          worktreeSlug: worktreeName,
-        });
-        resolvedCwd = worktree.worktreePath;
+      let resolvedCwd: string;
+      let resolvedMode: string | undefined;
+      let resolvedParentAgentId: string | undefined;
+
+      if (callerAgentId) {
+        const parentAgent = agentManager.getAgent(callerAgentId);
+        if (!parentAgent) {
+          throw new Error(`Parent agent ${callerAgentId} not found`);
+        }
+        resolvedCwd = parentAgent.cwd;
+        resolvedParentAgentId = callerAgentId;
+
+        const provider: AgentProvider = agentType ?? "claude";
+        const parentMode = parentAgent.currentModeId;
+        if (parentMode) {
+          resolvedMode = mapModeAcrossProviders(
+            parentMode,
+            parentAgent.provider,
+            provider
+          );
+        }
+      } else {
+        const topLevelArgs = args as unknown as {
+          cwd: string;
+          initialMode: string;
+          worktreeName?: string;
+          parentAgentId?: string;
+        };
+        const {
+          cwd,
+          initialMode,
+          worktreeName,
+          parentAgentId,
+        } = topLevelArgs;
+
+        resolvedCwd = expandPath(cwd);
+
+        if (worktreeName) {
+          const worktree = await createWorktree({
+            branchName: worktreeName,
+            cwd: resolvedCwd,
+            worktreeSlug: worktreeName,
+          });
+          resolvedCwd = worktree.worktreePath;
+        }
+
+        resolvedMode = initialMode;
+        resolvedParentAgentId = parentAgentId;
       }
 
       const provider: AgentProvider = agentType ?? "claude";
       const normalizedTitle = title?.trim() ?? null;
-      // Use explicit parentAgentId if provided, otherwise default to caller agent ID
-      const resolvedParentAgentId = parentAgentId ?? callerAgentId;
       const snapshot = await agentManager.createAgent({
         provider,
         cwd: resolvedCwd,
-        modeId: initialMode,
+        modeId: resolvedMode,
         title: normalizedTitle ?? undefined,
         parentAgentId: resolvedParentAgentId,
       });

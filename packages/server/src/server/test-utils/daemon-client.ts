@@ -14,6 +14,7 @@ import type {
   AgentPersistenceHandle,
   AgentProvider,
 } from "../agent/agent-sdk-types.js";
+import { getAgentProviderDefinition } from "../agent/provider-manifest.js";
 
 // ============================================================================
 // Configuration
@@ -147,6 +148,12 @@ export class DaemonClient {
     // Record the current queue position so we only check NEW messages
     const startPosition = this.messageQueue.length;
 
+    // Apply default modeId if not provided (mimics frontend behavior)
+    const modeId =
+      options.modeId ??
+      getAgentProviderDefinition(options.provider).defaultModeId ??
+      undefined;
+
     this.send({
       type: "create_agent_request",
       requestId,
@@ -155,7 +162,7 @@ export class DaemonClient {
         cwd: options.cwd,
         title: options.title,
         model: options.model,
-        modeId: options.modeId,
+        modeId,
         mcpServers: options.mcpServers,
         extra: options.extra,
       },
@@ -209,6 +216,12 @@ export class DaemonClient {
     // Record the current queue position so we only check NEW messages
     const startPosition = this.messageQueue.length;
 
+    // Apply default modeId if not provided (mimics frontend behavior)
+    const modeId =
+      options.modeId ??
+      getAgentProviderDefinition(options.provider).defaultModeId ??
+      undefined;
+
     this.send({
       type: "create_agent_request",
       requestId,
@@ -217,7 +230,7 @@ export class DaemonClient {
         cwd: options.cwd,
         title: options.title,
         model: options.model,
-        modeId: options.modeId,
+        modeId,
         mcpServers: options.mcpServers,
         extra: options.extra,
       },

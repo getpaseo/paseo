@@ -93,7 +93,6 @@ type ManagedAgentBase = {
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
-  sessionId: string | null;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -368,7 +367,6 @@ export class AgentManager {
       lifecycle: "closed",
       session: null,
       pendingRun: null,
-      sessionId: agent.sessionId,
     };
     await session.close();
     this.emitState(closedAgent);
@@ -421,8 +419,14 @@ export class AgentManager {
     }
 
     const agent = this.requireAgent(agentId);
+    const sessionId = agent.persistence?.sessionId;
+    if (!sessionId) {
+      throw new Error(
+        `Agent ${agentId} has no persistence.sessionId after run completed`
+      );
+    }
     return {
-      sessionId: agent.sessionId ?? agent.id,
+      sessionId,
       finalText,
       usage,
       timeline,
@@ -767,7 +771,6 @@ export class AgentManager {
       provider: config.provider,
       cwd: config.cwd,
       session,
-      sessionId: session.id,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
@@ -878,7 +881,9 @@ export class AgentManager {
 
     switch (event.type) {
       case "thread_started":
-        agent.sessionId = event.sessionId;
+        // Update persistence with the new session ID from the provider.
+        // persistence.sessionId is the single source of truth for session identity.
+        agent.persistence = agent.session.describePersistence();
         break;
       case "timeline":
         this.recordTimeline(agent, event.item);

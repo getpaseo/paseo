@@ -4,9 +4,8 @@ import {
   useEffect,
   useMemo,
   useCallback,
-  useLayoutEffect,
 } from "react";
-import type { ReactElement, RefObject, ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   View,
   Text,
@@ -21,9 +20,6 @@ import {
   type LayoutChangeEvent,
   type ListRenderItem,
   Platform,
-  NativeSyntheticEvent,
-  TextInputContentSizeChangeEventData,
-  TextInputKeyPressEventData,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -35,17 +31,12 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, Check, X, RefreshCcw, Monitor } from "lucide-react-native";
+import { Monitor, X } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
 import { generateMessageId } from "@/types/stream";
-import { useDictation } from "@/hooks/use-dictation";
-import type { DictationStatus } from "@/hooks/use-dictation";
-import { VolumeMeter } from "@/components/volume-meter";
-import { AUDIO_DEBUG_ENABLED } from "@/config/audio-debug";
-import { AudioDebugNotice, type AudioDebugInfo } from "./audio-debug-notice";
-import { DictationStatusNotice, type DictationToastVariant } from "./dictation-status-notice";
+import { MessageInput } from "./message-input";
 import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import type {
   AgentProvider,
@@ -59,7 +50,7 @@ import { formatConnectionStatus } from "@/utils/daemons";
 import { trackAnalyticsEvent } from "@/utils/analytics";
 import type { SessionContextValue } from "@/contexts/session-context";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
   AssistantDropdown,
   DropdownField,
@@ -82,16 +73,6 @@ interface AgentFlowModalProps {
   onAfterClose?: () => void;
 }
 
-type DictationToastConfig = {
-  variant: DictationToastVariant;
-  title: string;
-  subtitle?: string;
-  meta?: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  onDismiss?: () => void;
-};
-
 interface ModalWrapperProps {
   isVisible: boolean;
   onClose: () => void;
@@ -111,52 +92,17 @@ type CreateAgentSessionSlice = {
   }) => void;
   resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
   sendAgentAudio: (
-    agentId: string,
+    agentId: string | undefined,
     audioBlob: Blob,
     requestId?: string,
     options?: { mode?: "transcribe_only" | "auto_run" }
   ) => Promise<void>;
-  agents: Map<string, any>;
+  agents: Map<string, Agent>;
 };
 
 const BACKDROP_OPACITY = 0.55;
 const IMPORT_PAGE_SIZE = 20;
-const PROMPT_MIN_HEIGHT = 64;
-const PROMPT_MAX_HEIGHT = 200;
 const IS_WEB = Platform.OS === "web";
-const DICTATION_AGENT_ID = "__dictation__";
-
-type WebTextInputKeyPressEvent = NativeSyntheticEvent<
-  TextInputKeyPressEventData & {
-    metaKey?: boolean;
-    ctrlKey?: boolean;
-    shiftKey?: boolean;
-  }
->;
-
-type TextAreaHandle = {
-  scrollHeight?: number;
-  style?: {
-    height?: string;
-    minHeight?: string;
-    maxHeight?: string;
-    overflowY?: string;
-  } & Record<string, unknown>;
-};
-
-const isTextAreaLike = (node: unknown): node is TextAreaHandle => {
-  if (!node || typeof node !== "object") {
-    return false;
-  }
-  if (!("scrollHeight" in node) || !("style" in node)) {
-    return false;
-  }
-  const style = (node as { style?: unknown }).style;
-  if (!style || typeof style !== "object") {
-    return false;
-  }
-  return true;
-};
 
 type ImportCandidate = {
   provider: AgentProvider;
@@ -237,7 +183,6 @@ function AgentFlowModal({
   const backdropOpacity = useSharedValue(0);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const isCompactLayout = screenWidth < 720;
-  const shouldHandlePromptDesktopSubmit = IS_WEB;
   const shouldAutoFocusPrompt = IS_WEB;
   const isImportFlow = flow === "import";
   const isCreateFlow = !isImportFlow;
@@ -451,7 +396,6 @@ function AgentFlowModal({
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [initialPrompt, setInitialPrompt] = useState("");
-  const [promptInputHeight, setPromptInputHeight] = useState(PROMPT_MIN_HEIGHT);
   const [baseBranch, setBaseBranch] = useState("");
   const [createNewBranch, setCreateNewBranch] = useState(false);
   const [branchName, setBranchName] = useState("");
@@ -469,103 +413,12 @@ function AgentFlowModal({
   );
   const [isImportLoading, setIsImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [dictationDebugInfo, setDictationDebugInfo] = useState<AudioDebugInfo | null>(null);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
   const shouldSyncBaseBranchRef = useRef(true);
-  const promptInputRef = useRef<
-    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-  >(null);
-  const focusPromptInputRef = useRef<() => void>(() => {});
-  const promptInputHeightRef = useRef(PROMPT_MIN_HEIGHT);
-  const promptBaselineHeightRef = useRef<number | null>(null);
-  const dictationRequestIdRef = useRef<string | null>(null);
-
-  const handleDictationTranscript = useCallback(
-    (text: string, _meta: { requestId: string }) => {
-      if (!isCreateFlow || !text) {
-        return;
-      }
-      setInitialPrompt((prev) => {
-        if (!prev) {
-          return text;
-        }
-        const needsSpace = /\s$/.test(prev);
-        return `${prev}${needsSpace ? "" : " "}${text}`;
-      });
-      focusPromptInputRef.current?.();
-    },
-    [isCreateFlow, setInitialPrompt]
-  );
-
-  const handleDictationError = useCallback(
-    (dictationError: Error) => {
-      setErrorMessage(dictationError.message);
-    },
-    []
-  );
-
-  const canStartDictation = useCallback(() => {
-    const allowed = isCreateFlow && !isLoading && isTargetDaemonReady && isWsConnected;
-    console.log("[CreateAgentModal] canStartDictation", {
-      allowed,
-      isCreateFlow,
-      isLoading,
-      isTargetDaemonReady,
-      isWsConnected,
-    });
-    return allowed;
-  }, [isCreateFlow, isLoading, isTargetDaemonReady, isWsConnected]);
-
-  const canConfirmDictation = useCallback(() => {
-    const allowed = isTargetDaemonReady && hasSendAgentAudio;
-    console.log("[CreateAgentModal] canConfirmDictation", {
-      allowed,
-      isTargetDaemonReady,
-      hasSendAgentAudio,
-    });
-    return allowed;
-  }, [hasSendAgentAudio, isTargetDaemonReady]);
-
-  const {
-    isRecording: isDictating,
-    isProcessing: isDictationProcessing,
-    volume: dictationVolume,
-    pendingRequestId: dictationPendingRequestId,
-    error: dictationError,
-    status: dictationStatus,
-    retryAttempt: dictationRetryAttempt,
-    maxRetryAttempts: dictationMaxRetryAttempts,
-    retryInfo: dictationRetryInfo,
-    failedRecording: dictationFailedRecording,
-    startDictation,
-    cancelDictation,
-    confirmDictation,
-    reset: resetDictation,
-    retryFailedDictation,
-    discardFailedDictation,
-  } = useDictation({
-    agentId: DICTATION_AGENT_ID,
-    sendAgentAudio,
-    ws: effectiveWs,
-    mode: "transcribe_only",
-    onTranscript: handleDictationTranscript,
-    onError: handleDictationError,
-    canStart: canStartDictation,
-    canConfirm: canConfirmDictation,
-    autoStopWhenHidden: { isVisible },
-  });
-  const shouldShowAudioDebug = AUDIO_DEBUG_ENABLED;
-
-  useEffect(() => {
-    dictationRequestIdRef.current = dictationPendingRequestId;
-  }, [dictationPendingRequestId]);
 
   const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
-  const hasPendingDictation = dictationPendingRequestId !== null;
   const shouldListenForStatus = isVisible || hasPendingCreateOrResume;
-  const shouldListenForDictation =
-    isCreateFlow && (isVisible || hasPendingDictation);
 
   const idleProviderPrefetchHandleRef = useRef<ReturnType<
     typeof InteractionManager.runAfterInteractions
@@ -612,131 +465,15 @@ function AgentFlowModal({
       providerDefinitionMap.get(provider)?.label ?? provider,
     []
   );
-  const setPromptHeight = useCallback((nextHeight: number) => {
-    const bounded = Math.min(
-      PROMPT_MAX_HEIGHT,
-      Math.max(PROMPT_MIN_HEIGHT, nextHeight)
-    );
-    if (Math.abs(promptInputHeightRef.current - bounded) < 1) {
-      return;
-    }
-    promptInputHeightRef.current = bounded;
-    setPromptInputHeight(bounded);
-  }, []);
 
-  const applyPromptMeasuredHeight = useCallback(
-    (measuredHeight: number) => {
-      if (promptBaselineHeightRef.current === null) {
-        promptBaselineHeightRef.current = measuredHeight;
-      }
-      const baseline = promptBaselineHeightRef.current ?? measuredHeight;
-      const normalized = measuredHeight - baseline + PROMPT_MIN_HEIGHT;
-      const bounded = Math.min(
-        PROMPT_MAX_HEIGHT,
-        Math.max(PROMPT_MIN_HEIGHT, normalized)
-      );
-      setPromptHeight(bounded);
-      return bounded;
-    },
-    [setPromptHeight]
-  );
-
-  const getPromptWebTextArea = useCallback((): TextAreaHandle | null => {
-    if (!IS_WEB) {
-      return null;
-    }
-    const node = promptInputRef.current;
-    if (!node) {
-      return null;
-    }
-    if (isTextAreaLike(node)) {
-      return node;
-    }
-    if (
-      typeof (node as { getNativeRef?: () => unknown }).getNativeRef ===
-      "function"
-    ) {
-      const native = (
-        node as { getNativeRef?: () => unknown }
-      ).getNativeRef?.();
-      if (isTextAreaLike(native)) {
-        return native;
-      }
-    }
-    return null;
-  }, []);
-
-  const measurePromptWebInputHeight = useCallback(() => {
-    if (!IS_WEB) {
-      return false;
-    }
-    const element = getPromptWebTextArea();
-    if (!element?.style || typeof element.scrollHeight !== "number") {
-      return false;
-    }
-    const previousHeight = element.style.height;
-    element.style.height = "auto";
-    const measuredHeight = element.scrollHeight;
-    element.style.height = previousHeight ?? "";
-    const bounded = applyPromptMeasuredHeight(measuredHeight);
-    element.style.height = `${bounded}px`;
-    element.style.minHeight = `${PROMPT_MIN_HEIGHT}px`;
-    element.style.maxHeight = `${PROMPT_MAX_HEIGHT}px`;
-    element.style.overflowY = bounded >= PROMPT_MAX_HEIGHT ? "auto" : "hidden";
-    return true;
-  }, [applyPromptMeasuredHeight, getPromptWebTextArea]);
-
-  const handlePromptContentSizeChange = useCallback(
-    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-      if (IS_WEB && measurePromptWebInputHeight()) {
-        return;
-      }
-      applyPromptMeasuredHeight(event.nativeEvent.contentSize.height);
-    },
-    [applyPromptMeasuredHeight, measurePromptWebInputHeight]
-  );
-
-  const focusPromptInput = useCallback(() => {
-    if (!shouldAutoFocusPrompt) {
-      return;
-    }
-    const node = promptInputRef.current;
-    if (!node) {
-      return;
-    }
-    const target:
-      | (TextInput & { focus?: () => void })
-      | { focus?: () => void }
-      | null =
-      typeof (node as { focus?: () => void }).focus === "function"
-        ? node
-        : typeof (node as { getNativeRef?: () => unknown }).getNativeRef ===
-          "function"
-        ? ((node as { getNativeRef?: () => unknown }).getNativeRef?.() as {
-            focus?: () => void;
-          } | null)
-        : null;
-    if (target && typeof target.focus === "function") {
-      const exec = () => target.focus?.();
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(exec);
-      } else {
-        setTimeout(exec, 0);
-      }
-    }
-  }, [shouldAutoFocusPrompt]);
-  useEffect(() => {
-    focusPromptInputRef.current = focusPromptInput;
-  }, [focusPromptInput]);
   const activeSessionIds = useMemo(() => {
     const ids = new Set<string>();
     if (!agents) {
       return ids;
     }
-    agents.forEach((agent: any) => {
-      if (agent.sessionId) {
-        ids.add(agent.sessionId);
-      }
+    // Use persistence.sessionId for filtering - this is the canonical reference
+    // to the provider's session file (Claude resume token, Codex thread ID, etc.)
+    agents.forEach((agent) => {
       const persistedSessionId = agent.persistence?.sessionId;
       if (persistedSessionId) {
         ids.add(persistedSessionId);
@@ -769,23 +506,6 @@ function AgentFlowModal({
     importSearchQuery,
   ]);
 
-  useLayoutEffect(() => {
-    if (!IS_WEB) {
-      return;
-    }
-    measurePromptWebInputHeight();
-  }, [initialPrompt, measurePromptWebInputHeight]);
-
-  useEffect(() => {
-    if (!shouldAutoFocusPrompt) {
-      return;
-    }
-    if (!isVisible || !isCreateFlow) {
-      return;
-    }
-    focusPromptInput();
-  }, [focusPromptInput, isCreateFlow, isVisible, shouldAutoFocusPrompt]);
-
   const logOfflineDaemonAction = useCallback(
     (action: "create" | "resume" | "dictation" | "import_list", reason?: string | null) => {
       trackAnalyticsEvent({
@@ -805,9 +525,6 @@ function AgentFlowModal({
 
   const resetFormState = useCallback(() => {
     setInitialPrompt("");
-    promptBaselineHeightRef.current = null;
-    promptInputHeightRef.current = PROMPT_MIN_HEIGHT;
-    setPromptHeight(PROMPT_MIN_HEIGHT);
     setBaseBranch("");
     setCreateNewBranch(false);
     setBranchName("");
@@ -822,160 +539,8 @@ function AgentFlowModal({
     pendingRequestIdRef.current = null;
     pendingNavigationServerIdRef.current = null;
     shouldSyncBaseBranchRef.current = true;
-    dictationRequestIdRef.current = null;
-    setDictationDebugInfo(null);
-    void cancelDictation();
-    resetDictation();
     cancelRepoInfo();
-  }, [cancelRepoInfo, cancelDictation, resetDictation, resetRepoInfo, setPromptHeight]);
-
-  const handleDictationStart = useCallback(async () => {
-    console.log("[CreateAgentModal] handleDictationStart", {
-      isCreateFlow,
-      isLoading,
-      isDictating,
-      isDictationProcessing,
-      isTargetDaemonReady,
-      isWsConnected,
-    });
-    if (!isCreateFlow || isLoading || isDictating || isDictationProcessing) {
-      return;
-    }
-    if (!isTargetDaemonReady || !isWsConnected) {
-      logOfflineDaemonAction(
-        "dictation",
-        daemonAvailabilityError ?? "WebSocket disconnected"
-      );
-      return;
-    }
-    try {
-      if (shouldShowAudioDebug) {
-        setDictationDebugInfo(null);
-      }
-      setErrorMessage("");
-      await startDictation();
-      console.log("[CreateAgentModal] startDictation invoked");
-    } catch (error) {
-      const isCancelled = error instanceof Error && error.message.includes("Recording cancelled");
-      if (!isCancelled) {
-        console.error("[CreateAgentModal] Failed to start dictation:", error);
-      }
-    }
-  }, [
-    daemonAvailabilityError,
-    isCreateFlow,
-    isDictating,
-    isDictationProcessing,
-    isLoading,
-    isTargetDaemonReady,
-    isWsConnected,
-    logOfflineDaemonAction,
-    shouldShowAudioDebug,
-    startDictation,
-  ]);
-
-  const handleDictationCancel = useCallback(async () => {
-    console.log("[CreateAgentModal] handleDictationCancel", {
-      isDictating,
-    });
-    if (dictationStatus === "failed") {
-      discardFailedDictation();
-      return;
-    }
-    if (!isDictating) {
-      return;
-    }
-    try {
-      await cancelDictation();
-    } catch (error) {
-      console.error("[CreateAgentModal] Failed to cancel dictation:", error);
-    }
-  }, [cancelDictation, dictationStatus, discardFailedDictation, isDictating]);
-
-  const handleDictationConfirm = useCallback(async () => {
-    console.log("[CreateAgentModal] handleDictationConfirm", {
-      isDictating,
-      isDictationProcessing,
-      isTargetDaemonReady,
-      hasSendAgentAudio,
-    });
-    if (dictationStatus === "failed") {
-      void retryFailedDictation();
-      return;
-    }
-    if (!isDictating || isDictationProcessing) {
-      return;
-    }
-    if (!isTargetDaemonReady || !hasSendAgentAudio) {
-      logOfflineDaemonAction("dictation");
-      setErrorMessage(
-        daemonAvailabilityError ??
-          "Dictation is unavailable until the selected host is online. Paseo reconnects automatically—try again once it comes back."
-      );
-      return;
-    }
-    try {
-      await confirmDictation();
-    } catch (error) {
-      console.error("[CreateAgentModal] Failed to complete dictation:", error);
-    }
-  }, [
-    daemonAvailabilityError,
-    confirmDictation,
-    dictationStatus,
-    hasSendAgentAudio,
-    isDictating,
-    isDictationProcessing,
-    isTargetDaemonReady,
-    logOfflineDaemonAction,
-    retryFailedDictation,
-  ]);
-
-  const handlePromptDictationRetry = useCallback(() => {
-    void retryFailedDictation();
-  }, [retryFailedDictation]);
-
-  const handlePromptDictationDiscard = useCallback(() => {
-    discardFailedDictation();
-  }, [discardFailedDictation]);
-
-  const promptDictationToast = useMemo<DictationToastConfig | null>(() => {
-    if (dictationStatus === "retrying") {
-      const attempt = dictationRetryInfo?.attempt ?? Math.max(1, dictationRetryAttempt || 1);
-      const maxAttempts = dictationRetryInfo?.maxAttempts ?? dictationMaxRetryAttempts;
-      const retryMeta =
-        dictationRetryInfo?.nextRetryMs && dictationRetryInfo.nextRetryMs > 0
-          ? `Attempt ${attempt}/${maxAttempts} · Next in ${Math.ceil(dictationRetryInfo.nextRetryMs / 1000)}s`
-          : `Attempt ${attempt}/${maxAttempts}`;
-      return {
-        variant: "warning",
-        title: "Retrying dictation…",
-        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Network error",
-        meta: retryMeta,
-      };
-    }
-
-    if (dictationStatus === "failed") {
-      return {
-        variant: "error",
-        title: "Dictation failed",
-        subtitle: dictationRetryInfo?.errorMessage ?? dictationError ?? "Unknown error",
-        actionLabel: "Retry",
-        onAction: handlePromptDictationRetry,
-        onDismiss: handlePromptDictationDiscard,
-      };
-    }
-
-    return null;
-  }, [
-    dictationError,
-    dictationMaxRetryAttempts,
-    dictationRetryAttempt,
-    dictationRetryInfo,
-    dictationStatus,
-    handlePromptDictationDiscard,
-    handlePromptDictationRetry,
-  ]);
+  }, [cancelRepoInfo, resetRepoInfo]);
 
   const navigateToAgentIfNeeded = useCallback(() => {
     const agentId = pendingNavigationAgentIdRef.current;
@@ -1592,36 +1157,6 @@ function AgentFlowModal({
   }, [handleClose, shouldListenForStatus, ws]);
 
   useEffect(() => {
-    if (!shouldListenForDictation || !ws || !shouldShowAudioDebug) {
-      return;
-    }
-    const unsubscribe = ws.on("transcription_result", (message) => {
-      if (message.type !== "transcription_result") {
-        return;
-      }
-      const pendingId = dictationRequestIdRef.current;
-      if (!pendingId || message.payload.requestId !== pendingId) {
-        return;
-      }
-      dictationRequestIdRef.current = null;
-      setDictationDebugInfo({
-        requestId: pendingId,
-        transcript: message.payload.text?.trim(),
-        debugRecordingPath: message.payload.debugRecordingPath ?? undefined,
-        format: message.payload.format,
-        byteLength: message.payload.byteLength,
-        duration: message.payload.duration,
-        avgLogprob: message.payload.avgLogprob,
-        isLowConfidence: message.payload.isLowConfidence,
-      });
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [shouldListenForDictation, shouldShowAudioDebug, ws]);
-
-  useEffect(() => {
     if (!isVisible || !isImportFlow) {
       return;
     }
@@ -1638,24 +1173,6 @@ function AgentFlowModal({
 
   const shouldRender = isVisible || isMounted;
   const modalTitle = isImportFlow ? "Import Agent" : "Create New Agent";
-  const dictationAccessory = isCreateFlow ? (
-    <PromptDictationControls
-      isRecording={isDictating}
-      isProcessing={isDictationProcessing}
-      disabled={isLoading || !isWsConnected || !isTargetDaemonReady}
-      volume={dictationVolume}
-      onStart={handleDictationStart}
-      onCancel={handleDictationCancel}
-      onConfirm={handleDictationConfirm}
-      status={dictationStatus}
-      retryAttempt={dictationRetryAttempt}
-      maxRetryAttempts={dictationMaxRetryAttempts}
-      retryCountdownMs={dictationRetryInfo?.nextRetryMs}
-      errorMessage={dictationRetryInfo?.errorMessage ?? dictationError ?? undefined}
-      onRetry={handlePromptDictationRetry}
-      onDiscard={handlePromptDictationDiscard}
-    />
-  ) : null;
 
   const gitBlockingError = useMemo(() => {
     if (isNonGitDirectory) {
@@ -1720,26 +1237,6 @@ function AgentFlowModal({
     Boolean(gitBlockingError) ||
     isLoading ||
     !isTargetDaemonReady;
-  const handlePromptDesktopSubmitKeyPress = useCallback(
-    (event: WebTextInputKeyPressEvent) => {
-      if (!shouldHandlePromptDesktopSubmit) {
-        return;
-      }
-      if (event.nativeEvent.key !== "Enter") {
-        return;
-      }
-      const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
-      if (shiftKey || metaKey || ctrlKey) {
-        return;
-      }
-      if (createDisabled) {
-        return;
-      }
-      event.preventDefault();
-      void handleCreate();
-    },
-    [createDisabled, handleCreate, shouldHandlePromptDesktopSubmit]
-  );
   const headerPaddingTop = useMemo(
     () => insets.top + defaultTheme.spacing[4],
     [insets.top]
@@ -1875,29 +1372,25 @@ function AgentFlowModal({
                     ) : null}
                   </View>
 
-                  <PromptSection
-                    value={initialPrompt}
-                    isLoading={isLoading}
-                    onChange={(text) => {
-                      setInitialPrompt(text);
-                      setErrorMessage("");
-                    }}
-                    inputRef={promptInputRef}
-                    inputHeight={promptInputHeight}
-                    onContentSizeChange={handlePromptContentSizeChange}
-                    onDesktopSubmit={handlePromptDesktopSubmitKeyPress}
-                    autoFocus={shouldAutoFocusPrompt}
-                    scrollEnabled={promptInputHeight >= PROMPT_MAX_HEIGHT}
-                    accessory={dictationAccessory}
-                  />
-
-                  {shouldShowAudioDebug && dictationDebugInfo ? (
-                    <AudioDebugNotice
-                      info={dictationDebugInfo}
-                      onDismiss={() => setDictationDebugInfo(null)}
-                      title="Prompt Dictation Debug"
+                  <View style={styles.formSection}>
+                    <Text style={styles.label}>Initial Prompt</Text>
+                    <MessageInput
+                      value={initialPrompt}
+                      onChangeText={(text) => {
+                        setInitialPrompt(text);
+                        setErrorMessage("");
+                      }}
+                      onSubmit={() => {
+                        void handleCreate();
+                      }}
+                      ws={effectiveWs}
+                      sendAgentAudio={sendAgentAudio}
+                      placeholder="Describe what you want the agent to do"
+                      autoFocus={shouldAutoFocusPrompt}
+                      disabled={isLoading || !isTargetDaemonReady}
+                      isSubmitDisabled={createDisabled}
                     />
-                  ) : null}
+                  </View>
 
                   <View
                     style={[
@@ -2048,13 +1541,6 @@ function AgentFlowModal({
                     )}
                   </Pressable>
                 </Animated.View>
-                {promptDictationToast ? (
-                  <View style={styles.dictationToastPortal} pointerEvents="box-none">
-                    <View pointerEvents="auto">
-                      <DictationStatusNotice {...promptDictationToast} />
-                    </View>
-                  </View>
-                ) : null}
               </>
             ) : (
               <View
@@ -2253,184 +1739,6 @@ function ModalHeader({
           <X size={20} color={defaultTheme.colors.mutedForeground} />
         </Pressable>
       </View>
-    </View>
-  );
-}
-
-interface PromptSectionProps {
-  value: string;
-  isLoading: boolean;
-  onChange: (value: string) => void;
-  inputRef: RefObject<
-    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-  >;
-  inputHeight: number;
-  onContentSizeChange: (
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>
-  ) => void;
-  onDesktopSubmit?: (event: WebTextInputKeyPressEvent) => void;
-  autoFocus?: boolean;
-  scrollEnabled: boolean;
-  accessory?: ReactNode;
-}
-
-function PromptSection({
-  value,
-  isLoading,
-  onChange,
-  inputRef,
-  inputHeight,
-  onContentSizeChange,
-  onDesktopSubmit,
-  autoFocus,
-  scrollEnabled,
-  accessory,
-}: PromptSectionProps): ReactElement {
-  return (
-    <View style={styles.formSection}>
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>Initial Prompt</Text>
-        {accessory}
-      </View>
-      <TextInput
-        ref={inputRef}
-        style={[
-          styles.input,
-          styles.promptInput,
-          isLoading && styles.inputDisabled,
-          {
-            height: inputHeight,
-            minHeight: PROMPT_MIN_HEIGHT,
-            maxHeight: PROMPT_MAX_HEIGHT,
-          },
-        ]}
-        placeholder="Describe what you want the agent to do"
-        placeholderTextColor={defaultTheme.colors.mutedForeground}
-        value={value}
-        onChangeText={onChange}
-        autoCapitalize="sentences"
-        autoCorrect
-        multiline
-        scrollEnabled={scrollEnabled}
-        onContentSizeChange={onContentSizeChange}
-        editable={!isLoading}
-        autoFocus={autoFocus}
-        blurOnSubmit={false}
-        onKeyPress={onDesktopSubmit}
-      />
-    </View>
-  );
-}
-
-interface PromptDictationControlsProps {
-  isRecording: boolean;
-  isProcessing: boolean;
-  disabled: boolean;
-  volume: number;
-  onStart: () => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-  status: DictationStatus;
-  retryAttempt: number;
-  maxRetryAttempts: number;
-  retryCountdownMs?: number | null;
-  errorMessage?: string | null;
-  onRetry?: () => void;
-  onDiscard?: () => void;
-}
-
-function PromptDictationControls({
-  isRecording,
-  isProcessing,
-  disabled,
-  volume,
-  onStart,
-  onCancel,
-  onConfirm,
-  status,
-  retryAttempt,
-  maxRetryAttempts,
-  retryCountdownMs,
-  errorMessage,
-  onRetry,
-  onDiscard,
-}: PromptDictationControlsProps): ReactElement {
-  const { theme } = useUnistyles();
-
-  const isRetrying = status === "retrying";
-  const isFailed = status === "failed";
-  const showActiveState = isRecording || isProcessing || isRetrying || isFailed;
-  const cancelHandler = isFailed ? onDiscard ?? onCancel : onCancel;
-  const confirmHandler = isFailed ? onRetry ?? onConfirm : onConfirm;
-
-  if (!showActiveState) {
-    return (
-      <Pressable
-        onPress={onStart}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel="Start voice dictation"
-        style={[styles.dictationButton, disabled && styles.dictationButtonDisabled]}
-      >
-        <Mic size={16} color={theme.colors.foreground} />
-      </Pressable>
-    );
-  }
-
-  return (
-    <View style={styles.dictationActiveContainer}>
-      <View style={styles.dictationMeterWrapper}>
-        <VolumeMeter
-          volume={volume}
-          isMuted={false}
-          isDetecting
-          isSpeaking={false}
-          orientation="horizontal"
-        />
-      </View>
-      <View style={styles.dictationActionGroup}>
-        <Pressable
-          onPress={cancelHandler}
-          disabled={isProcessing && !isFailed}
-          accessibilityLabel="Cancel dictation"
-          style={[
-            styles.dictationActionButton,
-            styles.dictationActionButtonCancel,
-            isProcessing && !isFailed ? styles.dictationActionButtonDisabled : undefined,
-          ]}
-        >
-          <X size={14} color={theme.colors.foreground} />
-        </Pressable>
-        <Pressable
-          onPress={confirmHandler}
-          disabled={isProcessing}
-          accessibilityLabel={isFailed ? "Retry dictation" : "Insert transcription"}
-          style={[
-            styles.dictationActionButton,
-            styles.dictationActionButtonConfirm,
-            isProcessing ? styles.dictationActionButtonDisabled : undefined,
-          ]}
-        >
-          {isProcessing || isRetrying ? (
-            <ActivityIndicator size="small" color={theme.colors.background} />
-          ) : isFailed ? (
-            <RefreshCcw size={14} color={theme.colors.background} />
-          ) : (
-            <Check size={14} color={theme.colors.background} />
-          )}
-        </Pressable>
-      </View>
-      {(isRetrying || isFailed) && (
-        <Text style={[styles.dictationStatusLabel, { color: theme.colors.mutedForeground }]}>
-          {isRetrying
-            ? `Retrying ${Math.max(1, retryAttempt)} / ${Math.max(1, maxRetryAttempts)}${
-                retryCountdownMs && retryCountdownMs > 0
-                  ? ` in ${Math.ceil(retryCountdownMs / 1000)}s`
-                  : ""
-              }`
-            : errorMessage ?? "Dictation failed"}
-        </Text>
-      )}
     </View>
   );
 }
@@ -2757,22 +2065,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     paddingBottom: theme.spacing[8],
     gap: theme.spacing[6],
   },
-  dictationToastPortal: {
-    position: "absolute",
-    left: theme.spacing[4],
-    right: theme.spacing[4],
-    bottom: theme.spacing[6],
-  },
-  dictationNoticeWrapper: {
-    marginTop: theme.spacing[3],
-  },
   formSection: {
-    gap: theme.spacing[3],
-  },
-  labelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     gap: theme.spacing[3],
   },
   label: {
@@ -2899,13 +2192,6 @@ const styles = StyleSheet.create(((theme: any) => ({
     alignItems: "center",
     paddingVertical: theme.spacing[4],
   },
-  promptInput: {
-    minHeight: theme.spacing[24],
-    textAlignVertical: "top",
-    outlineWidth: 0,
-    outlineColor: "transparent",
-    outlineStyle: "none",
-  },
   inputDisabled: {
     opacity: theme.opacity[50],
   },
@@ -2920,55 +2206,6 @@ const styles = StyleSheet.create(((theme: any) => ({
   helperText: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
-  },
-  dictationButton: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.full,
-    padding: theme.spacing[2],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dictationButtonDisabled: {
-    opacity: theme.opacity[50],
-  },
-  dictationActiveContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  dictationMeterWrapper: {
-    width: 48,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dictationActionGroup: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-  },
-  dictationActionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: theme.borderWidth[1],
-  },
-  dictationActionButtonCancel: {
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-  },
-  dictationActionButtonConfirm: {
-    borderColor: theme.colors.foreground,
-    backgroundColor: theme.colors.foreground,
-  },
-  dictationActionButtonDisabled: {
-    opacity: theme.opacity[40],
-  },
-  dictationStatusLabel: {
-    marginTop: theme.spacing[1],
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
   },
   selectorRow: {
     flexDirection: "row",

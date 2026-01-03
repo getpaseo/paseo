@@ -609,7 +609,6 @@ export class Session {
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
       status: record.lastStatus,
-      sessionId: null,
       capabilities: defaultCapabilities,
       currentModeId: record.lastModeId ?? null,
       availableModes: [],
@@ -1107,6 +1106,17 @@ export class Session {
     const { agentId, audio, format, isLast, requestId, mode } = msg;
     const shouldAutoRun = mode === "auto_run";
 
+    // agentId is required for auto_run mode
+    if (shouldAutoRun && !agentId) {
+      console.error(
+        `[Session ${this.clientId}] agentId is required for auto_run mode`
+      );
+      return;
+    }
+
+    // Use placeholder for logging when agentId is not provided
+    const logAgentId = agentId ?? "transcription";
+
     // Decode base64
     const audioBuffer = Buffer.from(audio, "base64");
 
@@ -1114,20 +1124,20 @@ export class Session {
     // In the future, we might want to buffer chunks similar to realtime audio
     if (!isLast) {
       console.log(
-        `[Session ${this.clientId}] Buffering agent audio chunk for agent ${agentId}`
+        `[Session ${this.clientId}] Buffering agent audio chunk for agent ${logAgentId}`
       );
       // TODO: Implement buffering if needed
       return;
     }
 
     console.log(
-      `[Session ${this.clientId}] Transcribing audio for agent ${agentId}`
+      `[Session ${this.clientId}] Transcribing audio for agent ${logAgentId}`
     );
 
     try {
       // Transcribe the audio
       const result = await this.sttManager.transcribe(audioBuffer, format, {
-        agentId,
+        agentId: logAgentId,
         requestId,
         label: shouldAutoRun ? "dictation:auto_run" : "dictation",
       });
@@ -1135,13 +1145,13 @@ export class Session {
       const transcriptText = result.text.trim();
       if (!transcriptText) {
         console.log(
-          `[Session ${this.clientId}] Empty transcription for agent ${agentId}, ignoring`
+          `[Session ${this.clientId}] Empty transcription for agent ${logAgentId}, ignoring`
         );
         return;
       }
 
       console.log(
-        `[Session ${this.clientId}] Transcribed audio for agent ${agentId}: ${transcriptText}`
+        `[Session ${this.clientId}] Transcribed audio for agent ${logAgentId}: ${transcriptText}`
       );
 
       // Emit transcription result to client with requestId
@@ -1162,16 +1172,19 @@ export class Session {
 
       if (!shouldAutoRun) {
         console.log(
-          `[Session ${this.clientId}] Completed transcription for agent ${agentId} (requestId: ${requestId ?? "n/a"})`
+          `[Session ${this.clientId}] Completed transcription for agent ${logAgentId} (requestId: ${requestId ?? "n/a"})`
         );
         return;
       }
 
+      // At this point, agentId is guaranteed to be defined (validated at function start)
+      const validAgentId = agentId!;
+
       try {
-        await this.ensureAgentLoaded(agentId);
+        await this.ensureAgentLoaded(validAgentId);
       } catch (error) {
         this.handleAgentRunError(
-          agentId,
+          validAgentId,
           error,
           "Failed to initialize agent before sending audio prompt"
         );
@@ -1179,10 +1192,10 @@ export class Session {
       }
 
       try {
-        await this.interruptAgentIfRunning(agentId);
+        await this.interruptAgentIfRunning(validAgentId);
       } catch (error) {
         this.handleAgentRunError(
-          agentId,
+          validAgentId,
           error,
           "Failed to interrupt running agent before sending audio prompt"
         );
@@ -1190,22 +1203,22 @@ export class Session {
       }
 
       try {
-        this.agentManager.recordUserMessage(agentId, transcriptText);
+        this.agentManager.recordUserMessage(validAgentId, transcriptText);
       } catch (recordError) {
         console.error(
-          `[Session ${this.clientId}] Failed to record transcribed user message for agent ${agentId}:`,
+          `[Session ${this.clientId}] Failed to record transcribed user message for agent ${validAgentId}:`,
           recordError
         );
       }
 
       // Send transcribed text to agent
-      this.startAgentStream(agentId, transcriptText);
+      this.startAgentStream(validAgentId, transcriptText);
       console.log(
-        `[Session ${this.clientId}] Sent transcribed text to agent ${agentId}`
+        `[Session ${this.clientId}] Sent transcribed text to agent ${validAgentId}`
       );
     } catch (error: any) {
       console.error(
-        `[Session ${this.clientId}] Failed to process audio for agent ${agentId}:`,
+        `[Session ${this.clientId}] Failed to process audio for agent ${logAgentId}:`,
         error
       );
       this.emit({

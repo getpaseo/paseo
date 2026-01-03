@@ -89,7 +89,10 @@ class TestAgentSession implements AgentSession {
   async respondToPermission(): Promise<void> {}
 
   describePersistence() {
-    return null;
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+    };
   }
 
   async interrupt(): Promise<void> {}
@@ -165,7 +168,7 @@ describe("AgentManager", () => {
 
     expect(snapshot.runtimeInfo).toBeDefined();
     expect(snapshot.runtimeInfo?.model).toBe("gpt-5.2-codex");
-    expect(snapshot.runtimeInfo?.sessionId).toBe(snapshot.sessionId);
+    expect(snapshot.runtimeInfo?.sessionId).toBe(snapshot.persistence?.sessionId);
   });
 
   test("runAgent refreshes runtimeInfo after completion", async () => {

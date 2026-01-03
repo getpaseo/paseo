@@ -117,6 +117,15 @@ const MODE_PRESETS: Record<
   },
 };
 
+function validateCodexMode(modeId: string): void {
+  if (!(modeId in MODE_PRESETS)) {
+    const validModes = Object.keys(MODE_PRESETS).join(", ");
+    throw new Error(
+      `Invalid Codex mode "${modeId}". Valid modes are: ${validModes}`
+    );
+  }
+}
+
 function createToolCallTimelineItem(
   data: Omit<ToolCallTimelineItem, "type">
 ): AgentTimelineItem {
@@ -2757,9 +2766,13 @@ class CodexMcpAgentSession implements AgentSession {
   private pendingResumeFile: string | null = null;
 
   constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
+    if (config.modeId === undefined) {
+      throw new Error("Codex agent requires modeId to be specified");
+    }
+    validateCodexMode(config.modeId);
+
     this.config = config;
-    this.currentMode =
-      config.modeId !== undefined ? config.modeId : DEFAULT_CODEX_MODE_ID;
+    this.currentMode = config.modeId;
     this.pendingLocalId = `codex-${randomUUID()}`;
 
     if (resumeHandle) {
@@ -3053,6 +3066,8 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   async setMode(modeId: string): Promise<void> {
+    validateCodexMode(modeId);
+
     this.currentMode = modeId;
     this.config.modeId = modeId;
 

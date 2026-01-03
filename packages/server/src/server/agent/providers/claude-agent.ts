@@ -728,6 +728,12 @@ class ClaudeAgentSession implements AgentSession {
       stderr: (data: string) => {
         console.error("[ClaudeAgentSDK]", data.trim());
       },
+      env: {
+        ...process.env,
+        // Increase MCP timeouts for long-running tool calls (10 minutes)
+        MCP_TIMEOUT: "600000",
+        MCP_TOOL_TIMEOUT: "600000",
+      },
       ...this.config.extra?.claude,
     };
 

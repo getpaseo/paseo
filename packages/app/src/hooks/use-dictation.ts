@@ -31,7 +31,7 @@ export type DictationOutcome =
   | { type: "failure"; requestId: string; errorMessage: string; timestamp: number };
 
 export type UseDictationOptions = {
-  agentId: string;
+  agentId?: string;
   sendAgentAudio: SessionContextValue["sendAgentAudio"];
   ws: UseWebSocketReturn;
   mode?: "transcribe_only" | "auto_run";

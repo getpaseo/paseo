@@ -91,7 +91,6 @@ export interface Agent {
   updatedAt: Date;
   lastUserMessageAt: Date | null;
   lastActivityAt: Date;
-  sessionId: string | null;
   capabilities: AgentCapabilityFlags;
   currentModeId: string | null;
   availableModes: AgentMode[];
@@ -191,7 +190,7 @@ export interface SessionState {
       images?: Array<{ uri: string; mimeType?: string }>
     ) => Promise<void>;
     sendAgentAudio: (
-      agentId: string,
+      agentId: string | undefined,
       audioBlob: Blob,
       requestId?: string,
       options?: { mode?: "transcribe_only" | "auto_run" }

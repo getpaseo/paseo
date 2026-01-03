@@ -66,6 +66,7 @@ export class AgentRegistry {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private loaded = false;
   private filePath: string;
+  private loadPromise: Promise<StoredAgentRecord[]> | null = null;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -75,6 +76,15 @@ export class AgentRegistry {
     if (this.loaded) {
       return Array.from(this.cache.values());
     }
+
+    if (!this.loadPromise) {
+      this.loadPromise = this.doLoad();
+    }
+
+    return this.loadPromise;
+  }
+
+  private async doLoad(): Promise<StoredAgentRecord[]> {
     try {
       const content = await fs.readFile(this.filePath, "utf8");
       const parsed = await this.parseContent(content);

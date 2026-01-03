@@ -407,7 +407,7 @@ describe("agent MCP end-to-end", () => {
             cwd: agentCwd,
             title: "MCP interrupt test",
             agentType: "codex",
-            initialMode: "full-auto",
+            initialMode: "full-access",
             background: true, // Start in background so create returns immediately
           },
         })) as McpToolResult;
