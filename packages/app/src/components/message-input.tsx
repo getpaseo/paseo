@@ -189,6 +189,23 @@ export function MessageInput({
     enableDuration: true,
   });
 
+  // Cmd+D to toggle dictation on web
+  useEffect(() => {
+    if (!IS_WEB) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key === "d") {
+        event.preventDefault();
+        if (isDictating) {
+          cancelDictation();
+        } else {
+          startDictation();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isDictating, cancelDictation, startDictation]);
+
   // Animate overlay
   useEffect(() => {
     const showOverlay =
