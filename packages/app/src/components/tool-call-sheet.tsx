@@ -15,7 +15,14 @@ import {
 } from "@gorhom/bottom-sheet";
 import { Pencil, Eye, SquareTerminal, Search, Wrench, X } from "lucide-react-native";
 import { DiffViewer } from "./diff-viewer";
-import type { EditEntry, ReadEntry, CommandDetails, DiffLine } from "@/utils/tool-call-parsers";
+import {
+  extractKeyValuePairs,
+  type EditEntry,
+  type ReadEntry,
+  type CommandDetails,
+  type DiffLine,
+  type KeyValuePair,
+} from "@/utils/tool-call-parsers";
 
 // ----- Types -----
 
@@ -157,7 +164,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const [sheetData, setSheetData] = React.useState<ToolCallSheetData | null>(null);
 
-  const snapPoints = useMemo(() => ["50%", "90%"], []);
+  const snapPoints = useMemo(() => ["60%", "90%"], []);
 
   const openToolCall = useCallback((data: ToolCallSheetData) => {
     setSheetData(data);
@@ -321,24 +328,65 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   // Render content sections
   const renderSections = useCallback(() => {
     const sections: ReactNode[] = [];
+    let hasOutput = false;
 
     // Always show args first if available
     if (args !== undefined) {
+      // Add Input group header
       sections.push(
-        <View key="args" style={styles.section}>
-          <Text style={styles.sectionTitle}>Arguments</Text>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            style={styles.jsonScroll}
-            contentContainerStyle={styles.jsonContent}
-            showsHorizontalScrollIndicator={true}
-          >
-            <Text style={styles.scrollText}>{serializedArgs}</Text>
-          </ScrollView>
+        <View key="input-header" style={styles.groupHeader}>
+          <Text style={styles.groupHeaderText}>Input</Text>
         </View>
       );
+
+      const argPairs = extractKeyValuePairs(args);
+      if (argPairs.length > 0) {
+        argPairs.forEach((pair, index) => {
+          sections.push(
+            <View key={`arg-${index}-${pair.key}`} style={styles.section}>
+              <Text style={styles.sectionTitle}>{pair.key}</Text>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                style={styles.jsonScroll}
+                contentContainerStyle={styles.jsonContent}
+                showsHorizontalScrollIndicator={true}
+              >
+                <Text style={styles.scrollText}>{pair.value}</Text>
+              </ScrollView>
+            </View>
+          );
+        });
+      } else {
+        // Fallback to raw JSON display
+        sections.push(
+          <View key="args" style={styles.section}>
+            <Text style={styles.sectionTitle}>Arguments</Text>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              style={styles.jsonScroll}
+              contentContainerStyle={styles.jsonContent}
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text style={styles.scrollText}>{serializedArgs}</Text>
+            </ScrollView>
+          </View>
+        );
+      }
     }
+
+    // Helper to add output header once
+    const addOutputHeader = () => {
+      if (!hasOutput) {
+        hasOutput = true;
+        sections.push(
+          <View key="output-header" style={styles.groupHeader}>
+            <Text style={styles.groupHeaderText}>Output</Text>
+          </View>
+        );
+      }
+    };
 
     // Render based on structured result type or raw data
     if (structuredResult) {
@@ -346,6 +394,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         case "command": {
           const cmd = parsedCommandDetails ?? extractCommandFromStructured(structuredResult);
           if (cmd) {
+            addOutputHeader();
             sections.push(
               <View key="command" style={styles.section}>
                 <Text style={styles.sectionTitle}>Command</Text>
@@ -395,6 +444,9 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           const diffs = parsedEditEntries?.length
             ? parsedEditEntries
             : extractDiffFromStructured(structuredResult);
+          if (diffs.length > 0) {
+            addOutputHeader();
+          }
           diffs.forEach((entry, index) => {
             sections.push(
               <View key={`diff-${index}`} style={styles.section}>
@@ -417,6 +469,9 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           const reads = parsedReadEntries?.length
             ? parsedReadEntries
             : extractReadFromStructured(structuredResult);
+          if (reads.length > 0) {
+            addOutputHeader();
+          }
           reads.forEach((entry, index) => {
             sections.push(
               <View key={`read-${index}`} style={styles.section}>
@@ -444,6 +499,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         default: {
           if (result !== undefined && sections.length === 1) {
             // Only args shown, add result
+            addOutputHeader();
             sections.push(
               <View key="result" style={styles.section}>
                 <Text style={styles.sectionTitle}>Result</Text>
@@ -463,28 +519,50 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         }
       }
     } else if (result !== undefined) {
-      // No structured result - show raw result
-      sections.push(
-        <View key="result" style={styles.section}>
-          <Text style={styles.sectionTitle}>Result</Text>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            style={styles.jsonScroll}
-            contentContainerStyle={styles.jsonContent}
-            showsHorizontalScrollIndicator={true}
-          >
-            <Text style={styles.scrollText}>{serializedResult}</Text>
-          </ScrollView>
-        </View>
-      );
+      // No structured result - try to extract key-value pairs
+      addOutputHeader();
+      const keyValuePairs = extractKeyValuePairs(result);
+      if (keyValuePairs.length > 0) {
+        keyValuePairs.forEach((pair, index) => {
+          sections.push(
+            <View key={`kv-${index}-${pair.key}`} style={styles.section}>
+              <Text style={styles.sectionTitle}>{pair.key}</Text>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                style={styles.jsonScroll}
+                contentContainerStyle={styles.jsonContent}
+                showsHorizontalScrollIndicator={true}
+              >
+                <Text style={styles.scrollText}>{pair.value}</Text>
+              </ScrollView>
+            </View>
+          );
+        });
+      } else {
+        // Fallback to raw JSON display
+        sections.push(
+          <View key="result" style={styles.section}>
+            <Text style={styles.sectionTitle}>Result</Text>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              style={styles.jsonScroll}
+              contentContainerStyle={styles.jsonContent}
+              showsHorizontalScrollIndicator={true}
+            >
+              <Text style={styles.scrollText}>{serializedResult}</Text>
+            </ScrollView>
+          </View>
+        );
+      }
     }
 
     // Always show errors if available
     if (error !== undefined) {
       sections.push(
         <View key="error" style={styles.section}>
-          <Text style={styles.sectionTitle}>Error</Text>
+          <Text style={[styles.sectionTitle, styles.errorText]}>Error</Text>
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -644,8 +722,24 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentContainer: {
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
-    gap: theme.spacing[4],
+    paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[8],
+    gap: theme.spacing[6],
+  },
+  groupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  groupHeaderText: {
+    color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.bold,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   section: {
     gap: theme.spacing[2],

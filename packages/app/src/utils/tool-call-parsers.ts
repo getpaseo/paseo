@@ -704,3 +704,51 @@ export function extractCommandDetails(...sources: unknown[]): CommandDetails | n
   }
   return null;
 }
+
+// ---- Key-Value Extraction for Generic Tool Results ----
+
+export interface KeyValuePair {
+  key: string;
+  value: string;
+}
+
+const WrappedOutputSchema = z
+  .object({ output: z.record(z.unknown()) })
+  .transform((data) => data.output);
+
+const DirectRecordSchema = z.record(z.unknown());
+
+const ToolResultRecordSchema = z.union([WrappedOutputSchema, DirectRecordSchema]);
+
+function stringifyValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+export function extractKeyValuePairs(result: unknown): KeyValuePair[] {
+  const parsed = ToolResultRecordSchema.safeParse(result);
+  if (!parsed.success) {
+    return [];
+  }
+
+  const record = parsed.data;
+  return Object.entries(record).map(([key, value]) => ({
+    key,
+    value: stringifyValue(value),
+  }));
+}
