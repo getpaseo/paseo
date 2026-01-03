@@ -351,10 +351,22 @@ export function MessageInput({
 
   const shouldHandleDesktopSubmit = IS_WEB;
 
-  function handleDesktopSubmitKeyPress(event: WebTextInputKeyPressEvent) {
+  function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
     if (!shouldHandleDesktopSubmit) return;
-    if (event.nativeEvent.key !== "Enter") return;
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+
+    // Cmd+D or Ctrl+D: toggle dictation
+    if ((metaKey || ctrlKey) && event.nativeEvent.key === "d") {
+      event.preventDefault();
+      if (isDictating) {
+        cancelDictation();
+      } else {
+        startDictation();
+      }
+      return;
+    }
+
+    if (event.nativeEvent.key !== "Enter") return;
 
     // Shift+Enter: add newline (default behavior, don't intercept)
     if (shiftKey) return;
@@ -436,7 +448,7 @@ export function MessageInput({
           onContentSizeChange={handleContentSizeChange}
           editable={!isDictating && isConnected && !disabled}
           onKeyPress={
-            shouldHandleDesktopSubmit ? handleDesktopSubmitKeyPress : undefined
+            shouldHandleDesktopSubmit ? handleDesktopKeyPress : undefined
           }
           autoFocus={IS_WEB && autoFocus}
         />
