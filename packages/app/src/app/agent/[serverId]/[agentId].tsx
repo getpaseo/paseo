@@ -35,8 +35,7 @@ import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { AgentList } from "@/components/agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
-import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
-import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
+import { ImportAgentModal } from "@/components/create-agent-modal";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -183,11 +182,7 @@ function AgentScreenContent({
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
-  const [showCreateAgentModal, setShowCreateAgentModal] = useState(false);
   const [showImportAgentModal, setShowImportAgentModal] = useState(false);
-  const [createAgentInitialValues, setCreateAgentInitialValues] = useState<
-    CreateAgentInitialValues | undefined
-  >();
 
   const resolvedAgentId = agentId;
 
@@ -568,10 +563,6 @@ function AgentScreenContent({
     router.push({ pathname: "/agent/new", params });
   }, [agent, agentModel, handleCloseMenu, router, serverId]);
 
-  const handleCloseCreateAgentModal = useCallback(() => {
-    setShowCreateAgentModal(false);
-  }, []);
-
   const handleImportAgent = useCallback(() => {
     handleCloseMenu();
     setShowImportAgentModal(true);
@@ -595,15 +586,6 @@ function AgentScreenContent({
     [handleCloseMenu, router, serverId]
   );
 
-  const createAgentModal = (
-    <CreateAgentModal
-      isVisible={showCreateAgentModal}
-      onClose={handleCloseCreateAgentModal}
-      initialValues={createAgentInitialValues}
-      serverId={serverId}
-    />
-  );
-
   const importAgentModal = (
     <ImportAgentModal
       isVisible={showImportAgentModal}
@@ -621,7 +603,6 @@ function AgentScreenContent({
             <Text style={styles.errorText}>Agent not found</Text>
           </View>
         </View>
-        {createAgentModal}
         {importAgentModal}
       </>
     );
@@ -872,7 +853,6 @@ function AgentScreenContent({
           </View>
         </Modal>
       </View>
-      {createAgentModal}
       {importAgentModal}
     </>
   );

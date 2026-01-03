@@ -1705,10 +1705,6 @@ function LazyAgentFlowModal(props: Omit<AgentFlowModalProps, "onAfterClose">) {
   return <AgentFlowModal {...props} onAfterClose={handleAfterClose} />;
 }
 
-export function CreateAgentModal(props: ModalWrapperProps) {
-  return <LazyAgentFlowModal {...props} flow="create" />;
-}
-
 export function ImportAgentModal(props: ModalWrapperProps) {
   return <LazyAgentFlowModal {...props} flow="import" />;
 }

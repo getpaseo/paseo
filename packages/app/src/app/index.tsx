@@ -9,7 +9,7 @@ import { HomeHeader } from "@/components/headers/home-header";
 import { HomeFooter } from "@/components/home-footer";
 import { EmptyState } from "@/components/empty-state";
 import { AgentList } from "@/components/agent-list";
-import { CreateAgentModal, ImportAgentModal } from "@/components/create-agent-modal";
+import { ImportAgentModal } from "@/components/create-agent-modal";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { endNavigationTiming, HOME_NAVIGATION_KEY } from "@/utils/navigation-timing";
@@ -24,7 +24,6 @@ export default function HomeScreen() {
     refreshAll,
   } = useAggregatedAgents();
   const router = useRouter();
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingImportServerId, setPendingImportServerId] = useState<string | null>(null);
   const { modal, flow, action, serverId: serverIdParam } = useLocalSearchParams<{
@@ -34,7 +33,6 @@ export default function HomeScreen() {
     serverId?: string;
   }>();
   const deepLinkHandledRef = useRef<string | null>(null);
-  const createDeepLinkHandledRef = useRef<string | null>(null);
 
   // Keyboard animation
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -62,10 +60,6 @@ export default function HomeScreen() {
     openImportModal();
   }, [openImportModal]);
 
-  const handleCloseCreateModal = useCallback(() => {
-    setShowCreateModal(false);
-  }, []);
-
   const handleCloseImportModal = useCallback(() => {
     setShowImportModal(false);
     setPendingImportServerId(null);
@@ -75,12 +69,6 @@ export default function HomeScreen() {
     const values = [modal, flow, action];
     return values.some(
       (value) => typeof value === "string" && value.trim().toLowerCase() === "import"
-    );
-  }, [action, flow, modal]);
-  const wantsCreateDeepLink = useMemo(() => {
-    const values = [modal, flow, action];
-    return values.some(
-      (value) => typeof value === "string" && value.trim().toLowerCase() === "create"
     );
   }, [action, flow, modal]);
   const deepLinkServerId = typeof serverIdParam === "string" ? serverIdParam : null;
@@ -95,16 +83,6 @@ export default function HomeScreen() {
       serverId: deepLinkServerId,
     });
   }, [action, flow, modal, deepLinkServerId, wantsImportDeepLink]);
-  const createDeepLinkKey = useMemo(() => {
-    if (!wantsCreateDeepLink) {
-      return null;
-    }
-    return JSON.stringify({
-      action: action ?? null,
-      flow: flow ?? null,
-      modal: modal ?? null,
-    });
-  }, [action, flow, modal, wantsCreateDeepLink]);
 
   useEffect(() => {
     if (!wantsImportDeepLink || !deepLinkKey) {
@@ -117,17 +95,6 @@ export default function HomeScreen() {
     deepLinkHandledRef.current = deepLinkKey;
     openImportModal(deepLinkServerId);
   }, [deepLinkKey, deepLinkServerId, openImportModal, wantsImportDeepLink]);
-  useEffect(() => {
-    if (!wantsCreateDeepLink || !createDeepLinkKey) {
-      createDeepLinkHandledRef.current = null;
-      return;
-    }
-    if (createDeepLinkHandledRef.current === createDeepLinkKey) {
-      return;
-    }
-    createDeepLinkHandledRef.current = createDeepLinkKey;
-    setShowCreateModal(true);
-  }, [createDeepLinkKey, wantsCreateDeepLink]);
 
   useFocusEffect(
     useCallback(() => {
@@ -166,8 +133,7 @@ export default function HomeScreen() {
       {/* Home Footer */}
       <HomeFooter />
 
-      {/* Create Agent Modal */}
-      <CreateAgentModal isVisible={showCreateModal} onClose={handleCloseCreateModal} />
+      {/* Import Agent Modal */}
       <ImportAgentModal
         isVisible={showImportModal}
         onClose={handleCloseImportModal}
