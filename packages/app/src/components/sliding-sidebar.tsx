@@ -358,7 +358,7 @@ const styles = StyleSheet.create((theme) => ({
     transitionDuration: "150ms",
   },
   newAgentButtonHovered: {
-    borderColor: theme.colors.foreground,
+    borderColor: theme.colors.palette.zinc[500],
     backgroundColor: theme.colors.muted,
   },
   newAgentButtonText: {
