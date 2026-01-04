@@ -234,17 +234,12 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           <Animated.View
             style={[
               styles.mobileSidebar,
-              { width: windowWidth, paddingTop: insets.top },
+              { width: windowWidth, paddingTop: insets.top, paddingBottom: insets.bottom },
               sidebarAnimatedStyle,
             ]}
           >
+            {/* Header: New Agent button */}
             <View style={styles.sidebarHeader}>
-              <Pressable
-                style={styles.headerIconButton}
-                onPress={handleSettingsMobile}
-              >
-                <Settings size={20} color={theme.colors.foreground} />
-              </Pressable>
               <Pressable
                 style={[
                   styles.newAgentButton,
@@ -263,6 +258,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 </Text>
               </Pressable>
             </View>
+
+            {/* Middle: scrollable agent list */}
             <AgentList
               agents={agents}
               isRefreshing={isRevalidating}
@@ -270,6 +267,17 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
               selectedAgentId={selectedAgentId}
               onAgentSelect={handleAgentSelectMobile}
             />
+
+            {/* Footer: Settings button */}
+            <View style={styles.sidebarFooter}>
+              <Pressable
+                style={styles.settingsButton}
+                onPress={handleSettingsMobile}
+              >
+                <Settings size={20} color={theme.colors.mutedForeground} />
+                <Text style={styles.settingsButtonText}>Settings</Text>
+              </Pressable>
+            </View>
           </Animated.View>
         </GestureDetector>
       </View>
@@ -283,10 +291,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   return (
     <View style={[styles.desktopSidebar, { width: DESKTOP_SIDEBAR_WIDTH }]}>
+      {/* Header: New Agent button */}
       <View style={styles.sidebarHeader}>
-        <Pressable style={styles.headerIconButton} onPress={handleSettingsDesktop}>
-          <Settings size={20} color={theme.colors.foreground} />
-        </Pressable>
         <Pressable
           style={[
             styles.newAgentButton,
@@ -305,12 +311,25 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           </Text>
         </Pressable>
       </View>
+
+      {/* Middle: scrollable agent list */}
       <AgentList
         agents={agents}
         isRefreshing={isRevalidating}
         onRefresh={refreshAll}
         selectedAgentId={selectedAgentId}
       />
+
+      {/* Footer: Settings button */}
+      <View style={styles.sidebarFooter}>
+        <Pressable
+          style={styles.settingsButton}
+          onPress={handleSettingsDesktop}
+        >
+          <Settings size={20} color={theme.colors.mutedForeground} />
+          <Text style={styles.settingsButtonText}>Settings</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -336,19 +355,11 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.background,
   },
   sidebarHeader: {
-    flexDirection: "row",
-    alignItems: "center",
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[2],
-    gap: theme.spacing[2],
-  },
-  headerIconButton: {
-    padding: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
   },
   newAgentButton: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -359,5 +370,24 @@ const styles = StyleSheet.create((theme) => ({
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+  },
+  sidebarFooter: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[4],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  settingsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+  },
+  settingsButtonText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.mutedForeground,
   },
 }));

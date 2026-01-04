@@ -57,9 +57,12 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
         to: "agent",
         params: { serverId, agentId },
       });
+
       const shouldReplace = pathname.startsWith("/agent/");
       const navigate = shouldReplace ? router.replace : router.push;
+
       onAgentSelect?.();
+
       navigate({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
@@ -91,7 +94,8 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
     ({ item: agent }) => {
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
       const isRunning = agent.status === "running";
-      const isSelected = selectedAgentId === agent.id;
+      const agentKey = `${agent.serverId}:${agent.id}`;
+      const isSelected = selectedAgentId === agentKey;
       const statusColor = isRunning ? "#3b82f6" : agent.requiresAttention ? "#22c55e" : null;
 
       return (
@@ -225,7 +229,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
-    backgroundColor: theme.colors.palette.zinc[950],
   },
   agentItemSelected: {
     backgroundColor: theme.colors.palette.zinc[800],
