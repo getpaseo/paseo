@@ -206,7 +206,10 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       isGesturing.value = false;
     });
 
-  const swipeGesture = Gesture.Simultaneous(
+  // Use Race so that whichever gesture activates first wins - if vertical scroll
+  // happens first (via Native), the Pan gesture fails; if horizontal swipe
+  // happens first, Pan wins and closes the sidebar
+  const swipeGesture = Gesture.Race(
     isOpen ? closeGesture : openGesture,
     Gesture.Native()
   );
