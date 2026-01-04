@@ -1,4 +1,5 @@
-import { View, Text, Pressable, FlatList, Modal, RefreshControl, type ListRenderItem } from "react-native";
+import { View, Text, Pressable, Modal, RefreshControl, type ListRenderItem } from "react-native";
+import { FlatList } from "react-native-gesture-handler";
 import { useCallback, useMemo, useState } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
