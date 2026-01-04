@@ -1,14 +1,11 @@
-import { useCallback, useEffect } from "react";
-import { View, Pressable, useWindowDimensions, Text } from "react-native";
+import { useCallback } from "react";
+import { View, Pressable, Text, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
-  useSharedValue,
-  withTiming,
   interpolate,
   Extrapolation,
   runOnJS,
-  Easing,
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
@@ -17,10 +14,9 @@ import { router } from "expo-router";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { AgentList } from "./agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
+import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
-const ANIMATION_DURATION = 220;
-const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
 
 interface SlidingSidebarProps {
   selectedAgentId?: string;
@@ -29,46 +25,24 @@ interface SlidingSidebarProps {
 export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
-  const { isOpen, open, close } = useSidebarStore();
+  const { isOpen, close } = useSidebarStore();
   const { agents, isRevalidating, refreshAll } = useAggregatedAgents();
+  const {
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    animateToOpen,
+    animateToClose,
+    isGesturing,
+  } = useSidebarAnimation();
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-
-  // Mobile sidebar is full width
-  const sidebarWidth = isMobile ? windowWidth : DESKTOP_SIDEBAR_WIDTH;
-
-  const translateX = useSharedValue(isOpen ? 0 : -sidebarWidth);
-  const backdropOpacity = useSharedValue(isOpen ? 1 : 0);
-
-  // Track if we're currently in a gesture (to prevent useEffect from interfering)
-  const isGesturing = useSharedValue(false);
-
-  useEffect(() => {
-    // Don't animate if we're in the middle of a gesture
-    if (isGesturing.value) {
-      return;
-    }
-
-    const width = isMobile ? windowWidth : DESKTOP_SIDEBAR_WIDTH;
-    translateX.value = withTiming(isOpen ? 0 : -width, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
-    backdropOpacity.value = withTiming(isOpen ? 1 : 0, {
-      duration: ANIMATION_DURATION,
-      easing: ANIMATION_EASING,
-    });
-  }, [isOpen, translateX, backdropOpacity, isMobile, windowWidth, isGesturing]);
 
   const handleClose = useCallback(() => {
     close();
   }, [close]);
 
-  const handleOpen = useCallback(() => {
-    open();
-  }, [open]);
 
   // Mobile: close sidebar and navigate
   const handleCreateAgentMobile = useCallback(() => {
@@ -93,19 +67,16 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   }, []);
 
   // Mobile: close sidebar when agent is selected
-  // Use a quick fade instead of slide since navigation interrupts the animation
+  // Snap immediately since navigation interrupts animations
   const handleAgentSelectMobile = useCallback(() => {
-    // Fast fade out - slide animations freeze during navigation
-    backdropOpacity.value = withTiming(0, {
-      duration: 100,
-      easing: ANIMATION_EASING,
-    });
-    translateX.value = -windowWidth; // Snap immediately
+    translateX.value = -windowWidth;
+    backdropOpacity.value = 0;
     close();
   }, [close, translateX, backdropOpacity, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
   const closeGesture = Gesture.Pan()
+    .enabled(isOpen)
     // Only activate after 15px horizontal movement
     .activeOffsetX([-15, 15])
     // Fail if 10px vertical movement happens first (allow vertical scroll)
@@ -130,89 +101,16 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       if (!isMobile) return;
       const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
       if (shouldClose) {
-        translateX.value = withTiming(-windowWidth, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-        backdropOpacity.value = withTiming(0, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
+        animateToClose();
         runOnJS(handleClose)();
       } else {
-        translateX.value = withTiming(0, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-        backdropOpacity.value = withTiming(1, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
+        animateToOpen();
       }
     })
     .onFinalize(() => {
       isGesturing.value = false;
     });
 
-  // Open gesture (swipe right from left edge to open when sidebar is closed)
-  const openGesture = Gesture.Pan()
-    .hitSlop({ right: windowWidth * 0.5 })
-    // Only activate after 15px horizontal movement to the right
-    .activeOffsetX(15)
-    // Fail if 10px vertical movement happens first (allow vertical scroll)
-    .failOffsetY([-10, 10])
-    .onStart(() => {
-      isGesturing.value = true;
-    })
-    .onUpdate((event) => {
-      if (!isMobile) return;
-      // Start from closed position (-windowWidth) and move towards 0
-      const newTranslateX = Math.min(0, -windowWidth + event.translationX);
-      translateX.value = newTranslateX;
-      backdropOpacity.value = interpolate(
-        newTranslateX,
-        [-windowWidth, 0],
-        [0, 1],
-        Extrapolation.CLAMP
-      );
-    })
-    .onEnd((event) => {
-      isGesturing.value = false;
-      if (!isMobile) return;
-      // Open if dragged more than 1/3 of sidebar or fast swipe
-      const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
-      if (shouldOpen) {
-        translateX.value = withTiming(0, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-        backdropOpacity.value = withTiming(1, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-        runOnJS(handleOpen)();
-      } else {
-        translateX.value = withTiming(-windowWidth, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-        backdropOpacity.value = withTiming(0, {
-          duration: ANIMATION_DURATION,
-          easing: ANIMATION_EASING,
-        });
-      }
-    })
-    .onFinalize(() => {
-      isGesturing.value = false;
-    });
-
-  // Use Race so that whichever gesture activates first wins - if vertical scroll
-  // happens first (via Native), the Pan gesture fails; if horizontal swipe
-  // happens first, Pan wins and closes the sidebar
-  const swipeGesture = Gesture.Race(
-    isOpen ? closeGesture : openGesture,
-    Gesture.Native()
-  );
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -223,56 +121,60 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
-  // Render mobile sidebar with edge swipe
+  // Render mobile sidebar
+  // On web, use "auto" instead of "box-none" because web's pointer-events: none blocks scroll
+  const overlayPointerEvents = Platform.OS === "web" ? "auto" : "box-none";
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
+      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
         <Animated.View style={[styles.backdrop, backdropAnimatedStyle]}>
           <Pressable style={styles.backdropPressable} onPress={handleClose} />
         </Animated.View>
 
-        {/* Sidebar */}
-        <GestureDetector gesture={swipeGesture}>
+        <GestureDetector gesture={closeGesture} touchAction="pan-y">
           <Animated.View
             style={[
               styles.mobileSidebar,
               { width: windowWidth, paddingTop: insets.top, paddingBottom: insets.bottom },
               sidebarAnimatedStyle,
             ]}
+            pointerEvents="auto"
           >
-            {/* Header: New Agent button */}
-            <View style={styles.sidebarHeader}>
-              <Pressable
-                style={({ hovered }) => [
-                  styles.newAgentButton,
-                  hovered && styles.newAgentButtonHovered,
-                ]}
-                onPress={handleCreateAgentMobile}
-              >
-                <Plus size={18} color={theme.colors.foreground} />
-                <Text style={styles.newAgentButtonText}>New Agent</Text>
-              </Pressable>
-            </View>
+            <View style={styles.sidebarContent} pointerEvents="auto">
+              {/* Header */}
+              <View style={styles.sidebarHeader}>
+                <Pressable
+                  style={({ hovered }) => [
+                    styles.newAgentButton,
+                    hovered && styles.newAgentButtonHovered,
+                  ]}
+                  onPress={handleCreateAgentMobile}
+                >
+                  <Plus size={18} color={theme.colors.foreground} />
+                  <Text style={styles.newAgentButtonText}>New Agent</Text>
+                </Pressable>
+              </View>
 
-            {/* Middle: scrollable agent list */}
-            <AgentList
-              agents={agents}
-              isRefreshing={isRevalidating}
-              onRefresh={refreshAll}
-              selectedAgentId={selectedAgentId}
-              onAgentSelect={handleAgentSelectMobile}
-            />
+              {/* Middle: scrollable agent list */}
+              <AgentList
+                agents={agents}
+                isRefreshing={isRevalidating}
+                onRefresh={refreshAll}
+                selectedAgentId={selectedAgentId}
+                onAgentSelect={handleAgentSelectMobile}
+              />
 
-            {/* Footer: Settings button */}
-            <View style={styles.sidebarFooter}>
-              <Pressable
-                style={styles.settingsButton}
-                onPress={handleSettingsMobile}
-              >
-                <Settings size={20} color={theme.colors.mutedForeground} />
-                <Text style={styles.settingsButtonText}>Settings</Text>
-              </Pressable>
+              {/* Footer */}
+              <View style={styles.sidebarFooter}>
+                <Pressable
+                  style={styles.settingsButton}
+                  onPress={handleSettingsMobile}
+                >
+                  <Settings size={20} color={theme.colors.mutedForeground} />
+                  <Text style={styles.settingsButtonText}>Settings</Text>
+                </Pressable>
+              </View>
             </View>
           </Animated.View>
         </GestureDetector>
@@ -337,6 +239,12 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     bottom: 0,
     backgroundColor: theme.colors.background,
+    overflow: "hidden",
+  },
+  sidebarContent: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
   },
   desktopSidebar: {
     borderRightWidth: 1,

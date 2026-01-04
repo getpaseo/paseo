@@ -1,7 +1,7 @@
 import { Stack, usePathname } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -13,6 +13,12 @@ import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode, useMemo } from "react";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
+import { useSidebarStore } from "@/stores/sidebar-store";
+import { runOnJS, interpolate, Extrapolation } from "react-native-reanimated";
+import {
+  SidebarAnimationProvider,
+  useSidebarAnimation,
+} from "@/contexts/sidebar-animation-context";
 
 function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -40,10 +46,59 @@ interface AppContainerProps {
 
 function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
+  const { isOpen, open } = useSidebarStore();
+  const {
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    animateToOpen,
+    animateToClose,
+    isGesturing,
+  } = useSidebarAnimation();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
-  return (
+  // Open gesture: swipe right from anywhere to open sidebar (interactive drag)
+  const openGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(isMobile && !isOpen)
+        // Only activate after 15px horizontal movement to the right
+        .activeOffsetX(15)
+        // Fail if 10px vertical movement happens first (allow vertical scroll)
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          isGesturing.value = true;
+        })
+        .onUpdate((event) => {
+          // Start from closed position (-windowWidth) and move towards 0
+          const newTranslateX = Math.min(0, -windowWidth + event.translationX);
+          translateX.value = newTranslateX;
+          backdropOpacity.value = interpolate(
+            newTranslateX,
+            [-windowWidth, 0],
+            [0, 1],
+            Extrapolation.CLAMP
+          );
+        })
+        .onEnd((event) => {
+          isGesturing.value = false;
+          // Open if dragged more than 1/3 of sidebar or fast swipe
+          const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
+          if (shouldOpen) {
+            animateToOpen();
+            runOnJS(open)();
+          } else {
+            animateToClose();
+          }
+        })
+        .onFinalize(() => {
+          isGesturing.value = false;
+        }),
+    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, open, isGesturing]
+  );
+
+  const content = (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
         {!isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
@@ -51,6 +106,16 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
       </View>
       {isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
     </View>
+  );
+
+  if (!isMobile) {
+    return content;
+  }
+
+  return (
+    <GestureDetector gesture={openGesture} touchAction="pan-y">
+      {content}
+    </GestureDetector>
   );
 }
 
@@ -141,26 +206,28 @@ export default function RootLayout() {
                 <DaemonConnectionsProvider>
                   <MultiDaemonSessionHost />
                   <ProvidersWrapper>
-                    <AppWithSidebar>
-                      <Stack
-                        screenOptions={{
-                          headerShown: false,
-                          animation: "none",
-                          gestureEnabled: true,
-                          gestureDirection: "horizontal",
-                          fullScreenGestureEnabled: true,
-                        }}
-                      >
-                        <Stack.Screen name="index" />
-                        <Stack.Screen name="orchestrator" />
-                        <Stack.Screen name="agent/[id]" />
-                        <Stack.Screen name="agent/[serverId]/[agentId]" />
-                        <Stack.Screen name="settings" />
-                        <Stack.Screen name="audio-test" />
-                        <Stack.Screen name="git-diff" />
-                        <Stack.Screen name="file-explorer" />
-                      </Stack>
-                    </AppWithSidebar>
+                    <SidebarAnimationProvider>
+                      <AppWithSidebar>
+                        <Stack
+                          screenOptions={{
+                            headerShown: false,
+                            animation: "none",
+                            gestureEnabled: true,
+                            gestureDirection: "horizontal",
+                            fullScreenGestureEnabled: true,
+                          }}
+                        >
+                          <Stack.Screen name="index" />
+                          <Stack.Screen name="orchestrator" />
+                          <Stack.Screen name="agent/[id]" />
+                          <Stack.Screen name="agent/[serverId]/[agentId]" />
+                          <Stack.Screen name="settings" />
+                          <Stack.Screen name="audio-test" />
+                          <Stack.Screen name="git-diff" />
+                          <Stack.Screen name="file-explorer" />
+                        </Stack>
+                      </AppWithSidebar>
+                    </SidebarAnimationProvider>
                   </ProvidersWrapper>
                 </DaemonConnectionsProvider>
               </DaemonRegistryProvider>

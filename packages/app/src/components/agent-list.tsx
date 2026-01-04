@@ -221,6 +221,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
 const styles = StyleSheet.create((theme) => ({
   list: {
     flex: 1,
+    minHeight: 0,
   },
   listContent: {
     paddingHorizontal: theme.spacing[4],
