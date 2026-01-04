@@ -241,7 +241,10 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             {/* Header: New Agent button */}
             <View style={styles.sidebarHeader}>
               <Pressable
-                style={styles.newAgentButton}
+                style={({ hovered }) => [
+                  styles.newAgentButton,
+                  hovered && styles.newAgentButtonHovered,
+                ]}
                 onPress={handleCreateAgentMobile}
               >
                 <Plus size={18} color={theme.colors.foreground} />
@@ -284,10 +287,13 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       {/* Header: New Agent button */}
       <View style={styles.sidebarHeader}>
         <Pressable
-          style={styles.newAgentButton}
+          style={({ hovered }) => [
+            styles.newAgentButton,
+            hovered && styles.newAgentButtonHovered,
+          ]}
           onPress={handleCreateAgentDesktop}
         >
-          <Plus size={18} color={theme.colors.mutedForeground} />
+          <Plus size={18} color={theme.colors.foreground} />
           <Text style={styles.newAgentButtonText}>New Agent</Text>
         </Pressable>
       </View>
@@ -348,6 +354,10 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  newAgentButtonHovered: {
+    borderColor: theme.colors.foreground,
+    backgroundColor: theme.colors.muted,
   },
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
