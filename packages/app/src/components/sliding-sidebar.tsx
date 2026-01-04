@@ -241,21 +241,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             {/* Header: New Agent button */}
             <View style={styles.sidebarHeader}>
               <Pressable
-                style={[
-                  styles.newAgentButton,
-                  { backgroundColor: theme.colors.primary },
-                ]}
+                style={styles.newAgentButton}
                 onPress={handleCreateAgentMobile}
               >
-                <Plus size={18} color={theme.colors.primaryForeground} />
-                <Text
-                  style={[
-                    styles.newAgentButtonText,
-                    { color: theme.colors.primaryForeground },
-                  ]}
-                >
-                  New Agent
-                </Text>
+                <Plus size={18} color={theme.colors.mutedForeground} />
+                <Text style={styles.newAgentButtonText}>New Agent</Text>
               </Pressable>
             </View>
 
@@ -294,21 +284,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       {/* Header: New Agent button */}
       <View style={styles.sidebarHeader}>
         <Pressable
-          style={[
-            styles.newAgentButton,
-            { backgroundColor: theme.colors.primary },
-          ]}
+          style={styles.newAgentButton}
           onPress={handleCreateAgentDesktop}
         >
-          <Plus size={18} color={theme.colors.primaryForeground} />
-          <Text
-            style={[
-              styles.newAgentButtonText,
-              { color: theme.colors.primaryForeground },
-            ]}
-          >
-            New Agent
-          </Text>
+          <Plus size={18} color={theme.colors.mutedForeground} />
+          <Text style={styles.newAgentButtonText}>New Agent</Text>
         </Pressable>
       </View>
 
@@ -366,10 +346,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+    color: theme.colors.mutedForeground,
   },
   sidebarFooter: {
     paddingHorizontal: theme.spacing[4],
