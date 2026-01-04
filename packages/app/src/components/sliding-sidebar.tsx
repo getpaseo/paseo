@@ -354,6 +354,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
+    transitionProperty: "border-color, background-color",
+    transitionDuration: "150ms",
   },
   newAgentButtonHovered: {
     borderColor: theme.colors.foreground,
