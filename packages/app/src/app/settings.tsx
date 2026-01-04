@@ -18,7 +18,7 @@ import { useDaemonRegistry, type DaemonProfile } from "@/contexts/daemon-registr
 import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { theme as defaultTheme } from "@/styles/theme";
-import { BackHeader } from "@/components/headers/back-header";
+import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 
@@ -575,7 +575,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title="Settings" />
+      <MenuHeader title="Settings" />
 
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>

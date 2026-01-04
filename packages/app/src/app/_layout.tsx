@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams, usePathname } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -72,17 +72,21 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
 function AppWithSidebar({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const params = useLocalSearchParams<{ agentId?: string }>();
 
-  const selectedAgentId = useMemo(() => {
-    if (pathname.startsWith("/agent/") && params.agentId) {
-      return params.agentId;
+  // Parse selectedAgentKey directly from pathname
+  // useLocalSearchParams doesn't update when navigating between same-pattern routes
+  const selectedAgentKey = useMemo(() => {
+    // Match /agent/[serverId]/[agentId] pattern
+    const match = pathname.match(/^\/agent\/([^/]+)\/([^/]+)$/);
+    if (match) {
+      const [, serverId, agentId] = match;
+      return `${serverId}:${agentId}`;
     }
     return undefined;
-  }, [pathname, params.agentId]);
+  }, [pathname]);
 
   return (
-    <AppContainer selectedAgentId={selectedAgentId}>{children}</AppContainer>
+    <AppContainer selectedAgentId={selectedAgentKey}>{children}</AppContainer>
   );
 }
 
