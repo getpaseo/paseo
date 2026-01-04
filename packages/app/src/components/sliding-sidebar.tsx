@@ -244,7 +244,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 style={styles.newAgentButton}
                 onPress={handleCreateAgentMobile}
               >
-                <Plus size={18} color={theme.colors.mutedForeground} />
+                <Plus size={18} color={theme.colors.foreground} />
                 <Text style={styles.newAgentButtonText}>New Agent</Text>
               </Pressable>
             </View>
@@ -352,7 +352,7 @@ const styles = StyleSheet.create((theme) => ({
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foreground,
   },
   sidebarFooter: {
     paddingHorizontal: theme.spacing[4],
