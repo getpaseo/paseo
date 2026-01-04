@@ -20,14 +20,16 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
   const pathname = usePathname();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
-  // Sort agents with requires attention at the top
+  // Sort agents with requires attention at the top, limit to 15 for fast rendering
   const sortedAgents = useMemo(() => {
-    return [...agents].sort((a, b) => {
-      // Requires attention first
-      if (a.requiresAttention && !b.requiresAttention) return -1;
-      if (!a.requiresAttention && b.requiresAttention) return 1;
-      return 0;
-    });
+    return [...agents]
+      .sort((a, b) => {
+        // Requires attention first
+        if (a.requiresAttention && !b.requiresAttention) return -1;
+        if (!a.requiresAttention && b.requiresAttention) return 1;
+        return 0;
+      })
+      .slice(0, 15);
   }, [agents]);
 
   // Get the methods for the specific server
