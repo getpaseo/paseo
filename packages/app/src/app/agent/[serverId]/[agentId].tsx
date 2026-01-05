@@ -9,6 +9,7 @@ import {
   LayoutChangeEvent,
   ScrollView,
   Platform,
+  BackHandler,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -17,8 +18,12 @@ import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller
 import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
+  runOnJS,
+  interpolate,
+  Extrapolation,
 } from "react-native-reanimated";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import {
   MoreVertical,
   GitBranch,
@@ -28,12 +33,19 @@ import {
   Users,
   ChevronRight,
   PlusIcon,
+  PanelRightOpen,
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ImportAgentModal } from "@/components/create-agent-modal";
+import { ExplorerSidebar } from "@/components/explorer-sidebar";
+import {
+  ExplorerSidebarAnimationProvider,
+  useExplorerSidebarAnimation,
+} from "@/contexts/explorer-sidebar-animation-context";
+import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -143,10 +155,12 @@ export default function AgentScreen() {
   }
 
   return (
-    <AgentScreenContent
-      serverId={resolvedServerId}
-      agentId={resolvedAgentId}
-    />
+    <ExplorerSidebarAnimationProvider>
+      <AgentScreenContent
+        serverId={resolvedServerId}
+        agentId={resolvedAgentId}
+      />
+    </ExplorerSidebarAnimationProvider>
   );
 }
 
@@ -169,6 +183,84 @@ function AgentScreenContent({
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
   const [showImportAgentModal, setShowImportAgentModal] = useState(false);
+
+  const { isOpen: isExplorerOpen, toggle: toggleExplorer, open: openExplorer, close: closeExplorer } = useExplorerSidebarStore();
+  const {
+    translateX: explorerTranslateX,
+    backdropOpacity: explorerBackdropOpacity,
+    windowWidth: explorerWindowWidth,
+    animateToOpen: animateExplorerToOpen,
+    animateToClose: animateExplorerToClose,
+    isGesturing: isExplorerGesturing,
+  } = useExplorerSidebarAnimation();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+
+  // Swipe-left gesture to open explorer sidebar on mobile
+  const explorerOpenGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(isMobile && !isExplorerOpen)
+        // Only activate after 15px horizontal movement to the left (negative)
+        .activeOffsetX(-15)
+        // Fail if 10px vertical movement happens first (allow vertical scroll)
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          isExplorerGesturing.value = true;
+        })
+        .onUpdate((event) => {
+          // Right sidebar: start from closed position (+windowWidth) and move towards 0
+          // Swiping left means negative translationX
+          const newTranslateX = Math.max(0, explorerWindowWidth + event.translationX);
+          explorerTranslateX.value = newTranslateX;
+          explorerBackdropOpacity.value = interpolate(
+            newTranslateX,
+            [explorerWindowWidth, 0],
+            [0, 1],
+            Extrapolation.CLAMP
+          );
+        })
+        .onEnd((event) => {
+          isExplorerGesturing.value = false;
+          // Open if dragged more than 1/3 of window or fast swipe left
+          const shouldOpen = event.translationX < -explorerWindowWidth / 3 || event.velocityX < -500;
+          if (shouldOpen) {
+            animateExplorerToOpen();
+            runOnJS(openExplorer)();
+          } else {
+            animateExplorerToClose();
+          }
+        })
+        .onFinalize(() => {
+          isExplorerGesturing.value = false;
+        }),
+    [
+      isMobile,
+      isExplorerOpen,
+      explorerWindowWidth,
+      explorerTranslateX,
+      explorerBackdropOpacity,
+      animateExplorerToOpen,
+      animateExplorerToClose,
+      openExplorer,
+      isExplorerGesturing,
+    ]
+  );
+
+  // Handle hardware back button - close explorer sidebar first, then navigate back
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (isExplorerOpen) {
+        closeExplorer();
+        return true; // Prevent default back navigation
+      }
+      return false; // Let default back navigation happen
+    });
+
+    return () => handler.remove();
+  }, [isExplorerOpen, closeExplorer]);
 
   const resolvedAgentId = agentId;
 
@@ -573,50 +665,62 @@ function AgentScreenContent({
     );
   }
 
-  return (
-    <>
+  const mainContent = (
+    <View style={styles.outerContainer}>
       <View style={styles.container}>
         {/* Header */}
         <MenuHeader
           title={agent.title || "Agent"}
           rightContent={
-            <View ref={menuButtonRef} collapsable={false}>
-              <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                <MoreVertical size={20} color={theme.colors.mutedForeground} />
+            <View style={styles.headerRightContent}>
+              <Pressable onPress={toggleExplorer} style={styles.menuButton}>
+                <PanelRightOpen
+                  size={20}
+                  color={
+                    isExplorerOpen
+                      ? theme.colors.foreground
+                      : theme.colors.mutedForeground
+                  }
+                />
               </Pressable>
+              <View ref={menuButtonRef} collapsable={false}>
+                <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
+                  <MoreVertical size={20} color={theme.colors.mutedForeground} />
+                </Pressable>
+              </View>
             </View>
           }
         />
 
-        {/* Content Area with Keyboard Animation */}
-        <View style={styles.contentContainer}>
-          <ReanimatedAnimated.View
-            style={[styles.content, animatedKeyboardStyle]}
-          >
-            {isInitializing ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator
-                  size="large"
-                  color={theme.colors.primary}
+          {/* Content Area with Keyboard Animation */}
+          <View style={styles.contentContainer}>
+            <ReanimatedAnimated.View
+              style={[styles.content, animatedKeyboardStyle]}
+            >
+              {isInitializing ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator
+                    size="large"
+                    color={theme.colors.primary}
+                  />
+                  <Text style={styles.loadingText}>Loading agent...</Text>
+                </View>
+              ) : (
+                <AgentStreamView
+                  agentId={agent.id}
+                  serverId={serverId}
+                  agent={agent}
+                  streamItems={streamItems}
+                  pendingPermissions={pendingPermissions}
                 />
-                <Text style={styles.loadingText}>Loading agent...</Text>
-              </View>
-            ) : (
-              <AgentStreamView
-                agentId={agent.id}
-                serverId={serverId}
-                agent={agent}
-                streamItems={streamItems}
-                pendingPermissions={pendingPermissions}
-              />
-            )}
-          </ReanimatedAnimated.View>
-        </View>
+              )}
+            </ReanimatedAnimated.View>
+          </View>
 
-        {/* Agent Input Area */}
-        {!isInitializing && agent && resolvedAgentId && (
-          <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
-        )}
+          {/* Agent Input Area */}
+          {!isInitializing && agent && resolvedAgentId && (
+            <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
+          )}
 
         {/* Dropdown Menu */}
         <Modal
@@ -778,7 +882,30 @@ function AgentScreenContent({
             </View>
           </View>
         </Modal>
+        </View>
+
+        {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
+        {!isMobile && isExplorerOpen && resolvedAgentId && (
+          <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} />
+        )}
       </View>
+  );
+
+  return (
+    <>
+      {isMobile ? (
+        <GestureDetector gesture={explorerOpenGesture} touchAction="pan-y">
+          {mainContent}
+        </GestureDetector>
+      ) : (
+        mainContent
+      )}
+
+      {/* Mobile Explorer Sidebar Overlay */}
+      {isMobile && resolvedAgentId && (
+        <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} />
+      )}
+
       {importAgentModal}
     </>
   );
@@ -853,9 +980,18 @@ function AgentSessionUnavailableState({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  outerContainer: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: theme.colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  headerRightContent: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   contentContainer: {
     flex: 1,
