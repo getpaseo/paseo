@@ -92,11 +92,82 @@ const AgentStatusEnum = z.enum([
   "closed",
 ]);
 
+// 50 seconds - surface friendly message before SDK tool timeout (~60s)
+const AGENT_WAIT_TIMEOUT_MS = 50000;
+
 function expandPath(path: string): string {
   if (path.startsWith("~/") || path === "~") {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
+}
+
+/**
+ * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
+ * Returns a friendly message when timeout occurs, rather than letting
+ * the SDK tool timeout trigger a generic "tool failed" error.
+ */
+async function waitForAgentWithTimeout(
+  agentManager: AgentManager,
+  agentId: string,
+  options?: {
+    signal?: AbortSignal;
+    waitForActive?: boolean;
+  }
+): Promise<WaitForAgentResult> {
+  const timeoutController = new AbortController();
+  const combinedController = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    timeoutController.abort(new Error("wait timeout"));
+  }, AGENT_WAIT_TIMEOUT_MS);
+
+  const forwardAbort = (reason: unknown) => {
+    if (!combinedController.signal.aborted) {
+      combinedController.abort(reason);
+    }
+  };
+
+  // Forward external signal abort
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      forwardAbort(options.signal.reason);
+    } else {
+      options.signal.addEventListener(
+        "abort",
+        () => forwardAbort(options.signal!.reason),
+        { once: true }
+      );
+    }
+  }
+
+  // Forward timeout abort
+  timeoutController.signal.addEventListener(
+    "abort",
+    () => forwardAbort(timeoutController.signal.reason),
+    { once: true }
+  );
+
+  try {
+    const result = await agentManager.waitForAgentEvent(agentId, {
+      signal: combinedController.signal,
+      waitForActive: options?.waitForActive,
+    });
+    return result;
+  } catch (error) {
+    if (error instanceof Error && error.message === "wait timeout") {
+      const snapshot = agentManager.getAgent(agentId);
+      return {
+        status: snapshot?.lifecycle ?? "idle",
+        permission: null,
+        lastMessage:
+          "Awaiting the agent timed out. This does not mean the agent failed - call wait_for_agent again to continue waiting.",
+      };
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function startAgentRun(
@@ -373,9 +444,11 @@ export async function createAgentMcpServer(
 
           // If not running in background, wait for completion
           if (!background) {
-            const result = await agentManager.waitForAgentEvent(snapshot.id, {
-              waitForActive: true,
-            });
+            const result = await waitForAgentWithTimeout(
+              agentManager,
+              snapshot.id,
+              { waitForActive: true }
+            );
 
             const responseData = {
               agentId: snapshot.id,
@@ -481,10 +554,11 @@ export async function createAgentMcpServer(
       cleanupFns.push(unregister);
 
       try {
-        const result: WaitForAgentResult =
-          await agentManager.waitForAgentEvent(agentId, {
-            signal: abortController.signal,
-          });
+        const result: WaitForAgentResult = await waitForAgentWithTimeout(
+          agentManager,
+          agentId,
+          { signal: abortController.signal }
+        );
 
         const validJson = ensureValidJson({
           agentId,
@@ -596,7 +670,7 @@ export async function createAgentMcpServer(
 
       // If not running in background, wait for completion
       if (!background) {
-        const result = await agentManager.waitForAgentEvent(agentId, {
+        const result = await waitForAgentWithTimeout(agentManager, agentId, {
           waitForActive: true,
         });
 

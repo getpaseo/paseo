@@ -438,6 +438,11 @@ function AgentScreenContent({
       return;
     }
 
+    // Skip if not connected - will re-run when connection is established
+    if (!ws?.isConnected) {
+      return;
+    }
+
     // Skip if already initializing
     if (isInitializingFromMap === true) {
       return;
@@ -459,7 +464,7 @@ function AgentScreenContent({
     });
 
     initializeAgent({ agentId: resolvedAgentId });
-  }, [resolvedAgentId, initializeAgent, isInitializingFromMap]);
+  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, ws?.isConnected]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
