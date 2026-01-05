@@ -840,7 +840,7 @@ export class Session {
           break;
 
         case "git_diff_request":
-          await this.handleGitDiffRequest(msg.agentId);
+          await this.handleGitDiffRequest(msg.agentId, msg.requestId);
           break;
 
         case "file_explorer_request":
@@ -1967,7 +1967,7 @@ export class Session {
   /**
    * Handle git diff request for an agent
    */
-  private async handleGitDiffRequest(agentId: string): Promise<void> {
+  private async handleGitDiffRequest(agentId: string, requestId?: string): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Handling git diff request for agent ${agentId}`
     );
@@ -1983,6 +1983,7 @@ export class Session {
             agentId,
             diff: "",
             error: `Agent not found: ${agentId}`,
+            requestId,
           },
         });
         return;
@@ -1998,6 +1999,7 @@ export class Session {
           agentId,
           diff: stdout,
           error: null,
+          requestId,
         },
       });
 
@@ -2015,6 +2017,7 @@ export class Session {
           agentId,
           diff: "",
           error: error.message,
+          requestId,
         },
       });
     }

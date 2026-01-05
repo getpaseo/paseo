@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
 type ExplorerTab = "changes" | "files";
 export type ViewMode = "list" | "grid";
@@ -9,6 +10,8 @@ export type SortOption = "name" | "modified" | "size";
 export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
 export const MAX_EXPLORER_SIDEBAR_WIDTH = 800;
+
+const DEFAULT_OPEN = Platform.OS === "web";
 
 interface ExplorerSidebarState {
   isOpen: boolean;
@@ -32,7 +35,7 @@ function clampWidth(width: number): number {
 export const useExplorerSidebarStore = create<ExplorerSidebarState>()(
   persist(
     (set) => ({
-      isOpen: false,
+      isOpen: DEFAULT_OPEN,
       activeTab: "changes",
       width: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       viewMode: "list",

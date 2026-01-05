@@ -450,6 +450,7 @@ export const AgentPermissionResponseMessageSchema = z.object({
 export const GitDiffRequestSchema = z.object({
   type: z.literal("git_diff_request"),
   agentId: z.string(),
+  requestId: z.string().optional(),
 });
 
 const FileExplorerEntrySchema = z.object({
@@ -736,6 +737,7 @@ export const GitDiffResponseSchema = z.object({
     agentId: z.string(),
     diff: z.string(),
     error: z.string().nullable(),
+    requestId: z.string().optional(),
   }),
 });
 

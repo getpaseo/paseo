@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { View, Text, ActivityIndicator, Platform } from "react-native";
+import { View, Text, ActivityIndicator, Platform, RefreshControl } from "react-native";
 import { Gesture, GestureDetector, ScrollView } from "react-native-gesture-handler";
-import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { useSessionStore } from "@/stores/session-store";
+import { useGitDiffQuery } from "@/hooks/use-git-diff-query";
 
 interface ParsedDiffFile {
   path: string;
@@ -33,13 +33,28 @@ function parseDiff(diffText: string): ParsedDiffFile[] {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@") || line.startsWith("index ")) {
-        parsedLines.push({ type: "header", content: line });
+      // Skip metadata lines - they're noise in the UI
+      // - First line (a/... b/...) - already shown in file header
+      // - index ... - git hash info, not useful
+      // - --- a/... and +++ b/... - file markers, redundant
+      if (i === 0) continue;
+      if (line.startsWith("index ")) continue;
+      if (line.startsWith("--- ")) continue;
+      if (line.startsWith("+++ ")) continue;
+
+      if (line.startsWith("@@")) {
+        // Extract just the line numbers portion from @@ -x,y +x,y @@ context
+        const hunkMatch = line.match(/^(@@ .+? @@)/);
+        const hunkHeader = hunkMatch ? hunkMatch[1] : line;
+        parsedLines.push({ type: "header", content: hunkHeader });
       } else if (line.startsWith("+")) {
-        parsedLines.push({ type: "add", content: line });
+        parsedLines.push({ type: "add", content: line.slice(1) });
       } else if (line.startsWith("-")) {
-        parsedLines.push({ type: "remove", content: line });
-      } else {
+        parsedLines.push({ type: "remove", content: line.slice(1) });
+      } else if (line.startsWith(" ")) {
+        parsedLines.push({ type: "context", content: line.slice(1) });
+      } else if (line.length > 0) {
+        // Non-empty lines without prefix (rare, but handle gracefully)
         parsedLines.push({ type: "context", content: line });
       }
     }
@@ -56,9 +71,12 @@ interface GitDiffPaneProps {
 }
 
 export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
-  const [isLoading, setIsLoading] = useState(true);
-  const hasRequestedRef = useRef<string | null>(null);
+  const { theme } = useUnistyles();
   const { closeGestureRef } = useExplorerSidebarAnimation();
+  const { diff, isLoading, isFetching, isError, error, refresh } = useGitDiffQuery({
+    serverId,
+    agentId,
+  });
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -75,42 +93,6 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     state.sessions[serverId]?.agents?.get(agentId)
   );
 
-  const diffText = useSessionStore((state) =>
-    state.sessions[serverId]?.gitDiffs?.get(agentId)
-  );
-
-  const requestGitDiff = useSessionStore((state) =>
-    state.sessions[serverId]?.methods?.requestGitDiff
-  );
-
-  useEffect(() => {
-    if (!agentId || !requestGitDiff) {
-      setIsLoading(false);
-      return;
-    }
-
-    // Prevent duplicate requests for the same agentId
-    if (hasRequestedRef.current === agentId) {
-      return;
-    }
-    hasRequestedRef.current = agentId;
-
-    setIsLoading(true);
-    requestGitDiff(agentId);
-
-    const timeout = setTimeout(() => {
-      setIsLoading(false);
-    }, 5000);
-
-    return () => clearTimeout(timeout);
-  }, [agentId, requestGitDiff]);
-
-  useEffect(() => {
-    if (diffText !== undefined) {
-      setIsLoading(false);
-    }
-  }, [diffText]);
-
   if (!agent) {
     return (
       <View style={styles.errorContainer}>
@@ -119,12 +101,23 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     );
   }
 
-  const isError = diffText?.startsWith("Error:");
-  const parsedFiles = isError || !diffText ? [] : parseDiff(diffText);
+  const parsedFiles = isError || !diff ? [] : parseDiff(diff);
   const hasChanges = parsedFiles.length > 0;
+  const errorMessage = isError && error instanceof Error ? error.message : null;
 
   return (
-    <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
+    <ScrollView
+      style={styles.scrollView}
+      contentContainerStyle={styles.contentContainer}
+      refreshControl={
+        <RefreshControl
+          refreshing={isFetching && !isLoading}
+          onRefresh={refresh}
+          tintColor={theme.colors.mutedForeground}
+          colors={[theme.colors.primary]}
+        />
+      }
+    >
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
@@ -132,7 +125,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         </View>
       ) : isError ? (
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{diffText}</Text>
+          <Text style={styles.errorText}>{errorMessage ?? "Failed to load changes"}</Text>
         </View>
       ) : !hasChanges ? (
         <View style={styles.emptyContainer}>

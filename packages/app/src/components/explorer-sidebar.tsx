@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { View, Text, Pressable, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -13,12 +13,11 @@ import {
   useExplorerSidebarStore,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
+  type ViewMode,
 } from "@/stores/explorer-sidebar-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
-
-type ViewMode = "list" | "grid";
 
 type ExplorerTab = "changes" | "files";
 
@@ -30,7 +29,7 @@ interface ExplorerSidebarProps {
 export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { isOpen, activeTab, width, close, setActiveTab, setWidth } =
+  const { isOpen, activeTab, width, viewMode, close, setActiveTab, setWidth, setViewMode } =
     useExplorerSidebarStore();
   const {
     translateX,
@@ -44,9 +43,6 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-
-  // File explorer view mode state
-  const [fileViewMode, setFileViewMode] = useState<ViewMode>("list");
 
   // For resize drag, track the starting width
   const startWidthRef = useRef(width);
@@ -174,8 +170,8 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
               onClose={handleClose}
               serverId={serverId}
               agentId={agentId}
-              fileViewMode={fileViewMode}
-              onFileViewModeChange={setFileViewMode}
+              fileViewMode={viewMode}
+              onFileViewModeChange={setViewMode}
               isMobile={isMobile}
             />
           </Animated.View>
@@ -209,8 +205,8 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
         onClose={handleClose}
         serverId={serverId}
         agentId={agentId}
-        fileViewMode={fileViewMode}
-        onFileViewModeChange={setFileViewMode}
+        fileViewMode={viewMode}
+        onFileViewModeChange={setViewMode}
         isMobile={false}
       />
     </Animated.View>
