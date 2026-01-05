@@ -45,7 +45,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
   },
   bubble: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: theme.colors.muted,
     borderRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
@@ -53,7 +53,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     maxWidth: "80%",
   },
   text: {
-    color: theme.colors.primaryForeground,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     lineHeight: 24,
   },

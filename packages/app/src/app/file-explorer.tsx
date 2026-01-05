@@ -6,6 +6,7 @@ import {
   Image as RNImage,
   LayoutChangeEvent,
   ListRenderItemInfo,
+  RefreshControl,
   ViewToken,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -23,6 +24,12 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import {
+  BottomSheetModal,
+  BottomSheetScrollView,
+  BottomSheetBackdrop,
+  BottomSheetView,
+} from "@gorhom/bottom-sheet";
 import {
   File,
   FileText,
@@ -173,43 +180,43 @@ function FileExplorerContent({
   const showInitialListLoading = isListingLoading && entries.length === 0;
   const showListLoadingBanner = isListingLoading && entries.length > 0;
   const isPreviewLoading = Boolean(
-    isExplorerLoading && pendingRequest?.mode === "file"
+    isExplorerLoading &&
+      pendingRequest?.mode === "file" &&
+      pendingRequest?.path === selectedEntryPath
   );
   const error = explorerState?.lastError ?? null;
   const preview = selectedEntryPath
     ? explorerState?.files.get(selectedEntryPath)
     : null;
   const shouldShowPreview = Boolean(selectedEntryPath);
-  const pendingThumbnailPathsRef = useRef<Set<string>>(new Set());
   const [thumbnailLoadingMap, setThumbnailLoadingMap] = useState<Record<string, boolean>>({});
-  const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 50 });
-  const gridColumnCount = useMemo(() => {
-    if (windowWidth >= 1500) {
-      return 6;
-    }
-    if (windowWidth >= 1200) {
-      return 5;
-    }
-    if (windowWidth >= 960) {
-      return 4;
-    }
-    if (windowWidth >= 720) {
-      return 3;
-    }
-    if (windowWidth >= 520) {
-      return 2;
-    }
-    return 1;
-  }, [windowWidth]);
+  const viewabilityConfigRef = useRef({
+    itemVisiblePercentThreshold: 10,
+    minimumViewTime: 0,
+  });
+
+  // Bottom sheet for file preview
+  const previewSheetRef = useRef<BottomSheetModal>(null);
+  const previewSnapPoints = useMemo(() => ["80%"], []);
+
+  // Thumbnail queue state - allows up to MAX_CONCURRENT_THUMBNAILS in parallel
+  const MAX_CONCURRENT_THUMBNAILS = 2;
+  const thumbnailQueueRef = useRef<string[]>([]);
+  const inFlightPathsRef = useRef<Set<string>>(new Set());
+  const THUMBNAIL_TIMEOUT_MS = 15000;
+  const gridColumnCount = 2;
   const listColumns = viewMode === "grid" ? gridColumnCount : 1;
   const listKey = viewMode === "grid" ? `grid-${gridColumnCount}` : "list";
   const [menuEntry, setMenuEntry] = useState<ExplorerEntry | null>(null);
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
   const [menuHeight, setMenuHeight] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const agentIdRef = useRef(agentId);
   const viewModeRef = useRef(viewMode);
   const requestFilePreviewRef = useRef(requestFilePreview);
   const explorerFilesRef = useRef(explorerState?.files);
+  const refreshPathRef = useRef<string | null>(null);
+  const refreshStartedRef = useRef(false);
 
   useEffect(() => {
     agentIdRef.current = agentId;
@@ -227,36 +234,136 @@ function FileExplorerContent({
     explorerFilesRef.current = explorerState?.files;
   }, [explorerState?.files]);
 
+  // Process items from the thumbnail queue (up to MAX_CONCURRENT_THUMBNAILS in parallel)
+  const processNextThumbnail = useCallback(() => {
+    const currentAgentId = agentIdRef.current;
+    const currentRequestFilePreview = requestFilePreviewRef.current;
+
+    if (!currentAgentId || !currentRequestFilePreview) {
+      return;
+    }
+
+    // Fill up to max concurrent slots
+    while (
+      inFlightPathsRef.current.size < MAX_CONCURRENT_THUMBNAILS &&
+      thumbnailQueueRef.current.length > 0
+    ) {
+      const path = thumbnailQueueRef.current.shift()!;
+
+      // Skip if already loaded or already in flight
+      if (explorerFilesRef.current?.has(path) || inFlightPathsRef.current.has(path)) {
+        continue;
+      }
+
+      inFlightPathsRef.current.add(path);
+      setThumbnailLoadingMap((prev) => ({ ...prev, [path]: true }));
+      currentRequestFilePreview(currentAgentId, path);
+
+      // Set up timeout to clean up stuck requests
+      setTimeout(() => {
+        if (inFlightPathsRef.current.has(path)) {
+          inFlightPathsRef.current.delete(path);
+          setThumbnailLoadingMap((prev) => {
+            const next = { ...prev };
+            delete next[path];
+            return next;
+          });
+          processNextThumbnail();
+        }
+      }, THUMBNAIL_TIMEOUT_MS);
+    }
+  }, []);
+
+  // Enqueue a file preview request with optional priority
+  const enqueueFilePreview = useCallback(
+    (path: string, options?: { priority?: boolean }) => {
+      const currentAgentId = agentIdRef.current;
+      const currentRequestFilePreview = requestFilePreviewRef.current;
+
+      if (!currentAgentId || !currentRequestFilePreview) {
+        return;
+      }
+
+      // Already have this file cached
+      if (explorerFilesRef.current?.has(path)) {
+        return;
+      }
+
+      if (options?.priority) {
+        // Priority request: clear queue entirely
+        thumbnailQueueRef.current = [];
+
+        // If this path is already in flight, let it complete
+        if (inFlightPathsRef.current.has(path)) {
+          return;
+        }
+
+        // Clear all in-flight thumbnails (their timeouts will clean up loading state)
+        if (inFlightPathsRef.current.size > 0) {
+          const abandonedPaths = Array.from(inFlightPathsRef.current);
+          setThumbnailLoadingMap((prev) => {
+            const next = { ...prev };
+            abandonedPaths.forEach((p) => delete next[p]);
+            return next;
+          });
+          inFlightPathsRef.current.clear();
+        }
+
+        // Fire immediately for priority requests
+        inFlightPathsRef.current.add(path);
+        setThumbnailLoadingMap((prev) => ({ ...prev, [path]: true }));
+        currentRequestFilePreview(currentAgentId, path);
+
+        // Set up timeout for priority requests too
+        setTimeout(() => {
+          if (inFlightPathsRef.current.has(path)) {
+            inFlightPathsRef.current.delete(path);
+            setThumbnailLoadingMap((prev) => {
+              const next = { ...prev };
+              delete next[path];
+              return next;
+            });
+            processNextThumbnail();
+          }
+        }, THUMBNAIL_TIMEOUT_MS);
+
+        return;
+      }
+
+      // Non-priority: add to queue if not already queued or in-flight
+      if (
+        !thumbnailQueueRef.current.includes(path) &&
+        !inFlightPathsRef.current.has(path)
+      ) {
+        thumbnailQueueRef.current.push(path);
+        processNextThumbnail();
+      }
+    },
+    [processNextThumbnail]
+  );
+
   const handleViewableItemsChangedRef = useRef(
     ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-      const currentAgentId = agentIdRef.current;
       const currentViewMode = viewModeRef.current;
-      const currentRequestFilePreview = requestFilePreviewRef.current;
-      if (!currentAgentId || currentViewMode !== "grid" || !currentRequestFilePreview) {
+
+      if (currentViewMode !== "grid") {
         return;
       }
 
       viewableItems.forEach((token) => {
         const item = token.item as ExplorerEntry | undefined;
-        if (!item) {
+        if (!item || getEntryDisplayKind(item) !== "image") {
           return;
         }
-
-        if (getEntryDisplayKind(item) !== "image") {
-          return;
-        }
-
-        const hasPreview = explorerFilesRef.current?.get(item.path);
-        if (hasPreview || pendingThumbnailPathsRef.current.has(item.path)) {
-          return;
-        }
-
-        pendingThumbnailPathsRef.current.add(item.path);
-        setThumbnailLoadingMap((prev) => ({ ...prev, [item.path]: true }));
-        currentRequestFilePreview(currentAgentId, item.path);
+        enqueueFilePreviewRef.current?.(item.path);
       });
     }
   );
+
+  const enqueueFilePreviewRef = useRef(enqueueFilePreview);
+  useEffect(() => {
+    enqueueFilePreviewRef.current = enqueueFilePreview;
+  }, [enqueueFilePreview]);
 
   const restoreQueuedScrollOffset = useCallback(() => {
     if (pendingScrollRestoreRef.current === null) {
@@ -281,6 +388,15 @@ function FileExplorerContent({
   useEffect(() => {
     setSelectedEntryPath(null);
   }, [activePath]);
+
+  // Open/close preview sheet based on selection
+  useEffect(() => {
+    if (selectedEntryPath) {
+      previewSheetRef.current?.present();
+    } else {
+      previewSheetRef.current?.dismiss();
+    }
+  }, [selectedEntryPath]);
 
   useEffect(() => {
     if (shouldShowPreview) {
@@ -312,14 +428,14 @@ function FileExplorerContent({
   }, [agentId, initialTargetDirectory, requestDirectoryListing]);
 
   useEffect(() => {
-    if (!agentId || !normalizedFileParam || !requestFilePreview) {
+    if (!agentId || !normalizedFileParam) {
       pendingFileParamRef.current = null;
       return;
     }
 
     pendingFileParamRef.current = normalizedFileParam;
-    requestFilePreview(agentId, normalizedFileParam);
-  }, [agentId, normalizedFileParam, requestFilePreview]);
+    enqueueFilePreview(normalizedFileParam, { priority: true });
+  }, [agentId, normalizedFileParam, enqueueFilePreview]);
 
   useEffect(() => {
     if (!agentId) {
@@ -342,7 +458,7 @@ function FileExplorerContent({
 
   const handleEntryPress = useCallback(
     (entry: ExplorerEntry) => {
-      if (!agentId || !requestDirectoryListing || !requestFilePreview) {
+      if (!agentId || !requestDirectoryListing) {
         return;
       }
 
@@ -353,9 +469,9 @@ function FileExplorerContent({
       }
 
       setSelectedEntryPath(entry.path);
-      requestFilePreview(agentId, entry.path);
+      enqueueFilePreview(entry.path, { priority: true });
     },
-    [agentId, requestDirectoryListing, requestFilePreview]
+    [agentId, requestDirectoryListing, enqueueFilePreview]
   );
 
   const handleCopyPath = useCallback(async (path: string) => {
@@ -478,12 +594,69 @@ function FileExplorerContent({
     router.back();
   }, [agentId, serverId]);
 
+  const handleClosePreviewSheet = useCallback(() => {
+    setSelectedEntryPath(null);
+  }, []);
+
+  const handlePreviewSheetChange = useCallback((index: number) => {
+    if (index === -1) {
+      setSelectedEntryPath(null);
+    }
+  }, []);
+
+  const renderPreviewBackdrop = useCallback(
+    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
+      <BottomSheetBackdrop
+        {...props}
+        disappearsOnIndex={-1}
+        appearsOnIndex={0}
+        opacity={0.5}
+      />
+    ),
+    []
+  );
+
   const handleRetryDirectory = useCallback(() => {
     if (!agentId || !requestDirectoryListing) {
       return;
     }
     requestDirectoryListing(agentId, activePath);
   }, [agentId, requestDirectoryListing, activePath]);
+
+  const handleRefresh = useCallback(() => {
+    if (!agentId || !requestDirectoryListing) {
+      return;
+    }
+    refreshPathRef.current = activePath;
+    refreshStartedRef.current = false;
+    setIsRefreshing(true);
+    requestDirectoryListing(agentId, activePath, { recordHistory: false });
+  }, [agentId, requestDirectoryListing, activePath]);
+
+  useEffect(() => {
+    if (!isRefreshing) {
+      return;
+    }
+
+    const refreshPath = refreshPathRef.current;
+    if (!refreshPath) {
+      return;
+    }
+
+    const isMatchingList =
+      pendingRequest?.mode === "list" && pendingRequest?.path === refreshPath;
+
+    if (isMatchingList) {
+      refreshStartedRef.current = true;
+      return;
+    }
+
+    if (refreshStartedRef.current) {
+      setIsRefreshing(false);
+      refreshPathRef.current = null;
+      refreshStartedRef.current = false;
+    }
+  }, [isRefreshing, pendingRequest?.mode, pendingRequest?.path]);
 
   const handleBackNavigation = useCallback(() => {
     if (!agentId) {
@@ -609,26 +782,48 @@ function FileExplorerContent({
     );
   }, [activePath, showListLoadingBanner, viewMode]);
 
+  // Watch for completed file previews and process queue
   useEffect(() => {
     if (!explorerState) {
       return;
     }
-    setThumbnailLoadingMap((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      Object.keys(prev).forEach((path) => {
-        if (explorerState.files.has(path)) {
-          delete next[path];
-          pendingThumbnailPathsRef.current.delete(path);
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [explorerState?.files.size]);
 
+    // Check which in-flight requests have completed
+    const completedPaths: string[] = [];
+    for (const path of inFlightPathsRef.current) {
+      if (explorerState.files.has(path)) {
+        completedPaths.push(path);
+      }
+    }
+
+    if (completedPaths.length === 0) {
+      return;
+    }
+
+    // Remove completed paths from in-flight set
+    for (const path of completedPaths) {
+      inFlightPathsRef.current.delete(path);
+    }
+
+    // Clear loading state for completed files
+    setThumbnailLoadingMap((prev) => {
+      const next = { ...prev };
+      for (const path of completedPaths) {
+        delete next[path];
+      }
+      return next;
+    });
+
+    // Schedule next batch processing after state update
+    queueMicrotask(() => {
+      processNextThumbnail();
+    });
+  }, [explorerState?.files.size, processNextThumbnail]);
+
+  // Clear queue and loading state on path/view change
   useEffect(() => {
-    pendingThumbnailPathsRef.current.clear();
+    thumbnailQueueRef.current = [];
+    inFlightPathsRef.current.clear();
     setThumbnailLoadingMap({});
   }, [activePath, viewMode]);
 
@@ -654,7 +849,7 @@ function FileExplorerContent({
   return (
     <View style={styles.container}>
       <BackHeader
-        title={selectedEntryPath ?? (activePath || ".")}
+        title={activePath || "."}
         onBack={handleBackNavigation}
         rightContent={
           <Pressable style={styles.closeButton} onPress={handleCloseExplorer}>
@@ -664,99 +859,56 @@ function FileExplorerContent({
       />
 
       <View style={styles.content}>
-        {shouldShowPreview ? (
-          <View style={styles.previewWrapper}>
-            <View style={styles.previewSection}>
-              {isPreviewLoading && !preview ? (
-                <View style={styles.centerState}>
-                  <ActivityIndicator size="small" />
-                  <Text style={styles.loadingText}>Loading file...</Text>
-                </View>
-              ) : !preview ? (
-                <View style={styles.centerState}>
-                  <Text style={styles.emptyText}>No preview available yet</Text>
-                </View>
-              ) : preview.kind === "text" ? (
-                <ScrollView
-                  style={styles.textPreview}
-                  horizontal={false}
-                  contentContainerStyle={styles.textPreviewContent}
-                >
-                  <ScrollView horizontal>
-                    <Text style={styles.codeText}>{preview.content}</Text>
-                  </ScrollView>
-                </ScrollView>
-              ) : preview.kind === "image" && preview.content ? (
-                <View style={styles.imagePreviewContainer}>
-                  <RNImage
-                    source={{
-                      uri: `data:${preview.mimeType ?? "image/png"};base64,${
-                        preview.content
-                      }`,
-                    }}
-                    style={styles.image}
-                    resizeMode="contain"
-                  />
-                </View>
-              ) : (
-                <View style={styles.centerState}>
-                  <Text style={styles.emptyText}>Binary preview unavailable</Text>
-                  <Text style={styles.entryMeta}>
-                    {formatFileSize({ size: preview.size })}
-                  </Text>
-                </View>
-              )}
+        <View style={styles.listSection}>
+          {error ? (
+            <View style={styles.centerState}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </Pressable>
             </View>
-          </View>
-        ) : (
-          <View style={styles.listSection}>
-            {error ? (
-              <View style={styles.centerState}>
-                <Text style={styles.errorText}>{error}</Text>
-                <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </Pressable>
-              </View>
-            ) : showInitialListLoading ? (
-              <View style={styles.centerState}>
-                <ActivityIndicator size="small" />
-                <Text style={styles.loadingText}>Loading directory...</Text>
-              </View>
-            ) : entries.length === 0 ? (
-              <View style={styles.centerState}>
-                <Text style={styles.emptyText}>Directory is empty</Text>
-              </View>
-            ) : (
-              <FlatList
-                ref={listScrollRef}
-                data={entries}
-                renderItem={renderEntry}
-                keyExtractor={(item) => item.path}
-                contentContainerStyle={
-                  viewMode === "grid" ? styles.gridContent : styles.entriesContent
-                }
-                columnWrapperStyle={
-                  viewMode === "grid" && listColumns > 1
-                    ? styles.gridColumnWrapper
-                    : undefined
-                }
-                numColumns={listColumns}
-                key={listKey}
-                onScroll={handleListScroll}
-                scrollEventThrottle={16}
-                onLayout={restoreQueuedScrollOffset}
-                onContentSizeChange={restoreQueuedScrollOffset}
-                ListHeaderComponent={listHeaderComponent}
-                extraData={{ viewMode, thumbnailLoadingMap }}
-                initialNumToRender={20}
-                maxToRenderPerBatch={30}
-                windowSize={10}
-                onViewableItemsChanged={handleViewableItemsChangedRef.current}
-                viewabilityConfig={viewabilityConfigRef.current}
-              />
-            )}
-          </View>
-        )}
+          ) : showInitialListLoading ? (
+            <View style={styles.centerState}>
+              <ActivityIndicator size="small" />
+              <Text style={styles.loadingText}>Loading directory...</Text>
+            </View>
+          ) : entries.length === 0 ? (
+            <View style={styles.centerState}>
+              <Text style={styles.emptyText}>Directory is empty</Text>
+            </View>
+          ) : (
+            <FlatList
+              ref={listScrollRef}
+              data={entries}
+              renderItem={renderEntry}
+              keyExtractor={(item) => item.path}
+              contentContainerStyle={
+                viewMode === "grid" ? styles.gridContent : styles.entriesContent
+              }
+              columnWrapperStyle={
+                viewMode === "grid" && listColumns > 1
+                  ? styles.gridColumnWrapper
+                  : undefined
+              }
+              numColumns={listColumns}
+              key={listKey}
+              onScroll={handleListScroll}
+              scrollEventThrottle={16}
+              onLayout={restoreQueuedScrollOffset}
+              onContentSizeChange={restoreQueuedScrollOffset}
+              ListHeaderComponent={listHeaderComponent}
+              extraData={{ viewMode, thumbnailLoadingMap }}
+              initialNumToRender={20}
+              maxToRenderPerBatch={30}
+                windowSize={15}
+              refreshControl={
+                <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+              }
+              onViewableItemsChanged={handleViewableItemsChangedRef.current}
+              viewabilityConfig={viewabilityConfigRef.current}
+            />
+          )}
+        </View>
       </View>
 
       <Modal
@@ -804,6 +956,61 @@ function FileExplorerContent({
           ) : null}
         </View>
       </Modal>
+
+      <BottomSheetModal
+        ref={previewSheetRef}
+        snapPoints={previewSnapPoints}
+        onChange={handlePreviewSheetChange}
+        backdropComponent={renderPreviewBackdrop}
+        enablePanDownToClose
+        backgroundStyle={styles.sheetBackground}
+        handleIndicatorStyle={styles.handleIndicator}
+      >
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle} numberOfLines={1}>
+            {selectedEntryPath?.split("/").pop() ?? "Preview"}
+          </Text>
+          <Pressable onPress={handleClosePreviewSheet} style={styles.sheetCloseButton}>
+            <X size={20} color={theme.colors.mutedForeground} />
+          </Pressable>
+        </View>
+        {isPreviewLoading && !preview ? (
+          <View style={styles.sheetCenterState}>
+            <ActivityIndicator size="small" />
+            <Text style={styles.loadingText}>Loading file...</Text>
+          </View>
+        ) : !preview ? (
+          <View style={styles.sheetCenterState}>
+            <Text style={styles.emptyText}>No preview available yet</Text>
+          </View>
+        ) : preview.kind === "text" ? (
+          <BottomSheetScrollView
+            style={styles.sheetContent}
+            contentContainerStyle={styles.sheetScrollContent}
+          >
+            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+              <Text style={styles.codeText}>{preview.content}</Text>
+            </ScrollView>
+          </BottomSheetScrollView>
+        ) : preview.kind === "image" && preview.content ? (
+          <BottomSheetView style={styles.sheetImageContainer}>
+            <RNImage
+              source={{
+                uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+              }}
+              style={styles.sheetImage}
+              resizeMode="contain"
+            />
+          </BottomSheetView>
+        ) : (
+          <View style={styles.sheetCenterState}>
+            <Text style={styles.emptyText}>Binary preview unavailable</Text>
+            <Text style={styles.entryMeta}>
+              {formatFileSize({ size: preview.size })}
+            </Text>
+          </View>
+        )}
+      </BottomSheetModal>
     </View>
   );
 }
@@ -1437,6 +1644,54 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   image: {
+    width: "100%",
+    height: "100%",
+  },
+  // Bottom sheet styles
+  sheetBackground: {
+    backgroundColor: theme.colors.card,
+  },
+  handleIndicator: {
+    backgroundColor: theme.colors.palette.zinc[600],
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  sheetTitle: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    flex: 1,
+  },
+  sheetCloseButton: {
+    padding: theme.spacing[2],
+  },
+  sheetContent: {
+    flex: 1,
+  },
+  sheetScrollContent: {
+    padding: theme.spacing[4],
+  },
+  sheetCenterState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    padding: theme.spacing[4],
+  },
+  sheetImageContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+  },
+  sheetImage: {
     width: "100%",
     height: "100%",
   },

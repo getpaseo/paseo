@@ -189,22 +189,30 @@ export function MessageInput({
     enableDuration: true,
   });
 
-  // Cmd+D to toggle dictation on web
+  // Cmd+D to start/submit dictation, Escape to cancel
   useEffect(() => {
     if (!IS_WEB) return;
     function handleKeyDown(event: KeyboardEvent) {
+      // Cmd+D: start dictation or submit if already dictating
       if ((event.metaKey || event.ctrlKey) && event.key === "d") {
         event.preventDefault();
         if (isDictating) {
-          cancelDictation();
+          sendAfterTranscriptRef.current = true;
+          confirmDictation();
         } else {
           startDictation();
         }
+        return;
+      }
+      // Escape: cancel dictation
+      if (event.key === "Escape" && isDictating) {
+        event.preventDefault();
+        cancelDictation();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isDictating, cancelDictation, startDictation]);
+  }, [isDictating, cancelDictation, confirmDictation, startDictation]);
 
   // Animate overlay
   useEffect(() => {
@@ -355,14 +363,22 @@ export function MessageInput({
     if (!shouldHandleDesktopSubmit) return;
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
 
-    // Cmd+D or Ctrl+D: toggle dictation
+    // Cmd+D or Ctrl+D: start dictation or submit if already dictating
     if ((metaKey || ctrlKey) && event.nativeEvent.key === "d") {
       event.preventDefault();
       if (isDictating) {
-        cancelDictation();
+        sendAfterTranscriptRef.current = true;
+        confirmDictation();
       } else {
         startDictation();
       }
+      return;
+    }
+
+    // Escape: cancel dictation
+    if (event.nativeEvent.key === "Escape" && isDictating) {
+      event.preventDefault();
+      cancelDictation();
       return;
     }
 
@@ -561,6 +577,13 @@ const styles = StyleSheet.create(((theme: any) => ({
       xs: theme.spacing[3],
       md: theme.spacing[4],
     },
+    ...(IS_WEB
+      ? {
+          transitionProperty: "border-color",
+          transitionDuration: "200ms",
+          transitionTimingFunction: "ease-in-out",
+        }
+      : {}),
   },
   imagePreviewContainer: {
     flexDirection: "row",
