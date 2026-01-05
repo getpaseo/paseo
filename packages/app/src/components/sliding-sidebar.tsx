@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { View, Pressable, Text, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -17,6 +17,7 @@ import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
+const SIDEBAR_AGENT_LIMIT = 15;
 
 interface SlidingSidebarProps {
   selectedAgentId?: string;
@@ -38,6 +39,20 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+
+  const sortedAgents = useMemo(() => {
+    return [...agents].sort((a, b) => {
+      if (a.requiresAttention && !b.requiresAttention) return -1;
+      if (!a.requiresAttention && b.requiresAttention) return 1;
+      return 0;
+    });
+  }, [agents]);
+
+  const limitedAgents = useMemo(
+    () => sortedAgents.slice(0, SIDEBAR_AGENT_LIMIT),
+    [sortedAgents]
+  );
+  const hasMore = agents.length > SIDEBAR_AGENT_LIMIT;
 
   const handleClose = useCallback(() => {
     close();
@@ -73,6 +88,15 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     backdropOpacity.value = 0;
     close();
   }, [close, translateX, backdropOpacity, windowWidth]);
+
+  const handleViewMore = useCallback(() => {
+    if (isMobile) {
+      translateX.value = -windowWidth;
+      backdropOpacity.value = 0;
+    }
+    close();
+    router.push("/agents");
+  }, [backdropOpacity, close, isMobile, translateX, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
   const closeGesture = Gesture.Pan()
@@ -121,6 +145,21 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
+  const viewMoreButton = hasMore ? (
+    <View style={styles.viewMoreContainer}>
+      <Pressable
+        style={({ hovered }) => [
+          styles.newAgentButton,
+          styles.viewMoreButton,
+          hovered && styles.newAgentButtonHovered,
+        ]}
+        onPress={handleViewMore}
+      >
+        <Text style={styles.viewMoreButtonText}>View More</Text>
+      </Pressable>
+    </View>
+  ) : null;
+
   // Render mobile sidebar
   // On web, use "auto" instead of "box-none" because web's pointer-events: none blocks scroll
   const overlayPointerEvents = Platform.OS === "web" ? "auto" : "box-none";
@@ -158,11 +197,12 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
               {/* Middle: scrollable agent list */}
               <AgentList
-                agents={agents}
+                agents={limitedAgents}
                 isRefreshing={isRevalidating}
                 onRefresh={refreshAll}
                 selectedAgentId={selectedAgentId}
                 onAgentSelect={handleAgentSelectMobile}
+                listFooterComponent={viewMoreButton}
               />
 
               {/* Footer */}
@@ -205,10 +245,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
       {/* Middle: scrollable agent list */}
       <AgentList
-        agents={agents}
+        agents={limitedAgents}
         isRefreshing={isRevalidating}
         onRefresh={refreshAll}
         selectedAgentId={selectedAgentId}
+        listFooterComponent={viewMoreButton}
       />
 
       {/* Footer: Settings button */}
@@ -273,6 +314,17 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.muted,
   },
   newAgentButtonText: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foreground,
+  },
+  viewMoreContainer: {
+    paddingTop: theme.spacing[2],
+  },
+  viewMoreButton: {
+    paddingVertical: theme.spacing[2],
+  },
+  viewMoreButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,

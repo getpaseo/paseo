@@ -218,6 +218,7 @@ export default function RootLayout() {
                           }}
                         >
                           <Stack.Screen name="index" />
+                          <Stack.Screen name="agents" />
                           <Stack.Screen name="orchestrator" />
                           <Stack.Screen name="agent/[id]" />
                           <Stack.Screen name="agent/[serverId]/[agentId]" />

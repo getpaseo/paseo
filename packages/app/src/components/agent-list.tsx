@@ -1,6 +1,6 @@
 import { View, Text, Pressable, Modal, RefreshControl, type ListRenderItem } from "react-native";
 import { FlatList } from "react-native-gesture-handler";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
@@ -14,24 +14,20 @@ interface AgentListProps {
   onRefresh?: () => void;
   selectedAgentId?: string;
   onAgentSelect?: () => void;
+  listFooterComponent?: ReactElement | null;
 }
 
-export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAgentId, onAgentSelect }: AgentListProps) {
+export function AgentList({
+  agents,
+  isRefreshing = false,
+  onRefresh,
+  selectedAgentId,
+  onAgentSelect,
+  listFooterComponent,
+}: AgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
-
-  // Sort agents with requires attention at the top, limit to 15 for fast rendering
-  const sortedAgents = useMemo(() => {
-    return [...agents]
-      .sort((a, b) => {
-        // Requires attention first
-        if (a.requiresAttention && !b.requiresAttention) return -1;
-        if (!a.requiresAttention && b.requiresAttention) return 1;
-        return 0;
-      })
-      .slice(0, 15);
-  }, [agents]);
 
   // Get the methods for the specific server
   const methods = useSessionStore((state) =>
@@ -148,7 +144,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
   return (
     <>
       <FlatList
-        data={sortedAgents}
+        data={agents}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
@@ -161,6 +157,7 @@ export function AgentList({ agents, isRefreshing = false, onRefresh, selectedAge
         maxToRenderPerBatch={12}
         updateCellsBatchingPeriod={16}
         removeClippedSubviews={true}
+        ListFooterComponent={listFooterComponent}
         refreshControl={
           onRefresh ? (
             <RefreshControl

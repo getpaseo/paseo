@@ -49,226 +49,265 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   content: {
-    padding: theme.spacing[6],
+    padding: theme.spacing[4],
+    paddingTop: theme.spacing[6],
   },
   section: {
-    marginBottom: theme.spacing[8],
+    marginBottom: theme.spacing[6],
   },
   sectionTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing[4],
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: theme.spacing[3],
+    marginLeft: theme.spacing[1],
   },
   label: {
     color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
     marginBottom: theme.spacing[2],
   },
   input: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.background,
     color: theme.colors.foreground,
-    padding: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[2],
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    fontSize: theme.fontSize.base,
   },
-  settingCard: {
+  inputUrl: {
+    fontFamily: "monospace",
+  },
+  // Host card styles
+  hostCard: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[4],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     marginBottom: theme.spacing[3],
+    overflow: "hidden",
   },
-  daemonCard: {
+  hostCardContent: {
+    padding: theme.spacing[4],
     gap: theme.spacing[2],
   },
-  settingRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  daemonHeaderRow: {
+  hostHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  settingContent: {
-    flex: 1,
-  },
-  settingTitle: {
+  hostLabel: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    marginBottom: theme.spacing[1],
+    fontWeight: theme.fontWeight.semibold,
   },
-  settingDescription: {
+  hostUrl: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
+    fontFamily: "monospace",
   },
-  connectionStatusBadge: {
+  hostError: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+  },
+  // Status pill
+  statusPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  connectionStatusDot: {
-    width: 8,
-    height: 8,
+    gap: 6,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.full,
   },
-  connectionStatusText: {
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+  },
+  statusText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
-  connectionErrorText: {
-    color: theme.colors.destructive,
-    fontSize: theme.fontSize.xs,
-    marginTop: theme.spacing[1],
-  },
-  daemonActionsRow: {
+  // Host actions
+  hostActionsRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing[2],
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    gap: theme.spacing[1],
   },
-  daemonActionButton: {
+  hostActionButton: {
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
   },
-  daemonActionText: {
-    color: theme.colors.foreground,
+  hostActionText: {
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
-  daemonActionDestructive: {
-    borderColor: theme.colors.destructive,
+  hostActionPrimary: {
+    backgroundColor: theme.colors.palette.blue[500],
   },
-  daemonActionDestructiveText: {
-    color: theme.colors.destructive,
+  hostActionPrimaryText: {
+    color: theme.colors.palette.white,
   },
-  daemonFormActionsRow: {
+  hostActionDestructiveText: {
+    color: theme.colors.palette.red[500],
+  },
+  hostActionDisabled: {
+    opacity: theme.opacity[50],
+  },
+  hostActionSeparator: {
+    width: 1,
+    height: 16,
+    backgroundColor: theme.colors.border,
+    marginHorizontal: theme.spacing[1],
+  },
+  testResultText: {
+    fontSize: theme.fontSize.xs,
+  },
+  // Add host button
+  addButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderStyle: "dashed",
+  },
+  addButtonText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  // Add/Edit form
+  formCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+    gap: theme.spacing[4],
+  },
+  formTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  formField: {
+    gap: theme.spacing[2],
+  },
+  formActionsRow: {
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
-    marginTop: theme.spacing[3],
   },
-  daemonActionPrimary: {
+  formButton: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  formButtonPrimary: {
     backgroundColor: theme.colors.palette.blue[500],
     borderColor: theme.colors.palette.blue[500],
   },
-  daemonActionPrimaryText: {
-    color: theme.colors.palette.white,
-  },
-  daemonActionDisabled: {
-    opacity: theme.opacity[50],
-  },
-  testResultSuccessText: {
-    color: theme.colors.palette.green[400],
-    fontSize: theme.fontSize.xs,
-  },
-  testResultErrorText: {
-    color: theme.colors.palette.red[200],
-    fontSize: theme.fontSize.xs,
-  },
-  testResultInfoText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-  },
-  addButton: {
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    alignItems: "center",
-  },
-  addButtonText: {
+  formButtonText: {
     color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
-  themeCardDisabled: {
+  formButtonPrimaryText: {
+    color: theme.colors.palette.white,
+  },
+  // Audio settings card
+  audioCard: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[4],
-    opacity: theme.opacity[50],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
   },
-  themeHelpText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    marginBottom: theme.spacing[3],
-  },
-  themeOption: {
+  audioRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: theme.spacing[2],
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
   },
-  radioOuter: {
-    width: 20,
-    height: 20,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: theme.borderWidth[2],
+  audioRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  audioRowContent: {
+    flex: 1,
     marginRight: theme.spacing[3],
-    alignItems: "center",
-    justifyContent: "center",
   },
-  radioOuterSelected: {
-    borderColor: theme.colors.palette.blue[500],
+  audioRowTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
   },
-  radioOuterUnselected: {
-    borderColor: theme.colors.border,
-  },
-  radioInner: {
-    width: 12,
-    height: 12,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  themeOptionText: {
+  audioRowDescription: {
     color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.base,
-    textTransform: "capitalize",
+    fontSize: theme.fontSize.sm,
+    marginTop: 2,
   },
-  saveButton: {
-    padding: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[3],
-    backgroundColor: theme.colors.palette.blue[500],
-  },
-  saveButtonDisabled: {
-    backgroundColor: theme.colors.palette.blue[900],
-    opacity: theme.opacity[50],
-  },
-  saveButtonText: {
-    color: theme.colors.palette.white,
-    textAlign: "center",
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  resetButton: {
-    padding: theme.spacing[4],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.destructive,
-  },
-  resetButtonText: {
-    color: theme.colors.destructive,
-    textAlign: "center",
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
+  // Footer
   footer: {
-    borderTopWidth: theme.borderWidth[1],
+    borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     paddingTop: theme.spacing[6],
+    paddingBottom: theme.spacing[4],
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  footerAppInfo: {
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
   footerText: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
-    textAlign: "center",
   },
   footerVersion: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
+  },
+  resetButton: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+  },
+  resetButtonText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
+  },
+  // Empty state
+  emptyCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing[4],
+    marginBottom: theme.spacing[3],
+  },
+  emptyText: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
     textAlign: "center",
-    marginTop: theme.spacing[1],
   },
 }));
 
@@ -281,10 +320,6 @@ export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
   const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon } = useDaemonRegistry();
   const { connectionStates, updateConnectionStatus } = useDaemonConnections();
-  const [useSpeaker, setUseSpeaker] = useState(settings.useSpeaker);
-  const [keepScreenOn, setKeepScreenOn] = useState(settings.keepScreenOn);
-  const [theme, setTheme] = useState<"dark" | "light" | "auto">(settings.theme);
-  const [hasChanges, setHasChanges] = useState(false);
   const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
   const [daemonForm, setDaemonForm] = useState<{ id: string | null; label: string; wsUrl: string }>({ id: null, label: "", wsUrl: "" });
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
@@ -484,21 +519,19 @@ export default function SettingsScreen() {
     [testServerConnection, updateConnectionStatus, updateDaemonTestState]
   );
 
-  // Update local state when settings load
-  useEffect(() => {
-    setUseSpeaker(settings.useSpeaker);
-    setKeepScreenOn(settings.keepScreenOn);
-    setTheme(settings.theme);
-  }, [settings]);
+  const handleToggleUseSpeaker = useCallback(
+    (value: boolean) => {
+      void updateSettings({ ...settings, useSpeaker: value });
+    },
+    [settings, updateSettings]
+  );
 
-  // Track changes
-  useEffect(() => {
-    const changed =
-      useSpeaker !== settings.useSpeaker ||
-      keepScreenOn !== settings.keepScreenOn ||
-      theme !== settings.theme;
-    setHasChanges(changed);
-  }, [useSpeaker, keepScreenOn, theme, settings]);
+  const handleToggleKeepScreenOn = useCallback(
+    (value: boolean) => {
+      void updateSettings({ ...settings, keepScreenOn: value });
+    },
+    [settings, updateSettings]
+  );
 
   function validateServerUrl(url: string): boolean {
     try {
@@ -509,32 +542,7 @@ export default function SettingsScreen() {
     }
   }
 
-  async function handleSave() {
-    try {
-      await updateSettings({
-        useSpeaker,
-        keepScreenOn,
-        theme,
-      });
-
-      Alert.alert(
-        "Settings Saved",
-        "Your settings have been saved successfully.",
-        [
-          {
-            text: "OK",
-            onPress: () => router.back(),
-          },
-        ]
-      );
-    } catch (error) {
-      Alert.alert("Error", "Failed to save settings. Please try again.", [
-        { text: "OK" },
-      ]);
-    }
-  }
-
-  async function handleReset() {
+  function handleReset() {
     Alert.alert(
       "Reset Settings",
       "Are you sure you want to reset all settings to defaults?",
@@ -584,8 +592,8 @@ export default function SettingsScreen() {
             <Text style={styles.sectionTitle}>Hosts</Text>
 
             {daemons.length === 0 ? (
-              <View style={styles.settingCard}>
-                <Text style={styles.settingDescription}>No hosts configured.</Text>
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyText}>No hosts configured</Text>
               </View>
             ) : (
               daemons.map((daemon) => {
@@ -613,46 +621,49 @@ export default function SettingsScreen() {
             )}
 
             {isDaemonFormVisible ? (
-              <View style={styles.settingCard}>
-                <Text style={styles.settingTitle}>{daemonForm.id ? "Edit Host" : "Add Host"}</Text>
-                <Text style={styles.label}>Label</Text>
-                <TextInput
-                  style={styles.input}
-                  value={daemonForm.label}
-                  onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
-                  placeholder="My Host"
-                  placeholderTextColor={defaultTheme.colors.mutedForeground}
-                />
-
-                <Text style={styles.label}>WebSocket URL</Text>
-                <TextInput
-                  style={styles.input}
-                  value={daemonForm.wsUrl}
-                  onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, wsUrl: text }))}
-                  placeholder="wss://example.com/ws"
-                  placeholderTextColor={defaultTheme.colors.mutedForeground}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                />
-                <View style={styles.daemonFormActionsRow}>
-                  <Pressable style={[styles.daemonActionButton, styles.daemonActionDestructive]} onPress={handleCloseDaemonForm}>
-                    <Text style={[styles.daemonActionText, styles.daemonActionDestructiveText]}>Cancel</Text>
+              <View style={styles.formCard}>
+                <Text style={styles.formTitle}>{daemonForm.id ? "Edit Host" : "Add Host"}</Text>
+                <View style={styles.formField}>
+                  <Text style={styles.label}>Label</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={daemonForm.label}
+                    onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
+                    placeholder="My Host"
+                    placeholderTextColor={defaultTheme.colors.mutedForeground}
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <Text style={styles.label}>WebSocket URL</Text>
+                  <TextInput
+                    style={[styles.input, styles.inputUrl]}
+                    value={daemonForm.wsUrl}
+                    onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, wsUrl: text }))}
+                    placeholder="wss://example.com/ws"
+                    placeholderTextColor={defaultTheme.colors.mutedForeground}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                  />
+                </View>
+                <View style={styles.formActionsRow}>
+                  <Pressable style={styles.formButton} onPress={handleCloseDaemonForm}>
+                    <Text style={styles.formButtonText}>Cancel</Text>
                   </Pressable>
                   <Pressable
-                    style={[styles.daemonActionButton, styles.daemonActionPrimary, isSavingDaemon && styles.daemonActionDisabled]}
+                    style={[styles.formButton, styles.formButtonPrimary, isSavingDaemon && styles.hostActionDisabled]}
                     onPress={handleSubmitDaemonForm}
                     disabled={isSavingDaemon}
                   >
-                    <Text style={[styles.daemonActionText, styles.daemonActionPrimaryText]}>
-                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save Host" : "Add Host"}
+                    <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
+                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save" : "Add"}
                     </Text>
                   </Pressable>
                 </View>
               </View>
             ) : (
               <Pressable style={styles.addButton} onPress={() => handleOpenDaemonForm()}>
-                <Text style={styles.addButtonText}>Add Host</Text>
+                <Text style={styles.addButtonText}>+ Add Host</Text>
               </Pressable>
             )}
           </View>
@@ -661,96 +672,48 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Audio</Text>
 
-            <View style={styles.settingCard}>
-              <View style={styles.settingRow}>
-                <View style={styles.settingContent}>
-                  <Text style={styles.settingTitle}>Use Speaker</Text>
-                  <Text style={styles.settingDescription}>
+            <View style={styles.audioCard}>
+              <View style={styles.audioRow}>
+                <View style={styles.audioRowContent}>
+                  <Text style={styles.audioRowTitle}>Use Speaker</Text>
+                  <Text style={styles.audioRowDescription}>
                     Play audio through speaker instead of earpiece
                   </Text>
                 </View>
                 <Switch
-                  value={useSpeaker}
-                  onValueChange={setUseSpeaker}
+                  value={settings.useSpeaker}
+                  onValueChange={handleToggleUseSpeaker}
                   trackColor={{ false: defaultTheme.colors.palette.gray[700], true: defaultTheme.colors.palette.blue[500] }}
-                  thumbColor={useSpeaker ? defaultTheme.colors.palette.blue[400] : defaultTheme.colors.palette.gray[300]}
+                  thumbColor={settings.useSpeaker ? defaultTheme.colors.palette.white : defaultTheme.colors.palette.gray[300]}
                 />
               </View>
-            </View>
 
-            <View style={styles.settingCard}>
-              <View style={styles.settingRow}>
-                <View style={styles.settingContent}>
-                  <Text style={styles.settingTitle}>Keep Screen On</Text>
-                  <Text style={styles.settingDescription}>
+              <View style={[styles.audioRow, styles.audioRowBorder]}>
+                <View style={styles.audioRowContent}>
+                  <Text style={styles.audioRowTitle}>Keep Screen On</Text>
+                  <Text style={styles.audioRowDescription}>
                     Prevent screen from sleeping during voice sessions
                   </Text>
                 </View>
                 <Switch
-                  value={keepScreenOn}
-                  onValueChange={setKeepScreenOn}
+                  value={settings.keepScreenOn}
+                  onValueChange={handleToggleKeepScreenOn}
                   trackColor={{ false: defaultTheme.colors.palette.gray[700], true: defaultTheme.colors.palette.blue[500] }}
-                  thumbColor={keepScreenOn ? defaultTheme.colors.palette.blue[400] : defaultTheme.colors.palette.gray[300]}
+                  thumbColor={settings.keepScreenOn ? defaultTheme.colors.palette.white : defaultTheme.colors.palette.gray[300]}
                 />
               </View>
             </View>
           </View>
 
-          {/* Theme Settings */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Theme</Text>
-
-            <View style={styles.themeCardDisabled}>
-              <Text style={styles.themeHelpText}>
-                Theme selection (coming soon)
-              </Text>
-
-              {(["dark", "light", "auto"] as const).map((themeOption) => (
-                <Pressable
-                  key={themeOption}
-                  disabled
-                  style={styles.themeOption}
-                >
-                  <View
-                    style={[
-                      styles.radioOuter,
-                      theme === themeOption
-                        ? styles.radioOuterSelected
-                        : styles.radioOuterUnselected,
-                    ]}
-                  >
-                    {theme === themeOption && (
-                      <View style={styles.radioInner} />
-                    )}
-                  </View>
-                  <Text style={styles.themeOptionText}>{themeOption}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.section}>
-            <Pressable
-              style={[
-                styles.saveButton,
-                !hasChanges && styles.saveButtonDisabled,
-              ]}
-              onPress={handleSave}
-              disabled={!hasChanges}
-            >
-              <Text style={styles.saveButtonText}>Save Settings</Text>
-            </Pressable>
-
-            <Pressable style={styles.resetButton} onPress={handleReset}>
-              <Text style={styles.resetButtonText}>Reset to Defaults</Text>
-            </Pressable>
-          </View>
-
-          {/* App Info */}
+          {/* Footer */}
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Voice Assistant Mobile</Text>
-            <Text style={styles.footerVersion}>Version 1.0.0</Text>
+            <View style={styles.footerAppInfo}>
+              <Text style={styles.footerText}>Voice Dev Mobile</Text>
+              <Text style={styles.footerVersion}>Version 1.0.0</Text>
+            </View>
+            <Pressable style={styles.resetButton} onPress={handleReset}>
+              <Text style={styles.resetButtonText}>Reset to defaults</Text>
+            </Pressable>
           </View>
         </View>
       </ScrollView>
@@ -921,67 +884,73 @@ function DaemonCard({
     ]);
   }, [beginServerRestart, daemon.label, restartConfirmationMessage, restartServerFn]);
 
+  // Status pill background with 10% opacity
+  const statusPillBg =
+    statusTone === "success"
+      ? "rgba(74, 222, 128, 0.1)"
+      : statusTone === "warning"
+        ? "rgba(245, 158, 11, 0.1)"
+        : statusTone === "error"
+          ? "rgba(248, 113, 113, 0.1)"
+          : "rgba(161, 161, 170, 0.1)";
+
+  const testResultColor =
+    testState?.status === "success"
+      ? theme.colors.palette.green[400]
+      : testState?.status === "error"
+        ? theme.colors.palette.red[300]
+        : theme.colors.mutedForeground;
+
   return (
-    <View style={[styles.settingCard, styles.daemonCard]}>
-      <View style={styles.daemonHeaderRow}>
-        <Text style={styles.settingTitle}>{daemon.label}</Text>
-        <View style={styles.connectionStatusBadge}>
-          <View style={[styles.connectionStatusDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.connectionStatusText, { color: statusColor }]}>{badgeText}</Text>
+    <View style={styles.hostCard}>
+      <View style={styles.hostCardContent}>
+        <View style={styles.hostHeaderRow}>
+          <Text style={styles.hostLabel}>{daemon.label}</Text>
+          <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={[styles.statusText, { color: statusColor }]}>{badgeText}</Text>
+          </View>
         </View>
+        <Text style={styles.hostUrl}>{daemon.wsUrl}</Text>
+        {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
+        {testState && testState.status !== "idle" ? (
+          <Text style={[styles.testResultText, { color: testResultColor }]}>
+            {testState.message ?? (testState.status === "success" ? "Reachable" : "Testing...")}
+          </Text>
+        ) : null}
       </View>
-      <Text style={styles.settingDescription}>{daemon.wsUrl}</Text>
-      {connectionError ? <Text style={styles.connectionErrorText}>{connectionError}</Text> : null}
-      {testState && testState.status !== "idle" ? (
-        <Text
-          style={
-            testState.status === "success"
-              ? styles.testResultSuccessText
-              : testState.status === "error"
-                ? styles.testResultErrorText
-                : styles.testResultInfoText
-          }
-        >
-          {testState.message ?? (testState.status === "success" ? "Reachable" : "Testing...")}
-        </Text>
-      ) : null}
-      <View style={styles.daemonActionsRow}>
+      <View style={styles.hostActionsRow}>
         <Pressable
           style={[
-            styles.daemonActionButton,
-            styles.daemonActionPrimary,
-            isTesting && styles.daemonActionDisabled,
+            styles.hostActionButton,
+            styles.hostActionPrimary,
+            isTesting && styles.hostActionDisabled,
           ]}
           onPress={() => onTestConnection(daemon)}
           disabled={isTesting}
         >
-          <Text style={[styles.daemonActionText, styles.daemonActionPrimaryText]}>
+          <Text style={[styles.hostActionText, styles.hostActionPrimaryText]}>
             {isTesting ? "Testing..." : "Test"}
           </Text>
         </Pressable>
+        <View style={styles.hostActionSeparator} />
         <Pressable
-          style={[
-            styles.daemonActionButton,
-            styles.daemonActionDestructive,
-            isRestarting && styles.daemonActionDisabled,
-          ]}
+          style={[styles.hostActionButton, isRestarting && styles.hostActionDisabled]}
           onPress={handleRestartPress}
           disabled={isRestarting}
         >
           {isRestarting ? (
-            <ActivityIndicator size="small" color={defaultTheme.colors.destructive} />
+            <ActivityIndicator size="small" color={theme.colors.mutedForeground} />
           ) : (
-            <Text style={[styles.daemonActionText, styles.daemonActionDestructiveText]}>Restart</Text>
+            <Text style={styles.hostActionText}>Restart</Text>
           )}
         </Pressable>
-        <Pressable style={styles.daemonActionButton} onPress={() => onEdit(daemon)}>
-          <Text style={styles.daemonActionText}>Edit</Text>
+        <Pressable style={styles.hostActionButton} onPress={() => onEdit(daemon)}>
+          <Text style={styles.hostActionText}>Edit</Text>
         </Pressable>
-        <Pressable
-          style={[styles.daemonActionButton, styles.daemonActionDestructive]}
-          onPress={() => onRemove(daemon)}
-        >
-          <Text style={[styles.daemonActionText, styles.daemonActionDestructiveText]}>Remove</Text>
+        <View style={styles.hostActionSeparator} />
+        <Pressable style={styles.hostActionButton} onPress={() => onRemove(daemon)}>
+          <Text style={[styles.hostActionText, styles.hostActionDestructiveText]}>Remove</Text>
         </Pressable>
       </View>
     </View>
