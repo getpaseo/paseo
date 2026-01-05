@@ -22,7 +22,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system";
+import { File as FSFile, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import {
   BottomSheetModal,
@@ -31,6 +31,8 @@ import {
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
 import {
+  Check,
+  Download,
   File,
   FileText,
   Folder,
@@ -39,6 +41,7 @@ import {
   List as ListIcon,
   MoreVertical,
   X,
+  XCircle,
 } from "lucide-react-native";
 import { BackHeader } from "@/components/headers/back-header";
 import type { ExplorerEntry } from "@/stores/session-store";
@@ -211,6 +214,12 @@ function FileExplorerContent({
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
   const [menuHeight, setMenuHeight] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [downloadToast, setDownloadToast] = useState<{
+    status: "downloading" | "complete" | "error";
+    fileName: string;
+    message?: string;
+  } | null>(null);
+  const downloadToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentIdRef = useRef(agentId);
   const viewModeRef = useRef(viewMode);
   const requestFilePreviewRef = useRef(requestFilePreview);
@@ -498,11 +507,29 @@ function FileExplorerContent({
     setMenuHeight((current) => (current === height ? current : height));
   }, []);
 
+  const showDownloadToast = useCallback(
+    (toast: { status: "downloading" | "complete" | "error"; fileName: string; message?: string }) => {
+      if (downloadToastTimeoutRef.current) {
+        clearTimeout(downloadToastTimeoutRef.current);
+        downloadToastTimeoutRef.current = null;
+      }
+      setDownloadToast(toast);
+      if (toast.status !== "downloading") {
+        downloadToastTimeoutRef.current = setTimeout(() => {
+          setDownloadToast(null);
+        }, 3000);
+      }
+    },
+    []
+  );
+
   const handleDownloadEntry = useCallback(
     async (entry: ExplorerEntry) => {
       if (!agentId || !requestFileDownloadToken || entry.kind !== "file") {
         return;
       }
+
+      const displayName = entry.name;
 
       try {
         const tokenResponse = await requestFileDownloadToken(agentId, entry.path);
@@ -527,21 +554,24 @@ function FileExplorerContent({
           return;
         }
 
-        const targetUri = await resolveDownloadTargetUri(fileName);
-        const downloadResult = await FileSystem.downloadAsync(
+        showDownloadToast({ status: "downloading", fileName: displayName });
+
+        const targetFile = resolveDownloadTargetFile(fileName);
+        const downloadedFile = await FSFile.downloadFileAsync(
           downloadUrl,
-          targetUri,
+          targetFile,
           downloadTarget.authHeader
             ? { headers: { Authorization: downloadTarget.authHeader } }
             : undefined
         );
+
+        showDownloadToast({ status: "complete", fileName: displayName });
+
         if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(downloadResult.uri, {
+          await Sharing.shareAsync(downloadedFile.uri, {
             mimeType: tokenResponse.mimeType ?? undefined,
             dialogTitle: fileName ? `Share ${fileName}` : "Share file",
           });
-        } else {
-          Alert.alert("Download complete", `Saved to ${downloadResult.uri}`);
         }
       } catch (error) {
         const message =
@@ -550,10 +580,10 @@ function FileExplorerContent({
           console.warn("[FileExplorer] Download failed:", message);
           return;
         }
-        Alert.alert("Download failed", message);
+        showDownloadToast({ status: "error", fileName: displayName, message });
       }
     },
-    [agentId, daemonProfile, requestFileDownloadToken]
+    [agentId, daemonProfile, requestFileDownloadToken, showDownloadToast]
   );
 
   const menuPosition = useMemo(() => {
@@ -1011,6 +1041,41 @@ function FileExplorerContent({
           </View>
         )}
       </BottomSheetModal>
+
+      {downloadToast && (
+        <View style={styles.downloadToast}>
+          <View style={styles.downloadToastContent}>
+            {downloadToast.status === "downloading" ? (
+              <ActivityIndicator size="small" color={theme.colors.foreground} />
+            ) : downloadToast.status === "complete" ? (
+              <Check size={18} color={theme.colors.primary} />
+            ) : (
+              <XCircle size={18} color={theme.colors.destructive} />
+            )}
+            <View style={styles.downloadToastTextContainer}>
+              <Text style={styles.downloadToastFileName} numberOfLines={1}>
+                {downloadToast.fileName}
+              </Text>
+              <Text style={styles.downloadToastStatus}>
+                {downloadToast.status === "downloading"
+                  ? "Downloading..."
+                  : downloadToast.status === "complete"
+                    ? "Download complete"
+                    : downloadToast.message ?? "Download failed"}
+              </Text>
+            </View>
+            {downloadToast.status !== "downloading" && (
+              <Pressable
+                onPress={() => setDownloadToast(null)}
+                hitSlop={8}
+                style={styles.downloadToastDismiss}
+              >
+                <X size={16} color={theme.colors.mutedForeground} />
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -1336,23 +1401,23 @@ function triggerBrowserDownload(url: string, fileName: string) {
   link.remove();
 }
 
-async function resolveDownloadTargetUri(fileName: string): Promise<string> {
-  const directory = FileSystem.Paths.cache?.uri ?? FileSystem.Paths.document?.uri;
+function resolveDownloadTargetFile(fileName: string): FSFile {
+  const directory = Paths.cache ?? Paths.document;
   if (!directory) {
     throw new Error("No download directory available.");
   }
 
   const safeName = sanitizeDownloadFileName(fileName);
   const split = splitFileName(safeName);
-  let targetUri = `${directory}${safeName}`;
+  let targetFile = new FSFile(directory, safeName);
   let suffix = 1;
 
-  while ((await FileSystem.getInfoAsync(targetUri)).exists) {
-    targetUri = `${directory}${split.base} (${suffix})${split.ext}`;
+  while (targetFile.exists) {
+    targetFile = new FSFile(directory, `${split.base} (${suffix})${split.ext}`);
     suffix += 1;
   }
 
-  return targetUri;
+  return targetFile;
 }
 
 function sanitizeDownloadFileName(fileName: string): string {
@@ -1694,5 +1759,44 @@ const styles = StyleSheet.create((theme) => ({
   sheetImage: {
     width: "100%",
     height: "100%",
+  },
+  downloadToast: {
+    position: "absolute",
+    bottom: theme.spacing[4],
+    left: theme.spacing[4],
+    right: theme.spacing[4],
+    zIndex: 1000,
+  },
+  downloadToastContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  downloadToastTextContainer: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  downloadToastFileName: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  downloadToastStatus: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+  },
+  downloadToastDismiss: {
+    padding: theme.spacing[1],
   },
 }));

@@ -23,16 +23,19 @@ function spawnServer() {
   });
 
   child.on("exit", (code, signal) => {
-    if (restarting) {
+    const exitDescriptor =
+      signal ?? (typeof code === "number" ? `code ${code}` : "unknown");
+
+    // Restart on: explicit restart request, or any non-zero exit (crash)
+    if (restarting || (code !== 0 && code !== null)) {
       restarting = false;
+      console.warn(`[DevRunner] Server exited (${exitDescriptor}). Restarting...`);
       spawnServer();
       return;
     }
 
-    const exitDescriptor =
-      signal ?? (typeof code === "number" ? `code ${code}` : "unknown");
     console.warn(`[DevRunner] Server exited (${exitDescriptor}). Shutting down.`);
-    process.exit(typeof code === "number" ? code : 0);
+    process.exit(0);
   });
 }
 
