@@ -1989,22 +1989,53 @@ export class Session {
         return;
       }
 
-      const { stdout } = await execAsync("git diff HEAD", {
+      // Get diff for tracked files
+      const { stdout: trackedDiff } = await execAsync("git diff HEAD", {
         cwd: agent.cwd,
       });
+
+      // Get diff for untracked files (new files not yet added to git)
+      // Using git diff --no-index /dev/null <file> to show new file content as additions
+      let untrackedDiff = "";
+      try {
+        const { stdout: untrackedFiles } = await execAsync(
+          "git ls-files --others --exclude-standard",
+          { cwd: agent.cwd }
+        );
+        const newFiles = untrackedFiles.trim().split("\n").filter(Boolean);
+
+        for (const file of newFiles) {
+          try {
+            // Use git diff with --no-index to generate diff for untracked file
+            const { stdout: fileDiff } = await execAsync(
+              `git diff --no-index /dev/null "${file}" || true`,
+              { cwd: agent.cwd }
+            );
+            if (fileDiff) {
+              untrackedDiff += fileDiff;
+            }
+          } catch {
+            // Ignore errors for individual files (binary files, etc.)
+          }
+        }
+      } catch {
+        // Ignore errors getting untracked files
+      }
+
+      const combinedDiff = trackedDiff + untrackedDiff;
 
       this.emit({
         type: "git_diff_response",
         payload: {
           agentId,
-          diff: stdout,
+          diff: combinedDiff,
           error: null,
           requestId,
         },
       });
 
       console.log(
-        `[Session ${this.clientId}] Git diff for agent ${agentId} completed (${stdout.length} bytes)`
+        `[Session ${this.clientId}] Git diff for agent ${agentId} completed (${combinedDiff.length} bytes)`
       );
     } catch (error: any) {
       console.error(
