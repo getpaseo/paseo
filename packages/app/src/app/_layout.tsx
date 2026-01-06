@@ -11,7 +11,8 @@ import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-reg
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode, useMemo } from "react";
+import { useState, useEffect, type ReactNode, useMemo } from "react";
+import { Platform } from "react-native";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { runOnJS, interpolate, Extrapolation } from "react-native-reanimated";
@@ -46,7 +47,20 @@ interface AppContainerProps {
 
 function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
-  const { isOpen, open } = useSidebarStore();
+  const { isOpen, open, toggle } = useSidebarStore();
+
+  // Cmd+B to toggle sidebar (web only)
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key === "b") {
+        event.preventDefault();
+        toggle();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggle]);
   const {
     translateX,
     backdropOpacity,

@@ -150,13 +150,21 @@ function DiffFileSection({ file, defaultExpanded = true }: DiffFileSectionProps)
         </View>
       </Pressable>
       {isExpanded && (
-        <View style={styles.diffContent}>
-          {file.hunks.map((hunk, hunkIndex) =>
-            hunk.lines.map((line, lineIndex) => (
-              <DiffLineView key={`${hunkIndex}-${lineIndex}`} line={line} />
-            ))
-          )}
-        </View>
+        <ScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator
+          style={styles.diffContent}
+          contentContainerStyle={styles.diffContentInner}
+        >
+          <View style={styles.linesContainer}>
+            {file.hunks.map((hunk, hunkIndex) =>
+              hunk.lines.map((line, lineIndex) => (
+                <DiffLineView key={`${hunkIndex}-${lineIndex}`} line={line} />
+              ))
+            )}
+          </View>
+        </ScrollView>
       )}
     </View>
   );
@@ -339,6 +347,13 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
     backgroundColor: "#0d1117", // GitHub dark background
+  },
+  diffContentInner: {
+    flexDirection: "column",
+  },
+  linesContainer: {
+    alignSelf: "flex-start",
+    minWidth: "100%",
   },
   diffLineContainer: {
     paddingHorizontal: theme.spacing[3],
