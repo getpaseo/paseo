@@ -34,6 +34,7 @@ export function useGitDiffQuery({ serverId, agentId }: UseGitDiffQueryOptions) {
     },
     enabled: !!ws && ws.isConnected && !!agentId,
     staleTime: GIT_DIFF_STALE_TIME,
+    refetchInterval: 10_000,
   });
 
   // Revalidate when sidebar opens with "changes" tab active
