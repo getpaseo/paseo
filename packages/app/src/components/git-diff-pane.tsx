@@ -323,13 +323,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   additions: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.green[400],
     fontFamily: "monospace",
   },
   deletions: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.red[500],
     fontFamily: "monospace",
   },
