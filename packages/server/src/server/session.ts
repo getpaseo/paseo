@@ -20,6 +20,7 @@ import {
   type FileDownloadTokenRequest,
   type GitSetupOptions,
 } from "./messages.js";
+import { parseAndHighlightDiff } from "./utils/diff-highlighter.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
@@ -841,6 +842,10 @@ export class Session {
 
         case "git_diff_request":
           await this.handleGitDiffRequest(msg.agentId, msg.requestId);
+          break;
+
+        case "highlighted_diff_request":
+          await this.handleHighlightedDiffRequest(msg.agentId, msg.requestId);
           break;
 
         case "file_explorer_request":
@@ -2047,6 +2052,103 @@ export class Session {
         payload: {
           agentId,
           diff: "",
+          error: error.message,
+          requestId,
+        },
+      });
+    }
+  }
+
+  /**
+   * Handle highlighted diff request - returns parsed and syntax-highlighted diff
+   */
+  private async handleHighlightedDiffRequest(
+    agentId: string,
+    requestId?: string
+  ): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Handling highlighted diff request for agent ${agentId}`
+    );
+
+    try {
+      const agents = this.agentManager.listAgents();
+      const agent = agents.find((a) => a.id === agentId);
+
+      if (!agent) {
+        this.emit({
+          type: "highlighted_diff_response",
+          payload: {
+            agentId,
+            files: [],
+            error: `Agent not found: ${agentId}`,
+            requestId,
+          },
+        });
+        return;
+      }
+
+      // Get diff for tracked files
+      const { stdout: trackedDiff } = await execAsync("git diff HEAD", {
+        cwd: agent.cwd,
+      });
+
+      // Get diff for untracked files (new files not yet added to git)
+      let untrackedDiff = "";
+      try {
+        const { stdout: untrackedFiles } = await execAsync(
+          "git ls-files --others --exclude-standard",
+          { cwd: agent.cwd }
+        );
+        const newFiles = untrackedFiles.trim().split("\n").filter(Boolean);
+
+        for (const file of newFiles) {
+          try {
+            const { stdout: fileDiff } = await execAsync(
+              `git diff --no-index /dev/null "${file}" || true`,
+              { cwd: agent.cwd }
+            );
+            if (fileDiff) {
+              untrackedDiff += fileDiff;
+            }
+          } catch {
+            // Ignore errors for individual files
+          }
+        }
+      } catch {
+        // Ignore errors getting untracked files
+      }
+
+      const combinedDiff = trackedDiff + untrackedDiff;
+
+      // Parse and highlight the diff
+      const highlightedFiles = await parseAndHighlightDiff(
+        combinedDiff,
+        agent.cwd
+      );
+
+      this.emit({
+        type: "highlighted_diff_response",
+        payload: {
+          agentId,
+          files: highlightedFiles,
+          error: null,
+          requestId,
+        },
+      });
+
+      console.log(
+        `[Session ${this.clientId}] Highlighted diff for agent ${agentId} completed (${highlightedFiles.length} files)`
+      );
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to get highlighted diff for agent ${agentId}:`,
+        error
+      );
+      this.emit({
+        type: "highlighted_diff_response",
+        payload: {
+          agentId,
+          files: [],
           error: error.message,
           requestId,
         },

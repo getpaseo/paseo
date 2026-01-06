@@ -99,6 +99,7 @@ class RpcError extends Error {
  */
 const RESPONSE_TYPE_MAP: Record<string, SessionOutboundMessage["type"]> = {
   git_diff_request: "git_diff_response",
+  highlighted_diff_request: "highlighted_diff_response",
   file_explorer_request: "file_explorer_response",
   file_download_token_request: "file_download_token_response",
   git_repo_info_request: "git_repo_info_response",

@@ -453,6 +453,46 @@ export const GitDiffRequestSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// Highlighted diff token schema
+const HighlightTokenSchema = z.object({
+  text: z.string(),
+  style: z.enum([
+    "keyword", "comment", "string", "number", "literal",
+    "function", "definition", "class", "type", "tag",
+    "attribute", "property", "variable", "operator",
+    "punctuation", "regexp", "escape", "meta", "heading", "link",
+  ]).nullable(),
+});
+
+const DiffLineSchema = z.object({
+  type: z.enum(["add", "remove", "context", "header"]),
+  content: z.string(),
+  tokens: z.array(HighlightTokenSchema).optional(),
+});
+
+const DiffHunkSchema = z.object({
+  oldStart: z.number(),
+  oldCount: z.number(),
+  newStart: z.number(),
+  newCount: z.number(),
+  lines: z.array(DiffLineSchema),
+});
+
+const ParsedDiffFileSchema = z.object({
+  path: z.string(),
+  isNew: z.boolean(),
+  isDeleted: z.boolean(),
+  additions: z.number(),
+  deletions: z.number(),
+  hunks: z.array(DiffHunkSchema),
+});
+
+export const HighlightedDiffRequestSchema = z.object({
+  type: z.literal("highlighted_diff_request"),
+  agentId: z.string(),
+  requestId: z.string().optional(),
+});
+
 const FileExplorerEntrySchema = z.object({
   name: z.string(),
   path: z.string(),
@@ -517,6 +557,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
+  HighlightedDiffRequestSchema,
   FileExplorerRequestSchema,
   FileDownloadTokenRequestSchema,
   ListPersistedAgentsRequestMessageSchema,
@@ -741,6 +782,16 @@ export const GitDiffResponseSchema = z.object({
   }),
 });
 
+export const HighlightedDiffResponseSchema = z.object({
+  type: z.literal("highlighted_diff_response"),
+  payload: z.object({
+    agentId: z.string(),
+    files: z.array(ParsedDiffFileSchema),
+    error: z.string().nullable(),
+    requestId: z.string().optional(),
+  }),
+});
+
 export const FileExplorerResponseSchema = z.object({
   type: z.literal("file_explorer_response"),
   payload: z.object({
@@ -817,6 +868,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDeletedMessageSchema,
   ListPersistedAgentsResponseSchema,
   GitDiffResponseSchema,
+  HighlightedDiffResponseSchema,
   FileExplorerResponseSchema,
   FileDownloadTokenResponseSchema,
   GitRepoInfoResponseSchema,
@@ -873,6 +925,8 @@ export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
+export type HighlightedDiffRequest = z.infer<typeof HighlightedDiffRequestSchema>;
+export type HighlightedDiffResponse = z.infer<typeof HighlightedDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
