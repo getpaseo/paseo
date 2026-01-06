@@ -1,12 +1,16 @@
-import { View, Text, ActivityIndicator, Platform, RefreshControl } from "react-native";
-import { Gesture, GestureDetector, ScrollView } from "react-native-gesture-handler";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
+import { useState, useCallback } from "react";
+import { View, Text, ActivityIndicator, Pressable, RefreshControl } from "react-native";
+import { ScrollView } from "react-native-gesture-handler";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { ChevronRight } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
 import { useGitDiffQuery } from "@/hooks/use-git-diff-query";
 
 interface ParsedDiffFile {
   path: string;
+  isNew: boolean;
+  additions: number;
+  deletions: number;
   lines: Array<{
     type: "add" | "remove" | "context" | "header";
     content: string;
@@ -25,44 +29,137 @@ function parseDiff(diffText: string): ParsedDiffFile[] {
     const lines = section.split("\n");
     const firstLine = lines[0];
 
+    // Check for new file indicator
+    const isNew = section.includes("new file mode") || section.includes("/dev/null");
+
+    // Extract path - handle both regular and new file formats
+    let path = "unknown";
     const pathMatch = firstLine.match(/a\/(.*?) b\//);
-    const path = pathMatch ? pathMatch[1] : "unknown";
+    if (pathMatch) {
+      path = pathMatch[1];
+    } else {
+      // For new files from /dev/null, extract from b/...
+      const newFileMatch = firstLine.match(/b\/(.+)$/);
+      if (newFileMatch) {
+        path = newFileMatch[1];
+      }
+    }
 
     const parsedLines: ParsedDiffFile["lines"] = [];
+    let additions = 0;
+    let deletions = 0;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Skip metadata lines - they're noise in the UI
-      // - First line (a/... b/...) - already shown in file header
-      // - index ... - git hash info, not useful
-      // - --- a/... and +++ b/... - file markers, redundant
+      // Skip metadata lines
       if (i === 0) continue;
       if (line.startsWith("index ")) continue;
       if (line.startsWith("--- ")) continue;
       if (line.startsWith("+++ ")) continue;
+      if (line.startsWith("new file mode")) continue;
 
       if (line.startsWith("@@")) {
-        // Extract just the line numbers portion from @@ -x,y +x,y @@ context
         const hunkMatch = line.match(/^(@@ .+? @@)/);
         const hunkHeader = hunkMatch ? hunkMatch[1] : line;
         parsedLines.push({ type: "header", content: hunkHeader });
       } else if (line.startsWith("+")) {
         parsedLines.push({ type: "add", content: line.slice(1) });
+        additions++;
       } else if (line.startsWith("-")) {
         parsedLines.push({ type: "remove", content: line.slice(1) });
+        deletions++;
       } else if (line.startsWith(" ")) {
         parsedLines.push({ type: "context", content: line.slice(1) });
       } else if (line.length > 0) {
-        // Non-empty lines without prefix (rare, but handle gracefully)
         parsedLines.push({ type: "context", content: line });
       }
     }
 
-    files.push({ path, lines: parsedLines });
+    files.push({ path, isNew, additions, deletions, lines: parsedLines });
   }
 
   return files;
+}
+
+interface DiffFileSectionProps {
+  file: ParsedDiffFile;
+  defaultExpanded?: boolean;
+}
+
+function DiffFileSection({ file, defaultExpanded = true }: DiffFileSectionProps) {
+  const { theme } = useUnistyles();
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+
+  const toggleExpanded = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
+
+  return (
+    <View style={styles.fileSection}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.fileHeader,
+          pressed && styles.fileHeaderPressed,
+        ]}
+        onPress={toggleExpanded}
+      >
+        <View style={styles.fileHeaderLeft}>
+          <View
+            style={[
+              styles.chevronContainer,
+              isExpanded && styles.chevronExpanded,
+            ]}
+          >
+            <ChevronRight
+              size={16}
+              color={theme.colors.mutedForeground}
+            />
+          </View>
+          <Text style={styles.filePath} numberOfLines={1} ellipsizeMode="middle">
+            {file.path}
+          </Text>
+          {file.isNew && (
+            <View style={styles.newBadge}>
+              <Text style={styles.newBadgeText}>New</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.fileHeaderRight}>
+          <Text style={styles.additions}>+{file.additions}</Text>
+          <Text style={styles.deletions}>-{file.deletions}</Text>
+        </View>
+      </Pressable>
+      {isExpanded && (
+        <View style={styles.diffContent}>
+          {file.lines.map((line, lineIndex) => (
+            <View
+              key={lineIndex}
+              style={[
+                styles.diffLineContainer,
+                line.type === "add" && styles.addLineContainer,
+                line.type === "remove" && styles.removeLineContainer,
+                line.type === "header" && styles.headerLineContainer,
+                line.type === "context" && styles.contextLineContainer,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.diffLineText,
+                  line.type === "add" && styles.addLineText,
+                  line.type === "remove" && styles.removeLineText,
+                  line.type === "header" && styles.headerLineText,
+                  line.type === "context" && styles.contextLineText,
+                ]}
+              >
+                {line.content || " "}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
 }
 
 interface GitDiffPaneProps {
@@ -72,22 +169,10 @@ interface GitDiffPaneProps {
 
 export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
-  const { closeGestureRef } = useExplorerSidebarAnimation();
   const { diff, isLoading, isFetching, isError, error, refresh } = useGitDiffQuery({
     serverId,
     agentId,
   });
-
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-
-  // Pan gesture gate: only allow horizontal scroll after deliberate horizontal movement
-  // This prevents diagonal scrolling from being captured by horizontal ScrollView
-  const horizontalScrollGate = Gesture.Pan()
-    .enabled(isMobile)
-    .activeOffsetX([-15, 15]) // Require 15px horizontal movement to activate
-    .failOffsetY([-10, 10]) // Fail if 10px vertical movement happens first
-    .blocksExternalGesture(closeGestureRef); // Block sidebar close while scrolling
 
   const agent = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.get(agentId)
@@ -133,48 +218,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         </View>
       ) : (
         parsedFiles.map((file, fileIndex) => (
-          <View key={fileIndex} style={styles.fileSection}>
-            <View style={styles.fileHeader}>
-              <Text style={styles.filePath}>{file.path}</Text>
-            </View>
-            <View style={styles.diffContent}>
-              <GestureDetector gesture={horizontalScrollGate}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator
-                  nestedScrollEnabled
-                  directionalLockEnabled={Platform.OS === "ios"}
-                >
-                  <View style={styles.diffLinesContainer}>
-                  {file.lines.map((line, lineIndex) => (
-                    <View
-                      key={lineIndex}
-                      style={[
-                        styles.diffLineContainer,
-                        line.type === "add" && styles.addLineContainer,
-                        line.type === "remove" && styles.removeLineContainer,
-                        line.type === "header" && styles.headerLineContainer,
-                        line.type === "context" && styles.contextLineContainer,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.diffLineText,
-                          line.type === "add" && styles.addLineText,
-                          line.type === "remove" && styles.removeLineText,
-                          line.type === "header" && styles.headerLineText,
-                          line.type === "context" && styles.contextLineText,
-                        ]}
-                      >
-                        {line.content}
-                      </Text>
-                    </View>
-                  ))}
-                  </View>
-                </ScrollView>
-              </GestureDetector>
-            </View>
-          </View>
+          <DiffFileSection key={fileIndex} file={file} />
         ))
       )}
     </ScrollView>
@@ -188,6 +232,7 @@ const styles = StyleSheet.create((theme) => ({
   contentContainer: {
     padding: theme.spacing[4],
     paddingBottom: theme.spacing[8],
+    gap: theme.spacing[3],
   },
   loadingContainer: {
     flex: 1,
@@ -223,36 +268,78 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
   },
   fileSection: {
-    marginBottom: theme.spacing[6],
     borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    width: "100%",
+    backgroundColor: theme.colors.card,
   },
   fileHeader: {
-    backgroundColor: theme.colors.muted,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: theme.spacing[3],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
+    paddingVertical: theme.spacing[4],
+    gap: theme.spacing[3],
+  },
+  fileHeaderPressed: {
+    opacity: 0.7,
+  },
+  fileHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flex: 1,
+    minWidth: 0,
+  },
+  fileHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 0,
+  },
+  chevronContainer: {
+    transform: [{ rotate: "0deg" }],
+  },
+  chevronExpanded: {
+    transform: [{ rotate: "90deg" }],
   },
   filePath: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
+    fontFamily: "monospace",
+    flex: 1,
+  },
+  newBadge: {
+    backgroundColor: theme.colors.palette.green[800],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    flexShrink: 0,
+  },
+  newBadgeText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.palette.green[200],
+  },
+  additions: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.palette.green[400],
+    fontFamily: "monospace",
+  },
+  deletions: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.palette.red[500],
     fontFamily: "monospace",
   },
   diffContent: {
-    backgroundColor: theme.colors.card,
-  },
-  diffLinesContainer: {
-    minWidth: "100%",
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
   },
   diffLineContainer: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
-    flexDirection: "row",
-    alignItems: "flex-start",
   },
   diffLineText: {
     fontSize: theme.fontSize.xs,
