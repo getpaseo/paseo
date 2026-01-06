@@ -1,20 +1,29 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { View, Text, ActivityIndicator, Pressable, RefreshControl } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
 import { useGitDiffQuery } from "@/hooks/use-git-diff-query";
+import {
+  highlightCode,
+  isLanguageSupported,
+  type HighlightToken,
+  type HighlightStyle,
+} from "@/utils/syntax-highlighter";
+
+interface DiffLine {
+  type: "add" | "remove" | "context" | "header";
+  content: string;
+  tokens?: HighlightToken[];
+}
 
 interface ParsedDiffFile {
   path: string;
   isNew: boolean;
   additions: number;
   deletions: number;
-  lines: Array<{
-    type: "add" | "remove" | "context" | "header";
-    content: string;
-  }>;
+  lines: DiffLine[];
 }
 
 function parseDiff(diffText: string): ParsedDiffFile[] {
@@ -45,7 +54,7 @@ function parseDiff(diffText: string): ParsedDiffFile[] {
       }
     }
 
-    const parsedLines: ParsedDiffFile["lines"] = [];
+    const parsedLines: DiffLine[] = [];
     let additions = 0;
     let deletions = 0;
 
@@ -80,6 +89,119 @@ function parseDiff(diffText: string): ParsedDiffFile[] {
   }
 
   return files;
+}
+
+function applyHighlighting(files: ParsedDiffFile[]): ParsedDiffFile[] {
+  return files.map((file) => {
+    if (!isLanguageSupported(file.path)) {
+      return file;
+    }
+
+    // Collect all non-header lines to build the "file content" for highlighting
+    // We need to build separate content for add/context and remove/context
+    // to properly highlight each side of the diff
+    const addContextLines: Array<{ index: number; content: string }> = [];
+    const removeLines: Array<{ index: number; content: string }> = [];
+
+    file.lines.forEach((line, index) => {
+      if (line.type === "add" || line.type === "context") {
+        addContextLines.push({ index, content: line.content });
+      }
+      if (line.type === "remove") {
+        removeLines.push({ index, content: line.content });
+      }
+    });
+
+    // Highlight the "new" file content (additions + context)
+    const addContextCode = addContextLines.map((l) => l.content).join("\n");
+    const addContextHighlighted = highlightCode(addContextCode, file.path);
+
+    // Highlight the "old" file content (removals only, context already covered)
+    const removeCode = removeLines.map((l) => l.content).join("\n");
+    const removeHighlighted = highlightCode(removeCode, file.path);
+
+    // Map highlighted tokens back to diff lines
+    const newLines = [...file.lines];
+
+    addContextLines.forEach((item, highlightIndex) => {
+      if (addContextHighlighted[highlightIndex]) {
+        newLines[item.index] = {
+          ...newLines[item.index],
+          tokens: addContextHighlighted[highlightIndex],
+        };
+      }
+    });
+
+    removeLines.forEach((item, highlightIndex) => {
+      if (removeHighlighted[highlightIndex]) {
+        newLines[item.index] = {
+          ...newLines[item.index],
+          tokens: removeHighlighted[highlightIndex],
+        };
+      }
+    });
+
+    return { ...file, lines: newLines };
+  });
+}
+
+interface HighlightedTextProps {
+  tokens: HighlightToken[];
+  baseStyle: HighlightStyle | null;
+  lineType: "add" | "remove" | "context" | "header";
+}
+
+function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
+  const { theme } = useUnistyles();
+
+  // Get color for a highlight style, respecting the line type
+  const getTokenColor = (style: HighlightStyle | null): string => {
+    // For add/remove lines, use appropriate base colors
+    const baseColor =
+      lineType === "add"
+        ? theme.colors.palette.green[200]
+        : lineType === "remove"
+          ? theme.colors.palette.red[200]
+          : theme.colors.mutedForeground;
+
+    if (!style) return baseColor;
+
+    // Define highlight colors - these work on both light and dark backgrounds
+    const highlightColors: Record<HighlightStyle, string> = {
+      keyword: theme.colors.palette.purple[500],
+      comment: theme.colors.mutedForeground,
+      string: theme.colors.palette.green[400],
+      number: theme.colors.palette.orange[500],
+      literal: theme.colors.palette.orange[500],
+      function: theme.colors.palette.blue[400],
+      definition: theme.colors.palette.blue[400],
+      class: theme.colors.palette.yellow[400],
+      type: theme.colors.palette.yellow[400],
+      tag: theme.colors.palette.red[500],
+      attribute: theme.colors.palette.purple[500],
+      property: theme.colors.palette.blue[400],
+      variable: baseColor,
+      operator: baseColor,
+      punctuation: baseColor,
+      regexp: theme.colors.palette.green[400],
+      escape: theme.colors.palette.orange[500],
+      meta: theme.colors.mutedForeground,
+      heading: theme.colors.palette.blue[400],
+      link: theme.colors.palette.blue[400],
+    };
+
+    return highlightColors[style] ?? baseColor;
+  };
+
+  return (
+    <Text style={styles.diffLineText}>
+      {tokens.map((token, index) => (
+        <Text key={index} style={{ color: getTokenColor(token.style) }}>
+          {token.text}
+        </Text>
+      ))}
+    </Text>
+  );
 }
 
 interface DiffFileSectionProps {
@@ -143,17 +265,25 @@ function DiffFileSection({ file, defaultExpanded = true }: DiffFileSectionProps)
                 line.type === "context" && styles.contextLineContainer,
               ]}
             >
-              <Text
-                style={[
-                  styles.diffLineText,
-                  line.type === "add" && styles.addLineText,
-                  line.type === "remove" && styles.removeLineText,
-                  line.type === "header" && styles.headerLineText,
-                  line.type === "context" && styles.contextLineText,
-                ]}
-              >
-                {line.content || " "}
-              </Text>
+              {line.tokens && line.type !== "header" ? (
+                <HighlightedText
+                  tokens={line.tokens}
+                  baseStyle={null}
+                  lineType={line.type}
+                />
+              ) : (
+                <Text
+                  style={[
+                    styles.diffLineText,
+                    line.type === "add" && styles.addLineText,
+                    line.type === "remove" && styles.removeLineText,
+                    line.type === "header" && styles.headerLineText,
+                    line.type === "context" && styles.contextLineText,
+                  ]}
+                >
+                  {line.content || " "}
+                </Text>
+              )}
             </View>
           ))}
         </View>
@@ -178,6 +308,12 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     state.sessions[serverId]?.agents?.get(agentId)
   );
 
+  const highlightedFiles = useMemo(() => {
+    if (isError || !diff) return [];
+    const parsed = parseDiff(diff);
+    return applyHighlighting(parsed);
+  }, [diff, isError]);
+
   if (!agent) {
     return (
       <View style={styles.errorContainer}>
@@ -186,8 +322,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     );
   }
 
-  const parsedFiles = isError || !diff ? [] : parseDiff(diff);
-  const hasChanges = parsedFiles.length > 0;
+  const hasChanges = highlightedFiles.length > 0;
   const errorMessage = isError && error instanceof Error ? error.message : null;
 
   return (
@@ -217,7 +352,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
           <Text style={styles.emptyText}>No changes</Text>
         </View>
       ) : (
-        parsedFiles.map((file, fileIndex) => (
+        highlightedFiles.map((file, fileIndex) => (
           <DiffFileSection key={fileIndex} file={file} />
         ))
       )}
