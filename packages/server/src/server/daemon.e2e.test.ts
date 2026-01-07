@@ -3115,4 +3115,169 @@ describe("daemon E2E", () => {
       180000 // 3 minute timeout
     );
   });
+
+  describe("tool call structure", () => {
+    test(
+      "Claude agent tool calls have expected structure",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Claude agent with bypass permissions
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Tool Structure Test - Claude",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.provider).toBe("claude");
+
+        ctx.client.clearMessageQueue();
+
+        // Prompt that triggers a Read tool call
+        await ctx.client.sendMessage(
+          agent.id,
+          "Read the file /etc/hosts and tell me how many lines it has. Be brief."
+        );
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(finalState.status).toBe("idle");
+
+        // Extract tool_call timeline items
+        const queue = ctx.client.getMessageQueue();
+        const toolCalls: AgentTimelineItem[] = [];
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline" &&
+            m.payload.event.item.type === "tool_call"
+          ) {
+            toolCalls.push(m.payload.event.item);
+          }
+        }
+
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        // Log and verify structure for each tool call
+        for (const tc of toolCalls) {
+          expect(tc.type).toBe("tool_call");
+
+          // Current structure has: server, tool, displayName, kind
+          expect(typeof tc.server).toBe("string");
+          expect(typeof tc.tool).toBe("string");
+
+          console.log(
+            "[CLAUDE TOOL_CALL]",
+            JSON.stringify({
+              server: tc.server,
+              tool: tc.tool,
+              displayName: tc.displayName,
+              kind: tc.kind,
+              callId: tc.callId,
+              status: tc.status,
+              hasInput: tc.input !== undefined,
+              hasOutput: tc.output !== undefined,
+            })
+          );
+        }
+
+        // Find a Read tool call specifically
+        const readCall = toolCalls.find(
+          (tc) =>
+            tc.server === "Read" ||
+            tc.tool === "Read" ||
+            tc.displayName === "Read"
+        );
+        expect(readCall).toBeDefined();
+        expect(readCall?.input).toBeDefined();
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "Codex agent tool calls have expected structure",
+      async () => {
+        const cwd = tmpCwd();
+
+        // Create Codex agent with full access
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Tool Structure Test - Codex",
+          modeId: "full-access",
+        });
+
+        expect(agent.provider).toBe("codex");
+
+        ctx.client.clearMessageQueue();
+
+        // Prompt that triggers a shell command
+        await ctx.client.sendMessage(
+          agent.id,
+          "Run `echo hello` and tell me what it outputs. Be brief."
+        );
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(finalState.status).toBe("idle");
+
+        // Extract tool_call timeline items
+        const queue = ctx.client.getMessageQueue();
+        const toolCalls: AgentTimelineItem[] = [];
+        for (const m of queue) {
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline" &&
+            m.payload.event.item.type === "tool_call"
+          ) {
+            toolCalls.push(m.payload.event.item);
+          }
+        }
+
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        // Log and verify structure for each tool call
+        for (const tc of toolCalls) {
+          expect(tc.type).toBe("tool_call");
+
+          // Current structure has: server, tool, displayName, kind
+          expect(typeof tc.server).toBe("string");
+          expect(typeof tc.tool).toBe("string");
+
+          console.log(
+            "[CODEX TOOL_CALL]",
+            JSON.stringify({
+              server: tc.server,
+              tool: tc.tool,
+              displayName: tc.displayName,
+              kind: tc.kind,
+              callId: tc.callId,
+              status: tc.status,
+              hasInput: tc.input !== undefined,
+              hasOutput: tc.output !== undefined,
+            })
+          );
+        }
+
+        // Find a shell/execute tool call
+        const shellCall = toolCalls.find(
+          (tc) =>
+            tc.kind === "execute" ||
+            tc.server?.includes("shell") ||
+            tc.displayName?.includes("echo")
+        );
+        expect(shellCall).toBeDefined();
+
+        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+  });
 });

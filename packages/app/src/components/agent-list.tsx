@@ -1,5 +1,4 @@
-import { View, Text, Pressable, Modal, RefreshControl, type ListRenderItem } from "react-native";
-import { FlatList } from "react-native-gesture-handler";
+import { View, Text, Pressable, Modal, RefreshControl, FlatList, type ListRenderItem } from "react-native";
 import { useCallback, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -222,7 +221,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   listContent: {
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
+    paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[4],
   },
   agentItem: {

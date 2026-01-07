@@ -283,6 +283,8 @@ export function AgentStreamView({
       case "tool_call": {
         const { payload } = item;
 
+        console.log("[TOOL_CALL_DEBUG]", JSON.stringify(payload, null, 2));
+
         if (payload.source === "agent") {
           const data = payload.data;
           const toolLabel = data.displayName ?? `${data.server}/${data.tool}`;

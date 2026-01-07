@@ -15,11 +15,15 @@ import { useState, useEffect, type ReactNode, useMemo } from "react";
 import { Platform } from "react-native";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
 import { useSidebarStore } from "@/stores/sidebar-store";
-import { runOnJS, interpolate, Extrapolation } from "react-native-reanimated";
+import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
 import {
   SidebarAnimationProvider,
   useSidebarAnimation,
 } from "@/contexts/sidebar-animation-context";
+import {
+  HorizontalScrollProvider,
+  useHorizontalScrollOptional,
+} from "@/contexts/horizontal-scroll-context";
 
 function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -48,6 +52,7 @@ interface AppContainerProps {
 function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
   const { isOpen, open, toggle } = useSidebarStore();
+  const horizontalScroll = useHorizontalScrollOptional();
 
   // Cmd+B to toggle sidebar (web only)
   useEffect(() => {
@@ -72,15 +77,41 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
+  // Track initial touch position for manual activation
+  const touchStartX = useSharedValue(0);
+
   // Open gesture: swipe right from anywhere to open sidebar (interactive drag)
+  // If any horizontal scroll is scrolled right, let the scroll view handle the gesture first
   const openGesture = useMemo(
     () =>
       Gesture.Pan()
         .enabled(isMobile && !isOpen)
-        // Only activate after 15px horizontal movement to the right
-        .activeOffsetX(15)
+        .manualActivation(true)
         // Fail if 10px vertical movement happens first (allow vertical scroll)
         .failOffsetY([-10, 10])
+        .onTouchesDown((event) => {
+          const touch = event.changedTouches[0];
+          if (touch) {
+            touchStartX.value = touch.absoluteX;
+          }
+        })
+        .onTouchesMove((event, stateManager) => {
+          const touch = event.changedTouches[0];
+          if (!touch || event.numberOfTouches !== 1) return;
+
+          const deltaX = touch.absoluteX - touchStartX.value;
+
+          // If horizontal scroll is scrolled right, fail so ScrollView handles it
+          if (horizontalScroll?.isAnyScrolledRight.value) {
+            stateManager.fail();
+            return;
+          }
+
+          // Activate after 15px rightward movement
+          if (deltaX > 15) {
+            stateManager.activate();
+          }
+        })
         .onStart(() => {
           isGesturing.value = true;
         })
@@ -109,7 +140,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
         .onFinalize(() => {
           isGesturing.value = false;
         }),
-    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, open, isGesturing]
+    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, open, isGesturing, horizontalScroll?.isAnyScrolledRight, touchStartX]
   );
 
   const content = (
@@ -221,7 +252,8 @@ export default function RootLayout() {
                   <MultiDaemonSessionHost />
                   <ProvidersWrapper>
                     <SidebarAnimationProvider>
-                      <AppWithSidebar>
+                      <HorizontalScrollProvider>
+                        <AppWithSidebar>
                         <Stack
                           screenOptions={{
                             headerShown: false,
@@ -242,6 +274,7 @@ export default function RootLayout() {
                           <Stack.Screen name="file-explorer" />
                         </Stack>
                       </AppWithSidebar>
+                      </HorizontalScrollProvider>
                     </SidebarAnimationProvider>
                   </ProvidersWrapper>
                 </DaemonConnectionsProvider>
