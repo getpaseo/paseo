@@ -106,12 +106,9 @@ interface OrchestratorToolCallData {
 
 export interface AgentToolCallData {
   provider: AgentProvider;
-  server: string;
-  tool: string;
+  name: string;
   status?: ToolCallStatus;
   callId?: string;
-  displayName?: string;
-  kind?: string;
   input?: unknown;
   result?: unknown;
   error?: unknown;
@@ -355,8 +352,7 @@ function findExistingAgentToolCallIndex(
     const payload = entry.payload.data;
     const providerMatches =
       payload.provider === data.provider &&
-      payload.server === data.server &&
-      payload.tool === data.tool;
+      payload.name === data.name;
     if (providerMatches) {
       metadataMatches.push({ index: i, item: entry as AgentToolCallItem });
     }
@@ -371,49 +367,13 @@ function findExistingAgentToolCallIndex(
     }
   }
 
-  const normalizedDisplayName = normalizeComparableString(data.displayName);
-  const normalizedKind = normalizeComparableString(data.kind);
-
-  const filterByComparableField = (
-    candidates: Array<{ index: number; item: AgentToolCallItem }>,
-    selector: (entry: AgentToolCallItem) => string | null,
-    value: string | null
-  ): Array<{ index: number; item: AgentToolCallItem }> => {
-    if (!value) {
-      return candidates;
-    }
-    const matches = candidates.filter((candidate) => selector(candidate.item) === value);
-    if (matches.length === 1) {
-      return matches;
-    }
-    return matches.length > 0 ? matches : candidates;
-  };
-
-  const selectCandidate = (
-    candidates: Array<{ index: number; item: AgentToolCallItem }>
-  ): number => {
-    const byDisplayName = filterByComparableField(
-      candidates,
-      (entry) => normalizeComparableString(entry.payload.data.displayName),
-      normalizedDisplayName
-    );
-
-    const byKind = filterByComparableField(
-      byDisplayName,
-      (entry) => normalizeComparableString(entry.payload.data.kind),
-      normalizedKind
-    );
-
-    return byKind[0]?.index ?? -1;
-  };
-
   if (fallbackCandidates.length) {
-    return selectCandidate(fallbackCandidates);
+    return fallbackCandidates[0]?.index ?? -1;
   }
 
   // If this update still lacks a call id, fall back to metadata matches (e.g. replayed hydration events)
   if (!normalizedCallId && metadataMatches.length) {
-    return selectCandidate(metadataMatches);
+    return metadataMatches[0]?.index ?? -1;
   }
 
   return -1;
@@ -466,8 +426,6 @@ function appendAgentToolCall(
           status: mergedStatus,
           result: mergedResult,
           error: mergedError,
-          displayName: payloadData.displayName ?? existing.payload.data.displayName,
-          kind: payloadData.kind ?? existing.payload.data.kind,
           callId: payloadData.callId ?? existing.payload.data.callId,
           parsedEdits: parsed.parsedEdits ?? existing.payload.data.parsedEdits,
           parsedReads: parsed.parsedReads ?? existing.payload.data.parsedReads,
@@ -483,7 +441,7 @@ function appendAgentToolCall(
     : createUniqueTimelineId(
         state,
         "tool",
-        `${data.provider}:${data.server}:${data.tool}`,
+        `${data.provider}:${data.name}`,
         timestamp
       );
 
@@ -507,8 +465,8 @@ function isPermissionToolCall(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") {
     return false;
   }
-  const candidate = raw as { server?: string; kind?: string };
-  return candidate.server === "permission" || candidate.kind === "permission";
+  const candidate = raw as { name?: string };
+  return candidate.name === "permission_request";
 }
 
 const FAILED_STATUS_PATTERN = /fail|error|deny|reject|cancel|abort|exception|refus/;
@@ -779,12 +737,9 @@ export function reduceStreamUpdate(
             state,
             {
               provider: event.provider,
-              server: item.server,
-              tool: item.tool,
+              name: item.name,
               status: normalizeStatusString(item.status) ?? "executing",
               callId: item.callId,
-              displayName: item.displayName,
-              kind: item.kind,
               input: item.input,
               result: item.output,
               error: item.error,

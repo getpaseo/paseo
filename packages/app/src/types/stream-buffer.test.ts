@@ -19,8 +19,7 @@ const toolCallEvent = (): AgentStreamEventPayload => ({
   provider: "codex",
   item: {
     type: "tool_call",
-    server: "local",
-    tool: "run",
+    name: "run",
     status: "executing",
   },
 });

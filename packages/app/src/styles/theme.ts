@@ -179,6 +179,7 @@ const commonTheme = {
 
   fontWeight: {
     normal: "normal" as const,
+    medium: "500" as const,
     semibold: "600" as const,
     bold: "bold" as const,
   },

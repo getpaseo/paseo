@@ -55,22 +55,34 @@ export type AgentUsage = {
   totalCostUsd?: number;
 };
 
+/**
+ * Tool call kind categories for UI rendering hints.
+ * Derived from the tool name, not sent over the wire.
+ */
+export type ToolCallKind = "read" | "edit" | "execute" | "search" | "other";
+
+/**
+ * Clean tool call structure.
+ * - `name`: Tool identifier (e.g., "Read", "Bash", "Edit", "shell", "read_file", "apply_patch")
+ * - `input`: Tool input parameters
+ * - `output`: Tool result
+ * - `error`: Error if tool failed
+ */
+export interface ToolCallTimelineItem {
+  type: "tool_call";
+  name: string;
+  callId?: string;
+  status?: string;
+  input?: unknown;
+  output?: unknown;
+  error?: unknown;
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string }
   | { type: "assistant_message"; text: string }
   | { type: "reasoning"; text: string }
-  | {
-      type: "tool_call";
-      server: string;
-      tool: string;
-      status?: string;
-      callId?: string;
-      displayName?: string;
-      kind?: string;
-      input?: unknown;
-      output?: unknown;
-      error?: unknown;
-    }
+  | ToolCallTimelineItem
   | { type: "todo"; items: { text: string; completed: boolean }[] }
   | { type: "error"; message: string };
 

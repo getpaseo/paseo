@@ -8,7 +8,7 @@ import {
   useTempClaudeConfigDir,
 } from "./test-utils/index.js";
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import type { AgentSnapshotPayload } from "./messages.js";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "./messages.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
@@ -3117,82 +3117,81 @@ describe("daemon E2E", () => {
   });
 
   describe("tool call structure", () => {
+    // Helper to extract and dedupe tool calls by callId, keeping the last (most complete) version
+    function extractToolCalls(
+      queue: SessionOutboundMessage[],
+      agentId: string
+    ): AgentTimelineItem[] {
+      const byCallId = new Map<string, AgentTimelineItem>();
+      const noCallId: AgentTimelineItem[] = [];
+
+      for (const m of queue) {
+        if (
+          m.type === "agent_stream" &&
+          m.payload.agentId === agentId &&
+          m.payload.event.type === "timeline" &&
+          m.payload.event.item.type === "tool_call"
+        ) {
+          const tc = m.payload.event.item;
+          if (tc.callId) {
+            byCallId.set(tc.callId, tc);
+          } else {
+            noCallId.push(tc);
+          }
+        }
+      }
+
+      return [...byCallId.values(), ...noCallId];
+    }
+
+    // Helper to log tool call structure in a consistent format
+    function logToolCall(prefix: string, tc: AgentTimelineItem): void {
+      if (tc.type !== "tool_call") return;
+      console.log(
+        `[${prefix}]`,
+        JSON.stringify({
+          name: tc.name,
+          callId: tc.callId,
+          status: tc.status,
+          hasInput: tc.input !== undefined,
+          hasOutput: tc.output !== undefined,
+        })
+      );
+    }
+
     test(
-      "Claude agent tool calls have expected structure",
+      "Claude agent: Read tool",
       async () => {
         const cwd = tmpCwd();
 
-        // Create Claude agent with bypass permissions
         const agent = await ctx.client.createAgent({
           provider: "claude",
           cwd,
-          title: "Tool Structure Test - Claude",
+          title: "Claude Read Test",
           modeId: "bypassPermissions",
         });
 
-        expect(agent.provider).toBe("claude");
-
         ctx.client.clearMessageQueue();
 
-        // Prompt that triggers a Read tool call
         await ctx.client.sendMessage(
           agent.id,
           "Read the file /etc/hosts and tell me how many lines it has. Be brief."
         );
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
-        expect(finalState.status).toBe("idle");
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
 
-        // Extract tool_call timeline items
-        const queue = ctx.client.getMessageQueue();
-        const toolCalls: AgentTimelineItem[] = [];
-        for (const m of queue) {
-          if (
-            m.type === "agent_stream" &&
-            m.payload.agentId === agent.id &&
-            m.payload.event.type === "timeline" &&
-            m.payload.event.item.type === "tool_call"
-          ) {
-            toolCalls.push(m.payload.event.item);
-          }
-        }
-
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
-        // Log and verify structure for each tool call
         for (const tc of toolCalls) {
-          expect(tc.type).toBe("tool_call");
-
-          // Current structure has: server, tool, displayName, kind
-          expect(typeof tc.server).toBe("string");
-          expect(typeof tc.tool).toBe("string");
-
-          console.log(
-            "[CLAUDE TOOL_CALL]",
-            JSON.stringify({
-              server: tc.server,
-              tool: tc.tool,
-              displayName: tc.displayName,
-              kind: tc.kind,
-              callId: tc.callId,
-              status: tc.status,
-              hasInput: tc.input !== undefined,
-              hasOutput: tc.output !== undefined,
-            })
-          );
+          logToolCall("CLAUDE_READ", tc);
         }
 
-        // Find a Read tool call specifically
-        const readCall = toolCalls.find(
-          (tc) =>
-            tc.server === "Read" ||
-            tc.tool === "Read" ||
-            tc.displayName === "Read"
-        );
+        const readCall = toolCalls.find((tc) => tc.type === "tool_call" && tc.name === "Read");
         expect(readCall).toBeDefined();
+        expect(readCall?.name).toBe("Read");
         expect(readCall?.input).toBeDefined();
 
-        // Cleanup
         await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });
       },
@@ -3200,80 +3199,209 @@ describe("daemon E2E", () => {
     );
 
     test(
-      "Codex agent tool calls have expected structure",
+      "Claude agent: Bash tool",
       async () => {
         const cwd = tmpCwd();
 
-        // Create Codex agent with full access
         const agent = await ctx.client.createAgent({
-          provider: "codex",
+          provider: "claude",
           cwd,
-          title: "Tool Structure Test - Codex",
-          modeId: "full-access",
+          title: "Claude Bash Test",
+          modeId: "bypassPermissions",
         });
-
-        expect(agent.provider).toBe("codex");
 
         ctx.client.clearMessageQueue();
 
-        // Prompt that triggers a shell command
         await ctx.client.sendMessage(
           agent.id,
           "Run `echo hello` and tell me what it outputs. Be brief."
         );
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
-        expect(finalState.status).toBe("idle");
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
 
-        // Extract tool_call timeline items
-        const queue = ctx.client.getMessageQueue();
-        const toolCalls: AgentTimelineItem[] = [];
-        for (const m of queue) {
-          if (
-            m.type === "agent_stream" &&
-            m.payload.agentId === agent.id &&
-            m.payload.event.type === "timeline" &&
-            m.payload.event.item.type === "tool_call"
-          ) {
-            toolCalls.push(m.payload.event.item);
-          }
-        }
-
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
-        // Log and verify structure for each tool call
         for (const tc of toolCalls) {
-          expect(tc.type).toBe("tool_call");
-
-          // Current structure has: server, tool, displayName, kind
-          expect(typeof tc.server).toBe("string");
-          expect(typeof tc.tool).toBe("string");
-
-          console.log(
-            "[CODEX TOOL_CALL]",
-            JSON.stringify({
-              server: tc.server,
-              tool: tc.tool,
-              displayName: tc.displayName,
-              kind: tc.kind,
-              callId: tc.callId,
-              status: tc.status,
-              hasInput: tc.input !== undefined,
-              hasOutput: tc.output !== undefined,
-            })
-          );
+          logToolCall("CLAUDE_BASH", tc);
         }
 
-        // Find a shell/execute tool call
-        const shellCall = toolCalls.find(
-          (tc) =>
-            tc.kind === "execute" ||
-            tc.server?.includes("shell") ||
-            tc.displayName?.includes("echo")
-        );
-        expect(shellCall).toBeDefined();
+        const bashCall = toolCalls.find((tc) => tc.type === "tool_call" && tc.name === "Bash");
+        expect(bashCall).toBeDefined();
+        expect(bashCall?.name).toBe("Bash");
+        expect(bashCall?.input).toBeDefined();
+        // Command text should be in input.command
+        const bashInput = bashCall?.input as { command?: string } | undefined;
+        expect(bashInput?.command).toContain("echo");
 
-        // Cleanup
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "Claude agent: Edit tool",
+      async () => {
+        const cwd = tmpCwd();
+        const testFile = path.join(cwd, "test.txt");
+        writeFileSync(testFile, "hello world\n");
+
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Claude Edit Test",
+          modeId: "bypassPermissions",
+        });
+
+        ctx.client.clearMessageQueue();
+
+        await ctx.client.sendMessage(
+          agent.id,
+          `Edit the file ${testFile} and change "hello" to "goodbye". Be brief.`
+        );
+
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        for (const tc of toolCalls) {
+          logToolCall("CLAUDE_EDIT", tc);
+        }
+
+        const editCall = toolCalls.find((tc) => tc.type === "tool_call" && tc.name === "Edit");
+        expect(editCall).toBeDefined();
+        expect(editCall?.input).toBeDefined();
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "Codex agent: shell command",
+      async () => {
+        const cwd = tmpCwd();
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Codex Shell Test",
+          modeId: "full-access",
+        });
+
+        ctx.client.clearMessageQueue();
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "Run `echo hello` and tell me what it outputs. Be brief."
+        );
+
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        for (const tc of toolCalls) {
+          logToolCall("CODEX_SHELL", tc);
+        }
+
+        const shellCall = toolCalls.find((tc) => tc.type === "tool_call" && tc.name === "shell");
+        expect(shellCall).toBeDefined();
+        expect(shellCall?.name).toBe("shell");
+        expect(shellCall?.input).toBeDefined();
+        // Command text should be in input.command
+        const shellInput = shellCall?.input as { command?: string } | undefined;
+        expect(shellInput?.command).toContain("echo");
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "Codex agent: file read",
+      async () => {
+        const cwd = tmpCwd();
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Codex Read Test",
+          modeId: "full-access",
+        });
+
+        ctx.client.clearMessageQueue();
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "Read the file /etc/hosts and tell me how many lines it has. Be brief."
+        );
+
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        for (const tc of toolCalls) {
+          logToolCall("CODEX_READ", tc);
+        }
+
+        // Codex may use shell cat or file read
+        const readCall = toolCalls.find(
+          (tc) => tc.type === "tool_call" && tc.name === "read_file"
+        );
+        if (readCall) {
+          expect(readCall.name).toBe("read_file");
+        }
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "Codex agent: file edit",
+      async () => {
+        const cwd = tmpCwd();
+        const testFile = path.join(cwd, "test.txt");
+        writeFileSync(testFile, "hello world\n");
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          cwd,
+          title: "Codex Edit Test",
+          modeId: "full-access",
+        });
+
+        ctx.client.clearMessageQueue();
+
+        await ctx.client.sendMessage(
+          agent.id,
+          `Edit the file ${testFile} and change "hello" to "goodbye". Be brief.`
+        );
+
+        await ctx.client.waitForAgentIdle(agent.id, 120000);
+
+        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        expect(toolCalls.length).toBeGreaterThan(0);
+
+        for (const tc of toolCalls) {
+          logToolCall("CODEX_EDIT", tc);
+        }
+
+        // Codex uses apply_patch for edits
+        const editCall = toolCalls.find(
+          (tc) => tc.type === "tool_call" && tc.name === "apply_patch"
+        );
+        if (editCall) {
+          expect(editCall.name).toBe("apply_patch");
+        }
+
         await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });
       },

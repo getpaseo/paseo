@@ -1954,13 +1954,6 @@ function shouldReportCommandError(input: {
   return false;
 }
 
-function buildFileChangeSummary(files: { path: string; kind: string }[]): string {
-  if (files.length === 1) {
-    return `${files[0].kind}: ${files[0].path}`;
-  }
-  return `${files.length} file changes`;
-}
-
 function extractContentText(content: unknown): string | null {
   if (!Array.isArray(content)) {
     return null;
@@ -3105,12 +3098,9 @@ class CodexMcpAgentSession implements AgentSession {
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
-        server: "permission",
-        tool: pending.request.name,
+        name: pending.request.name,
         status,
         callId: pending.request.id,
-        displayName: pending.request.title ? pending.request.title : pending.request.name,
-        kind: "permission",
         input: pending.request.input,
       }),
     });
@@ -3415,12 +3405,9 @@ class CodexMcpAgentSession implements AgentSession {
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
-        server: "permission",
-        tool: request.name,
+        name: request.name,
         status: "requested",
         callId: request.id,
-        displayName: request.title ? request.title : request.name,
-        kind: "permission",
         input: request.input,
       }),
     });
@@ -3535,12 +3522,9 @@ class CodexMcpAgentSession implements AgentSession {
             type: "timeline",
             provider: CODEX_PROVIDER,
             item: createToolCallTimelineItem({
-              server: "file_change",
-              tool: "apply_patch",
+              name: "apply_patch",
               status: success ? "completed" : "failed",
               callId,
-              displayName: buildFileChangeSummary(summaryFiles),
-              kind: "edit",
               input: { files: summaryFiles },
               output: { files: pendingChanges, message: parsedOutputText, success },
             }),
@@ -3607,19 +3591,15 @@ class CodexMcpAgentSession implements AgentSession {
         if (!callId) {
           throw new Error("exec_command_begin missing call_id");
         }
-        const commandText = normalizeCommand(parsedEvent.command);
         const fileRead = extractFileReadFromParsedCmd(parsedEvent.parsedCmd);
         if (fileRead) {
           this.emitEvent({
             type: "timeline",
             provider: CODEX_PROVIDER,
             item: createToolCallTimelineItem({
-              server: "file",
-              tool: "read_file",
+              name: "read_file",
               status: "running",
               callId,
-              displayName: `Read: ${fileRead.name}`,
-              kind: "read",
               input: { path: fileRead.path },
             }),
           });
@@ -3628,12 +3608,9 @@ class CodexMcpAgentSession implements AgentSession {
             type: "timeline",
             provider: CODEX_PROVIDER,
             item: createToolCallTimelineItem({
-              server: "command",
-              tool: "shell",
+              name: "shell",
               status: "running",
               callId,
-              displayName: commandText,
-              kind: "execute",
               input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
             }),
           });
@@ -3709,12 +3686,9 @@ class CodexMcpAgentSession implements AgentSession {
             type: "timeline",
             provider: CODEX_PROVIDER,
             item: createToolCallTimelineItem({
-              server: "file",
-              tool: "read_file",
+              name: "read_file",
               status: failed ? "failed" : "completed",
               callId,
-              displayName: `Read: ${fileRead.name}`,
-              kind: "read",
               input: { path: fileRead.path },
               output: {
                 type: "read_file",
@@ -3749,12 +3723,9 @@ class CodexMcpAgentSession implements AgentSession {
             type: "timeline",
             provider: CODEX_PROVIDER,
             item: createToolCallTimelineItem({
-              server: "command",
-              tool: "shell",
+              name: "shell",
               status: failed ? "failed" : "completed",
               callId,
-              displayName: commandText,
-              kind: "execute",
               input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
               output: structuredOutput,
             }),
@@ -3791,12 +3762,9 @@ class CodexMcpAgentSession implements AgentSession {
           type: "timeline",
           provider: CODEX_PROVIDER,
           item: createToolCallTimelineItem({
-            server: "file_change",
-            tool: "apply_patch",
+            name: "apply_patch",
             status: "running",
             callId,
-            displayName: buildFileChangeSummary(files),
-            kind: "edit",
             input: { changes: parsedEvent.changes, files },
           }),
         });
@@ -3852,12 +3820,9 @@ class CodexMcpAgentSession implements AgentSession {
           type: "timeline",
           provider: CODEX_PROVIDER,
           item: createToolCallTimelineItem({
-            server: "file_change",
-            tool: "apply_patch",
+            name: "apply_patch",
             status: parsedEvent.success ? "completed" : "failed",
             callId,
-            displayName: buildFileChangeSummary(summaryFiles),
-            kind: "edit",
             input: { files: summaryFiles },
             output,
           }),
@@ -3881,12 +3846,9 @@ class CodexMcpAgentSession implements AgentSession {
           type: "timeline",
           provider: CODEX_PROVIDER,
           item: createToolCallTimelineItem({
-            server: parsedEvent.server,
-            tool: parsedEvent.tool,
+            name: `${parsedEvent.server}.${parsedEvent.tool}`,
             status: success ? "completed" : "failed",
             callId: parsedEvent.callId,
-            displayName: `${parsedEvent.server}.${parsedEvent.tool}`,
-            kind: "tool",
             input,
             output: normalizedOutput,
           }),
@@ -4059,12 +4021,9 @@ class CodexMcpAgentSession implements AgentSession {
         commandOutput.exitCode = resolvedExitCode;
       }
       return createToolCallTimelineItem({
-        server: "command",
-        tool: "shell",
+        name: "shell",
         status: item.status,
         callId: item.callId,
-        displayName: command,
-        kind: "execute",
         input: { command: item.command, cwd: item.cwd },
         output: commandOutput,
         error: item.error,
@@ -4089,12 +4048,9 @@ class CodexMcpAgentSession implements AgentSession {
           ? "running"
           : "completed";
       return createToolCallTimelineItem({
-        server: "file_change",
-        tool: "apply_patch",
+        name: "apply_patch",
         status,
         callId: item.callId,
-        displayName: buildFileChangeSummary(summaryFiles),
-        kind: "edit",
         input: { files: summaryFiles },
         output: { files: changes },
       });
@@ -4104,16 +4060,12 @@ class CodexMcpAgentSession implements AgentSession {
         return null;
       }
       const readItem = item as ReadFileThreadItem;
-      const displayName = `Read ${readItem.path}`;
       const output =
         readItem.content !== undefined ? readItem.content : readItem.output;
       return createToolCallTimelineItem({
-        server: "file_read",
-        tool: "read_file",
+        name: "read_file",
         status: readItem.status,
         callId: readItem.callId,
-        displayName,
-        kind: "read",
         input: readItem.input ? readItem.input : { path: readItem.path },
         output,
       });
@@ -4123,12 +4075,9 @@ class CodexMcpAgentSession implements AgentSession {
         return null;
       }
       return createToolCallTimelineItem({
-        server: item.server,
-        tool: item.tool,
+        name: `${item.server}.${item.tool}`,
         status: item.status,
         callId: item.callId,
-        displayName: `${item.server}.${item.tool}`,
-        kind: "tool",
         input: item.input,
         output: item.output,
       });
@@ -4137,16 +4086,12 @@ class CodexMcpAgentSession implements AgentSession {
       if (eventType && eventType !== "item.completed") {
         return null;
       }
-      const displayName = `Web search: ${item.query}`;
       const output =
         item.results !== undefined ? item.results : item.output;
       return createToolCallTimelineItem({
-        server: "web_search",
-        tool: "web_search",
+        name: "web_search",
         status: item.status,
         callId: item.callId,
-        displayName,
-        kind: "search",
         input: item.input ? item.input : { query: item.query },
         output,
       });

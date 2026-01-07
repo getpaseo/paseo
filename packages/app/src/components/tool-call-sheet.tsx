@@ -17,6 +17,7 @@ import { Pencil, Eye, SquareTerminal, Search, Wrench, X } from "lucide-react-nat
 import { DiffViewer } from "./diff-viewer";
 import {
   extractKeyValuePairs,
+  stripCwdPrefix,
   type EditEntry,
   type ReadEntry,
   type CommandDetails,
@@ -36,6 +37,7 @@ export interface ToolCallSheetData {
   parsedEditEntries?: EditEntry[];
   parsedReadEntries?: ReadEntry[];
   parsedCommandDetails?: CommandDetails | null;
+  cwd?: string;
 }
 
 interface ToolCallSheetContextValue {
@@ -234,6 +236,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     parsedEditEntries,
     parsedReadEntries,
     parsedCommandDetails,
+    cwd,
   } = data;
 
   const IconComponent = kind
@@ -453,7 +456,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
                 <Text style={styles.sectionTitle}>Diff</Text>
                 {entry.filePath ? (
                   <View style={styles.fileBadge}>
-                    <Text style={styles.fileBadgeText}>{entry.filePath}</Text>
+                    <Text style={styles.fileBadgeText}>{stripCwdPrefix(entry.filePath, cwd)}</Text>
                   </View>
                 ) : null}
                 <View style={styles.diffContainer}>
@@ -478,7 +481,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
                 <Text style={styles.sectionTitle}>Read Result</Text>
                 {entry.filePath ? (
                   <View style={styles.fileBadge}>
-                    <Text style={styles.fileBadgeText}>{entry.filePath}</Text>
+                    <Text style={styles.fileBadgeText}>{stripCwdPrefix(entry.filePath, cwd)}</Text>
                   </View>
                 ) : null}
                 <ScrollView

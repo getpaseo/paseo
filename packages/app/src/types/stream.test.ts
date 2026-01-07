@@ -41,8 +41,8 @@ function reasoningTimeline(text: string, provider: TestAgentProvider = "claude")
 function toolTimeline(
   id: string,
   status: string,
-  raw?: unknown,
-  options?: { callId?: string | null; provider?: "claude" | "codex"; server?: string; tool?: string; displayName?: string; kind?: string }
+  _raw?: unknown,
+  options?: { callId?: string | null; provider?: "claude" | "codex"; name?: string }
 ): AgentStreamEventPayload {
   const explicitCallIdProvided =
     options && Object.prototype.hasOwnProperty.call(options, "callId");
@@ -52,17 +52,15 @@ function toolTimeline(
       : options?.callId
     : id;
   const provider = options?.provider ?? "claude";
+  const name = options?.name ?? id;
   return {
     type: "timeline",
     provider,
     item: {
       type: "tool_call",
-      server: options?.server ?? "terminal",
-      tool: options?.tool ?? id,
+      name,
       status,
       callId: callIdValue,
-      displayName: options?.displayName ?? id,
-      kind: options?.kind ?? "execute",
     },
   };
 }
@@ -73,12 +71,9 @@ function permissionTimeline(id: string, status: string): AgentStreamEventPayload
     provider: "claude",
     item: {
       type: "tool_call",
-      server: "permission",
-      tool: "permission_request",
+      name: "permission_request",
       status,
       callId: id,
-      displayName: "Permission",
-      kind: "permission",
     },
   };
 }
@@ -188,8 +183,7 @@ function testToolCallStatusInference() {
     provider: 'claude',
     item: {
       type: 'tool_call',
-      server: 'editor',
-      tool: 'read',
+      name: 'read',
       status: 'pending',
       callId: toolCallId,
     },
@@ -200,8 +194,7 @@ function testToolCallStatusInference() {
     provider: 'claude',
     item: {
       type: 'tool_call',
-      server: 'editor',
-      tool: 'read',
+      name: 'read',
       callId: toolCallId,
       output: { content: 'Hello world' },
     },
@@ -234,8 +227,7 @@ function testToolCallStatusInferenceFromRawOnly() {
     provider: 'claude',
     item: {
       type: 'tool_call',
-      server: 'command',
-      tool: 'shell',
+      name: 'shell',
       callId: toolCallId,
       status: 'completed',
       output: { metadata: { exit_code: 0 } },
@@ -257,8 +249,7 @@ function testToolCallFailureInferenceFromError() {
     provider: 'claude',
     item: {
       type: 'tool_call',
-      server: 'command',
-      tool: 'shell',
+      name: 'shell',
       callId: toolCallId,
       error: { message: 'Command failed' },
     },
@@ -304,8 +295,7 @@ function testToolCallParsedPayloadHydration() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'read_file',
+          name: 'read_file',
           status: 'pending',
           callId: readCallId,
           input: { file_path: 'README.md' },
@@ -319,8 +309,7 @@ function testToolCallParsedPayloadHydration() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'read_file',
+          name: 'read_file',
           callId: readCallId,
           output: { content: 'Hello world' },
         },
@@ -333,12 +322,10 @@ function testToolCallParsedPayloadHydration() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'command',
-          tool: 'shell',
+          name: 'shell',
           status: 'pending',
           callId: commandCallId,
           input: { command: 'pwd' },
-          kind: 'execute',
         },
       },
       timestamp: timestampStart,
@@ -349,8 +336,7 @@ function testToolCallParsedPayloadHydration() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'command',
-          tool: 'shell',
+          name: 'shell',
           callId: commandCallId,
           output: {
             result: {
@@ -449,8 +435,7 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'apply_patch',
+          name: 'apply_patch',
           status: 'pending',
           callId: editCallId,
           input: {
@@ -467,8 +452,7 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'apply_patch',
+          name: 'apply_patch',
           callId: editCallId,
           output: {
             changes: [
@@ -489,8 +473,7 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'read_file',
+          name: 'read_file',
           status: 'pending',
           callId: readCallId,
           input: { file_path: 'README.md' },
@@ -504,8 +487,7 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'editor',
-          tool: 'read_file',
+          name: 'read_file',
           callId: readCallId,
           output: { content: '# Hydrated test file\nHello Claude!' },
         },
@@ -518,12 +500,10 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'command',
-          tool: 'shell',
+          name: 'shell',
           status: 'pending',
           callId: commandCallId,
           input: { command: 'ls' },
-          kind: 'execute',
         },
       },
       timestamp: timestampStart,
@@ -534,8 +514,7 @@ function testClaudeHydratedToolBodies() {
         provider: 'claude',
         item: {
           type: 'tool_call',
-          server: 'command',
-          tool: 'shell',
+          name: 'shell',
           callId: commandCallId,
           output: {
             result: {
@@ -814,10 +793,7 @@ function buildConcurrentToolCallUpdates(provider: ToolCallProvider) {
 
   const baseOptions = {
     provider,
-    server: 'command',
-    tool: 'shell',
-    displayName: 'Run command',
-    kind: 'execute',
+    name: 'shell',
   } as const;
 
   return [
@@ -924,7 +900,7 @@ function buildOutOfOrderToolCallSequence(provider: ToolCallProvider) {
         'shell',
         'completed',
         { type: 'tool_result', provider, tool_call_id: callId },
-        { provider, server: 'command', tool: 'shell', callId }
+        { provider, name: 'shell', callId }
       ),
       timestamp: timestamps[0],
     },
@@ -933,7 +909,7 @@ function buildOutOfOrderToolCallSequence(provider: ToolCallProvider) {
         'shell',
         'executing',
         { type: 'tool_use', provider },
-        { provider, server: 'command', tool: 'shell', callId: null }
+        { provider, name: 'shell', callId: null }
       ),
       timestamp: timestamps[1],
     },
@@ -976,7 +952,7 @@ function buildMetadataReplaySequence(provider: ToolCallProvider) {
         'shell',
         'completed',
         { type: 'tool_result', provider, tool_call_id: firstCallId },
-        { provider, server: 'command', tool: 'shell', callId: firstCallId, displayName: 'Run first' }
+        { provider, name: 'shell', callId: firstCallId }
       ),
       timestamp: timestamps[0],
     },
@@ -985,7 +961,7 @@ function buildMetadataReplaySequence(provider: ToolCallProvider) {
         'shell',
         'completed',
         { type: 'tool_result', provider, tool_call_id: secondCallId },
-        { provider, server: 'command', tool: 'shell', callId: secondCallId, displayName: 'Run second' }
+        { provider, name: 'shell', callId: secondCallId }
       ),
       timestamp: timestamps[1],
     },
@@ -994,7 +970,7 @@ function buildMetadataReplaySequence(provider: ToolCallProvider) {
         'shell',
         'executing',
         { type: 'tool_use', provider },
-        { provider, server: 'command', tool: 'shell', callId: null, displayName: 'Run first', kind: 'execute' }
+        { provider, name: 'shell', callId: null }
       ),
       timestamp: timestamps[2],
     },
@@ -1041,15 +1017,14 @@ function testMetadataReplayDeduplicationHydrated() {
 
 function testFallbackToolCallIdsStayUnique() {
   const timestamp = new Date('2025-01-01T14:05:00Z');
-  // Tool calls need different server/tool to remain distinct when lacking callIds
-  // (displayName alone is not sufficient for differentiation)
+  // Tool calls need different name to remain distinct when lacking callIds
   const updates = [
     {
       event: toolTimeline(
         'fallback-read',
         'completed',
         undefined,
-        { callId: null, server: 'editor', tool: 'read_file', displayName: 'Read file' }
+        { callId: null, name: 'read_file' }
       ),
       timestamp,
     },
@@ -1058,7 +1033,7 @@ function testFallbackToolCallIdsStayUnique() {
         'fallback-shell',
         'completed',
         undefined,
-        { callId: null, server: 'command', tool: 'shell', displayName: 'Run shell' }
+        { callId: null, name: 'shell' }
       ),
       timestamp,
     },
@@ -1072,7 +1047,7 @@ function testFallbackToolCallIdsStayUnique() {
   assert.strictEqual(
     new Set(ids).size,
     ids.length,
-    'Fallback-generated tool ids must be unique when server/tool differs'
+    'Fallback-generated tool ids must be unique when name differs'
   );
 }
 

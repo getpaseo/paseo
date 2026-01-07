@@ -619,12 +619,9 @@ class ClaudeAgentSession implements AgentSession {
       if (pending.request.kind === "plan") {
         await this.setMode("acceptEdits");
         this.pushToolCall({
-          server: "plan",
-          tool: "plan_approval",
+          name: "plan_approval",
           status: "granted",
           callId: pending.request.id,
-          displayName: "Plan approved",
-          kind: "plan",
         });
       }
       const result: PermissionResult = {
@@ -634,12 +631,9 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
       this.pushToolCall({
-        server: "permission",
-        tool: pending.request.name,
+        name: pending.request.name,
         status: "granted",
         callId: pending.request.id,
-        displayName: pending.request.title ?? pending.request.name,
-        kind: "permission",
         input: pending.request.input,
       });
     } else {
@@ -650,12 +644,9 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
       this.pushToolCall({
-        server: "permission",
-        tool: pending.request.name,
+        name: pending.request.name,
         status: "denied",
         callId: pending.request.id,
-        displayName: pending.request.title ?? pending.request.name,
-        kind: "permission",
         input: pending.request.input,
       });
     }
@@ -1039,12 +1030,9 @@ class ClaudeAgentSession implements AgentSession {
     };
 
     this.pushToolCall({
-      server: "permission",
-      tool: toolName,
+      name: toolName,
       status: "requested",
       callId: requestId,
-      displayName: request.title ?? toolName,
-      kind: "permission",
       input,
     });
 
@@ -1067,12 +1055,9 @@ class ClaudeAgentSession implements AgentSession {
         cleanup();
         const error = new Error("Permission request timed out");
         this.pushToolCall({
-          server: "permission",
-          tool: toolName,
+          name: toolName,
           status: "denied",
           callId: requestId,
-          displayName: request.title ?? toolName,
-          kind: "permission",
           input,
         });
         this.pushEvent({
@@ -1136,25 +1121,6 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.enqueueTimeline(item);
-  }
-
-  private getToolKind(classification?: ToolUseClassification): string | undefined {
-    switch (classification) {
-      case "command":
-        return "execute";
-      case "file_change":
-        return "edit";
-      case "generic":
-      default:
-        return "tool";
-    }
-  }
-
-  private buildToolDisplayName(entry?: ToolUseCacheEntry): string | undefined {
-    if (!entry) {
-      return undefined;
-    }
-    return entry.commandText ?? entry.name;
   }
 
   private pushEvent(event: AgentStreamEvent) {
@@ -1315,12 +1281,9 @@ class ClaudeAgentSession implements AgentSession {
     this.toolUseCache.set(entry.id, entry);
     this.pushToolCall(
       {
-        server: entry.server,
-        tool: entry.name,
+        name: entry.name,
         status: "pending",
         callId: entry.id,
-        displayName: this.buildToolDisplayName(entry),
-        kind: this.getToolKind(entry.classification),
         input: entry.input ?? this.normalizeToolInput(block.input),
       },
       items
@@ -1329,8 +1292,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
     const entry = typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
-    const server = entry?.server ?? block.server ?? "tool";
-    const tool = entry?.name ?? block.tool_name ?? "tool";
+    const toolName = entry?.name ?? block.tool_name ?? "tool";
     const status = block.is_error ? "failed" : "completed";
 
     // Extract output from block.content (SDK always returns content in string form)
@@ -1338,12 +1300,9 @@ class ClaudeAgentSession implements AgentSession {
 
     this.pushToolCall(
       {
-        server,
-        tool,
+        name: toolName,
         status,
         callId: typeof block.tool_use_id === "string" ? block.tool_use_id : undefined,
-        displayName: this.buildToolDisplayName(entry),
-        kind: this.getToolKind(entry?.classification),
         input: entry?.input,
         output,
         error: block.is_error ? block : undefined,
@@ -1577,12 +1536,9 @@ class ClaudeAgentSession implements AgentSession {
     this.applyToolInput(entry, normalized);
     this.toolUseCache.set(toolId, entry);
     this.pushToolCall({
-      server: entry.server,
-      tool: entry.name,
+      name: entry.name,
       status: "pending",
       callId: toolId,
-      displayName: this.buildToolDisplayName(entry),
-      kind: this.getToolKind(entry.classification),
       input: normalized,
     });
   }

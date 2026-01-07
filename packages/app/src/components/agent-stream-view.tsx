@@ -283,15 +283,11 @@ export function AgentStreamView({
       case "tool_call": {
         const { payload } = item;
 
-        console.log("[TOOL_CALL_DEBUG]", JSON.stringify(payload, null, 2));
-
         if (payload.source === "agent") {
           const data = payload.data;
-          const toolLabel = data.displayName ?? `${data.server}/${data.tool}`;
           content = (
             <ToolCall
-              toolName={toolLabel}
-              kind={data.kind}
+              toolName={data.name}
               args={data.input}
               result={data.result}
               error={data.error}
@@ -299,6 +295,7 @@ export function AgentStreamView({
               parsedEditEntries={data.parsedEdits}
               parsedReadEntries={data.parsedReads}
               parsedCommandDetails={data.parsedCommand ?? null}
+              cwd={agent.cwd}
             />
           );
         } else {

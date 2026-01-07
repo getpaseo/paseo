@@ -315,7 +315,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     backgroundColor: theme.colors.muted,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.accentBorder,
     marginBottom: theme.spacing[2],
   },
   fileHeader: {

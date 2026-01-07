@@ -29,6 +29,7 @@ import { Colors } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
 import type { CommandDetails, EditEntry, ReadEntry } from "@/utils/tool-call-parsers";
+import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
 
@@ -41,15 +42,16 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    marginBottom: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[4],
+    marginTop: theme.spacing[4],
+    paddingHorizontal: theme.spacing[2],
   },
   bubble: {
     backgroundColor: theme.colors.muted,
     borderRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
     maxWidth: "80%",
   },
   text: {
@@ -187,7 +189,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.accentBorder,
     backgroundColor: theme.colors.secondary,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
@@ -209,13 +211,24 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     backgroundColor: "transparent",
   },
   label: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    flexShrink: 0,
+  },
+  secondaryLabel: {
     flex: 1,
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+    marginLeft: theme.spacing[2],
+  },
+  spacer: {
+    flex: 1,
   },
   chevron: {
     marginLeft: theme.spacing[1],
+    flexShrink: 0,
   },
   detailWrapper: {
     marginTop: theme.spacing[2],
@@ -829,6 +842,7 @@ interface AgentThoughtMessageProps {
 
 interface ExpandableBadgeProps {
   label: string;
+  secondaryLabel?: string;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
   onToggle: () => void;
@@ -839,6 +853,7 @@ interface ExpandableBadgeProps {
 
 const ExpandableBadge = memo(function ExpandableBadge({
   label,
+  secondaryLabel,
   icon,
   isExpanded,
   onToggle,
@@ -914,6 +929,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
           <Text style={expandableBadgeStylesheet.label} numberOfLines={1}>
             {label}
           </Text>
+          {secondaryLabel ? (
+            <Text style={expandableBadgeStylesheet.secondaryLabel} numberOfLines={1}>
+              {secondaryLabel}
+            </Text>
+          ) : (
+            <View style={expandableBadgeStylesheet.spacer} />
+          )}
           {hasDetails ? (
             <ChevronRight
               size={14}
@@ -1084,7 +1106,6 @@ export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtM
 
 interface ToolCallProps {
   toolName: string;
-  kind?: string; // Optional kind for ACP tool calls
   args: any;
   result?: any;
   error?: any;
@@ -1092,6 +1113,7 @@ interface ToolCallProps {
   parsedEditEntries?: EditEntry[];
   parsedReadEntries?: ReadEntry[];
   parsedCommandDetails?: CommandDetails | null;
+  cwd?: string;
 }
 
 // Icon mapping for tool kinds
@@ -1102,9 +1124,19 @@ const toolKindIcons: Record<string, any> = {
   search: Search,
 };
 
+// Derive tool kind from tool name for icon selection
+function getToolKindFromName(toolName: string): string {
+  const lower = toolName.toLowerCase();
+  if (lower === "read" || lower === "read_file" || lower.startsWith("read")) return "read";
+  if (lower === "edit" || lower === "write" || lower === "apply_patch") return "edit";
+  if (lower === "bash" || lower === "shell") return "execute";
+  if (lower === "grep" || lower === "glob" || lower === "web_search") return "search";
+  return "tool";
+}
+
+
 export const ToolCall = memo(function ToolCall({
   toolName,
-  kind,
   args,
   result,
   error,
@@ -1112,12 +1144,18 @@ export const ToolCall = memo(function ToolCall({
   parsedEditEntries,
   parsedReadEntries,
   parsedCommandDetails,
+  cwd,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
 
-  const IconComponent = kind
-    ? toolKindIcons[kind.toLowerCase()] || Wrench
-    : Wrench;
+  const kind = getToolKindFromName(toolName);
+  const IconComponent = toolKindIcons[kind] || Wrench;
+
+  // Extract principal param for secondary label (memoized)
+  const principalParam = useMemo(
+    () => extractPrincipalParam(args, cwd),
+    [args, cwd]
+  );
 
   // Check if there's any content to display in the sheet
   const hasDetails = args !== undefined || result !== undefined || error !== undefined;
@@ -1133,8 +1171,9 @@ export const ToolCall = memo(function ToolCall({
       parsedEditEntries,
       parsedReadEntries,
       parsedCommandDetails,
+      cwd,
     });
-  }, [openToolCall, toolName, kind, status, args, result, error, parsedEditEntries, parsedReadEntries, parsedCommandDetails]);
+  }, [openToolCall, toolName, kind, status, args, result, error, parsedEditEntries, parsedReadEntries, parsedCommandDetails, cwd]);
 
   // Dummy renderDetails to make badge tappable - actual content is rendered in the sheet
   const dummyRenderDetails = useCallback(() => null, []);
@@ -1142,6 +1181,7 @@ export const ToolCall = memo(function ToolCall({
   return (
     <ExpandableBadge
       label={toolName}
+      secondaryLabel={principalParam}
       icon={IconComponent}
       isExpanded={false}
       onToggle={handleOpenSheet}

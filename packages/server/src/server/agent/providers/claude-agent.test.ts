@@ -88,21 +88,16 @@ function extractCommandText(input: unknown): string | null {
 }
 
 function isSleepCommandToolCall(item: ToolCallItem): boolean {
-  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
-  if (display.includes("sleep 60")) {
-    return true;
-  }
   const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
   return inputCommand.includes("sleep 60");
 }
 
 function isPermissionCommandToolCall(item: ToolCallItem): boolean {
-  if (item.server === "permission") {
+  if (item.name === "permission_request") {
     return false;
   }
-  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
   const inputCommand = extractCommandText(item.input)?.toLowerCase() ?? "";
-  return display.includes("permission.txt") || inputCommand.includes("permission.txt");
+  return inputCommand.includes("permission.txt");
 }
 
 type AgentMcpServerHandle = {
@@ -354,7 +349,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
-      let pendingDisplay: string | null = null;
+      let pendingCommand: string | null = null;
       const events = session.stream("Run the exact command `pwd` via Bash and stop.");
 
       try {
@@ -363,10 +358,10 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           if (
             event.type === "timeline" &&
             event.item.type === "tool_call" &&
-            event.item.server.toLowerCase().includes("bash") &&
+            event.item.name.toLowerCase().includes("bash") &&
             event.item.status === "pending"
           ) {
-            pendingDisplay = event.item.displayName ?? null;
+            pendingCommand = extractCommandText(event.item.input);
           }
           if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
@@ -377,8 +372,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         rmSync(cwd, { recursive: true, force: true });
       }
 
-      expect(pendingDisplay).toBeTruthy();
-      expect(pendingDisplay?.toLowerCase()).toContain("pwd");
+      expect(pendingCommand).toBeTruthy();
+      expect(pendingCommand?.toLowerCase()).toContain("pwd");
     },
     150_000
   );
@@ -418,9 +413,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       );
       const commandEvents = toolCalls.filter(
         (item) =>
-          (item.kind === "execute" || item.server === "command") &&
-          typeof item.displayName === "string" &&
-          !item.displayName.startsWith("permission:")
+          item.name.toLowerCase().includes("bash") &&
+          item.name !== "permission_request"
       );
       const fileChangeEvent = toolCalls.find((item) => {
         // Check for file changes in structured output.files array
@@ -444,7 +438,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       });
 
       const sawPwdCommand = commandEvents.some(
-        (item) => (item.displayName ?? "").toLowerCase().includes("pwd") && item.status === "completed"
+        (item) => (extractCommandText(item.input) ?? "").toLowerCase().includes("pwd") && item.status === "completed"
       );
 
       expect(completed).toBe(true);
@@ -906,7 +900,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         const liveState = hydrateStreamState(liveTimelineUpdates);
         const liveSnapshots = extractAgentToolSnapshots(liveState);
         const commandTool = liveSnapshots.find((snapshot) =>
-          (snapshot.data.displayName ?? "").toLowerCase().includes("pwd")
+          snapshot.data.name.toLowerCase().includes("bash") &&
+          (extractCommandText(snapshot.data.input) ?? "").toLowerCase().includes("pwd")
         );
         const editTool = liveSnapshots.find((snapshot) =>
           rawContainsText(snapshot.data.result, "hydrate-proof.txt")
@@ -953,8 +948,8 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           ({ live, hydrated }) => {
             expect(rawContainsText(live.result, cwd)).toBe(true);
             expect(rawContainsText(hydrated.result, cwd)).toBe(true);
-            expect((live.displayName ?? "").toLowerCase()).toContain("pwd");
-            expect((hydrated.displayName ?? "").toLowerCase()).toContain("pwd");
+            expect((extractCommandText(live.input) ?? "").toLowerCase()).toContain("pwd");
+            expect((extractCommandText(hydrated.input) ?? "").toLowerCase()).toContain("pwd");
           }
         );
         assertHydratedReplica(
@@ -1165,8 +1160,7 @@ function buildToolSnapshotKey(data: AgentToolCallData, fallbackId: string): stri
   if (normalized) {
     return normalized;
   }
-  const display = typeof data.displayName === "string" && data.displayName.trim().length > 0 ? data.displayName.trim() : fallbackId;
-  return `${data.server}:${data.tool}:${display}`;
+  return `${data.provider}:${data.name}:${fallbackId}`;
 }
 
 function assertHydratedReplica(
@@ -1179,9 +1173,7 @@ function assertHydratedReplica(
   const hydrated = hydratedMap.get(liveSnapshot.key);
   expect(hydrated).toBeTruthy();
   expect(hydrated?.status).toBe(liveSnapshot.data.status);
-  expect(hydrated?.server).toBe(liveSnapshot.data.server);
-  expect(hydrated?.tool).toBe(liveSnapshot.data.tool);
-  expect(hydrated?.displayName).toBe(liveSnapshot.data.displayName);
+  expect(hydrated?.name).toBe(liveSnapshot.data.name);
   expect(predicate(hydrated!)).toBe(true);
   if (hydrated && extraAssertions) {
     extraAssertions({ live: liveSnapshot.data, hydrated });

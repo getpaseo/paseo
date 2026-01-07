@@ -250,10 +250,6 @@ function stringifyUnknown(value: unknown): string {
 }
 
 function isSleepCommandToolCall(item: ToolCallItem): boolean {
-  const display = typeof item.displayName === "string" ? item.displayName.toLowerCase() : "";
-  if (display.includes("sleep 60")) {
-    return true;
-  }
   const inputText = commandTextFromInput(item.input);
   if (!inputText) {
     return false;

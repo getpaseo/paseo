@@ -1,6 +1,18 @@
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentTimelineItem, ToolCallKind } from "./agent-sdk-types.js";
 
 const DEFAULT_MAX_ITEMS = 40;
+
+/**
+ * Derive tool kind from the tool name for rendering purposes.
+ */
+function getToolKind(name: string): ToolCallKind {
+  const lower = name.toLowerCase();
+  if (lower === "read" || lower === "read_file") return "read";
+  if (lower === "edit" || lower === "write" || lower === "apply_patch") return "edit";
+  if (lower === "bash" || lower === "shell") return "execute";
+  if (lower === "grep" || lower === "glob" || lower === "web_search") return "search";
+  return "other";
+}
 
 function appendText(buffer: string, text: string): string {
   const normalized = text.trim();
@@ -50,6 +62,13 @@ function extractWebQuery(value: unknown): string {
   return value.query;
 }
 
+function extractCommand(value: unknown): string {
+  if (!isObject(value) || typeof value.command !== "string") {
+    return "";
+  }
+  return value.command;
+}
+
 /**
  * Convert normalized agent timeline items into a concise text summary.
  */
@@ -84,13 +103,12 @@ export function curateAgentActivity(
         break;
       case "tool_call": {
         flushBuffers(lines, buffers);
-        const label =
-          item.displayName ??
-          (item.server && item.tool ? `${item.server}.${item.tool}` : item.tool ?? item.server ?? "Tool");
         const status = item.status ? ` ${item.status}` : "";
-        if (item.kind === "execute" || item.server === "command") {
-          lines.push(`[Command: ${label}]${status}`);
-        } else if (item.kind === "edit" || item.server === "file_change") {
+        const kind = getToolKind(item.name);
+        if (kind === "execute") {
+          const command = extractCommand(item.input);
+          lines.push(`[Command: ${command || item.name}]${status}`);
+        } else if (kind === "edit") {
           const files = extractFileChanges(item.output);
           if (files.length > 0) {
             lines.push("[File Changes]");
@@ -98,13 +116,13 @@ export function curateAgentActivity(
               lines.push(`- (${file.kind}) ${file.path}`);
             }
           } else {
-            lines.push(`[Edit] ${label}${status}`);
+            lines.push(`[Edit] ${item.name}${status}`);
           }
-        } else if (item.kind === "search" || item.server === "web_search") {
+        } else if (kind === "search") {
           const query = extractWebQuery(item.input);
-          lines.push(`[Web Search] ${query || label}`);
+          lines.push(`[Web Search] ${query || item.name}`);
         } else {
-          lines.push(`[Tool ${item.server}.${item.tool}]${status}`);
+          lines.push(`[Tool ${item.name}]${status}`);
         }
         break;
       }

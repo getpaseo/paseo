@@ -33,8 +33,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.edit,
-      server: "editor",
-      tool: "apply_patch",
+      name: "apply_patch",
       input: {
         file_path: "README.md",
         patch: "*** Begin Patch\n*** Update File: README.md\n@@\n-Old line\n+New line\n*** End Patch",
@@ -45,8 +44,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolResultEvent({
       callId: HARNESS_CALL_IDS.edit,
-      server: "editor",
-      tool: "apply_patch",
+      name: "apply_patch",
       output: {
         changes: [
           {
@@ -62,8 +60,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.read,
-      server: "editor",
-      tool: "read_file",
+      name: "read_file",
       input: { file_path: "README.md" },
     }),
     timestamp: new Date("2025-02-01T10:00:03Z"),
@@ -71,8 +68,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolResultEvent({
       callId: HARNESS_CALL_IDS.read,
-      server: "editor",
-      tool: "read_file",
+      name: "read_file",
       output: { content: "# README\nNew line\n" },
     }),
     timestamp: new Date("2025-02-01T10:00:04Z"),
@@ -80,9 +76,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.command,
-      server: "command",
-      tool: "shell",
-      kind: "execute",
+      name: "shell",
       input: { command: "ls" },
     }),
     timestamp: new Date("2025-02-01T10:00:05Z"),
@@ -90,8 +84,7 @@ const STREAM_HARNESS_LIVE: HarnessUpdate[] = [
   {
     event: buildToolResultEvent({
       callId: HARNESS_CALL_IDS.command,
-      server: "command",
-      tool: "shell",
+      name: "shell",
       output: {
         result: {
           command: "ls",
@@ -121,8 +114,7 @@ const STREAM_HARNESS_HYDRATED: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.edit,
-      server: "editor",
-      tool: "apply_patch",
+      name: "apply_patch",
       status: "completed",
     }),
     timestamp: new Date("2025-02-01T10:05:01Z"),
@@ -130,8 +122,7 @@ const STREAM_HARNESS_HYDRATED: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.read,
-      server: "editor",
-      tool: "read_file",
+      name: "read_file",
       status: "completed",
     }),
     timestamp: new Date("2025-02-01T10:05:02Z"),
@@ -139,9 +130,7 @@ const STREAM_HARNESS_HYDRATED: HarnessUpdate[] = [
   {
     event: buildToolStartEvent({
       callId: HARNESS_CALL_IDS.command,
-      server: "command",
-      tool: "shell",
-      kind: "execute",
+      name: "shell",
       status: "completed",
     }),
     timestamp: new Date("2025-02-01T10:05:03Z"),
@@ -173,17 +162,13 @@ describe("stream harness captures hydrated regression", () => {
 
 function buildToolStartEvent({
   callId,
-  server,
-  tool,
+  name,
   input,
-  kind,
   status = "executing",
 }: {
   callId: string;
-  server: string;
-  tool: string;
+  name: string;
   input?: Record<string, unknown>;
-  kind?: string;
   status?: ToolCallStatus;
 }): AgentStreamEventPayload {
   return {
@@ -191,12 +176,9 @@ function buildToolStartEvent({
     provider: "claude",
     item: {
       type: "tool_call",
-      server,
-      tool,
+      name,
       status,
       callId,
-      displayName: tool,
-      kind,
       input,
     },
   };
@@ -204,13 +186,11 @@ function buildToolStartEvent({
 
 function buildToolResultEvent({
   callId,
-  server,
-  tool,
+  name,
   output,
 }: {
   callId: string;
-  server: string;
-  tool: string;
+  name: string;
   output?: Record<string, unknown>;
 }): AgentStreamEventPayload {
   return {
@@ -218,10 +198,8 @@ function buildToolResultEvent({
     provider: "claude",
     item: {
       type: "tool_call",
-      server,
-      tool,
+      name,
       callId,
-      displayName: tool,
       output,
     },
   };

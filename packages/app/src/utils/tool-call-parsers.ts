@@ -752,3 +752,41 @@ export function extractKeyValuePairs(result: unknown): KeyValuePair[] {
     value: stringifyValue(value),
   }));
 }
+
+// ---- Principal Parameter Extraction ----
+
+const PrincipalParamSchema = z.union([
+  z.object({ file_path: z.string() }).transform((d) => ({ type: "path" as const, value: d.file_path })),
+  z.object({ filePath: z.string() }).transform((d) => ({ type: "path" as const, value: d.filePath })),
+  z.object({ path: z.string() }).transform((d) => ({ type: "path" as const, value: d.path })),
+  z.object({ command: z.string() }).transform((d) => ({ type: "text" as const, value: d.command })),
+  z.object({ pattern: z.string() }).transform((d) => ({ type: "text" as const, value: d.pattern })),
+  z.object({ query: z.string() }).transform((d) => ({ type: "text" as const, value: d.query })),
+  z.object({ url: z.string() }).transform((d) => ({ type: "text" as const, value: d.url })),
+]);
+
+export function stripCwdPrefix(filePath: string, cwd?: string): string {
+  if (!cwd || !filePath) return filePath;
+
+  const normalizedCwd = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedPath = filePath.replace(/\\/g, "/");
+
+  const prefix = `${normalizedCwd}/`;
+  if (normalizedPath.startsWith(prefix)) {
+    return normalizedPath.slice(prefix.length);
+  }
+  if (normalizedPath === normalizedCwd) {
+    return ".";
+  }
+  return filePath;
+}
+
+export function extractPrincipalParam(args: unknown, cwd?: string): string | undefined {
+  const parsed = PrincipalParamSchema.safeParse(args);
+  if (!parsed.success) {
+    return undefined;
+  }
+
+  const { type, value } = parsed.data;
+  return type === "path" ? stripCwdPrefix(value, cwd) : value;
+}
