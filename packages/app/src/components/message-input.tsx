@@ -426,20 +426,30 @@ export function MessageInput({
         {hasImages && (
           <View style={styles.imagePreviewContainer}>
             {images.map((image, index) => (
-              <View key={`${image.uri}-${index}`} style={styles.imagePill}>
-                <Image
-                  source={{ uri: image.uri }}
-                  style={styles.imageThumbnail}
-                />
-                {onRemoveImage && (
-                  <Pressable
-                    onPress={() => onRemoveImage(index)}
-                    style={styles.removeImageButton}
-                  >
-                    <X size={16} color={theme.colors.foreground} />
-                  </Pressable>
+              <Pressable
+                key={`${image.uri}-${index}`}
+                style={styles.imagePill}
+                onPress={onRemoveImage ? () => onRemoveImage(index) : undefined}
+              >
+                {({ hovered }) => (
+                  <>
+                    <Image
+                      source={{ uri: image.uri }}
+                      style={styles.imageThumbnail}
+                    />
+                    {onRemoveImage && (
+                      <View
+                        style={[
+                          styles.removeImageButton,
+                          (hovered || !IS_WEB) && styles.removeImageButtonVisible,
+                        ]}
+                      >
+                        <X size={16} color="white" />
+                      </View>
+                    )}
+                  </>
                 )}
-              </View>
+              </Pressable>
             ))}
           </View>
         )}
@@ -591,23 +601,40 @@ const styles = StyleSheet.create(((theme: any) => ({
     flexWrap: "wrap",
   },
   imagePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[1],
-    gap: theme.spacing[2],
+    position: "relative",
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.accentBorder,
+    overflow: "hidden",
+    ...(IS_WEB
+      ? {
+          cursor: "pointer",
+        }
+      : {}),
   },
   imageThumbnail: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.md,
+    width: 48,
+    height: 48,
   },
   removeImageButton: {
-    width: 24,
-    height: 24,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    opacity: 0,
+    ...(IS_WEB
+      ? {
+          transitionProperty: "opacity",
+          transitionDuration: "150ms",
+        }
+      : {}),
+  },
+  removeImageButtonVisible: {
+    opacity: 1,
   },
   textInput: {
     width: "100%",

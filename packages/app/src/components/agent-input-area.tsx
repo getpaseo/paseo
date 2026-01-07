@@ -46,6 +46,8 @@ interface AgentInputAreaProps {
   onChangeText?: (text: string) => void;
   /** When true, auto-focuses the text input on web. */
   autoFocus?: boolean;
+  /** Callback to expose the addImages function to parent components */
+  onAddImages?: (addImages: (images: ImageAttachment[]) => void) => void;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -68,6 +70,7 @@ export function AgentInputArea({
   value,
   onChangeText,
   autoFocus = false,
+  onAddImages,
 }: AgentInputAreaProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -129,6 +132,15 @@ export function AgentInputArea({
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef(sendAgentMessage);
   const onSubmitMessageRef = useRef(onSubmitMessage);
+
+  // Expose addImages function to parent for drag-and-drop support
+  const addImages = useCallback((images: ImageAttachment[]) => {
+    setSelectedImages((prev) => [...prev, ...images]);
+  }, []);
+
+  useEffect(() => {
+    onAddImages?.(addImages);
+  }, [addImages, onAddImages]);
 
   const submitMessage = useCallback(
     async (text: string, images?: ImageAttachment[]) => {

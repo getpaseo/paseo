@@ -41,6 +41,8 @@ import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
 import { ImportAgentModal } from "@/components/create-agent-modal";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
+import { FileDropZone } from "@/components/file-drop-zone";
+import type { ImageAttachment } from "@/components/message-input";
 import {
   ExplorerSidebarAnimationProvider,
   useExplorerSidebarAnimation,
@@ -183,6 +185,15 @@ function AgentScreenContent({
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
   const [showImportAgentModal, setShowImportAgentModal] = useState(false);
+  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+
+  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
+    addImagesRef.current?.(files);
+  }, []);
+
+  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
+    addImagesRef.current = addImages;
+  }, []);
 
   const { isOpen: isExplorerOpen, toggle: toggleExplorer, open: openExplorer, close: closeExplorer } = useExplorerSidebarStore();
   const {
@@ -672,6 +683,7 @@ function AgentScreenContent({
 
   const mainContent = (
     <View style={styles.outerContainer}>
+      <FileDropZone onFilesDropped={handleFilesDropped} disabled={isInitializing}>
       <View style={styles.container}>
         {/* Header */}
         <MenuHeader
@@ -735,7 +747,7 @@ function AgentScreenContent({
 
           {/* Agent Input Area */}
           {!isInitializing && agent && resolvedAgentId && (
-            <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus />
+            <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus onAddImages={handleAddImagesCallback} />
           )}
 
         {/* Dropdown Menu */}
@@ -899,6 +911,7 @@ function AgentScreenContent({
           </View>
         </Modal>
         </View>
+      </FileDropZone>
 
         {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
         {!isMobile && isExplorerOpen && resolvedAgentId && (
