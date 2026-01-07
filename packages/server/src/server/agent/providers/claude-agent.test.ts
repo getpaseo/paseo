@@ -509,7 +509,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           timeline.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "granted"
           )
         ).toBe(true);
@@ -583,7 +583,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           timeline.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "denied"
           )
         ).toBe(true);
@@ -662,7 +662,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           timeline.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "denied"
           )
         ).toBe(true);

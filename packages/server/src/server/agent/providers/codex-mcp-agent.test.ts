@@ -530,7 +530,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             if (event.item.type === "reasoning") {
               sawReasoning = true;
             }
-            if (event.item.type === "tool_call" && event.item.server !== "permission") {
+            if (event.item.type === "tool_call" && event.item.name !== "permission") {
               toolCalls.push(event.item);
             }
           }
@@ -569,7 +569,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           .reverse()
           .find(
             (item) =>
-              item.server === "command" && item.status !== "running"
+              item.name === "shell" && item.status !== "running"
           );
         expect(commandToolCall).toBeTruthy();
 
@@ -665,7 +665,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         if (
           timelineItems.some(
-            (item) => item.type === "tool_call" && item.server === "file_change"
+            (item) => item.type === "tool_call" && item.name === "apply_patch"
           )
         ) {
           rawItemTypes.add("file_change");
@@ -674,8 +674,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "test" &&
-              item.tool === "echo"
+              item.name === "test.echo"
           )
         ) {
           rawItemTypes.add("mcp_tool_call");
@@ -684,8 +683,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "web_search" &&
-              item.tool === "web_search"
+              item.name === "web_search"
           )
         ) {
           rawItemTypes.add("web_search");
@@ -707,23 +705,21 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         expect(
           timelineItems.some(
-            (item) => item.type === "tool_call" && item.server === "file_change"
+            (item) => item.type === "tool_call" && item.name === "apply_patch"
           )
         ).toBe(true);
         expect(
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "test" &&
-              item.tool === "echo"
+              item.name === "test.echo"
           )
         ).toBe(true);
         expect(
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "web_search" &&
-              item.tool === "web_search"
+              item.name === "web_search"
           )
         ).toBe(true);
         expect(
@@ -807,7 +803,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             permissionResolved = true;
           }
           if (event.type === "timeline" && providerFromEvent(event) === "codex") {
-            if (event.item.type === "tool_call" && event.item.server !== "permission") {
+            if (event.item.type === "tool_call" && event.item.name !== "permission") {
               toolCalls.push(event.item);
             }
           }
@@ -820,7 +816,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect.soft(permissionResolved).toBe(true);
 
         const commandCalls = toolCalls.filter(
-          (item) => item.server === "command" && item.status === "completed"
+          (item) => item.name === "shell" && item.status === "completed"
         );
         expect.soft(commandCalls.length).toBeGreaterThanOrEqual(2);
 
@@ -842,7 +838,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect.soft(extractExitCode(stderrCall?.output)).toBe(0);
 
         const fileChangeCalls = toolCalls.filter(
-          (item) => item.server === "file_change" && item.tool === "apply_patch"
+          (item) => item.name === "apply_patch"
         );
         expect.soft(fileChangeCalls.length).toBeGreaterThanOrEqual(2);
         expect.soft(
@@ -859,21 +855,21 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         ).toBe(true);
 
         const readCall = toolCalls.find(
-          (item) => item.tool === "read_file" && item.status === "completed"
+          (item) => item.name === "read_file" && item.status === "completed"
         );
         expect.soft(readCall).toBeTruthy();
         expect.soft(stringifyUnknown(readCall?.input)).toContain("tool-create.txt");
         expect.soft(stringifyUnknown(readCall?.output)).toContain("beta");
 
         const mcpCall = toolCalls.find(
-          (item) => item.server === "test" && item.tool === "echo"
+          (item) => item.name === "test.echo"
         );
         expect.soft(mcpCall).toBeTruthy();
         expect.soft(stringifyUnknown(mcpCall?.input)).toContain("mcp-ok");
         expect.soft(stringifyUnknown(mcpCall?.output)).toContain("mcp-ok");
 
         const webSearchCall = toolCalls.find(
-          (item) => item.server === "web_search" && item.tool === "web_search"
+          (item) => item.name === "web_search"
         );
         expect.soft(webSearchCall).toBeTruthy();
         expect.soft(stringifyUnknown(webSearchCall?.input)).toContain("OpenAI Codex MCP");
@@ -894,11 +890,11 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           }
         }
         const commandCallIds = toolCalls
-          .filter((item) => item.server === "command")
+          .filter((item) => item.name === "shell")
           .map((item) => item.callId)
           .filter((callId): callId is string => typeof callId === "string");
         const fileChangeCallIds = toolCalls
-          .filter((item) => item.server === "file_change")
+          .filter((item) => item.name === "apply_patch")
           .map((item) => item.callId)
           .filter((callId): callId is string => typeof callId === "string");
 
@@ -1147,13 +1143,13 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "granted"
           )
         ).toBe(true);
         expect(
           timelineItems.some(
-            (item) => item.type === "tool_call" && item.server === "command"
+            (item) => item.type === "tool_call" && item.name === "shell"
           )
         ).toBe(true);
         expect(existsSync(filePath)).toBe(true);
@@ -1211,7 +1207,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "requested"
           )
         ).toBe(true);
@@ -1282,7 +1278,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "denied"
           )
         ).toBe(true);
@@ -1363,7 +1359,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
           timelineItems.some(
             (item) =>
               item.type === "tool_call" &&
-              item.server === "permission" &&
+              item.name === "permission" &&
               item.status === "denied"
           )
         ).toBe(true);
@@ -1419,7 +1415,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             event.type === "timeline" &&
             providerFromEvent(event) === "codex" &&
             event.item.type === "tool_call" &&
-            event.item.server === "command" &&
+            event.item.name === "shell" &&
             isSleepCommandToolCall(event.item)
           ) {
             sawSleepCommand = true;
@@ -1494,7 +1490,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             event.type === "timeline" &&
             providerFromEvent(event) === "codex" &&
             event.item.type === "tool_call" &&
-            event.item.server === "command"
+            event.item.name === "shell"
           ) {
             const commandText = commandTextFromInput(event.item.input);
             if (commandText && commandText.includes(marker)) {

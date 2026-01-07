@@ -2523,7 +2523,17 @@ function buildCodexMcpConfig(
     args: ["@playwright/mcp", "--headless", "--isolated"],
   };
 
-  // Merge user-provided MCP servers (they take precedence)
+  // Merge MCP servers from extra.codex.mcp_servers (legacy location)
+  const extraCodex = config.extra?.codex as Record<string, unknown> | undefined;
+  if (extraCodex?.mcp_servers && typeof extraCodex.mcp_servers === "object") {
+    for (const [name, serverConfig] of Object.entries(extraCodex.mcp_servers as Record<string, unknown>)) {
+      if (typeof serverConfig === "object" && serverConfig !== null) {
+        mcpServers[name] = serverConfig as CodexMcpServerConfig;
+      }
+    }
+  }
+
+  // Merge user-provided MCP servers (they take highest precedence)
   if (config.mcpServers) {
     for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
       if (typeof serverConfig === "object" && serverConfig !== null) {
@@ -3098,7 +3108,7 @@ class CodexMcpAgentSession implements AgentSession {
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
-        name: pending.request.name,
+        name: "permission",
         status,
         callId: pending.request.id,
         input: pending.request.input,
@@ -3405,7 +3415,7 @@ class CodexMcpAgentSession implements AgentSession {
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: createToolCallTimelineItem({
-        name: request.name,
+        name: "permission",
         status: "requested",
         callId: request.id,
         input: request.input,

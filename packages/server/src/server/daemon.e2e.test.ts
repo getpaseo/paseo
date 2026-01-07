@@ -172,7 +172,7 @@ describe("daemon E2E", () => {
         const hasGranted = timelineItems.some(
           (item) =>
             item.type === "tool_call" &&
-            item.server === "permission" &&
+            item.name === "permission" &&
             item.status === "granted"
         );
         expect(hasGranted).toBe(true);
@@ -256,7 +256,7 @@ describe("daemon E2E", () => {
         const hasDenied = timelineItems.some(
           (item) =>
             item.type === "tool_call" &&
-            item.server === "permission" &&
+            item.name === "permission" &&
             item.status === "denied"
         );
         expect(hasDenied).toBe(true);
@@ -799,8 +799,7 @@ describe("daemon E2E", () => {
         const hasCreateAgentCall = timelineItems.some(
           (item) =>
             item.type === "tool_call" &&
-            item.tool === "create_agent" &&
-            item.server === "agent-control"
+            item.name === "agent-control.create_agent"
         );
         expect(hasCreateAgentCall).toBe(true);
 
@@ -827,8 +826,7 @@ describe("daemon E2E", () => {
         const createAgentCall = timelineItems.find(
           (item) =>
             item.type === "tool_call" &&
-            item.tool === "create_agent" &&
-            item.server === "agent-control"
+            item.name === "agent-control.create_agent"
         );
 
         let childAgentId: string | null = null;
@@ -1372,7 +1370,7 @@ describe("daemon E2E", () => {
         const hasGranted = timelineItems.some(
           (item) =>
             item.type === "tool_call" &&
-            item.server === "permission" &&
+            item.name === "permission" &&
             item.status === "granted"
         );
         expect(hasGranted).toBe(true);
@@ -1463,7 +1461,7 @@ describe("daemon E2E", () => {
         const hasDenied = timelineItems.some(
           (item) =>
             item.type === "tool_call" &&
-            item.server === "permission" &&
+            item.name === "permission" &&
             item.status === "denied"
         );
         expect(hasDenied).toBe(true);

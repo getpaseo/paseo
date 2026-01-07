@@ -119,6 +119,7 @@ function DiffLineView({ line }: { line: DiffLine }) {
 function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSectionProps) {
   const { theme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const horizontalScroll = useHorizontalScrollOptional();
   const scrollId = useId();
 
@@ -190,8 +191,9 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
           contentContainerStyle={styles.diffContentInner}
           onScroll={handleScroll}
           scrollEventThrottle={16}
+          onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
         >
-          <View style={styles.linesContainer}>
+          <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
             {file.hunks.map((hunk, hunkIndex) =>
               hunk.lines.map((line, lineIndex) => (
                 <DiffLineView key={`${hunkIndex}-${lineIndex}`} line={line} />
@@ -388,8 +390,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "column",
   },
   linesContainer: {
-    alignSelf: "flex-start",
-    minWidth: "100%",
     backgroundColor: "#0d1117",
   },
   diffLineContainer: {

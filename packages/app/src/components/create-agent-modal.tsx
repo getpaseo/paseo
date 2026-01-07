@@ -436,6 +436,7 @@ function AgentFlowModal({
     (value: string) => {
       setWorkingDirFromUser(value);
       setErrorMessage("");
+      shouldSyncBaseBranchRef.current = true;
     },
     [setWorkingDirFromUser]
   );

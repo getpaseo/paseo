@@ -53,12 +53,14 @@ describe("create_agent MCP tool", () => {
 
     const missingTitle = await tool.inputSchema.safeParseAsync({
       cwd: "/tmp/repo",
+      initialMode: "default",
     });
     expect(missingTitle.success).toBe(false);
     expect(missingTitle.error.issues[0].path).toEqual(["title"]);
 
     const tooLong = await tool.inputSchema.safeParseAsync({
       cwd: "/tmp/repo",
+      initialMode: "default",
       title: "x".repeat(41),
     });
     expect(tooLong.success).toBe(false);
@@ -66,6 +68,7 @@ describe("create_agent MCP tool", () => {
 
     const ok = await tool.inputSchema.safeParseAsync({
       cwd: "/tmp/repo",
+      initialMode: "default",
       title: "Short title",
     });
     expect(ok.success).toBe(true);
