@@ -16,6 +16,7 @@ import {
   type ViewMode,
 } from "@/stores/explorer-sidebar-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
+import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 
@@ -187,16 +188,14 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
 
   return (
     <Animated.View style={[styles.desktopSidebar, resizeAnimatedStyle]}>
-      {/* Resize handle on left edge */}
+      {/* Resize handle - absolutely positioned over left border */}
       <GestureDetector gesture={resizeGesture}>
         <View
           style={[
             styles.resizeHandle,
             Platform.OS === "web" && ({ cursor: "col-resize" } as any),
           ]}
-        >
-          <View style={styles.resizeHandleInner} />
-        </View>
+        />
       </GestureDetector>
 
       <SidebarContent
@@ -239,7 +238,7 @@ function SidebarContent({
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <View style={styles.header}>
+      <View style={styles.header} testID="explorer-header">
         <View style={styles.tabsContainer}>
           <Pressable
             style={[styles.tab, activeTab === "changes" && styles.tabActive]}
@@ -297,7 +296,7 @@ function SidebarContent({
       </View>
 
       {/* Content based on active tab */}
-      <View style={styles.contentArea}>
+      <View style={styles.contentArea} testID="explorer-content-area">
         {activeTab === "changes" ? (
           <GitDiffPane serverId={serverId} agentId={agentId} />
         ) : (
@@ -355,22 +354,18 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   desktopSidebar: {
-    flexDirection: "row",
+    position: "relative",
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
     backgroundColor: theme.colors.background,
   },
   resizeHandle: {
-    width: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  resizeHandleInner: {
-    width: 2,
-    height: 32,
-    backgroundColor: theme.colors.border,
-    borderRadius: 1,
-    opacity: 0.5,
+    position: "absolute",
+    left: -5,
+    top: 0,
+    bottom: 0,
+    width: 10,
+    zIndex: 10,
   },
   sidebarContent: {
     flex: 1,
@@ -378,11 +373,11 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   header: {
+    height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },

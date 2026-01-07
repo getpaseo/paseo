@@ -33,7 +33,7 @@ import {
   Users,
   ChevronRight,
   PlusIcon,
-  PanelRightOpen,
+  PanelRight,
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
@@ -679,18 +679,29 @@ function AgentScreenContent({
           rightContent={
             <View style={styles.headerRightContent}>
               <Pressable onPress={toggleExplorer} style={styles.menuButton}>
-                <PanelRightOpen
-                  size={20}
-                  color={
-                    isExplorerOpen
-                      ? theme.colors.foreground
-                      : theme.colors.mutedForeground
-                  }
-                />
+                {isMobile ? (
+                  <Folder
+                    size={16}
+                    color={
+                      isExplorerOpen
+                        ? theme.colors.foreground
+                        : theme.colors.mutedForeground
+                    }
+                  />
+                ) : (
+                  <PanelRight
+                    size={16}
+                    color={
+                      isExplorerOpen
+                        ? theme.colors.foreground
+                        : theme.colors.mutedForeground
+                    }
+                  />
+                )}
               </Pressable>
               <View ref={menuButtonRef} collapsable={false}>
                 <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                  <MoreVertical size={20} color={theme.colors.mutedForeground} />
+                  <MoreVertical size={16} color={theme.colors.mutedForeground} />
                 </Pressable>
               </View>
             </View>

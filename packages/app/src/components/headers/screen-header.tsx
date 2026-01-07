@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -16,8 +17,9 @@ interface ScreenHeaderProps {
  */
 export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeaderProps) {
   const insets = useSafeAreaInsets();
-  const { theme } = useUnistyles();
-  const topPadding = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm" ? 8 : 4;
+  const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
+  const topPadding = isMobile ? 8 : 0;
 
   return (
     <View style={styles.header}>
@@ -37,17 +39,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: {},
   row: {
+    height: HEADER_INNER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: {
-      xs: theme.spacing[2],
-      md: theme.spacing[1],
-    },
-    paddingBottom: {
-      xs: theme.spacing[2],
-      md: theme.spacing[1],
-    },
+    paddingHorizontal: theme.spacing[2],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },

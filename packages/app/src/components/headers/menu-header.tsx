@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Pressable, Text } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Menu } from "lucide-react-native";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { Menu, PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
@@ -12,14 +12,21 @@ interface MenuHeaderProps {
 
 export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
   const { theme } = useUnistyles();
-  const { toggle } = useSidebarStore();
+  const { isOpen, toggle } = useSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+
+  const MenuIcon = isMobile ? Menu : PanelLeft;
+  const menuIconColor = !isMobile && isOpen
+    ? theme.colors.foreground
+    : theme.colors.mutedForeground;
 
   return (
     <ScreenHeader
       left={
         <>
           <Pressable onPress={toggle} style={styles.menuButton}>
-            <Menu size={20} color={theme.colors.mutedForeground} />
+            <MenuIcon size={16} color={menuIconColor} />
           </Pressable>
           {title && (
             <Text style={styles.title} numberOfLines={1}>
