@@ -763,31 +763,84 @@ describe("ClaudeAgentClient (SDK integration)", () => {
   );
 
   test(
-    "resumes a persisted session",
+    "resumes a persisted session with context preserved",
     async () => {
       const cwd = tmpCwd();
       const client = new ClaudeAgentClient();
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
-      const first = await session.run("Say READY and then stop.");
-      expect(first.finalText.toLowerCase()).toContain("ready");
+      // Store a specific word in a file to create history and enable recall
+      const timestamp = Date.now();
+      const secretWord = `XYZZY${timestamp}PLUGH`;
+      const secretFile = path.join(cwd, "secret.txt");
+      const prompt = `Write exactly this word to a file called secret.txt: ${secretWord}. Then respond only with "STORED".`;
 
-      const handle = session.describePersistence();
-      expect(handle).toBeTruthy();
+      let storedResponse = "";
+      for await (const event of session.stream(prompt)) {
+        await autoApprove(session, event);
+        if (event.type === "timeline" && event.item.type === "assistant_message") {
+          storedResponse = event.item.text;
+        }
+        if (event.type === "turn_completed" || event.type === "turn_failed") {
+          break;
+        }
+      }
+      expect(storedResponse.toLowerCase()).toContain("stored");
+      expect(existsSync(secretFile)).toBe(true);
 
       await session.close();
 
-      const resumed = await client.resumeSession(handle!, { cwd });
-      const resumedResult = await resumed.run(
-        "Respond with the single word RESUMED."
-      );
-      expect(resumedResult.finalText.toLowerCase()).toContain("resumed");
-      await resumed.close();
+      const handle = session.describePersistence();
+      expect(handle).toBeTruthy();
+      expect(handle!.sessionId).toBeTruthy();
 
+      // Wait for history file to be written
+      const historyPaths = getClaudeHistoryPaths(cwd, handle!.sessionId);
+      expect(await waitForHistoryFile(historyPaths)).toBe(true);
+
+      // Resume and verify context is preserved
+      const resumed = await client.resumeSession(handle!, { cwd });
+
+      // Verify history is emitted on resume
+      const historyEvents: AgentStreamEvent[] = [];
+      for await (const event of resumed.streamHistory()) {
+        historyEvents.push(event);
+      }
+
+      // Should have timeline events from previous session
+      const timelineEvents = historyEvents.filter((e) => e.type === "timeline");
+      expect(timelineEvents.length).toBeGreaterThan(0);
+
+      // Should include the user message with the secret word
+      const userMessages = timelineEvents.filter(
+        (e) => e.type === "timeline" && e.item.type === "user_message"
+      );
+      expect(userMessages.length).toBeGreaterThan(0);
+      const hasSecretWord = userMessages.some(
+        (e) =>
+          e.type === "timeline" &&
+          e.item.type === "user_message" &&
+          e.item.text.includes(secretWord)
+      );
+      expect(hasSecretWord).toBe(true);
+
+      // Ask the agent to recall what it wrote - this verifies context is actually preserved
+      const resumedResult = await resumed.run(
+        "What word did you write to secret.txt? Reply with only that exact word."
+      );
+      // The model should recall some part of the unique word we stored
+      // (models sometimes truncate or modify, so we check for any part of our unique token)
+      const recalledSomething =
+        resumedResult.finalText.includes(String(timestamp)) ||
+        resumedResult.finalText.includes("XYZZY") ||
+        resumedResult.finalText.includes("PLUGH");
+      expect(recalledSomething).toBe(true);
+
+      await resumed.close();
       rmSync(cwd, { recursive: true, force: true });
     },
-    150_000
+    180_000
   );
 
   test(
@@ -1186,7 +1239,8 @@ function sanitizeClaudeProjectName(cwd: string): string {
 
 function resolveClaudeHistoryPath(cwd: string, sessionId: string): string {
   const sanitized = sanitizeClaudeProjectName(cwd);
-  return path.join(os.homedir(), ".claude", "projects", sanitized, `${sessionId}.jsonl`);
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  return path.join(configDir, "projects", sanitized, `${sessionId}.jsonl`);
 }
 
 function getClaudeHistoryPaths(cwd: string, sessionId: string): string[] {

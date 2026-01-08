@@ -363,7 +363,6 @@ class ClaudeAgentSession implements AgentSession {
   private query: Query | null = null;
   private input: Pushable<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
-  private pendingLocalId: string;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
   private availableModes: AgentMode[] = DEFAULT_MODES;
@@ -394,9 +393,18 @@ class ClaudeAgentSession implements AgentSession {
     this.config = config;
     this.defaults = options?.defaults;
     const handle = options?.handle;
-    this.claudeSessionId = handle?.sessionId ?? handle?.nativeHandle ?? null;
-    this.pendingLocalId = this.claudeSessionId ?? `claude-${randomUUID()}`;
-    this.persistence = handle ?? null;
+
+    if (handle) {
+      if (!handle.sessionId) {
+        throw new Error("Cannot resume: persistence handle has no sessionId");
+      }
+      this.claudeSessionId = handle.sessionId;
+      this.persistence = handle;
+      this.loadPersistedHistory(handle.sessionId);
+    } else {
+      this.claudeSessionId = null;
+      this.persistence = null;
+    }
 
     // Validate mode if provided
     if (config.modeId && !VALID_CLAUDE_MODES.has(config.modeId)) {
@@ -407,9 +415,6 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
-    if (this.claudeSessionId) {
-      this.loadPersistedHistory(this.claudeSessionId);
-    }
   }
 
   get id(): string | null {
@@ -422,7 +427,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     const info: AgentRuntimeInfo = {
       provider: "claude",
-      sessionId: this.claudeSessionId ?? this.pendingLocalId ?? null,
+      sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
       modeId: this.currentMode ?? null,
     };
@@ -451,13 +456,17 @@ class ClaudeAgentSession implements AgentSession {
 
     this.cachedRuntimeInfo = {
       provider: "claude",
-      sessionId: this.claudeSessionId ?? this.pendingLocalId ?? null,
+      sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
       modeId: this.currentMode ?? null,
     };
 
+    if (!this.claudeSessionId) {
+      throw new Error("Session ID not set after run completed");
+    }
+
     return {
-      sessionId: this.claudeSessionId ?? this.pendingLocalId,
+      sessionId: this.claudeSessionId,
       finalText,
       usage,
       timeline,
@@ -811,7 +820,7 @@ class ClaudeAgentSession implements AgentSession {
         content,
       },
       parent_tool_use_id: null,
-      session_id: this.claudeSessionId ?? this.pendingLocalId,
+      session_id: this.claudeSessionId ?? "",
     };
   }
 
@@ -1184,7 +1193,8 @@ class ClaudeAgentSession implements AgentSession {
     const cwd = this.config.cwd;
     if (!cwd) return null;
     const sanitized = cwd.replace(/[\\/]/g, "-").replace(/_/g, "-");
-    const dir = path.join(os.homedir(), ".claude", "projects", sanitized);
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);
   }
 
