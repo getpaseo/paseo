@@ -378,6 +378,9 @@ class ClaudeAgentSession implements AgentSession {
   // These flags are now tracked per-turn via TurnContext to prevent race conditions
   // when multiple stream() calls overlap (e.g., interrupt + new message)
   private cancelCurrentTurn: (() => void) | null = null;
+  // Track the pending interrupt promise so we can await it in processPrompt
+  // This ensures the interrupt's response is consumed before we call query.next()
+  private pendingInterruptPromise: Promise<void> | null = null;
   // Track the current turn ID and active turn promise to serialize concurrent stream() calls
   // and prevent race conditions where two processPrompt() loops run against the same query
   private currentTurnId = 0;
@@ -481,26 +484,10 @@ class ClaudeAgentSession implements AgentSession {
     // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
     const turnId = ++this.currentTurnId;
 
-    // Actively cancel the previous turn if one exists - don't just suppress output.
-    // This ensures the SDK query is interrupted and side effects are stopped.
+    // Cancel the previous turn if one exists. The caller of interrupt() is responsible
+    // for awaiting completion - the new turn just signals cancellation and proceeds.
     if (this.cancelCurrentTurn) {
       this.cancelCurrentTurn();
-    }
-
-    // Wait briefly for any active turn to complete after cancellation.
-    // Use a timeout to prevent hangs if the old turn is stuck on query.next().
-    if (this.activeTurnPromise) {
-      const TURN_HANDOFF_TIMEOUT_MS = 500;
-      try {
-        await Promise.race([
-          this.activeTurnPromise,
-          new Promise<void>((resolve) => setTimeout(resolve, TURN_HANDOFF_TIMEOUT_MS)),
-        ]);
-      } catch {
-        // Ignore errors from the previous turn - we just need it to finish or timeout
-      }
-      // Clear stale promise to prevent accumulation of stuck turns
-      this.activeTurnPromise = null;
     }
 
     // Reset cancel flag at the start of each turn to prevent stale state from previous turns
@@ -517,7 +504,8 @@ class ClaudeAgentSession implements AgentSession {
       }
       cancelIssued = true;
       this.turnCancelRequested = true;
-      this.interruptActiveTurn().catch((error) => {
+      // Store the interrupt promise so processPrompt can await it before calling query.next()
+      this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
         console.warn("[ClaudeAgentSession] Failed to interrupt during cancel:", error);
       });
       // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
@@ -734,6 +722,9 @@ class ClaudeAgentSession implements AgentSession {
         MCP_TIMEOUT: "600000",
         MCP_TOOL_TIMEOUT: "600000",
       },
+      // If we have a session ID from a previous query (e.g., after interrupt),
+      // resume that session to continue the conversation history.
+      ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
       ...this.config.extra?.claude,
     };
 
@@ -828,6 +819,19 @@ class ClaudeAgentSession implements AgentSession {
     sdkMessage: SDKUserMessage,
     turnId: number
   ): AsyncGenerator<SDKMessage, void, undefined> {
+    // If there's a pending interrupt, await it BEFORE calling ensureQuery().
+    // interruptActiveTurn() clears this.query after interrupt() returns,
+    // so we must wait for it to complete before we try to get the query.
+    if (this.pendingInterruptPromise) {
+      await this.pendingInterruptPromise;
+      this.pendingInterruptPromise = null;
+    }
+
+    // Check if we were superseded while waiting for the interrupt
+    if (this.currentTurnId !== turnId) {
+      return;
+    }
+
     const query = await this.ensureQuery();
     if (!this.input) {
       throw new Error("Claude session input stream not initialized");
@@ -837,7 +841,6 @@ class ClaudeAgentSession implements AgentSession {
 
     while (true) {
       // Check if this turn has been superseded by a new one.
-      // This prevents stale events from an interrupted turn from being yielded.
       if (this.currentTurnId !== turnId) {
         break;
       }
@@ -914,11 +917,19 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async interruptActiveTurn(): Promise<void> {
-    if (!this.query || typeof this.query.interrupt !== "function") {
+    const queryToInterrupt = this.query;
+    if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
       return;
     }
     try {
-      await this.query.interrupt();
+      await queryToInterrupt.interrupt();
+      // After interrupt(), the query iterator is done (returns done: true).
+      // Clear it so ensureQuery() creates a fresh query for the next turn.
+      // Also end the input stream and call return() to clean up the SDK process.
+      this.input?.end();
+      await queryToInterrupt.return?.();
+      this.query = null;
+      this.input = null;
     } catch (error) {
       console.warn("[ClaudeAgentSession] Failed to interrupt active turn:", error);
     }

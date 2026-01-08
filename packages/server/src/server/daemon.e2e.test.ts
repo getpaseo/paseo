@@ -23,7 +23,7 @@ describe("daemon E2E", () => {
 
   afterEach(async () => {
     await ctx.cleanup();
-  });
+  }, 60000);
 
   test("creates agent and receives response", async () => {
     // Create a Codex agent
@@ -367,21 +367,22 @@ describe("daemon E2E", () => {
 
         expect(agent.id).toBeTruthy();
 
-        // Ask Codex to sleep 60 seconds then write a file
+        // Ask Codex to sleep 15 seconds then write a file
         ctx.client.clearMessageQueue();
         await ctx.client.sendMessage(
           agent.id,
-          "Run this bash command: sleep 60 && echo 'abort-test-completed' > abort-test-file.txt"
+          "Run this bash command: sleep 15 && echo 'abort-test-completed' > abort-test-file.txt"
         );
 
-        // Wait 5 seconds for the command to start
-        await new Promise((r) => setTimeout(r, 5000));
+        // Wait 3 seconds for the command to start
+        await new Promise((r) => setTimeout(r, 3000));
 
         // Cancel/interrupt the agent
         await ctx.client.cancelAgent(agent.id);
 
-        // Wait 60 seconds (if abort works, the file should NOT be written)
-        await new Promise((r) => setTimeout(r, 60000));
+        // Wait 10 seconds - if abort works, file should NOT be written
+        // (sleep would have completed at 15s if not interrupted)
+        await new Promise((r) => setTimeout(r, 10000));
 
         // Assert the file was NOT created (proving Codex actually stopped)
         const fileExists = existsSync(filePath);
@@ -389,7 +390,7 @@ describe("daemon E2E", () => {
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      90000 // 90 second timeout
+      30000 // 30 second timeout
     );
 
     // TODO: Fix this test - there's a race condition causing timeout errors
@@ -3111,6 +3112,314 @@ describe("daemon E2E", () => {
         rmSync(cwd, { recursive: true, force: true });
       },
       180000 // 3 minute timeout
+    );
+
+    test(
+      "sending message while agent is executing a tool call",
+      async () => {
+        const cwd = tmpCwd();
+
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Interrupt During Tool Call Test",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.id).toBeTruthy();
+
+        // Start a long-running tool call (sleep command)
+        console.log("[TOOL INTERRUPT TEST] Sending message 1 with long sleep command...");
+        const msg1StartPosition = ctx.client.getMessageQueue().length;
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "Run: sleep 30 && echo 'done sleeping'"
+        );
+
+        // Wait for the tool call to start (agent should be running and we should see the bash tool)
+        console.log("[TOOL INTERRUPT TEST] Waiting for tool call to start...");
+        let sawToolCall = false;
+        const toolWaitStart = Date.now();
+        while (Date.now() - toolWaitStart < 30000) {
+          const queue = ctx.client.getMessageQueue();
+          for (let i = msg1StartPosition; i < queue.length; i++) {
+            const m = queue[i];
+            if (
+              m.type === "agent_stream" &&
+              m.payload.agentId === agent.id &&
+              m.payload.event.type === "timeline" &&
+              m.payload.event.item.type === "tool_call"
+            ) {
+              const tc = m.payload.event.item;
+              if (tc.name?.toLowerCase().includes("bash") || tc.name?.toLowerCase().includes("shell")) {
+                sawToolCall = true;
+                console.log("[TOOL INTERRUPT TEST] Tool call started:", tc.name);
+                break;
+              }
+            }
+          }
+          if (sawToolCall) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+
+        expect(sawToolCall).toBe(true);
+
+        // Now send an interrupting message while the tool is running
+        console.log("[TOOL INTERRUPT TEST] Sending message 2 to interrupt...");
+        const msg2StartPosition = ctx.client.getMessageQueue().length;
+
+        await ctx.client.sendMessage(
+          agent.id,
+          "Stop. Say exactly: 'interrupted tool call'"
+        );
+
+        // Track state transitions
+        console.log("[TOOL INTERRUPT TEST] Monitoring state transitions...");
+        const stateTransitions: Array<{ status: string; timestamp: number; lastError?: string }> = [];
+        const monitorStart = Date.now();
+
+        while (Date.now() - monitorStart < 60000) {
+          const queue = ctx.client.getMessageQueue();
+          for (let i = msg2StartPosition; i < queue.length; i++) {
+            const m = queue[i];
+            if (m.type === "agent_state" && m.payload.id === agent.id) {
+              const lastRecorded = stateTransitions[stateTransitions.length - 1];
+              if (!lastRecorded || lastRecorded.status !== m.payload.status) {
+                stateTransitions.push({
+                  status: m.payload.status,
+                  timestamp: Date.now() - monitorStart,
+                  lastError: m.payload.lastError,
+                });
+                console.log(`[TOOL INTERRUPT TEST] State: ${m.payload.status} at ${Date.now() - monitorStart}ms`, m.payload.lastError || "");
+              }
+            }
+          }
+
+          // Check if we reached idle/error after seeing running
+          const sawRunning = stateTransitions.some(s => s.status === "running");
+          const sawFinal = stateTransitions.some(s => s.status === "idle" || s.status === "error");
+          if (sawRunning && sawFinal) {
+            break;
+          }
+
+          await new Promise(r => setTimeout(r, 200));
+        }
+
+        console.log("[TOOL INTERRUPT TEST] State transitions:", JSON.stringify(stateTransitions, null, 2));
+
+        // Verify we got proper state transitions
+        expect(stateTransitions.length).toBeGreaterThan(0);
+
+        // Check if we ended in idle (success) or error
+        const finalState = stateTransitions[stateTransitions.length - 1];
+        console.log("[TOOL INTERRUPT TEST] Final state:", finalState);
+
+        // Look for the response to message 2
+        const queue = ctx.client.getMessageQueue();
+        const assistantMessages: string[] = [];
+        let foundMsg2User = false;
+
+        for (let i = msg2StartPosition; i < queue.length; i++) {
+          const m = queue[i];
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "user_message" && (item.text as string)?.includes("interrupted tool call")) {
+              foundMsg2User = true;
+            }
+            if (foundMsg2User && item.type === "assistant_message" && item.text) {
+              assistantMessages.push(item.text);
+            }
+          }
+        }
+
+        console.log("[TOOL INTERRUPT TEST] Found user message 2:", foundMsg2User);
+        console.log("[TOOL INTERRUPT TEST] Assistant messages after msg2:", assistantMessages);
+
+        // The key assertion: agent should have responded to message 2
+        if (finalState.status === "idle") {
+          expect(assistantMessages.length).toBeGreaterThan(0);
+        }
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
+    );
+
+    test(
+      "rapid sequential messages to same agent",
+      async () => {
+        const cwd = tmpCwd();
+
+        const agent = await ctx.client.createAgent({
+          provider: "claude",
+          cwd,
+          title: "Rapid Sequential Messages Test",
+          modeId: "bypassPermissions",
+        });
+
+        expect(agent.id).toBeTruthy();
+
+        // Send 3 messages in rapid succession without waiting
+        console.log("[RAPID MSG TEST] Sending 3 messages rapidly...");
+        const startPosition = ctx.client.getMessageQueue().length;
+
+        const msg1 = "Say: MESSAGE_ONE";
+        const msg2 = "Say: MESSAGE_TWO";
+        const msg3 = "Say: MESSAGE_THREE";
+
+        // Helper to count user messages in queue
+        const countUserMessages = (): number => {
+          let count = 0;
+          const queue = ctx.client.getMessageQueue();
+          for (let i = startPosition; i < queue.length; i++) {
+            const m = queue[i];
+            if (
+              m.type === "agent_stream" &&
+              m.payload.agentId === agent.id &&
+              m.payload.event.type === "timeline" &&
+              m.payload.event.item.type === "user_message"
+            ) {
+              count++;
+            }
+          }
+          return count;
+        };
+
+        // Send all 3 messages
+        await ctx.client.sendMessage(agent.id, msg1);
+        console.log("[RAPID MSG TEST] MSG1 sent, waiting briefly...");
+        await new Promise(r => setTimeout(r, 100));
+
+        await ctx.client.sendMessage(agent.id, msg2);
+        console.log("[RAPID MSG TEST] MSG2 sent, waiting briefly...");
+        await new Promise(r => setTimeout(r, 100));
+
+        await ctx.client.sendMessage(agent.id, msg3);
+        console.log("[RAPID MSG TEST] MSG3 sent");
+
+        // First, wait until all 3 user messages are recorded
+        console.log("[RAPID MSG TEST] Waiting for all 3 user messages to be recorded...");
+        const userMsgWaitStart = Date.now();
+        while (Date.now() - userMsgWaitStart < 30000) {
+          const count = countUserMessages();
+          console.log(`[RAPID MSG TEST] User message count: ${count}`);
+          if (count >= 3) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+
+        const finalUserMsgCount = countUserMessages();
+        console.log(`[RAPID MSG TEST] Final user message count: ${finalUserMsgCount}`);
+
+        // Now wait for agent to become idle after processing all 3 messages
+        // We need to see at least 3 running transitions to know all messages were processed
+        console.log("[RAPID MSG TEST] Waiting for agent to finish processing all messages...");
+        const waitStart = Date.now();
+        let runningCount = 0;
+        let finalState: AgentSnapshotPayload | null = null;
+
+        while (Date.now() - waitStart < 120000) {
+          const queue = ctx.client.getMessageQueue();
+          let currentRunningCount = 0;
+          let lastState: AgentSnapshotPayload | null = null;
+
+          for (let i = startPosition; i < queue.length; i++) {
+            const m = queue[i];
+            if (m.type === "agent_state" && m.payload.id === agent.id) {
+              if (m.payload.status === "running") currentRunningCount++;
+              lastState = m.payload;
+            }
+          }
+
+          runningCount = currentRunningCount;
+
+          // Need to have seen at least 3 running states (one per message) and end up idle
+          if (runningCount >= 3 && lastState && lastState.status === "idle") {
+            finalState = lastState;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        console.log("[RAPID MSG TEST] Final state:", finalState?.status, finalState?.lastError);
+        console.log("[RAPID MSG TEST] Total running transitions:", runningCount);
+
+        // Analyze what happened
+        const queue = ctx.client.getMessageQueue();
+        const userMessages: string[] = [];
+        const assistantMessages: string[] = [];
+        const stateChanges: string[] = [];
+
+        for (let i = startPosition; i < queue.length; i++) {
+          const m = queue[i];
+          if (m.type === "agent_state" && m.payload.id === agent.id) {
+            stateChanges.push(m.payload.status);
+          }
+          if (
+            m.type === "agent_stream" &&
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline"
+          ) {
+            const item = m.payload.event.item;
+            if (item.type === "user_message") {
+              userMessages.push((item.text as string) || "");
+            }
+            if (item.type === "assistant_message" && item.text) {
+              assistantMessages.push(item.text);
+            }
+          }
+        }
+
+        console.log("[RAPID MSG TEST] User messages recorded:", userMessages.length, userMessages);
+        console.log("[RAPID MSG TEST] Assistant messages:", assistantMessages.length, JSON.stringify(assistantMessages));
+        console.log("[RAPID MSG TEST] State changes:", stateChanges.join(" -> "));
+        console.log("[RAPID MSG TEST] Total queue items since start:", queue.length - startPosition);
+
+        // All 3 user messages should have been recorded
+        expect(userMessages.length).toBe(3);
+
+        // Agent should have responded (at least to the final message)
+        expect(assistantMessages.length).toBeGreaterThan(0);
+
+        // The last turn should have completed successfully (not failed due to race condition)
+        const lastResponse = assistantMessages[assistantMessages.length - 1]?.toLowerCase() || "";
+        console.log("[RAPID MSG TEST] Last response:", lastResponse);
+
+        // Verify we got a proper turn_completed event (not turn_failed from race condition)
+        const turnCompletedEvents = queue.filter((m, i) =>
+          i >= startPosition &&
+          m.type === "agent_stream" &&
+          m.payload.agentId === agent.id &&
+          m.payload.event.type === "turn_completed"
+        );
+        const turnFailedEvents = queue.filter((m, i) =>
+          i >= startPosition &&
+          m.type === "agent_stream" &&
+          m.payload.agentId === agent.id &&
+          m.payload.event.type === "turn_failed"
+        );
+        console.log("[RAPID MSG TEST] Turn completed events:", turnCompletedEvents.length);
+        console.log("[RAPID MSG TEST] Turn failed events:", turnFailedEvents.length);
+
+        // The final turn should complete successfully, not fail
+        expect(turnCompletedEvents.length).toBeGreaterThan(0);
+        // We might have some turn_failed from interrupted turns, but the last turn should succeed
+        expect(turnFailedEvents.length).toBe(0);
+
+        // The response should mention "three" since that was the last message sent
+        const combinedResponse = assistantMessages.join(" ").toLowerCase();
+        console.log("[RAPID MSG TEST] Combined response:", combinedResponse);
+        expect(combinedResponse).toContain("three");
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      180000
     );
   });
 

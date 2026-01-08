@@ -545,15 +545,9 @@ export class AgentManager {
     }
 
     try {
-      const cancellation = pendingRun.return(
-        undefined as unknown as AgentStreamEvent
-      );
-      void cancellation.catch((error) => {
-        console.error(
-          `[AgentManager] Failed to cancel run for agent ${agentId}:`,
-          error
-        );
-      });
+      // Await the generator's .return() to ensure the finally block runs
+      // and pendingRun is properly cleared before we return.
+      await pendingRun.return(undefined as unknown as AgentStreamEvent);
       return true;
     } catch (error) {
       console.error(
