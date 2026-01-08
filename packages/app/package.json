@@ -15,6 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@paseo/server": "*",
     "@boudra/expo-two-way-audio": "^0.1.3",
     "@expo/vector-icons": "^15.0.2",
     "@gorhom/bottom-sheet": "^5.2.6",

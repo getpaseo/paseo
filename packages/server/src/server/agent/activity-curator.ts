@@ -1,18 +1,7 @@
-import type { AgentTimelineItem, ToolCallKind } from "./agent-sdk-types.js";
+import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import { extractPrincipalParam } from "../../utils/tool-call-parsers.js";
 
 const DEFAULT_MAX_ITEMS = 40;
-
-/**
- * Derive tool kind from the tool name for rendering purposes.
- */
-function getToolKind(name: string): ToolCallKind {
-  const lower = name.toLowerCase();
-  if (lower === "read" || lower === "read_file") return "read";
-  if (lower === "edit" || lower === "write" || lower === "apply_patch") return "edit";
-  if (lower === "bash" || lower === "shell") return "execute";
-  if (lower === "grep" || lower === "glob" || lower === "web_search") return "search";
-  return "other";
-}
 
 function appendText(buffer: string, text: string): string {
   const normalized = text.trim();
@@ -36,37 +25,69 @@ function flushBuffers(lines: string[], buffers: { message: string; thought: stri
   buffers.thought = "";
 }
 
-function isObject(value: unknown): value is { [key: string]: unknown } {
-  return typeof value === "object" && value !== null;
-}
+/**
+ * Collapse timeline items:
+ * - Dedupe tool calls by callId (pending/completed -> single)
+ * - Merge consecutive assistant_message/reasoning into single items
+ */
+function collapseTimeline(items: AgentTimelineItem[]): AgentTimelineItem[] {
+  const result: AgentTimelineItem[] = [];
+  const toolCallMap = new Map<string, AgentTimelineItem>();
+  let assistantBuffer = "";
+  let reasoningBuffer = "";
 
-function isFileChange(value: unknown): value is { path: string; kind: string } {
-  return (
-    isObject(value) &&
-    typeof value.path === "string" &&
-    typeof value.kind === "string"
-  );
-}
-
-function extractFileChanges(value: unknown): { path: string; kind: string }[] {
-  if (!isObject(value) || !Array.isArray(value.files)) {
-    return [];
+  function flushAssistant() {
+    if (assistantBuffer) {
+      result.push({ type: "assistant_message", text: assistantBuffer });
+      assistantBuffer = "";
+    }
   }
-  return value.files.filter(isFileChange);
-}
 
-function extractWebQuery(value: unknown): string {
-  if (!isObject(value) || typeof value.query !== "string") {
-    return "";
+  function flushReasoning() {
+    if (reasoningBuffer) {
+      result.push({ type: "reasoning", text: reasoningBuffer });
+      reasoningBuffer = "";
+    }
   }
-  return value.query;
-}
 
-function extractCommand(value: unknown): string {
-  if (!isObject(value) || typeof value.command !== "string") {
-    return "";
+  function flushToolCalls() {
+    for (const toolItem of toolCallMap.values()) {
+      result.push(toolItem);
+    }
+    toolCallMap.clear();
   }
-  return value.command;
+
+  for (const item of items) {
+    if (item.type === "assistant_message") {
+      flushReasoning();
+      flushToolCalls();
+      assistantBuffer += item.text;
+    } else if (item.type === "reasoning") {
+      flushAssistant();
+      flushToolCalls();
+      reasoningBuffer += item.text;
+    } else if (item.type === "tool_call" && item.callId) {
+      flushAssistant();
+      flushReasoning();
+      toolCallMap.set(item.callId, item);
+    } else if (item.type === "tool_call") {
+      flushAssistant();
+      flushReasoning();
+      flushToolCalls();
+      result.push(item);
+    } else {
+      flushAssistant();
+      flushReasoning();
+      flushToolCalls();
+      result.push(item);
+    }
+  }
+
+  flushAssistant();
+  flushReasoning();
+  flushToolCalls();
+
+  return result;
 }
 
 /**
@@ -80,11 +101,14 @@ export function curateAgentActivity(
     return "No activity to display.";
   }
 
+  // Collapse timeline: dedupe tool calls, merge consecutive messages
+  const collapsed = collapseTimeline(timeline);
+
   const maxItems = options?.maxItems ?? DEFAULT_MAX_ITEMS;
   const recentItems =
-    maxItems > 0 && timeline.length > maxItems
-      ? timeline.slice(-maxItems)
-      : timeline;
+    maxItems > 0 && collapsed.length > maxItems
+      ? collapsed.slice(-maxItems)
+      : collapsed;
 
   const lines: string[] = [];
   const buffers = { message: "", thought: "" };
@@ -103,26 +127,11 @@ export function curateAgentActivity(
         break;
       case "tool_call": {
         flushBuffers(lines, buffers);
-        const status = item.status ? ` ${item.status}` : "";
-        const kind = getToolKind(item.name);
-        if (kind === "execute") {
-          const command = extractCommand(item.input);
-          lines.push(`[Command: ${command || item.name}]${status}`);
-        } else if (kind === "edit") {
-          const files = extractFileChanges(item.output);
-          if (files.length > 0) {
-            lines.push("[File Changes]");
-            for (const file of files) {
-              lines.push(`- (${file.kind}) ${file.path}`);
-            }
-          } else {
-            lines.push(`[Edit] ${item.name}${status}`);
-          }
-        } else if (kind === "search") {
-          const query = extractWebQuery(item.input);
-          lines.push(`[Web Search] ${query || item.name}`);
+        const principal = extractPrincipalParam(item.input);
+        if (principal) {
+          lines.push(`[${item.name}] ${principal}`);
         } else {
-          lines.push(`[Tool ${item.name}]${status}`);
+          lines.push(`[${item.name}]`);
         }
         break;
       }
@@ -143,5 +152,5 @@ export function curateAgentActivity(
 
   flushBuffers(lines, buffers);
 
-  return lines.length > 0 ? lines.join("\n\n") : "No activity to display.";
+  return lines.length > 0 ? lines.join("\n") : "No activity to display.";
 }

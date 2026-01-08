@@ -157,11 +157,13 @@ async function waitForAgentWithTimeout(
   } catch (error) {
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
+      const timeline = agentManager.getTimeline(agentId);
+      const recentActivity = curateAgentActivity(timeline.slice(-5));
+      const message = `Awaiting the agent timed out. This does not mean the agent failed - call wait_for_agent again to continue waiting.\n\nRecent activity:\n${recentActivity}`;
       return {
         status: snapshot?.lifecycle ?? "idle",
         permission: null,
-        lastMessage:
-          "Awaiting the agent timed out. This does not mean the agent failed - call wait_for_agent again to continue waiting.",
+        lastMessage: message,
       };
     }
     throw error;

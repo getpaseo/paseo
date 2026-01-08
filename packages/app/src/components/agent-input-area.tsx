@@ -26,6 +26,7 @@ import {
   MessageInput,
   type MessagePayload,
   type ImageAttachment,
+  type MessageInputRef,
 } from "./message-input";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { Theme } from "@/styles/theme";
@@ -132,6 +133,7 @@ export function AgentInputArea({
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef(sendAgentMessage);
   const onSubmitMessageRef = useRef(onSubmitMessage);
+  const messageInputRef = useRef<MessageInputRef>(null);
 
   // Expose addImages function to parent for drag-and-drop support
   const addImages = useCallback((images: ImageAttachment[]) => {
@@ -338,6 +340,7 @@ export function AgentInputArea({
     }
     setIsCancellingAgent(true);
     cancelAgentRun(agentIdRef.current);
+    messageInputRef.current?.focus();
   }
 
   function handleEditQueuedMessage(id: string) {
@@ -470,6 +473,7 @@ export function AgentInputArea({
 
           {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
           <MessageInput
+            ref={messageInputRef}
             value={userInput}
             onChangeText={setUserInput}
             onSubmit={handleSubmit}

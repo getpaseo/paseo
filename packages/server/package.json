@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Paseo backend server",
   "type": "module",
+  "exports": {
+    "./utils/tool-call-parsers": "./src/utils/tool-call-parsers.ts"
+  },
   "scripts": {
     "dev": "NODE_ENV=development tsx scripts/dev-runner.ts",
     "dev:tsx": "NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
