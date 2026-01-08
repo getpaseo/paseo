@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ImageAttachment } from "@/components/message-input";
 import {
   View,
   Text,
@@ -15,6 +16,7 @@ import {
   GitOptionsSection,
   WorkingDirectoryDropdown,
 } from "@/components/agent-form/agent-form-dropdowns";
+import { FileDropZone } from "@/components/file-drop-zone";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { SessionOutboundMessage } from "@server/server/messages";
 import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
@@ -168,6 +170,16 @@ export default function HomeScreen() {
   const [branchNameEdited, setBranchNameEdited] = useState(false);
   const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
   const shouldSyncBaseBranchRef = useRef(true);
+  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+
+  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
+    addImagesRef.current?.(files);
+  }, []);
+
+  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
+    addImagesRef.current = addImages;
+  }, []);
+
   const createNewBranch = isolationMode === "branch" || isolationMode === "worktree";
   const createWorktree = isolationMode === "worktree";
   const openDropdownSheet = useCallback(
@@ -670,26 +682,27 @@ export default function HomeScreen() {
       : "Automatic";
 
   return (
-    <View style={styles.container}>
-      <View style={styles.agentPanel}>
-        <MenuHeader
-          title="New Agent"
-          rightContent={
-            <Pressable
-              style={styles.hostBadge}
-              onPress={() => openDropdownSheet("host")}
-            >
-              <Monitor size={14} color={theme.colors.mutedForeground} />
-              <Text style={styles.hostBadgeLabel}>{hostLabel}</Text>
-              <View
-                style={[
-                  styles.hostStatusDot,
-                  hostEntry?.status === "online" && styles.hostStatusDotOnline,
-                ]}
-              />
-            </Pressable>
-          }
-        />
+    <FileDropZone onFilesDropped={handleFilesDropped}>
+      <View style={styles.container}>
+        <View style={styles.agentPanel}>
+          <MenuHeader
+            title="New Agent"
+            rightContent={
+              <Pressable
+                style={styles.hostBadge}
+                onPress={() => openDropdownSheet("host")}
+              >
+                <Monitor size={14} color={theme.colors.mutedForeground} />
+                <Text style={styles.hostBadgeLabel}>{hostLabel}</Text>
+                <View
+                  style={[
+                    styles.hostStatusDot,
+                    hostEntry?.status === "online" && styles.hostStatusDotOnline,
+                  ]}
+                />
+              </Pressable>
+            }
+          />
 
         <ScrollView style={styles.contentContainer} contentContainerStyle={styles.configScrollContent}>
           <View style={styles.configSection}>
@@ -930,10 +943,12 @@ export default function HomeScreen() {
             value={promptText}
             onChangeText={setPromptText}
             autoFocus
+            onAddImages={handleAddImagesCallback}
           />
         </View>
       </View>
     </View>
+  </FileDropZone>
   );
 }
 
