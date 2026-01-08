@@ -1,0 +1,38 @@
+name: Server CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/server/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/server-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/server/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/server-ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=@paseo/server
+
+      - name: Test
+        run: npm run test --workspace=@paseo/server
