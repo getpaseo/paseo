@@ -1261,9 +1261,10 @@ function normalizeCwdCandidates(cwd: string): string[] {
 }
 
 function cleanupClaudeHistory(cwd: string) {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
   for (const candidate of normalizeCwdCandidates(cwd)) {
     const sanitized = sanitizeClaudeProjectName(candidate);
-    const projectDir = path.join(os.homedir(), ".claude", "projects", sanitized);
+    const projectDir = path.join(configDir, "projects", sanitized);
     if (existsSync(projectDir)) {
       rmSync(projectDir, { recursive: true, force: true });
     }
