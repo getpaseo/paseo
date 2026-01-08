@@ -856,10 +856,6 @@ export class Session {
           await this.handleFileDownloadTokenRequest(msg);
           break;
 
-        case "list_persisted_agents_request":
-          await this.handleListPersistedAgentsRequest(msg);
-          break;
-
         case "git_repo_info_request":
           await this.handleGitRepoInfoRequest(msg);
           break;
@@ -1550,9 +1546,18 @@ export class Session {
     }
 
     if (normalized.createWorktree) {
-      const targetBranch = normalized.createNewBranch
-        ? normalized.newBranchName
-        : normalized.baseBranch;
+      let targetBranch: string;
+
+      if (normalized.createNewBranch) {
+        targetBranch = normalized.newBranchName!;
+      } else {
+        // Resolve current branch name from HEAD
+        const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        targetBranch = stdout.trim();
+      }
 
       if (!targetBranch) {
         throw new Error(
@@ -1730,12 +1735,6 @@ export class Session {
       }
     }
 
-    if (createWorktree && !createNewBranch && !baseBranch) {
-      throw new Error(
-        "Base branch is required when creating a worktree without a new branch"
-      );
-    }
-
     return {
       baseBranch,
       createNewBranch,
@@ -1833,48 +1832,6 @@ export class Session {
       return true;
     } catch (error: any) {
       return false;
-    }
-  }
-
-  private async handleListPersistedAgentsRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_persisted_agents_request" }>
-  ): Promise<void> {
-    const { provider, limit } = msg;
-    try {
-      const entries = await this.agentManager.listPersistedAgents({
-        provider,
-        limit,
-      });
-      this.emit({
-        type: "list_persisted_agents_response",
-        payload: {
-          items: entries.map((entry) => ({
-            provider: entry.provider,
-            sessionId: entry.sessionId,
-            cwd: entry.cwd,
-            title: entry.title ?? `Session ${entry.sessionId.slice(0, 8)}`,
-            lastActivityAt: entry.lastActivityAt.toISOString(),
-            persistence: entry.persistence,
-            timeline: entry.timeline ?? [],
-          })),
-        },
-      });
-    } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to list persisted agents:`,
-        error
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to list saved agents: ${
-            (error as Error)?.message ?? error
-          }`,
-        },
-      });
     }
   }
 

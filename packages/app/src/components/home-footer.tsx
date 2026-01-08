@@ -3,12 +3,11 @@ import { View, Pressable, Text, Platform, Modal, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AudioLines, Users, Plus, Download } from "lucide-react-native";
+import { AudioLines, Users, Plus } from "lucide-react-native";
 import { useRealtime } from "@/contexts/realtime-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import { RealtimeControls } from "./realtime-controls";
-import { ImportAgentModal } from "./create-agent-modal";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -22,7 +21,6 @@ export function HomeFooter() {
   const router = useRouter();
   const { isRealtimeMode, startRealtime } = useRealtime();
   const { connectionStates } = useDaemonConnections();
-  const [showImportModal, setShowImportModal] = useState(false);
   const [showRealtimeHostPicker, setShowRealtimeHostPicker] = useState(false);
   // Guard Reanimated entry/exit transitions on Android to avoid ViewGroup.dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
@@ -143,25 +141,6 @@ export function HomeFooter() {
 
             <Pressable
               onPress={() => {
-                setShowImportModal(true);
-              }}
-              style={({ pressed }) => [
-                styles.footerButton,
-                pressed && styles.buttonPressed,
-              ]}
-            >
-              <View style={styles.footerIconWrapper}>
-                <Download
-                  size={iconSize}
-                  color={theme.colors.foreground}
-                  style={iconStyle}
-                />
-              </View>
-              <Text style={styles.footerButtonText}>Import</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
                 console.log("[HomeFooter] New Agent button pressed");
                 router.push("/");
               }}
@@ -202,10 +181,6 @@ export function HomeFooter() {
         </View>
       </Animated.View>
 
-      <ImportAgentModal
-        isVisible={showImportModal}
-        onClose={() => setShowImportModal(false)}
-      />
       <Modal
         visible={showRealtimeHostPicker}
         transparent

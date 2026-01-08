@@ -11,14 +11,11 @@ import {
   Text,
   Pressable,
   ScrollView,
-  FlatList,
   ActivityIndicator,
   InteractionManager,
-  TextInput,
   Modal,
   useWindowDimensions,
   type LayoutChangeEvent,
-  type ListRenderItem,
   Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,7 +28,7 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Monitor, X } from "lucide-react-native";
+import { X } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import { useRecentPaths } from "@/hooks/use-recent-paths";
 import { useRouter } from "expo-router";
@@ -41,8 +38,6 @@ import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-c
 import type {
   AgentProvider,
   AgentSessionConfig,
-  AgentPersistenceHandle,
-  AgentTimelineItem,
 } from "@server/server/agent/agent-sdk-types";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { WSInboundMessage, SessionOutboundMessage } from "@server/server/messages";
@@ -53,8 +48,8 @@ import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
   AssistantDropdown,
-  DropdownField,
   DropdownSheet,
+  GitOptionsSection,
   ModelDropdown,
   PermissionsDropdown,
   WorkingDirectoryDropdown,
@@ -67,7 +62,6 @@ import {
 interface AgentFlowModalProps {
   isVisible: boolean;
   onClose: () => void;
-  flow: "create" | "import";
   initialValues?: CreateAgentInitialValues;
   serverId?: string | null;
   onAfterClose?: () => void;
@@ -90,7 +84,6 @@ type CreateAgentSessionSlice = {
     worktreeName?: string;
     requestId?: string;
   }) => void;
-  resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
   sendAgentAudio: (
     agentId: string | undefined,
     audioBlob: Blob,
@@ -101,20 +94,8 @@ type CreateAgentSessionSlice = {
 };
 
 const BACKDROP_OPACITY = 0.55;
-const IMPORT_PAGE_SIZE = 20;
 const IS_WEB = Platform.OS === "web";
 
-type ImportCandidate = {
-  provider: AgentProvider;
-  sessionId: string;
-  cwd: string;
-  title: string;
-  lastActivityAt: Date;
-  persistence: AgentPersistenceHandle;
-  timeline: AgentTimelineItem[];
-};
-
-type ProviderFilter = "all" | AgentProvider;
 type DropdownKey =
   | "assistant"
   | "permissions"
@@ -136,43 +117,9 @@ type GitRepoInfoResponseMessage = Extract<
   { type: "git_repo_info_response" }
 >;
 
-function formatRelativeTime(date: Date): string {
-  const now = Date.now();
-  const diffMs = now - date.getTime();
-  if (!Number.isFinite(diffMs)) {
-    return "unknown";
-  }
-  const minutes = Math.max(0, Math.floor(diffMs / 60000));
-  if (minutes < 1) {
-    return "just now";
-  }
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function getImportPreview(candidate: ImportCandidate): string {
-  for (const item of candidate.timeline) {
-    if (item.type === "user_message") {
-      const text = item.text.trim();
-      if (text.length > 0) {
-        return text;
-      }
-    }
-  }
-  return candidate.title || candidate.cwd;
-}
-
 function AgentFlowModal({
   isVisible,
   onClose,
-  flow,
   initialValues,
   serverId,
   onAfterClose,
@@ -182,10 +129,7 @@ function AgentFlowModal({
   const slideOffset = useSharedValue(screenHeight);
   const backdropOpacity = useSharedValue(0);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
-  const isCompactLayout = screenWidth < 720;
   const shouldAutoFocusPrompt = IS_WEB;
-  const isImportFlow = flow === "import";
-  const isCreateFlow = !isImportFlow;
 
   const { addRecentPath } = useRecentPaths();
   const { connectionStates } = useDaemonConnections();
@@ -223,7 +167,7 @@ function AgentFlowModal({
     initialServerId,
     initialValues,
     isVisible,
-    isCreateFlow,
+    isCreateFlow: true,
   });
 
   const sessionState = useSessionStore((state) =>
@@ -239,7 +183,6 @@ function AgentFlowModal({
       serverId: selectedServerId,
       ws: sessionState.ws,
       createAgent: sessionState.methods.createAgent,
-      resumeAgent: sessionState.methods.resumeAgent,
       sendAgentAudio: sessionState.methods.sendAgentAudio,
       agents: sessionState.agents,
     };
@@ -299,7 +242,6 @@ function AgentFlowModal({
   const ws = session?.ws ?? null;
   const effectiveWs: UseWebSocketReturn = ws ?? inertWebSocket;
   const createAgent = session?.createAgent;
-  const resumeAgent = session?.resumeAgent;
   const sessionSendAgentAudio = session?.sendAgentAudio;
   const noopSendAgentAudio = useCallback<SessionContextValue["sendAgentAudio"]>(async () => {}, []);
   const sendAgentAudio = sessionSendAgentAudio ?? noopSendAgentAudio;
@@ -377,11 +319,10 @@ function AgentFlowModal({
     "Selected host";
   const selectedDaemonStatusLabel = formatConnectionStatus(selectedDaemonStatus);
   const hasSelectedDaemon = Boolean(selectedServerId);
-  const hostBadgeLabel = hasSelectedDaemon ? selectedDaemonLabel : "Select host";
   const selectedDaemonIsOffline = selectedDaemonStatus !== "online";
   const selectedDaemonLastError = selectedDaemonConnection?.lastError?.trim();
   const daemonAvailabilityError = !hasSelectedDaemon
-    ? "Select a host before creating or importing agents."
+    ? "Select a host before creating agents."
     : selectedDaemonIsOffline
         ? `${selectedDaemonLabel} is ${selectedDaemonStatusLabel}. We'll reconnect automatically and enable actions once it's online.${
             selectedDaemonLastError ? ` ${selectedDaemonLastError}` : ""
@@ -396,29 +337,14 @@ function AgentFlowModal({
 
   const [isMounted, setIsMounted] = useState(isVisible);
   const [initialPrompt, setInitialPrompt] = useState("");
-  const [baseBranch, setBaseBranch] = useState("");
-  const [createNewBranch, setCreateNewBranch] = useState(false);
-  const [branchName, setBranchName] = useState("");
-  const [createWorktree, setCreateWorktree] = useState(false);
-  const [worktreeSlug, setWorktreeSlug] = useState("");
-  const [branchNameEdited, setBranchNameEdited] = useState(false);
-  const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
+  const [useWorktree, setUseWorktree] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [importProviderFilter, setImportProviderFilter] =
-    useState<ProviderFilter>("all");
-  const [importSearchQuery, setImportSearchQuery] = useState("");
-  const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>(
-    []
-  );
-  const [isImportLoading, setIsImportLoading] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
   const pendingRequestIdRef = useRef<string | null>(null);
-  const shouldSyncBaseBranchRef = useRef(true);
 
-  const hasPendingCreateOrResume = pendingRequestIdRef.current !== null;
-  const shouldListenForStatus = isVisible || hasPendingCreateOrResume;
+  const hasPendingCreate = pendingRequestIdRef.current !== null;
+  const shouldListenForStatus = isVisible || hasPendingCreate;
 
   const idleProviderPrefetchHandleRef = useRef<ReturnType<
     typeof InteractionManager.runAfterInteractions
@@ -436,79 +362,12 @@ function AgentFlowModal({
     (value: string) => {
       setWorkingDirFromUser(value);
       setErrorMessage("");
-      shouldSyncBaseBranchRef.current = true;
     },
     [setWorkingDirFromUser]
   );
 
-  const handleBaseBranchChange = useCallback(
-    (value: string) => {
-      shouldSyncBaseBranchRef.current = false;
-      setBaseBranch(value);
-      setErrorMessage("");
-    },
-    [setErrorMessage]
-  );
-
-
-  const providerFilterOptions = useMemo(
-    () => [
-      { id: "all" as ProviderFilter, label: "All" },
-      ...providerDefinitions.map((definition) => ({
-        id: definition.id as ProviderFilter,
-        label: definition.label,
-      })),
-    ],
-    []
-  );
-  const getProviderLabel = useCallback(
-    (provider: AgentProvider) =>
-      providerDefinitionMap.get(provider)?.label ?? provider,
-    []
-  );
-
-  const activeSessionIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (!agents) {
-      return ids;
-    }
-    // Use persistence.sessionId for filtering - this is the canonical reference
-    // to the provider's session file (Claude resume token, Codex thread ID, etc.)
-    agents.forEach((agent) => {
-      const persistedSessionId = agent.persistence?.sessionId;
-      if (persistedSessionId) {
-        ids.add(persistedSessionId);
-      }
-    });
-    return ids;
-  }, [agents]);
-  const filteredImportCandidates = useMemo(() => {
-    const providerFilter = importProviderFilter;
-    const query = importSearchQuery.trim().toLowerCase();
-    return importCandidates
-      .filter((candidate) => !activeSessionIds.has(candidate.sessionId))
-      .filter(
-        (candidate) =>
-          providerFilter === "all" || candidate.provider === providerFilter
-      )
-      .filter((candidate) => {
-        if (query.length === 0) {
-          return true;
-        }
-        const titleText = candidate.title.toLowerCase();
-        const cwdText = candidate.cwd.toLowerCase();
-        return titleText.includes(query) || cwdText.includes(query);
-      })
-      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
-  }, [
-    activeSessionIds,
-    importCandidates,
-    importProviderFilter,
-    importSearchQuery,
-  ]);
-
   const logOfflineDaemonAction = useCallback(
-    (action: "create" | "resume" | "dictation" | "import_list", reason?: string | null) => {
+    (action: "create" | "dictation", reason?: string | null) => {
       trackAnalyticsEvent({
         type: "offline_daemon_action_attempt",
         action,
@@ -526,20 +385,13 @@ function AgentFlowModal({
 
   const resetFormState = useCallback(() => {
     setInitialPrompt("");
-    setBaseBranch("");
-    setCreateNewBranch(false);
-    setBranchName("");
-    setCreateWorktree(false);
-    setWorktreeSlug("");
-    setBranchNameEdited(false);
-    setWorktreeSlugEdited(false);
+    setUseWorktree(false);
     setErrorMessage("");
     setIsLoading(false);
     resetRepoInfo();
     setOpenDropdown(null);
     pendingRequestIdRef.current = null;
     pendingNavigationServerIdRef.current = null;
-    shouldSyncBaseBranchRef.current = true;
     cancelRepoInfo();
   }, [cancelRepoInfo, resetRepoInfo]);
 
@@ -577,41 +429,6 @@ function AgentFlowModal({
     navigateToAgentIfNeeded();
     onAfterClose?.();
   }, [navigateToAgentIfNeeded, onAfterClose, resetFormState]);
-
-  const requestImportCandidates = useCallback(
-    (provider?: AgentProvider) => {
-      if (!isTargetDaemonReady || !ws || !ws.isConnected) {
-        setIsImportLoading(false);
-        logOfflineDaemonAction("import_list");
-        setImportError(
-          daemonAvailabilityError ??
-            "Import candidates load automatically once the selected host is back online."
-        );
-        return;
-      }
-      setIsImportLoading(true);
-      setImportError(null);
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "list_persisted_agents_request",
-          ...(provider ? { provider } : {}),
-          limit: IMPORT_PAGE_SIZE,
-        },
-      };
-      try {
-        ws.send(msg);
-      } catch (error) {
-        console.error(
-          "[CreateAgentModal] Failed to request persisted agents:",
-          error
-        );
-        setIsImportLoading(false);
-        setImportError("Unable to load agents to import. Please try again.");
-      }
-    },
-    [daemonAvailabilityError, isTargetDaemonReady, logOfflineDaemonAction, ws]
-  );
 
   useEffect(() => {
     if (!isVisible) {
@@ -754,27 +571,6 @@ function AgentFlowModal({
     onClose();
   }, [onClose]);
 
-  useEffect(() => {
-    const slug = slugifyWorktreeName(initialPrompt);
-    if (!branchNameEdited) {
-      setBranchName(slug);
-    }
-    if (!worktreeSlugEdited) {
-      setWorktreeSlug(slug);
-    }
-  }, [
-    initialPrompt,
-    branchNameEdited,
-    worktreeSlugEdited,
-    slugifyWorktreeName,
-  ]);
-
-  useEffect(() => {
-    if (!isCreateFlow || !isVisible) {
-      return;
-    }
-    shouldSyncBaseBranchRef.current = true;
-  }, [isCreateFlow, isVisible, workingDir]);
 
   useEffect(() => {
     idleProviderPrefetchHandleRef.current?.cancel?.();
@@ -802,7 +598,7 @@ function AgentFlowModal({
   ]);
 
   const trimmedWorkingDir = workingDir.trim();
-  const shouldInspectRepo = isCreateFlow && isVisible && trimmedWorkingDir.length > 0;
+  const shouldInspectRepo = isVisible && trimmedWorkingDir.length > 0;
   const repoAvailabilityError = shouldInspectRepo && (!isTargetDaemonReady || !isWsConnected)
     ? daemonAvailabilityError ??
       "Repository details will load automatically once the selected host is back online."
@@ -854,45 +650,32 @@ function AgentFlowModal({
   ]);
 
   useEffect(() => {
-    if (!repoInfo) {
-      return;
+    if (isNonGitDirectory && useWorktree) {
+      setUseWorktree(false);
     }
-    setBaseBranch((prev) => {
-      if (shouldSyncBaseBranchRef.current || prev.trim().length === 0) {
-        shouldSyncBaseBranchRef.current = false;
-        return repoInfo.currentBranch ?? "";
-      }
-      return prev;
-    });
-  }, [repoInfo]);
+  }, [isNonGitDirectory, useWorktree]);
 
-  useEffect(() => {
-    if (!isNonGitDirectory) {
-      return;
+  const gitBlockingError = useMemo(() => {
+    if (!useWorktree || isNonGitDirectory) {
+      return null;
     }
-    if (
-      createNewBranch ||
-      createWorktree ||
-      baseBranch.trim().length > 0 ||
-      branchName.trim().length > 0 ||
-      worktreeSlug.trim().length > 0
-    ) {
-      setCreateNewBranch(false);
-      setCreateWorktree(false);
-      setBaseBranch("");
-      setBranchName("");
-      setWorktreeSlug("");
-      setBranchNameEdited(false);
-      setWorktreeSlugEdited(false);
-      shouldSyncBaseBranchRef.current = true;
+    const slug = slugifyWorktreeName(initialPrompt);
+    if (!slug) {
+      return null;
     }
+    const validation = validateWorktreeName(slug);
+    if (!validation.valid) {
+      return `Invalid worktree name: ${
+        validation.error ?? "Must use lowercase letters, numbers, or hyphens"
+      }`;
+    }
+    return null;
   }, [
-    baseBranch,
-    branchName,
-    createNewBranch,
-    createWorktree,
+    useWorktree,
     isNonGitDirectory,
-    worktreeSlug,
+    initialPrompt,
+    slugifyWorktreeName,
+    validateWorktreeName,
   ]);
 
   const handleCreate = useCallback(async () => {
@@ -926,8 +709,6 @@ function AgentFlowModal({
       return;
     }
 
-    const trimmedBaseBranch = baseBranch.trim();
-
     try {
       await addRecentPath(trimmedPath);
     } catch (error) {
@@ -952,24 +733,11 @@ function AgentFlowModal({
       ...(trimmedModel ? { model: trimmedModel } : {}),
     };
 
-    const currentBranch = repoInfo?.currentBranch ?? "";
-    const shouldIncludeBase =
-      createNewBranch ||
-      createWorktree ||
-      (trimmedBaseBranch.length > 0 && trimmedBaseBranch !== currentBranch);
-
-    const gitOptions = shouldIncludeBase && !isNonGitDirectory
+    const worktreeSlug = slugifyWorktreeName(trimmedPrompt);
+    const gitOptions = useWorktree && !isNonGitDirectory && worktreeSlug
       ? {
-          ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
-          ...(createNewBranch
-            ? { createNewBranch: true, newBranchName: branchName.trim() }
-            : {}),
-          ...(createWorktree
-            ? {
-                createWorktree: true,
-                worktreeSlug: (worktreeSlug || branchName).trim(),
-              }
-          : {}),
+          createWorktree: true,
+          worktreeSlug,
         }
       : undefined;
 
@@ -990,116 +758,22 @@ function AgentFlowModal({
   }, [
     workingDir,
     initialPrompt,
-    baseBranch,
-    createNewBranch,
-    branchName,
-    createWorktree,
-    worktreeSlug,
-    repoInfo,
+    useWorktree,
+    slugifyWorktreeName,
     selectedMode,
     modeOptions,
     logOfflineDaemonAction,
     selectedProvider,
     isLoading,
-    validateWorktreeName,
     addRecentPath,
     createAgent,
     daemonAvailabilityError,
     isTargetDaemonReady,
     selectedDaemonId,
+    isNonGitDirectory,
+    gitBlockingError,
+    selectedModel,
   ]);
-
-  const handleImportCandidatePress = useCallback(
-    (candidate: ImportCandidate) => {
-      if (isLoading) {
-        return;
-      }
-      if (!resumeAgent || !isTargetDaemonReady) {
-        logOfflineDaemonAction("resume");
-        setImportError(
-          daemonAvailabilityError ??
-            "Importing agents will resume automatically once the selected host is online."
-        );
-        return;
-      }
-      setErrorMessage("");
-      const requestId = generateMessageId();
-      pendingRequestIdRef.current = requestId;
-      pendingNavigationServerIdRef.current = selectedDaemonId ?? null;
-      setIsLoading(true);
-      resumeAgent({
-        handle: candidate.persistence,
-        requestId,
-      });
-    },
-    [
-      daemonAvailabilityError,
-      isLoading,
-      logOfflineDaemonAction,
-      isTargetDaemonReady,
-      resumeAgent,
-      selectedDaemonId,
-      setImportError,
-    ]
-  );
-
-  const renderImportItem = useCallback<ListRenderItem<ImportCandidate>>(
-    ({ item }) => (
-      <Pressable
-        onPress={() => handleImportCandidatePress(item)}
-        disabled={isLoading || !isTargetDaemonReady}
-        style={styles.resumeItem}
-      >
-        <View style={styles.resumeItemHeader}>
-          <Text style={styles.resumeItemTitle} numberOfLines={1}>
-            {getImportPreview(item)}
-          </Text>
-          <Text style={styles.resumeItemTimestamp}>
-            {formatRelativeTime(item.lastActivityAt)}
-          </Text>
-        </View>
-        <Text style={styles.resumeItemPath} numberOfLines={1}>
-          {item.cwd}
-        </Text>
-        <View style={styles.resumeItemMetaRow}>
-          <View style={styles.resumeProviderBadge}>
-            <Text style={styles.resumeProviderBadgeText}>
-              {getProviderLabel(item.provider)}
-            </Text>
-          </View>
-          <Text style={styles.resumeItemHint}>Tap to import</Text>
-        </View>
-      </Pressable>
-    ),
-    [getProviderLabel, handleImportCandidatePress, isLoading, isTargetDaemonReady]
-  );
-
-  useEffect(() => {
-    if (!isImportFlow || !isVisible || !ws) {
-      return;
-    }
-    const unsubscribe = ws.on("list_persisted_agents_response", (message) => {
-      if (message.type !== "list_persisted_agents_response") {
-        return;
-      }
-      const mapped = message.payload.items.map((item) => ({
-        provider: item.provider,
-        sessionId: item.sessionId,
-        cwd: item.cwd,
-        title: item.title ?? `Session ${item.sessionId.slice(0, 8)}`,
-        lastActivityAt: new Date(item.lastActivityAt),
-        persistence: item.persistence,
-        timeline: item.timeline ?? [],
-      })) as ImportCandidate[];
-
-      setImportCandidates(mapped);
-      setIsImportLoading(false);
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [isImportFlow, isVisible, ws]);
 
   useEffect(() => {
     if (!shouldListenForStatus || !ws) {
@@ -1132,11 +806,7 @@ function AgentFlowModal({
         return;
       }
 
-      if (
-        (payload.status !== "agent_created" &&
-          payload.status !== "agent_resumed") ||
-        !payload.agentId
-      ) {
+      if (payload.status !== "agent_created" || !payload.agentId) {
         return;
       }
 
@@ -1157,79 +827,7 @@ function AgentFlowModal({
     };
   }, [handleClose, shouldListenForStatus, ws]);
 
-  useEffect(() => {
-    if (!isVisible || !isImportFlow) {
-      return;
-    }
-    const provider =
-      importProviderFilter === "all" ? undefined : importProviderFilter;
-    requestImportCandidates(provider);
-  }, [importProviderFilter, isImportFlow, isVisible, requestImportCandidates]);
-
-  const refreshImportList = useCallback(() => {
-    const provider =
-      importProviderFilter === "all" ? undefined : importProviderFilter;
-    requestImportCandidates(provider);
-  }, [requestImportCandidates, importProviderFilter]);
-
   const shouldRender = isVisible || isMounted;
-  const modalTitle = isImportFlow ? "Import Agent" : "Create New Agent";
-
-  const gitBlockingError = useMemo(() => {
-    if (isNonGitDirectory) {
-      return null;
-    }
-    const trimmedBase = baseBranch.trim();
-    const currentBranch = repoInfo?.currentBranch ?? "";
-    const isCustomBase =
-      trimmedBase.length > 0 &&
-      (currentBranch.length === 0 || trimmedBase !== currentBranch);
-    const requiresBase = createNewBranch || createWorktree || isCustomBase;
-
-    if (requiresBase && !trimmedBase) {
-      return "Select a base branch before launching the agent";
-    }
-
-    if (createNewBranch) {
-      const slug = branchName.trim();
-      const validation = validateWorktreeName(slug);
-      if (!slug || !validation.valid) {
-        return `Invalid branch name: ${
-          validation.error ?? "Must use lowercase letters, numbers, hyphens, or forward slashes"
-        }`;
-      }
-    }
-
-    if (createWorktree) {
-      const slug = (worktreeSlug || branchName).trim();
-      const validation = validateWorktreeName(slug);
-      if (!slug || !validation.valid) {
-        return `Invalid worktree name: ${
-          validation.error ?? "Must use lowercase letters, numbers, or hyphens"
-        }`;
-      }
-    }
-
-    if (!createWorktree && repoInfo?.isDirty) {
-      const intendsCheckout =
-        createNewBranch ||
-        (trimmedBase.length > 0 && trimmedBase !== repoInfo.currentBranch);
-      if (intendsCheckout) {
-        return "Working directory has uncommitted changes. Clean up or create a worktree first.";
-      }
-    }
-
-    return null;
-  }, [
-    baseBranch,
-    branchName,
-    createNewBranch,
-    createWorktree,
-    isNonGitDirectory,
-    repoInfo,
-    validateWorktreeName,
-    worktreeSlug,
-  ]);
 
   const promptIsEmpty = !initialPrompt.trim();
   const createDisabled =
@@ -1291,27 +889,9 @@ function AgentFlowModal({
               paddingLeft={horizontalPaddingLeft}
               paddingRight={horizontalPaddingRight}
               onClose={handleClose}
-              title={modalTitle}
-              rightContent={
-                isImportFlow ? (
-                  <Pressable
-                    style={styles.hostBadge}
-                    onPress={() => openDropdownSheet("host")}
-                  >
-                    <Monitor size={14} color={defaultTheme.colors.mutedForeground} />
-                    <Text style={styles.hostBadgeLabel}>{hostBadgeLabel}</Text>
-                    <View
-                      style={[
-                        styles.hostStatusDot,
-                        selectedDaemonStatus === "online" && styles.hostStatusDotOnline,
-                      ]}
-                    />
-                  </Pressable>
-                ) : undefined
-              }
+              title="Create New Agent"
             />
-            {isCreateFlow ? (
-              <>
+            <>
                 <ScrollView
                   style={styles.scroll}
                   contentContainerStyle={[
@@ -1393,122 +973,32 @@ function AgentFlowModal({
                     />
                   </View>
 
-                  <View
-                    style={[
-                      styles.selectorRow,
-                      isCompactLayout && styles.selectorRowStacked,
-                    ]}
-                  >
-                    <AssistantDropdown
-                      providerDefinitions={providerDefinitions}
-                      disabled={isLoading}
-                      selectedProvider={selectedProvider}
-                      isOpen={openDropdown === "assistant"}
-                      onOpen={() => openDropdownSheet("assistant")}
-                      onClose={closeDropdown}
-                      onSelect={setProviderFromUser}
-                    />
-                    <PermissionsDropdown
-                      disabled={isLoading}
-                      modeOptions={modeOptions}
-                      selectedMode={selectedMode}
-                      isOpen={openDropdown === "permissions"}
-                      onOpen={() => openDropdownSheet("permissions")}
-                      onClose={closeDropdown}
-                      onSelect={setModeFromUser}
-                    />
-                    <ModelDropdown
-                      models={availableModels}
-                      selectedModel={selectedModel}
-                      isLoading={isModelLoading}
-                      error={modelError}
-                      isOpen={openDropdown === "model"}
-                      onOpen={() => {
-                        refreshProviderModels();
-                        openDropdownSheet("model");
-                      }}
-                      onClose={closeDropdown}
-                      onSelect={(modelId) => {
-                        setModelFromUser(modelId);
-                        setErrorMessage("");
-                      }}
-                      onClear={() => {
-                        setModelFromUser("");
-                        setErrorMessage("");
-                      }}
-                      onRefresh={refreshProviderModels}
-                    />
-                  </View>
-
                   <WorkingDirectoryDropdown
                     workingDir={workingDir}
                     errorMessage={errorMessage}
-                    isOpen={openDropdown === "workingDir"}
-                    onOpen={() => openDropdownSheet("workingDir")}
-                    onClose={closeDropdown}
                     disabled={isLoading}
                     suggestedPaths={agentWorkingDirSuggestions}
                     onSelectPath={handleUserWorkingDirChange}
                   />
 
-                  <GitOptionsSection
-                    baseBranch={baseBranch}
-                    onBaseBranchChange={handleBaseBranchChange}
-                    branches={repoInfo?.branches ?? []}
-                    status={repoInfoStatus}
-                    repoError={repoInfoError}
-                    helperText={gitHelperText}
-                    isGitDisabled={Boolean(gitHelperText)}
-                    warning={
-                      !createWorktree && repoInfo?.isDirty
-                        ? "Working directory has uncommitted changes"
-                        : null
-                    }
-                    createNewBranch={createNewBranch}
-                    onToggleCreateNewBranch={(next) => {
-                      setCreateNewBranch(next);
-                      if (next) {
-                        if (!branchNameEdited) {
-                          const slug = slugifyWorktreeName(
-                            initialPrompt || baseBranch || ""
-                          );
-                          setBranchName(slug);
-                        }
-                      } else {
-                        setBranchName("");
-                        setBranchNameEdited(false);
-                      }
-                    }}
-                    branchName={branchName}
-                    onBranchNameChange={(value) => {
-                      setBranchName(slugifyWorktreeName(value));
-                      setBranchNameEdited(true);
-                    }}
-                    createWorktree={createWorktree}
-                    onToggleCreateWorktree={(next) => {
-                      setCreateWorktree(next);
-                      if (next) {
-                        if (!worktreeSlugEdited) {
-                          const slug = slugifyWorktreeName(
-                            initialPrompt || branchName || baseBranch || ""
-                          );
-                          setWorktreeSlug(slug);
-                        }
-                      } else {
-                        setWorktreeSlug("");
-                        setWorktreeSlugEdited(false);
-                      }
-                    }}
-                    worktreeSlug={worktreeSlug}
-                    onWorktreeSlugChange={(value) => {
-                      setWorktreeSlug(slugifyWorktreeName(value));
-                      setWorktreeSlugEdited(true);
-                    }}
-                    gitValidationError={gitBlockingError}
-                    isBaseDropdownOpen={openDropdown === "baseBranch"}
-                    onToggleBaseDropdown={() => openDropdownSheet("baseBranch")}
-                    onCloseDropdown={closeDropdown}
+                  <AssistantDropdown
+                    providerDefinitions={providerDefinitions}
+                    disabled={isLoading}
+                    selectedProvider={selectedProvider}
+                    onSelect={setProviderFromUser}
                   />
+
+                  {!isNonGitDirectory ? (
+                    <GitOptionsSection
+                      useWorktree={useWorktree}
+                      onUseWorktreeChange={setUseWorktree}
+                      worktreeSlug={slugifyWorktreeName(initialPrompt)}
+                      currentBranch={repoInfo?.currentBranch ?? null}
+                      status={repoInfoStatus}
+                      repoError={repoInfoError}
+                      gitValidationError={gitBlockingError}
+                    />
+                  ) : null}
                 </ScrollView>
 
                 <Animated.View
@@ -1543,141 +1033,6 @@ function AgentFlowModal({
                   </Pressable>
                 </Animated.View>
               </>
-            ) : (
-              <View
-                style={[
-                  styles.resumeContainer,
-                  {
-                    paddingLeft: horizontalPaddingLeft,
-                    paddingRight: horizontalPaddingRight,
-                    paddingBottom: insets.bottom + defaultTheme.spacing[4],
-                  },
-                ]}
-              >
-                {daemonAvailabilityError ? (
-                  <Text style={styles.daemonAvailabilityText}>
-                    {daemonAvailabilityError}
-                  </Text>
-                ) : null}
-                <View style={styles.resumeFilters}>
-                  <View style={styles.providerFilterRow}>
-                    {providerFilterOptions.map((option) => {
-                      const isActive = importProviderFilter === option.id;
-                      return (
-                        <Pressable
-                          key={option.id}
-                          onPress={() => setImportProviderFilter(option.id)}
-                          style={[
-                            styles.providerFilterButton,
-                            isActive && styles.providerFilterButtonActive,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.providerFilterText,
-                              isActive && styles.providerFilterTextActive,
-                            ]}
-                          >
-                            {option.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                  <View style={styles.resumeSearchRow}>
-                    <TextInput
-                      style={styles.resumeSearchInput}
-                      placeholder="Search by title or path"
-                      placeholderTextColor={defaultTheme.colors.mutedForeground}
-                      value={importSearchQuery}
-                      onChangeText={setImportSearchQuery}
-                    />
-                    <Pressable
-                      style={styles.refreshButton}
-                      onPress={refreshImportList}
-                      disabled={isImportLoading || !isTargetDaemonReady}
-                    >
-                      <Text style={styles.refreshButtonText}>Refresh</Text>
-                    </Pressable>
-                  </View>
-                </View>
-                {importError ? (
-                  <Text style={styles.importErrorText}>{importError}</Text>
-                ) : null}
-                {isImportLoading ? (
-                  <View style={styles.resumeLoading}>
-                    <ActivityIndicator
-                      color={defaultTheme.colors.mutedForeground}
-                    />
-                    <Text style={styles.resumeLoadingText}>
-                      Loading agents to import...
-                    </Text>
-                  </View>
-                ) : filteredImportCandidates.length === 0 ? (
-                  <View style={styles.resumeEmptyState}>
-                    <Text style={styles.resumeEmptyTitle}>No agents to import</Text>
-                    <Text style={styles.resumeEmptySubtitle}>
-                      We will load the latest Claude and Codex sessions from your
-                      local history so you can import them.
-                    </Text>
-                    <Pressable
-                      style={styles.refreshButtonAlt}
-                      onPress={refreshImportList}
-                      disabled={isImportLoading || !isTargetDaemonReady}
-                    >
-                      <Text style={styles.refreshButtonAltText}>Try Again</Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  <FlatList
-                    data={filteredImportCandidates}
-                    renderItem={renderImportItem}
-                    keyExtractor={(item) =>
-                      `${item.provider}:${item.sessionId}`
-                    }
-                    ItemSeparatorComponent={() => (
-                      <View style={styles.resumeItemSeparator} />
-                    )}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.resumeListContent}
-                  />
-                )}
-              </View>
-            )}
-            <DropdownSheet
-              title="Host"
-              visible={openDropdown === "host"}
-              onClose={closeDropdown}
-            >
-              {daemonEntries.length === 0 ? (
-                <Text style={styles.helperText}>No hosts available yet.</Text>
-              ) : (
-                <View style={styles.dropdownSheetList}>
-                  {daemonEntries.map(({ daemon, status }) => {
-                    const isSelected = daemon.id === selectedServerId;
-                    const label = daemon.label ?? daemon.wsUrl ?? daemon.id;
-                    return (
-                      <Pressable
-                        key={daemon.id}
-                        style={[
-                          styles.dropdownSheetOption,
-                          isSelected && styles.dropdownSheetOptionSelected,
-                        ]}
-                        onPress={() => {
-                          setSelectedServerIdFromUser(daemon.id);
-                          closeDropdown();
-                        }}
-                      >
-                        <Text style={styles.dropdownSheetOptionLabel}>{label}</Text>
-                        <Text style={styles.dropdownSheetOptionDescription}>
-                          {formatConnectionStatus(status)}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
-            </DropdownSheet>
           </View>
         </Animated.View>
       </View>
@@ -1685,7 +1040,7 @@ function AgentFlowModal({
   );
 }
 
-function LazyAgentFlowModal(props: Omit<AgentFlowModalProps, "onAfterClose">) {
+function LazyCreateAgentModal(props: Omit<AgentFlowModalProps, "onAfterClose">) {
   const { isVisible } = props;
   const [shouldRender, setShouldRender] = useState(isVisible);
 
@@ -1706,8 +1061,8 @@ function LazyAgentFlowModal(props: Omit<AgentFlowModalProps, "onAfterClose">) {
   return <AgentFlowModal {...props} onAfterClose={handleAfterClose} />;
 }
 
-export function ImportAgentModal(props: ModalWrapperProps) {
-  return <LazyAgentFlowModal {...props} flow="import" />;
+export function CreateAgentModal(props: ModalWrapperProps) {
+  return <LazyCreateAgentModal {...props} />;
 }
 
 interface ModalHeaderProps {
@@ -1737,241 +1092,6 @@ function ModalHeader({
         </Pressable>
       </View>
     </View>
-  );
-}
-
-interface GitOptionsSectionProps {
-  baseBranch: string;
-  onBaseBranchChange: (value: string) => void;
-  branches: Array<{ name: string; isCurrent: boolean }>;
-  status: "idle" | "loading" | "ready" | "error";
-  repoError: string | null;
-  helperText?: string | null;
-  warning: string | null;
-  createNewBranch: boolean;
-  onToggleCreateNewBranch: (value: boolean) => void;
-  branchName: string;
-  onBranchNameChange: (value: string) => void;
-  createWorktree: boolean;
-  onToggleCreateWorktree: (value: boolean) => void;
-  worktreeSlug: string;
-  onWorktreeSlugChange: (value: string) => void;
-  gitValidationError: string | null;
-  isGitDisabled?: boolean;
-  isBaseDropdownOpen: boolean;
-  onToggleBaseDropdown: () => void;
-  onCloseDropdown: () => void;
-}
-
-function GitOptionsSection({
-  baseBranch,
-  onBaseBranchChange,
-  branches,
-  status,
-  repoError,
-  helperText,
-  warning,
-  createNewBranch,
-  onToggleCreateNewBranch,
-  branchName,
-  onBranchNameChange,
-  createWorktree,
-  onToggleCreateWorktree,
-  worktreeSlug,
-  onWorktreeSlugChange,
-  gitValidationError,
-  isGitDisabled,
-  isBaseDropdownOpen,
-  onToggleBaseDropdown,
-  onCloseDropdown,
-}: GitOptionsSectionProps): ReactElement {
-  const [branchSearch, setBranchSearch] = useState("");
-  const branchFilter = branchSearch.trim().toLowerCase();
-  const filteredBranches =
-    branchFilter.length === 0
-      ? branches
-      : branches.filter((branch) =>
-          branch.name.toLowerCase().includes(branchFilter)
-        );
-  const maxVisible = 30;
-  const currentBranchLabel =
-    branches.find((branch) => branch.isCurrent)?.name ?? "";
-  const baseInputRef = useRef<TextInput | null>(null);
-  const gitInputsDisabled = Boolean(isGitDisabled) || status === "loading";
-
-  useEffect(() => {
-    if (isBaseDropdownOpen) {
-      setBranchSearch("");
-      baseInputRef.current?.focus();
-    }
-  }, [isBaseDropdownOpen]);
-
-  return (
-    <View style={styles.formSection}>
-      <Text style={styles.label}>Git Setup</Text>
-      <Text style={styles.helperText}>
-        Choose a base branch, then optionally create a feature branch or
-        isolated worktree.
-      </Text>
-
-      <DropdownField
-        label="Base Branch"
-        value={baseBranch}
-        placeholder={currentBranchLabel || "main"}
-        onPress={onToggleBaseDropdown}
-        disabled={gitInputsDisabled}
-        errorMessage={repoError}
-        warningMessage={!gitValidationError && !isGitDisabled ? warning : null}
-        helperText={
-          helperText ??
-          (status === "loading"
-            ? "Inspecting repository…"
-            : "Search existing branches, then tap to select.")
-        }
-      />
-      <DropdownSheet
-        title="Base Branch"
-        visible={isBaseDropdownOpen}
-        onClose={onCloseDropdown}
-      >
-        <TextInput
-          ref={baseInputRef}
-          style={styles.dropdownSearchInput}
-          placeholder={currentBranchLabel || "main"}
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={branchSearch}
-          onChangeText={setBranchSearch}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {status === "loading" ? (
-          <View style={styles.dropdownLoading}>
-            <ActivityIndicator color={defaultTheme.colors.mutedForeground} />
-            <Text style={styles.helperText}>Inspecting repository…</Text>
-          </View>
-        ) : filteredBranches.length === 0 ? (
-          <Text style={styles.helperText}>
-            {branchFilter.length === 0
-              ? "No branches detected yet."
-              : "No branches match your search."}
-          </Text>
-        ) : (
-          <View style={styles.dropdownSheetList}>
-            {filteredBranches.slice(0, maxVisible).map((branch) => {
-              const isActive = branch.name === baseBranch;
-              return (
-                <Pressable
-                  key={branch.name}
-                  style={[
-                    styles.dropdownSheetOption,
-                    isActive && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => {
-                    onBaseBranchChange(branch.name);
-                    onCloseDropdown();
-                  }}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel}>
-                    {branch.name}
-                    {branch.isCurrent ? "  (current)" : ""}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
-        {filteredBranches.length > maxVisible ? (
-          <Text style={styles.helperText}>
-            Showing first {maxVisible} matches. Keep typing to narrow it down.
-          </Text>
-        ) : null}
-      </DropdownSheet>
-
-      <ToggleRow
-        label="New Branch"
-        description="Create a feature branch before launching the agent"
-        value={createNewBranch}
-        onToggle={onToggleCreateNewBranch}
-        disabled={isGitDisabled}
-      />
-      {createNewBranch ? (
-        <TextInput
-          style={styles.input}
-          placeholder="feature-branch-name"
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={branchName}
-          onChangeText={onBranchNameChange}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      ) : null}
-
-      <ToggleRow
-        label="Create Worktree"
-        description="Use an isolated directory so your current branch stays untouched"
-        value={createWorktree}
-        onToggle={onToggleCreateWorktree}
-        disabled={isGitDisabled}
-      />
-      {createWorktree ? (
-        <TextInput
-          style={styles.input}
-          placeholder={branchName || "feature-worktree"}
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={worktreeSlug}
-          onChangeText={onWorktreeSlugChange}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      ) : null}
-
-      {gitValidationError ? (
-        <Text style={styles.errorText}>{gitValidationError}</Text>
-      ) : null}
-    </View>
-  );
-}
-
-interface ToggleRowProps {
-  label: string;
-  description?: string;
-  value: boolean;
-  onToggle: (value: boolean) => void;
-  disabled?: boolean;
-}
-
-function ToggleRow({
-  label,
-  description,
-  value,
-  onToggle,
-  disabled,
-}: ToggleRowProps): ReactElement {
-  return (
-    <Pressable
-      onPress={() => {
-        if (!disabled) {
-          onToggle(!value);
-        }
-      }}
-      style={[styles.toggleRow, disabled && styles.toggleRowDisabled]}
-    >
-      <View
-        style={[
-          styles.checkbox,
-          value && styles.checkboxChecked,
-          disabled && styles.checkboxDisabled,
-        ]}
-      >
-        {value ? <View style={styles.checkboxDot} /> : null}
-      </View>
-      <View style={styles.toggleTextContainer}>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        {description ? (
-          <Text style={styles.helperText}>{description}</Text>
-        ) : null}
-      </View>
-    </Pressable>
   );
 }
 
@@ -2030,29 +1150,6 @@ const styles = StyleSheet.create(((theme: any) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  hostBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.full,
-  },
-  hostBadgeLabel: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  hostStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.mutedForeground,
-  },
-  hostStatusDotOnline: {
-    backgroundColor: theme.colors.palette.green[500],
   },
   scroll: {
     flex: 1,
@@ -2327,162 +1424,5 @@ const styles = StyleSheet.create(((theme: any) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  resumeContainer: {
-    flex: 1,
-    gap: theme.spacing[4],
-  },
-  resumeFilters: {
-    gap: theme.spacing[3],
-  },
-  providerFilterRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: theme.spacing[2],
-  },
-  providerFilterButton: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.full,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-  },
-  providerFilterButtonActive: {
-    borderColor: theme.colors.palette.blue[500],
-    backgroundColor: theme.colors.muted,
-  },
-  providerFilterText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  providerFilterTextActive: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  resumeSearchRow: {
-    flexDirection: "row",
-    gap: theme.spacing[3],
-    alignItems: "center",
-  },
-  resumeSearchInput: {
-    flex: 1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    color: theme.colors.foreground,
-  },
-  refreshButton: {
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-  },
-  refreshButtonText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  importErrorText: {
-    color: theme.colors.palette.red[500],
-    fontSize: theme.fontSize.sm,
-  },
-  resumeLoading: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-  },
-  resumeLoadingText: {
-    color: theme.colors.mutedForeground,
-  },
-  resumeEmptyState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[6],
-    textAlign: "center",
-  },
-  resumeEmptyTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
-    textAlign: "center",
-  },
-  resumeEmptySubtitle: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
-  },
-  refreshButtonAlt: {
-    marginTop: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.palette.blue[500],
-    paddingHorizontal: theme.spacing[6],
-    paddingVertical: theme.spacing[3],
-  },
-  refreshButtonAltText: {
-    color: theme.colors.palette.white,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  resumeListContent: {
-    paddingBottom: theme.spacing[8],
-    gap: theme.spacing[2],
-  },
-  resumeItem: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[4],
-    backgroundColor: theme.colors.background,
-    gap: theme.spacing[2],
-  },
-  resumeItemHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  resumeItemTitle: {
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.semibold,
-    flex: 1,
-  },
-  resumeItemTimestamp: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-  },
-  resumeItemPath: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-  },
-  resumeItemMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  resumeProviderBadge: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.muted,
-  },
-  resumeProviderBadgeText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  resumeItemHint: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-  },
-  resumeItemSeparator: {
-    height: theme.spacing[2],
   },
 })) as any) as Record<string, any>;

@@ -208,7 +208,6 @@ export interface SessionContextValue {
     worktreeName?: string;
     requestId?: string;
   }) => void;
-  resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (agentId: string, requestId: string, response: any) => void;
 }
@@ -1573,19 +1572,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     ws.send(msg);
   }, [encodeImages, ws]);
 
-  const resumeAgent = useCallback(({ handle, overrides, requestId }: { handle: any; overrides?: any; requestId?: string }) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "resume_agent_request",
-        handle,
-        ...(overrides ? { overrides } : {}),
-        ...(requestId ? { requestId } : {}),
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
   const setAgentMode = useCallback((agentId: string, modeId: string) => {
     const msg: WSInboundMessage = {
       type: "session",
@@ -1816,7 +1802,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       sendAgentMessage,
       sendAgentAudio,
       createAgent,
-      resumeAgent,
       setAgentMode,
       respondToPermission,
     }),
@@ -1840,7 +1825,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       sendAgentMessage,
       sendAgentAudio,
       createAgent,
-      resumeAgent,
       setAgentMode,
       respondToPermission,
     ]
@@ -1866,7 +1850,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     sendAgentAudio,
     deleteAgent,
     createAgent,
-    resumeAgent,
     setAgentMode,
     respondToPermission,
   }), [
@@ -1886,7 +1869,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     sendAgentAudio,
     deleteAgent,
     createAgent,
-    resumeAgent,
     setAgentMode,
     respondToPermission,
   ]);

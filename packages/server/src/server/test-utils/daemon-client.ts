@@ -5,7 +5,6 @@ import type {
   SessionOutboundMessage,
   AgentSnapshotPayload,
   AgentStreamEventPayload,
-  PersistedAgentDescriptorPayload,
 } from "../messages.js";
 import type {
   AgentModelDefinition,
@@ -294,16 +293,6 @@ export class DaemonClient {
     return Array.from(agentMap.values()).filter(
       (agent) => !deletedAgents.has(agent.id)
     );
-  }
-
-  async listPersistedAgents(): Promise<PersistedAgentDescriptorPayload[]> {
-    this.send({ type: "list_persisted_agents_request" });
-    return this.waitFor((msg) => {
-      if (msg.type === "list_persisted_agents_response") {
-        return msg.payload.items;
-      }
-      return null;
-    });
   }
 
   async resumeAgent(

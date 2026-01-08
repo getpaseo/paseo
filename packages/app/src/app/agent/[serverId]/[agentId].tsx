@@ -29,7 +29,6 @@ import {
   GitBranch,
   Folder,
   RotateCcw,
-  Download,
   Users,
   ChevronRight,
   PlusIcon,
@@ -39,7 +38,6 @@ import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
-import { ImportAgentModal } from "@/components/create-agent-modal";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
@@ -184,7 +182,6 @@ function AgentScreenContent({
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [menuContentHeight, setMenuContentHeight] = useState(0);
   const menuButtonRef = useRef<View>(null);
-  const [showImportAgentModal, setShowImportAgentModal] = useState(false);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -636,15 +633,6 @@ function AgentScreenContent({
     router.push({ pathname: "/", params });
   }, [agent, agentModel, handleCloseMenu, router, serverId]);
 
-  const handleImportAgent = useCallback(() => {
-    handleCloseMenu();
-    setShowImportAgentModal(true);
-  }, [handleCloseMenu]);
-
-  const handleCloseImportAgentModal = useCallback(() => {
-    setShowImportAgentModal(false);
-  }, []);
-
   const handleNavigateToChildAgent = useCallback(
     (childAgentId: string) => {
       handleCloseMenu();
@@ -659,25 +647,14 @@ function AgentScreenContent({
     [handleCloseMenu, router, serverId]
   );
 
-  const importAgentModal = (
-    <ImportAgentModal
-      isVisible={showImportAgentModal}
-      onClose={handleCloseImportAgentModal}
-      serverId={serverId}
-    />
-  );
-
   if (!agent) {
     return (
-      <>
-        <View style={styles.container}>
-          <MenuHeader title="Agent" />
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Agent not found</Text>
-          </View>
+      <View style={styles.container}>
+        <MenuHeader title="Agent" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Agent not found</Text>
         </View>
-        {importAgentModal}
-      </>
+      </View>
     );
   }
 
@@ -879,10 +856,6 @@ function AgentScreenContent({
                 <Folder size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Browse Files</Text>
               </Pressable>
-              <Pressable onPress={handleImportAgent} style={styles.menuItem}>
-                <Download size={16} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>Import Agent</Text>
-              </Pressable>
               <Pressable onPress={handleCreateNewAgent} style={styles.menuItem}>
                 <PlusIcon size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>New Agent</Text>
@@ -934,8 +907,6 @@ function AgentScreenContent({
       {isMobile && resolvedAgentId && (
         <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} />
       )}
-
-      {importAgentModal}
     </>
   );
 }

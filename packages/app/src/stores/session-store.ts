@@ -204,7 +204,6 @@ export interface SessionState {
       worktreeName?: string;
       requestId?: string;
     }) => Promise<void>;
-    resumeAgent: (options: { handle: any; overrides?: any; requestId?: string }) => void;
     setAgentMode: (agentId: string, modeId: string) => void;
     respondToPermission: (agentId: string, requestId: string, response: any) => void;
   } | null;
