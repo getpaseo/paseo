@@ -9,7 +9,14 @@ import {
   Platform,
   BackHandler,
 } from "react-native";
-import { useState, useRef, useCallback, useEffect } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  forwardRef,
+} from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Mic, ArrowUp, Paperclip, X, Square } from "lucide-react-native";
 import Animated, {
@@ -58,6 +65,10 @@ export interface MessageInputProps {
   onQueue?: (payload: MessagePayload) => void;
 }
 
+export interface MessageInputRef {
+  focus: () => void;
+}
+
 const MIN_INPUT_HEIGHT = 30;
 const MAX_INPUT_HEIGHT = 160;
 const IS_WEB = Platform.OS === "web";
@@ -78,35 +89,45 @@ type TextAreaHandle = {
   } & Record<string, unknown>;
 };
 
-export function MessageInput({
-  value,
-  onChangeText,
-  onSubmit,
-  isSubmitDisabled = false,
-  isSubmitLoading = false,
-  images = [],
-  onPickImages,
-  onRemoveImage,
-  ws,
-  sendAgentAudio,
-  placeholder = "Message...",
-  autoFocus = false,
-  disabled = false,
-  leftContent,
-  rightContent,
-  isAgentRunning = false,
-  onQueue,
-}: MessageInputProps) {
-  const { theme } = useUnistyles();
-  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-  const textInputRef = useRef<
-    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-  >(null);
-  const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
-  const baselineInputHeightRef = useRef<number | null>(null);
-  const overlayTransition = useSharedValue(0);
-  const sendAfterTranscriptRef = useRef(false);
-  const valueRef = useRef(value);
+export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
+  function MessageInput(
+    {
+      value,
+      onChangeText,
+      onSubmit,
+      isSubmitDisabled = false,
+      isSubmitLoading = false,
+      images = [],
+      onPickImages,
+      onRemoveImage,
+      ws,
+      sendAgentAudio,
+      placeholder = "Message...",
+      autoFocus = false,
+      disabled = false,
+      leftContent,
+      rightContent,
+      isAgentRunning = false,
+      onQueue,
+    },
+    ref
+  ) {
+    const { theme } = useUnistyles();
+    const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
+    const textInputRef = useRef<
+      TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
+    >(null);
+
+    useImperativeHandle(ref, () => ({
+      focus: () => {
+        textInputRef.current?.focus();
+      },
+    }));
+    const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
+    const baselineInputHeightRef = useRef<number | null>(null);
+    const overlayTransition = useSharedValue(0);
+    const sendAfterTranscriptRef = useRef(false);
+    const valueRef = useRef(value);
 
   useEffect(() => {
     valueRef.current = value;
@@ -566,7 +587,8 @@ export function MessageInput({
       </Animated.View>
     </View>
   );
-}
+  }
+);
 
 const styles = StyleSheet.create(((theme: any) => ({
   container: {
