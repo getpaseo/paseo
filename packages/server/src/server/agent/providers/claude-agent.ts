@@ -325,7 +325,8 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
-    const projectsRoot = path.join(os.homedir(), ".claude", "projects");
+    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const projectsRoot = path.join(configDir, "projects");
     if (!(await pathExists(projectsRoot))) {
       return [];
     }
@@ -628,7 +629,7 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
       this.pushToolCall({
-        name: pending.request.name,
+        name: "permission",
         status: "granted",
         callId: pending.request.id,
         input: pending.request.input,
@@ -641,7 +642,7 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
       this.pushToolCall({
-        name: pending.request.name,
+        name: "permission",
         status: "denied",
         callId: pending.request.id,
         input: pending.request.input,
@@ -1050,7 +1051,7 @@ class ClaudeAgentSession implements AgentSession {
     };
 
     this.pushToolCall({
-      name: toolName,
+      name: "permission",
       status: "requested",
       callId: requestId,
       input,
@@ -1075,7 +1076,7 @@ class ClaudeAgentSession implements AgentSession {
         cleanup();
         const error = new Error("Permission request timed out");
         this.pushToolCall({
-          name: toolName,
+          name: "permission",
           status: "denied",
           callId: requestId,
           input,

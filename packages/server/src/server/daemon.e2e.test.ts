@@ -2660,13 +2660,11 @@ describe("daemon E2E", () => {
 
   describe("Claude persisted agent import", () => {
     test("filters internal warmup entries from persisted Claude history", async () => {
-      const previousHome = process.env.HOME;
-      const previousUserProfile = process.env.USERPROFILE;
-      const homeDir = mkdtempSync(path.join(tmpdir(), "claude-home-"));
-      process.env.HOME = homeDir;
-      process.env.USERPROFILE = homeDir;
+      const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const claudeConfigDir = mkdtempSync(path.join(tmpdir(), "claude-config-"));
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-      const projectDir = path.join(homeDir, ".claude", "projects", "test-project");
+      const projectDir = path.join(claudeConfigDir, "projects", "test-project");
       mkdirSync(projectDir, { recursive: true });
 
       const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -2708,17 +2706,12 @@ describe("daemon E2E", () => {
         expect(timelineTexts).toContain("Real task prompt");
         expect(timelineTexts).not.toContain("Warmup");
       } finally {
-        if (previousHome === undefined) {
-          delete process.env.HOME;
+        if (previousClaudeConfigDir === undefined) {
+          delete process.env.CLAUDE_CONFIG_DIR;
         } else {
-          process.env.HOME = previousHome;
+          process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
         }
-        if (previousUserProfile === undefined) {
-          delete process.env.USERPROFILE;
-        } else {
-          process.env.USERPROFILE = previousUserProfile;
-        }
-        rmSync(homeDir, { recursive: true, force: true });
+        rmSync(claudeConfigDir, { recursive: true, force: true });
       }
     });
   });
