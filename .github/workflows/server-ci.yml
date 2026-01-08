@@ -27,13 +27,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
 
-      - name: Install dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install server dependencies
+        run: npm install --workspace=@paseo/server --include-workspace-root
 
       - name: Typecheck
         run: npm run typecheck --workspace=@paseo/server
