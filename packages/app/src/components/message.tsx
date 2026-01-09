@@ -56,8 +56,8 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   text: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    lineHeight: 24,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
   },
   bubblePressed: {
     opacity: 0.85,

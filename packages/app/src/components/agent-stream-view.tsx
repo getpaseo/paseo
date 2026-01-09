@@ -43,8 +43,7 @@ import {
 } from "@/utils/tool-call-parsers";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
-
-const MAX_CHAT_WIDTH = 960;
+import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 type PermissionResolvedMessage = Extract<
   SessionOutboundMessage,
   { type: "agent_permission_resolved" }
@@ -1024,7 +1023,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   contentWrapper: {
     width: "100%",
-    maxWidth: MAX_CHAT_WIDTH,
+    maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
   },
   list: {
@@ -1033,7 +1032,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   streamItemWrapper: {
     width: "100%",
-    maxWidth: MAX_CHAT_WIDTH,
+    maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
   },
   emptyState: {
@@ -1096,7 +1095,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   scrollToBottomInner: {
     width: "100%",
-    maxWidth: MAX_CHAT_WIDTH,
+    maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
     alignItems: "center",
   },

@@ -4,3 +4,6 @@ export const FOOTER_HEIGHT = 75;
 // Used by both agent header (ScreenHeader) and explorer sidebar header
 // This ensures both headers have the same visual height
 export const HEADER_INNER_HEIGHT = 48;
+
+// Max width for chat content (stream view, input area, new agent form)
+export const MAX_CONTENT_WIDTH = 820;

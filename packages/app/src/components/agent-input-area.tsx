@@ -16,7 +16,7 @@ import Animated, {
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRealtime } from "@/contexts/realtime-context";
-import { FOOTER_HEIGHT } from "@/constants/layout";
+import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
@@ -52,7 +52,6 @@ interface AgentInputAreaProps {
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
-const MAX_INPUT_WIDTH = 960;
 // Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
 // entering/exiting animations (see react-native-reanimated#8422), so guard them.
 const SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS = Platform.OS === "android";
@@ -525,7 +524,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   },
   inputAreaContent: {
     width: "100%",
-    maxWidth: MAX_INPUT_WIDTH,
+    maxWidth: MAX_CONTENT_WIDTH,
     gap: theme.spacing[3],
   },
   realtimeButton: {

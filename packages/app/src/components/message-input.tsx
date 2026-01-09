@@ -28,6 +28,7 @@ import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import type { SessionContextValue } from "@/contexts/session-context";
+import { useSidebarStore } from "@/stores/sidebar-store";
 
 export interface ImageAttachment {
   uri: string;
@@ -113,6 +114,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ref
   ) {
     const { theme } = useUnistyles();
+    const toggleSidebar = useSidebarStore((state) => state.toggle);
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const textInputRef = useRef<
       TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
@@ -382,6 +384,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
     if (!shouldHandleDesktopSubmit) return;
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+
+    // Cmd+B or Ctrl+B: toggle sidebar
+    if ((metaKey || ctrlKey) && event.nativeEvent.key === "b") {
+      event.preventDefault();
+      toggleSidebar();
+      return;
+    }
 
     // Cmd+D or Ctrl+D: start dictation or submit if already dictating
     if ((metaKey || ctrlKey) && event.nativeEvent.key === "d") {
