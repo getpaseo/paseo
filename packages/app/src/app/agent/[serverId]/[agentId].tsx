@@ -192,7 +192,7 @@ function AgentScreenContent({
     addImagesRef.current = addImages;
   }, []);
 
-  const { isOpen: isExplorerOpen, toggle: toggleExplorer, open: openExplorer, close: closeExplorer } = useExplorerSidebarStore();
+  const { isOpen: isExplorerOpen, toggle: toggleExplorer, open: openExplorer, close: closeExplorer, setActiveTab: setExplorerTab } = useExplorerSidebarStore();
   const {
     translateX: explorerTranslateX,
     backdropOpacity: explorerBackdropOpacity,
@@ -580,29 +580,15 @@ function AgentScreenContent({
 
   const handleViewChanges = useCallback(() => {
     handleCloseMenu();
-    if (resolvedAgentId) {
-      router.push({
-        pathname: "/git-diff",
-        params: {
-          agentId: resolvedAgentId,
-          serverId: serverId,
-        },
-      });
-    }
-  }, [resolvedAgentId, serverId, router, handleCloseMenu]);
+    setExplorerTab("changes");
+    openExplorer();
+  }, [handleCloseMenu, setExplorerTab, openExplorer]);
 
   const handleBrowseFiles = useCallback(() => {
     handleCloseMenu();
-    if (resolvedAgentId) {
-      router.push({
-        pathname: "/file-explorer",
-        params: {
-          agentId: resolvedAgentId,
-          serverId: serverId,
-        },
-      });
-    }
-  }, [handleCloseMenu, resolvedAgentId, serverId, router]);
+    setExplorerTab("files");
+    openExplorer();
+  }, [handleCloseMenu, setExplorerTab, openExplorer]);
 
   const handleRefreshAgent = useCallback(() => {
     if (!resolvedAgentId || !refreshAgent) {

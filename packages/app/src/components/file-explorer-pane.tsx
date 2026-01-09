@@ -70,10 +70,10 @@ export function FileExplorerPane({
   const { connectionStates } = useDaemonConnections();
   const daemonProfile = connectionStates.get(serverId)?.daemon;
 
-  const agent = useSessionStore((state) =>
+  const agentExists = useSessionStore((state) =>
     agentId && state.sessions[serverId]
-      ? state.sessions[serverId]?.agents.get(agentId)
-      : undefined
+      ? state.sessions[serverId]?.agents.has(agentId)
+      : false
   );
 
   const explorerState = useSessionStore((state) =>
@@ -763,7 +763,7 @@ export function FileExplorerPane({
     setThumbnailLoadingMap({});
   }, [activePath, viewMode]);
 
-  if (!agent) {
+  if (!agentExists) {
     return (
       <View style={styles.centerState}>
         <Text style={styles.errorText}>Agent not found</Text>
