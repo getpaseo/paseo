@@ -2,6 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { join, basename, dirname } from "path";
+import { createNameId } from "mnemonic-id";
 
 interface PaseoConfig {
   worktree?: {
@@ -180,9 +181,8 @@ export function slugify(input: string): string {
   return truncated.replace(/-+$/, "");
 }
 
-function sanitizeWorktreeSlug(input: string): string {
-  const slug = slugify(input);
-  return slug.length > 0 ? slug : "worktree";
+function generateWorktreeSlug(): string {
+  return createNameId();
 }
 
 
@@ -206,7 +206,7 @@ export async function createWorktree({
 
   // Determine worktree directory based on repo type
   let worktreePath: string;
-  const desiredSlug = sanitizeWorktreeSlug(worktreeSlug ?? branchName);
+  const desiredSlug = worktreeSlug || generateWorktreeSlug();
 
   if (repoInfo.type === "bare") {
     worktreePath = join(repoInfo.path, desiredSlug);
@@ -263,8 +263,8 @@ export async function createWorktree({
   await execAsync(command, { cwd: repoInfo.path });
   worktreePath = finalWorktreePath;
 
-  // Run setup commands from paseo.json if present
-  const paseoConfigPath = join(repoInfo.path, "paseo.json");
+  // Run setup commands from paseo.json if present (look in source worktree, not bare repo)
+  const paseoConfigPath = join(cwd, "paseo.json");
   if (existsSync(paseoConfigPath)) {
     let config: PaseoConfig;
     try {
@@ -277,7 +277,7 @@ export async function createWorktree({
     if (setupCommands && setupCommands.length > 0) {
       const setupEnv = {
         ...process.env,
-        PASEO_ROOT_PATH: repoInfo.path,
+        PASEO_ROOT_PATH: cwd,
         PASEO_WORKTREE_PATH: worktreePath,
         PASEO_BRANCH_NAME: newBranchName,
       };

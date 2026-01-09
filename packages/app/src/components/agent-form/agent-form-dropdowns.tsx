@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import type {
   AgentMode,
@@ -741,9 +741,13 @@ export interface GitOptionsSectionProps {
   onUseWorktreeChange: (value: boolean) => void;
   worktreeSlug: string;
   currentBranch: string | null;
+  baseBranch: string;
+  onBaseBranchChange: (value: string) => void;
+  branches: Array<{ name: string; isCurrent: boolean }>;
   status: "idle" | "loading" | "ready" | "error";
   repoError: string | null;
   gitValidationError: string | null;
+  baseBranchError: string | null;
 }
 
 export function GitOptionsSection({
@@ -751,11 +755,48 @@ export function GitOptionsSection({
   onUseWorktreeChange,
   worktreeSlug,
   currentBranch,
+  baseBranch,
+  onBaseBranchChange,
+  branches,
   status,
   repoError,
   gitValidationError,
+  baseBranchError,
 }: GitOptionsSectionProps): ReactElement {
   const isLoading = status === "loading";
+  const [isEditingBranch, setIsEditingBranch] = useState(false);
+  const [editedBranch, setEditedBranch] = useState(baseBranch);
+  const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    setEditedBranch(baseBranch);
+  }, [baseBranch]);
+
+  useEffect(() => {
+    if (isEditingBranch) {
+      inputRef.current?.focus();
+    }
+  }, [isEditingBranch]);
+
+  const handleStartEdit = useCallback(() => {
+    setEditedBranch(baseBranch);
+    setIsEditingBranch(true);
+  }, [baseBranch]);
+
+  const handleConfirmEdit = useCallback(() => {
+    const trimmed = editedBranch.trim();
+    if (trimmed) {
+      onBaseBranchChange(trimmed);
+    }
+    setIsEditingBranch(false);
+  }, [editedBranch, onBaseBranchChange]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditedBranch(baseBranch);
+    setIsEditingBranch(false);
+  }, [baseBranch]);
+
+  const displayBranch = baseBranch || currentBranch || "HEAD";
 
   return (
     <View style={styles.gitOptionsContainer}>
@@ -780,6 +821,42 @@ export function GitOptionsSection({
           </Text>
         </View>
       </Pressable>
+
+      {useWorktree ? (
+        <View style={styles.baseBranchRow}>
+          <Text style={styles.baseBranchLabel}>Base branch:</Text>
+          {isEditingBranch ? (
+            <View style={styles.baseBranchEditRow}>
+              <TextInput
+                ref={inputRef}
+                style={styles.baseBranchInput}
+                value={editedBranch}
+                onChangeText={setEditedBranch}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="branch name"
+                placeholderTextColor={defaultTheme.colors.mutedForeground}
+                onSubmitEditing={handleConfirmEdit}
+              />
+              <Pressable onPress={handleConfirmEdit} hitSlop={8} style={styles.baseBranchIconButton}>
+                <Check size={16} color={defaultTheme.colors.palette.green[500]} />
+              </Pressable>
+              <Pressable onPress={handleCancelEdit} hitSlop={8} style={styles.baseBranchIconButton}>
+                <X size={16} color={defaultTheme.colors.mutedForeground} />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={handleStartEdit} style={styles.baseBranchValueRow}>
+              <Text style={styles.baseBranchValue}>{displayBranch}</Text>
+              <Pencil size={14} color={defaultTheme.colors.mutedForeground} />
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
+      {baseBranchError ? (
+        <Text style={styles.errorText}>{baseBranchError}</Text>
+      ) : null}
 
       {repoError ? (
         <Text style={styles.errorText}>{repoError}</Text>
@@ -1043,6 +1120,46 @@ const styles = StyleSheet.create((theme) => ({
   worktreeToggleDescription: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
+  },
+  baseBranchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+  },
+  baseBranchLabel: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  baseBranchValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  baseBranchValue: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  baseBranchEditRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  baseBranchInput: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  baseBranchIconButton: {
+    padding: theme.spacing[1],
   },
   desktopDropdownOverlay: {
     flex: 1,
