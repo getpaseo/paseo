@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { FadeIn, FadeOut, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
-import { useRouter } from "expo-router";
+import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
 import {
   AssistantMessage,
   UserMessage,
@@ -72,7 +72,7 @@ export function AgentStreamView({
   const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
-  const router = useRouter();
+  const { open: openExplorer, setActiveTab: setExplorerTab } = useExplorerSidebarStore();
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
@@ -134,29 +134,16 @@ export function AgentStreamView({
         requestFilePreviewOrInert(agentId, normalized.file);
       }
 
-      router.push({
-        pathname: "/file-explorer",
-        params: {
-          agentId,
-          path: normalized.directory,
-          serverId: resolvedServerId,
-          ...(normalized.file ? { file: normalized.file } : {}),
-          ...(target.lineStart !== undefined
-            ? { lineStart: String(target.lineStart) }
-            : {}),
-          ...(target.lineEnd !== undefined
-            ? { lineEnd: String(target.lineEnd) }
-            : {}),
-        },
-      });
+      setExplorerTab("files");
+      openExplorer();
     },
     [
       agent.cwd,
       agentId,
       requestDirectoryListingOrInert,
       requestFilePreviewOrInert,
-      resolvedServerId,
-      router,
+      setExplorerTab,
+      openExplorer,
     ]
   );
 

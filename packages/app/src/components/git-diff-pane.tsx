@@ -218,11 +218,11 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     agentId,
   });
 
-  const agent = useSessionStore((state) =>
-    state.sessions[serverId]?.agents?.get(agentId)
+  const agentExists = useSessionStore((state) =>
+    state.sessions[serverId]?.agents?.has(agentId) ?? false
   );
 
-  if (!agent) {
+  if (!agentExists) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>Agent not found</Text>

@@ -270,8 +270,6 @@ export default function RootLayout() {
                           <Stack.Screen name="agent/[serverId]/[agentId]" />
                           <Stack.Screen name="settings" />
                           <Stack.Screen name="audio-test" />
-                          <Stack.Screen name="git-diff" />
-                          <Stack.Screen name="file-explorer" />
                         </Stack>
                       </AppWithSidebar>
                       </HorizontalScrollProvider>
