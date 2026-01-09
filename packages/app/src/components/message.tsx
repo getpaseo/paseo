@@ -963,7 +963,7 @@ const agentThoughtStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtMessageProps) {
+export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtMessageProps) {
   const { theme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(false);
   const markdownContent = useMemo(() => message?.trim() ?? "", [message]);
@@ -1102,7 +1102,7 @@ export function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtM
       isLoading={status !== "ready"}
     />
   );
-}
+});
 
 interface ToolCallProps {
   toolName: string;

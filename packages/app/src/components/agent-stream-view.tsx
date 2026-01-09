@@ -240,96 +240,99 @@ export function AgentStreamView({
     setIsNearBottom(true);
   }
 
-  function renderStreamItem({ item }: ListRenderItemInfo<StreamItem>) {
-    let content: React.ReactNode = null;
+  const renderStreamItem = useCallback(
+    ({ item }: ListRenderItemInfo<StreamItem>) => {
+      let content: React.ReactNode = null;
 
-    switch (item.kind) {
-      case "user_message":
-        content = (
-          <UserMessage
-            message={item.text}
-            timestamp={item.timestamp.getTime()}
-          />
-        );
-        break;
-
-      case "assistant_message":
-        content = (
-          <AssistantMessage
-            message={item.text}
-            timestamp={item.timestamp.getTime()}
-            onInlinePathPress={handleInlinePathPress}
-          />
-        );
-        break;
-
-      case "thought":
-        content = <AgentThoughtMessage message={item.text} status={item.status} />;
-        break;
-
-      case "tool_call": {
-        const { payload } = item;
-
-        if (payload.source === "agent") {
-          const data = payload.data;
+      switch (item.kind) {
+        case "user_message":
           content = (
-            <ToolCall
-              toolName={data.name}
-              args={data.input}
-              result={data.result}
-              error={data.error}
-              status={data.status as "executing" | "completed" | "failed"}
-              parsedEditEntries={data.parsedEdits}
-              parsedReadEntries={data.parsedReads}
-              parsedCommandDetails={data.parsedCommand ?? null}
-              cwd={agent.cwd}
+            <UserMessage
+              message={item.text}
+              timestamp={item.timestamp.getTime()}
             />
           );
-        } else {
-          const data = payload.data;
+          break;
+
+        case "assistant_message":
           content = (
-            <ToolCall
-              toolName={data.toolName}
-              args={data.arguments}
-              result={data.result}
-              status={data.status}
+            <AssistantMessage
+              message={item.text}
+              timestamp={item.timestamp.getTime()}
+              onInlinePathPress={handleInlinePathPress}
             />
           );
+          break;
+
+        case "thought":
+          content = <AgentThoughtMessage message={item.text} status={item.status} />;
+          break;
+
+        case "tool_call": {
+          const { payload } = item;
+
+          if (payload.source === "agent") {
+            const data = payload.data;
+            content = (
+              <ToolCall
+                toolName={data.name}
+                args={data.input}
+                result={data.result}
+                error={data.error}
+                status={data.status as "executing" | "completed" | "failed"}
+                parsedEditEntries={data.parsedEdits}
+                parsedReadEntries={data.parsedReads}
+                parsedCommandDetails={data.parsedCommand ?? null}
+                cwd={agent.cwd}
+              />
+            );
+          } else {
+            const data = payload.data;
+            content = (
+              <ToolCall
+                toolName={data.toolName}
+                args={data.arguments}
+                result={data.result}
+                status={data.status}
+              />
+            );
+          }
+          break;
         }
-        break;
+
+        case "activity_log":
+          content = (
+            <ActivityLog
+              type={item.activityType}
+              message={item.message}
+              timestamp={item.timestamp.getTime()}
+              metadata={item.metadata}
+            />
+          );
+          break;
+
+        case "todo_list":
+          content = (
+            <TodoListCard
+              provider={item.provider}
+              timestamp={item.timestamp.getTime()}
+              items={item.items}
+            />
+          );
+          break;
+
+        default:
+          content = null;
       }
 
-      case "activity_log":
-        content = (
-          <ActivityLog
-            type={item.activityType}
-            message={item.message}
-            timestamp={item.timestamp.getTime()}
-            metadata={item.metadata}
-          />
-        );
-        break;
+      if (!content) {
+        return null;
+      }
 
-      case "todo_list":
-        content = (
-          <TodoListCard
-            provider={item.provider}
-            timestamp={item.timestamp.getTime()}
-            items={item.items}
-          />
-        );
-        break;
-
-      default:
-        content = null;
-    }
-
-    if (!content) {
-      return null;
-    }
-
-    return <View style={stylesheet.streamItemWrapper}>{content}</View>;
-  }
+      return <View style={stylesheet.streamItemWrapper}>{content}</View>;
+    },
+    [handleInlinePathPress, agent.cwd]
+  );
 
   const pendingPermissionItems = useMemo(
     () =>
@@ -339,30 +342,20 @@ export function AgentStreamView({
     [pendingPermissions, agentId]
   );
 
-  const streamingItem = useMemo<StreamItem | null>(() => {
-    if (!streamingBuffer) {
-      return null;
-    }
-    return {
-      kind: "assistant_message",
-      id: streamingBuffer.id,
-      text: streamingBuffer.text,
-      timestamp: streamingBuffer.timestamp,
-    };
-  }, [streamingBuffer]);
-
-  const streamingItemId = streamingItem?.id ?? null;
   const showWorkingIndicator = agent.status === "running";
 
   const listHeaderComponent = useMemo(() => {
-    if (pendingPermissionItems.length === 0 && !showWorkingIndicator) {
+    const hasPermissions = pendingPermissionItems.length > 0;
+    const hasStreaming = !!streamingBuffer;
+
+    if (!hasPermissions && !showWorkingIndicator && !hasStreaming) {
       return null;
     }
 
     return (
       <View style={stylesheet.contentWrapper}>
         <View style={stylesheet.listHeaderContent}>
-          {pendingPermissionItems.length > 0 ? (
+          {hasPermissions ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
                 <PermissionRequestCard key={permission.key} permission={permission} ws={wsOrInert} />
@@ -375,18 +368,24 @@ export function AgentStreamView({
               <WorkingIndicator />
             </View>
           ) : null}
+
+          {hasStreaming ? (
+            <View style={stylesheet.streamItemWrapper}>
+              <AssistantMessage
+                message={streamingBuffer.text}
+                timestamp={streamingBuffer.timestamp.getTime()}
+                onInlinePathPress={handleInlinePathPress}
+              />
+            </View>
+          ) : null}
         </View>
       </View>
     );
-  }, [pendingPermissionItems, showWorkingIndicator, wsOrInert]);
+  }, [pendingPermissionItems, showWorkingIndicator, wsOrInert, streamingBuffer, handleInlinePathPress]);
 
   const flatListData = useMemo(() => {
-    const reversed = [...streamItems].reverse();
-    if (streamingItem) {
-      reversed.unshift(streamingItem);
-    }
-    return reversed;
-  }, [streamItems, streamingItem]);
+    return [...streamItems].reverse();
+  }, [streamItems]);
 
   const flatListExtraData = useMemo(
     () => ({
