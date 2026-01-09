@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createWorktree } from "./worktree";
+import { createWorktree, slugify } from "./worktree";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
@@ -152,5 +152,26 @@ describe("createWorktree", () => {
 
     // Verify worktree was cleaned up
     expect(existsSync(expectedWorktreePath)).toBe(false);
+  });
+});
+
+describe("slugify", () => {
+  it("converts to lowercase kebab-case", () => {
+    expect(slugify("Hello World")).toBe("hello-world");
+    expect(slugify("FOO_BAR")).toBe("foo-bar");
+  });
+
+  it("truncates long strings at word boundary", () => {
+    const longInput = "https-stackoverflow-com-questions-68349031-only-run-actions-on-non-draft-pull-request";
+    const result = slugify(longInput);
+    expect(result.length).toBeLessThanOrEqual(50);
+    expect(result).toBe("https-stackoverflow-com-questions-68349031-only");
+  });
+
+  it("truncates without trailing hyphen when no word boundary", () => {
+    const longInput = "a".repeat(60);
+    const result = slugify(longInput);
+    expect(result.length).toBe(50);
+    expect(result.endsWith("-")).toBe(false);
   });
 });

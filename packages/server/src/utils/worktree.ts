@@ -156,14 +156,28 @@ export function validateBranchSlug(slug: string): {
   return { valid: true };
 }
 
+const MAX_SLUG_LENGTH = 50;
+
 /**
  * Convert string to kebab-case for branch names
  */
 export function slugify(input: string): string {
-  return input
+  const slug = input
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+
+  if (slug.length <= MAX_SLUG_LENGTH) {
+    return slug;
+  }
+
+  // Truncate at word boundary (hyphen) if possible
+  const truncated = slug.slice(0, MAX_SLUG_LENGTH);
+  const lastHyphen = truncated.lastIndexOf("-");
+  if (lastHyphen > MAX_SLUG_LENGTH / 2) {
+    return truncated.slice(0, lastHyphen);
+  }
+  return truncated.replace(/-+$/, "");
 }
 
 function sanitizeWorktreeSlug(input: string): string {
