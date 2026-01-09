@@ -167,14 +167,14 @@ const commonTheme = {
   },
 
   fontSize: {
-    xs: 10,
-    sm: 12,
-    base: 14,
-    lg: 16,
-    xl: 18,
-    "2xl": 20,
-    "3xl": 24,
-    "4xl": 32,
+    xs: 12,
+    sm: 14,
+    base: 16,
+    lg: 18,
+    xl: 20,
+    "2xl": 22,
+    "3xl": 26,
+    "4xl": 34,
   },
 
   fontWeight: {

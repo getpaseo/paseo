@@ -26,6 +26,7 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import { generateMessageId } from "@/types/stream";
+import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import type {
   AgentProvider,
   AgentSessionConfig,
@@ -843,12 +844,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   configScrollContent: {
     flexGrow: 1,
+    justifyContent: "flex-end",
   },
   configSection: {
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[4],
     gap: theme.spacing[2],
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
+    width: "100%",
   },
   configRow: {
     flexDirection: "row",

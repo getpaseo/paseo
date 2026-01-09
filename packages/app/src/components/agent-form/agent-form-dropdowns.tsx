@@ -619,11 +619,6 @@ export function WorkingDirectoryDropdown({
         onPress={handleOpen}
         disabled={disabled}
         errorMessage={errorMessage || undefined}
-        helperText={
-          hasSuggestedPaths
-            ? "Search directories from existing agents or paste a new path."
-            : "No agent directories yet - search to add one."
-        }
         controlRef={anchorRef}
       />
       <AdaptiveSelect
