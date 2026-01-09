@@ -34,7 +34,6 @@ export type {
   DraftInput,
   ProviderModelState,
   Agent,
-  Command,
   ExplorerEntry,
   ExplorerFile,
   ExplorerEntryKind,
@@ -75,14 +74,6 @@ const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
 
 type PersistedSessionSnapshot = {
   agents: AgentSnapshotPayload[];
-  commands: Array<{
-    id: string;
-    name: string;
-    workingDirectory: string;
-    currentCommand: string;
-    isDead: boolean;
-    exitCode: number | null;
-  }>;
   savedAt: string;
 };
 
@@ -97,7 +88,7 @@ async function loadPersistedSessionSnapshot(serverId: string): Promise<Persisted
       return null;
     }
     const parsed = JSON.parse(raw) as PersistedSessionSnapshot;
-    if (!Array.isArray(parsed?.agents) || !Array.isArray(parsed?.commands)) {
+    if (!Array.isArray(parsed?.agents)) {
       return null;
     }
     return parsed;
@@ -107,11 +98,10 @@ async function loadPersistedSessionSnapshot(serverId: string): Promise<Persisted
   }
 }
 
-async function persistSessionSnapshot(serverId: string, snapshot: { agents: AgentSnapshotPayload[]; commands: any[] }) {
+async function persistSessionSnapshot(serverId: string, snapshot: { agents: AgentSnapshotPayload[] }) {
   try {
     const payload: PersistedSessionSnapshot = {
       agents: snapshot.agents,
-      commands: snapshot.commands,
       savedAt: new Date().toISOString(),
     };
     await AsyncStorage.setItem(getSessionSnapshotStorageKey(serverId), JSON.stringify(payload));
@@ -241,7 +231,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   const setHasHydratedAgents = useSessionStore((state) => state.setHasHydratedAgents);
   const setAgents = useSessionStore((state) => state.setAgents);
   const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
-  const setCommands = useSessionStore((state) => state.setCommands);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
@@ -368,13 +357,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       }
 
       setPendingPermissions(serverId, pendingPermissions);
-      const commandEntries = snapshot.commands ?? [];
-      setCommands(serverId, (prev) => {
-        if (prev.size > 0) {
-          return prev;
-        }
-        return new Map(commandEntries.map((command) => [command.id, command]));
-      });
       setHasHydratedAgents(serverId, true);
     };
 
@@ -383,7 +365,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     return () => {
       isMounted = false;
     };
-  }, [serverId, setAgents, setCommands, setPendingPermissions, setHasHydratedAgents]);
+  }, [serverId, setAgents, setPendingPermissions, setHasHydratedAgents]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: any) => any) => {
@@ -632,9 +614,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         sessionStateTimeoutRef.current = null;
       }
 
-      const { agents: agentsList, commands: commandsList } = message.payload;
+      const { agents: agentsList } = message.payload;
 
-      console.log("[Session] ✅ Received session_state:", agentsList.length, "agents,", commandsList.length, "commands");
+      console.log("[Session] ✅ Received session_state:", agentsList.length, "agents");
       setInitializingAgents(serverId, new Map());
 
       const agents = new Map();
@@ -651,8 +633,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         }
       }
 
-      const normalizedCommands = commandsList.map((command) => command);
-
       setAgents(serverId, agents);
 
       // Initialize agentLastActivity slice (top-level)
@@ -661,7 +641,6 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       }
 
       setPendingPermissions(serverId, pendingPermissions);
-      setCommands(serverId, new Map(normalizedCommands.map((command: any) => [command.id, command])));
       setAgentStreamState(serverId, (prev) => {
         if (prev.size === 0) {
           return prev;
@@ -716,7 +695,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
         return changed ? next : prev;
       });
-      void persistSessionSnapshot(serverId, { agents: agentsList, commands: normalizedCommands });
+      void persistSessionSnapshot(serverId, { agents: agentsList });
       setHasHydratedAgents(serverId, true);
       updateConnectionStatus(serverId, { status: "online", lastOnlineAt: new Date().toISOString(), sessionReady: true });
     });
@@ -1271,7 +1250,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       unsubProviderModels();
       unsubAgentDeleted();
     };
-  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setAgentStreamingBuffer, clearAgentStreamingBuffer, setInitializingAgents, setAgents, setAgentLastActivity, setCommands, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
+  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setAgentStreamingBuffer, clearAgentStreamingBuffer, setInitializingAgents, setAgents, setAgentLastActivity, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
 
   const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
     console.log("[Session] initializeAgent called", { agentId, requestId });

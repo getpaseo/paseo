@@ -2517,12 +2517,6 @@ function buildCodexMcpConfig(
     };
   }
 
-  // Add playwright MCP server (same as Claude provider)
-  mcpServers["playwright"] = {
-    command: "npx",
-    args: ["@playwright/mcp", "--headless", "--isolated"],
-  };
-
   // Merge MCP servers from extra.codex.mcp_servers (legacy location)
   const extraCodex = config.extra?.codex as Record<string, unknown> | undefined;
   if (extraCodex?.mcp_servers && typeof extraCodex.mcp_servers === "object") {

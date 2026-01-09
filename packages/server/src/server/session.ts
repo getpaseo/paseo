@@ -36,8 +36,6 @@ import {
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createTerminalMcpServer } from "./terminal-mcp/index.js";
 import { fetchProviderModelCatalog } from "./agent/model-catalog.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
@@ -52,7 +50,6 @@ import type {
   AgentPersistenceHandle,
 } from "./agent/agent-sdk-types.js";
 import { AgentRegistry, type StoredAgentRecord } from "./agent/agent-registry.js";
-import { expandTilde } from "./terminal-mcp/tmux.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
@@ -63,13 +60,13 @@ import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
 } from "../services/agent-title-generator.js";
-import type { TerminalManager } from "./terminal-mcp/terminal-manager.js";
 import {
   createWorktree,
   detectRepoInfo,
   slugify,
   validateBranchSlug,
 } from "../utils/worktree.js";
+import { expandTilde } from "../utils/path.js";
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -228,13 +225,6 @@ export class Session {
   private readonly sttManager: STTManager;
 
   // Per-session MCP client and tools
-  private terminalMcpClient: Awaited<
-    ReturnType<typeof experimental_createMCPClient>
-  > | null = null;
-  private terminalTools: ToolSet | null = null;
-  private terminalManager: TerminalManager | null = null;
-  private terminalInitPromise: Promise<void> | null = null;
-  private terminalInitError: Error | null = null;
   private agentMcpClient: Awaited<
     ReturnType<typeof experimental_createMCPClient>
   > | null = null;
@@ -279,23 +269,7 @@ export class Session {
     this.ttsManager = new TTSManager(this.conversationId);
     this.sttManager = new STTManager(this.conversationId);
 
-    // Initialize terminal + agent MCP clients asynchronously, but keep promise handles to avoid orphaned rejections
-    this.terminalInitPromise = this.initializeTerminalMcp().catch((error) => {
-      const normalizedError =
-        error instanceof Error
-          ? error
-          : new Error(
-              typeof error === "string"
-                ? error
-                : "Unknown terminal initialization error"
-            );
-      this.terminalInitError = normalizedError;
-      console.error(
-        `[Session ${this.clientId}] Terminal MCP init failed:`,
-        normalizedError
-      );
-    });
-
+    // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
@@ -437,50 +411,6 @@ export class Session {
         content: `${context}: ${message}`,
       },
     });
-  }
-
-  /**
-   * Initialize Terminal MCP client for this session
-   */
-  private async initializeTerminalMcp(): Promise<void> {
-    try {
-      // Create Terminal Manager directly
-      const { TerminalManager } = await import(
-        "./terminal-mcp/terminal-manager.js"
-      );
-      this.terminalManager = new TerminalManager(this.conversationId);
-      await this.terminalManager.initialize();
-
-      // Create Terminal MCP server with conversation-specific session
-      const server = await createTerminalMcpServer({
-        sessionName: this.conversationId,
-      });
-
-      // Create linked transport pair
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-
-      // Connect server to its transport
-      await server.connect(serverTransport);
-
-      // Create client connected to the other side
-      this.terminalMcpClient = await experimental_createMCPClient({
-        transport: clientTransport,
-      });
-
-      // Get tools from the client
-      this.terminalTools = (await this.terminalMcpClient.tools()) as ToolSet;
-
-      console.log(
-        `[Session ${this.clientId}] Terminal MCP initialized with session ${this.conversationId}`
-      );
-    } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to initialize Terminal MCP:`,
-        error
-      );
-      throw error;
-    }
   }
 
   /**
@@ -2299,38 +2229,16 @@ export class Session {
 
       const agents = [...liveAgents, ...persistedAgents];
 
-      // Get live commands from terminal manager
-      let commands: any[] = [];
-      if (this.terminalInitPromise) {
-        await this.terminalInitPromise;
-      }
-      if (this.terminalInitError) {
-        console.error(
-          `[Session ${this.clientId}] Skipping command listing due to terminal init failure:`,
-          this.terminalInitError
-        );
-      } else if (this.terminalManager) {
-        try {
-          commands = await this.terminalManager.listCommands();
-        } catch (error) {
-          console.error(
-            `[Session ${this.clientId}] Failed to list commands:`,
-            error
-          );
-        }
-      }
-
       // Emit session state
       this.emit({
         type: "session_state",
         payload: {
           agents,
-          commands,
         },
       });
 
       console.log(
-        `[Session ${this.clientId}] Sent session state: ${agents.length} agents, ${commands.length} commands`
+        `[Session ${this.clientId}] Sent session state: ${agents.length} agents`
       );
     } catch (error) {
       console.error(
@@ -2714,21 +2622,7 @@ export class Session {
         apiKey: process.env.OPENROUTER_API_KEY,
       });
 
-      // Wait for terminal MCP to initialize if needed
-      if (!this.terminalTools) {
-        console.log(
-          `[Session ${this.clientId}] Waiting for terminal MCP initialization...`
-        );
-        // Wait up to 5 seconds for initialization
-        const startTime = Date.now();
-        while (!this.terminalTools && Date.now() - startTime < 5000) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        if (!this.terminalTools) {
-          throw new Error("Terminal MCP failed to initialize");
-        }
-      }
-
+      // Wait for agent MCP to initialize if needed
       if (!this.agentTools) {
         console.log(
           `[Session ${this.clientId}] Waiting for agent MCP initialization...`
@@ -2744,7 +2638,7 @@ export class Session {
         }
       }
 
-      const allTools = await getAllTools(this.terminalTools, this.agentTools ?? undefined);
+      const allTools = getAllTools(this.agentTools ?? undefined);
 
       const result = await streamText({
         model: openrouter("anthropic/claude-haiku-4.5"),
@@ -3239,36 +3133,7 @@ export class Session {
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
 
-    // Kill tmux session for this conversation
-    try {
-      console.log(
-        `[Session ${this.clientId}] Killing tmux session ${this.conversationId}`
-      );
-      await execAsync(`tmux kill-session -t ${this.conversationId}`);
-      console.log(
-        `[Session ${this.clientId}] Tmux session ${this.conversationId} killed`
-      );
-    } catch (error) {
-      // Session might not exist or already be killed - that's okay
-      console.log(
-        `[Session ${this.clientId}] Tmux session cleanup (session may not exist):`,
-        error instanceof Error ? error.message : String(error)
-      );
-    }
-
     // Close MCP clients
-    if (this.terminalMcpClient) {
-      try {
-        await this.terminalMcpClient.close();
-        console.log(`[Session ${this.clientId}] Terminal MCP client closed`);
-      } catch (error) {
-        console.error(
-          `[Session ${this.clientId}] Failed to close Terminal MCP client:`,
-          error
-        );
-      }
-    }
-
     if (this.agentMcpClient) {
       try {
         await this.agentMcpClient.close();

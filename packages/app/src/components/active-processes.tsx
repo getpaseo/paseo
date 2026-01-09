@@ -4,14 +4,6 @@ import type { Agent } from "@/contexts/session-context";
 
 export interface ActiveProcessesProps {
   agents: Agent[];
-  commands: Array<{
-    id: string;
-    name: string;
-    workingDirectory: string;
-    currentCommand: string;
-    isDead: boolean;
-    exitCode: number | null;
-  }>;
   viewMode: "orchestrator" | "agent";
   activeAgentId: string | null;
   onSelectAgent: (serverId: string, id: string) => void;
@@ -132,7 +124,6 @@ const styles = StyleSheet.create((theme) => ({
 
 export function ActiveProcesses({
   agents,
-  commands,
   viewMode,
   activeAgentId,
   onSelectAgent,

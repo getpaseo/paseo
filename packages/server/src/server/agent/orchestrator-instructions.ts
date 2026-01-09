@@ -28,8 +28,7 @@ Conversation with agents:
 
 Agent selection guidance:
 - Codex: methodical and slower; great for deep debugging, tracing code paths, refactoring, complex features, and design discussions.
-- Claude: fast; strong at tool use (e.g., Playwright MCP, web search), agentic control, and managing other agents; may jump to conclusions—ask it to verify.
-- For debugging with UI/Playwright: Claude can drive Playwright MCP and logging; Codex can audit code and propose fixes.
+- Claude: fast; strong at tool use, agentic control, and managing other agents; may jump to conclusions—ask it to verify.
 
 Clarifying ambiguous requests:
 - Research first to understand the current state.

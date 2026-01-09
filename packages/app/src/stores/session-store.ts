@@ -108,15 +108,6 @@ export interface Agent {
   parentAgentId?: string | null;
 }
 
-export interface Command {
-  id: string;
-  name: string;
-  workingDirectory: string;
-  currentCommand: string;
-  isDead: boolean;
-  exitCode: number | null;
-}
-
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
 export type ExplorerEncoding = "utf-8" | "base64" | "none";
@@ -228,9 +219,8 @@ export interface SessionState {
   // Initializing agents
   initializingAgents: Map<string, boolean>;
 
-  // Agents and commands
+  // Agents
   agents: Map<string, Agent>;
-  commands: Map<string, Command>;
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
@@ -300,9 +290,6 @@ interface SessionStoreActions {
 
   // Agent activity timestamps
   setAgentLastActivity: (agentId: string, timestamp: Date) => void;
-
-  // Commands
-  setCommands: (serverId: string, commands: Map<string, Command> | ((prev: Map<string, Command>) => Map<string, Command>)) => void;
 
   // Permissions
   setPendingPermissions: (serverId: string, perms: Map<string, PendingPermission> | ((prev: Map<string, PendingPermission>) => Map<string, PendingPermission>)) => void;
@@ -379,7 +366,6 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
     agentStreamingBuffer: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
-    commands: new Map(),
     pendingPermissions: new Map(),
     gitDiffs: new Map(),
     fileExplorer: new Map(),
@@ -659,28 +645,6 @@ export const useSessionStore = create<SessionStore>()(
         return {
           ...prev,
           agentLastActivity: nextActivity,
-        };
-      });
-    },
-
-    // Commands
-    setCommands: (serverId, commands) => {
-      set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        const nextCommands = typeof commands === "function" ? commands(session.commands) : commands;
-        if (session.commands === nextCommands) {
-          return prev;
-        }
-        logSessionStoreUpdate("setCommands", serverId, { count: nextCommands.size });
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: { ...session, commands: nextCommands },
-          },
         };
       });
     },

@@ -1,6 +1,6 @@
 import { fetchProviderModelCatalog } from "./model-catalog.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
-import { expandTilde } from "../terminal-mcp/tmux.js";
+import { expandTilde } from "../../utils/path.js";
 
 type ResolveAgentModelOptions = {
   provider: AgentProvider;

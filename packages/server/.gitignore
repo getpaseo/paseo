@@ -5,3 +5,4 @@ dist
 *.log
 .debug.conversations
 conversations
+.cache
