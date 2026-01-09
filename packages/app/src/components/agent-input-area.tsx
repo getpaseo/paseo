@@ -222,17 +222,19 @@ export function AgentInputArea({
     }
 
     const isControlled = value !== undefined;
-    if (!isControlled) {
-      setUserInput("");
-    }
     setSelectedImages([]);
     setIsProcessing(true);
 
     try {
       await submitMessage(trimmedMessage, imageAttachments);
+      // Clear input only after successful submission
+      if (isControlled) {
+        onChangeText?.("");
+      } else {
+        setUserInput("");
+      }
     } catch (error) {
       console.error("[AgentInput] Failed to send message:", error);
-      setUserInput(trimmedMessage);
       if (imageAttachments) {
         setSelectedImages(imageAttachments);
       }

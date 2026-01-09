@@ -156,7 +156,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       if (shouldAutoSend) {
         const imageAttachments = images.length > 0 ? images : undefined;
         onSubmit({ text: nextValue, images: imageAttachments });
-        onChangeText("");
       } else {
         onChangeText(nextValue);
       }
@@ -295,10 +294,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     };
     if (isAgentRunning && onQueue) {
       onQueue(payload);
+      onChangeText("");
     } else {
       onSubmit(payload);
     }
-    onChangeText("");
     // Reset input height
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
@@ -420,7 +419,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         forceSend: true,
       };
       onSubmit(payload);
-      onChangeText("");
       inputHeightRef.current = MIN_INPUT_HEIGHT;
       setInputHeight(MIN_INPUT_HEIGHT);
       return;

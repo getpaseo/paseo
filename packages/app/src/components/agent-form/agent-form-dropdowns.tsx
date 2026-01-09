@@ -8,9 +8,10 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { ChevronDown } from "lucide-react-native";
+import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import type {
   AgentMode,
@@ -97,6 +98,57 @@ export function DropdownField({
   );
 }
 
+interface SelectFieldProps {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  errorMessage?: string | null;
+  warningMessage?: string | null;
+  helperText?: string | null;
+  controlRef?: React.RefObject<View | null>;
+}
+
+export function SelectField({
+  label,
+  value,
+  placeholder,
+  onPress,
+  disabled,
+  errorMessage,
+  warningMessage,
+  helperText,
+  controlRef,
+}: SelectFieldProps): ReactElement {
+  return (
+    <View style={styles.selectFieldContainer}>
+      <Pressable
+        ref={controlRef}
+        onPress={onPress}
+        disabled={disabled}
+        style={[styles.selectFieldControl, disabled && styles.selectFieldControlDisabled]}
+      >
+        <View style={styles.selectFieldContent}>
+          <Text style={styles.selectFieldLabel}>{label}</Text>
+          <Text
+            style={value ? styles.selectFieldValue : styles.selectFieldPlaceholder}
+            numberOfLines={1}
+          >
+            {value || placeholder || "Select..."}
+          </Text>
+        </View>
+        <ChevronRight size={20} color={defaultTheme.colors.mutedForeground} />
+      </Pressable>
+      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+      {warningMessage ? <Text style={styles.warningText}>{warningMessage}</Text> : null}
+      {!errorMessage && !warningMessage && helperText ? (
+        <Text style={styles.helperText}>{helperText}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 interface DropdownSheetProps {
   title: string;
   visible: boolean;
@@ -135,49 +187,159 @@ export function DropdownSheet({
   );
 }
 
+interface AdaptiveSelectProps {
+  title: string;
+  visible: boolean;
+  onClose: () => void;
+  children: ReactNode;
+  anchorRef: React.RefObject<View | null>;
+}
+
+export function AdaptiveSelect({
+  title,
+  visible,
+  onClose,
+  children,
+  anchorRef,
+}: AdaptiveSelectProps): ReactElement {
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const [dropdownPosition, setDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+  });
+
+  useEffect(() => {
+    if (!visible || isMobile) {
+      return;
+    }
+
+    const anchor = anchorRef.current;
+    if (!anchor) {
+      return;
+    }
+
+    anchor.measureInWindow((x, y, width, height) => {
+      const verticalOffset = 4;
+      const horizontalMargin = 16;
+      const maxDropdownHeight = 400;
+
+      let top = y + height + verticalOffset;
+      const left = Math.max(horizontalMargin, Math.min(x, windowWidth - width - horizontalMargin));
+
+      if (top + maxDropdownHeight > windowHeight - horizontalMargin) {
+        top = y - maxDropdownHeight - verticalOffset;
+        if (top < horizontalMargin) {
+          top = y + height + verticalOffset;
+        }
+      }
+
+      setDropdownPosition({ top, left, width });
+    });
+  }, [visible, isMobile, anchorRef, windowWidth, windowHeight]);
+
+  if (isMobile) {
+    return (
+      <Modal
+        transparent
+        animationType="fade"
+        visible={visible}
+        onRequestClose={onClose}
+      >
+        <View style={styles.dropdownSheetOverlay}>
+          <Pressable style={styles.dropdownSheetBackdrop} onPress={onClose} />
+          <View style={styles.dropdownSheetContainer}>
+            <View style={styles.dropdownSheetHandle} />
+            <Text style={styles.dropdownSheetTitle}>{title}</Text>
+            <ScrollView
+              contentContainerStyle={styles.dropdownSheetScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {children}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.desktopDropdownOverlay}>
+        <Pressable style={styles.desktopDropdownBackdrop} onPress={onClose} />
+        <View
+          style={[
+            styles.desktopDropdownContainer,
+            {
+              position: "absolute",
+              top: dropdownPosition.top,
+              left: dropdownPosition.left,
+              width: dropdownPosition.width,
+              minWidth: 200,
+            },
+          ]}
+        >
+          <ScrollView
+            contentContainerStyle={styles.desktopDropdownScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.desktopDropdownScroll}
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 interface AssistantDropdownProps {
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider;
   disabled: boolean;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
   onSelect: (provider: AgentProvider) => void;
-  label?: string;
-  placeholder?: string;
-  sheetTitle?: string;
-  renderTrigger?: DropdownTriggerRenderer;
-  wrapInContainer?: boolean;
 }
 
 export function AssistantDropdown({
   providerDefinitions,
   selectedProvider,
   disabled,
-  isOpen,
-  onOpen,
-  onClose,
   onSelect,
-  label = "Assistant",
-  placeholder = "Select assistant",
-  sheetTitle = "Choose Assistant",
-  renderTrigger,
-  wrapInContainer = true,
 }: AssistantDropdownProps): ReactElement {
+  const [isOpen, setIsOpen] = useState(false);
+  const anchorRef = useRef<View>(null);
+
   const selectedDefinition = providerDefinitions.find(
     (definition) => definition.id === selectedProvider
   );
-  const field = (
+
+  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleClose = useCallback(() => setIsOpen(false), []);
+
+  return (
     <>
-      <DropdownField
-        label={label}
+      <SelectField
+        label="AGENT"
         value={selectedDefinition?.label ?? ""}
-        placeholder={placeholder}
-        onPress={onOpen}
+        placeholder="Select assistant"
+        onPress={handleOpen}
         disabled={disabled}
-        renderTrigger={renderTrigger}
+        controlRef={anchorRef}
       />
-      <DropdownSheet title={sheetTitle} visible={isOpen} onClose={onClose}>
+      <AdaptiveSelect
+        title="Choose Assistant"
+        visible={isOpen}
+        onClose={handleClose}
+        anchorRef={anchorRef}
+      >
         {providerDefinitions.map((definition) => {
           const isSelected = definition.id === selectedProvider;
           return (
@@ -189,7 +351,7 @@ export function AssistantDropdown({
               ]}
               onPress={() => {
                 onSelect(definition.id);
-                onClose();
+                handleClose();
               }}
             >
               <Text style={styles.dropdownSheetOptionLabel}>{definition.label}</Text>
@@ -201,72 +363,63 @@ export function AssistantDropdown({
             </Pressable>
           );
         })}
-      </DropdownSheet>
+      </AdaptiveSelect>
     </>
   );
-
-  if (!wrapInContainer) {
-    return <>{field}</>;
-  }
-
-  return <View style={styles.selectorColumn}>{field}</View>;
 }
 
 interface PermissionsDropdownProps {
   modeOptions: AgentMode[];
   selectedMode: string;
   disabled: boolean;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
   onSelect: (modeId: string) => void;
-  label?: string;
-  placeholder?: string;
-  sheetTitle?: string;
-  renderTrigger?: DropdownTriggerRenderer;
-  wrapInContainer?: boolean;
 }
 
 export function PermissionsDropdown({
   modeOptions,
   selectedMode,
   disabled,
-  isOpen,
-  onOpen,
-  onClose,
   onSelect,
-  label = "Permissions",
-  placeholder,
-  sheetTitle = "Permissions",
-  renderTrigger,
-  wrapInContainer = true,
 }: PermissionsDropdownProps): ReactElement {
+  const [isOpen, setIsOpen] = useState(false);
+  const anchorRef = useRef<View>(null);
+
   const hasOptions = modeOptions.length > 0;
   const selectedModeLabel = hasOptions
     ? modeOptions.find((mode) => mode.id === selectedMode)?.label ??
       modeOptions[0]?.label ??
       "Default"
     : "Automatic";
-  const placeholderLabel = hasOptions
-    ? placeholder ?? "Select permissions"
-    : "Automatic";
-  const field = (
+
+  const handleOpen = useCallback(() => {
+    if (hasOptions) {
+      setIsOpen(true);
+    }
+  }, [hasOptions]);
+  const handleClose = useCallback(() => setIsOpen(false), []);
+
+  return (
     <>
-      <DropdownField
-        label={label}
+      <SelectField
+        label="PERMISSIONS"
         value={selectedModeLabel}
-        placeholder={placeholderLabel}
-        onPress={hasOptions ? onOpen : () => {}}
+        placeholder={hasOptions ? "Select permissions" : "Automatic"}
+        onPress={handleOpen}
         disabled={disabled || !hasOptions}
         helperText={
           hasOptions
             ? undefined
             : "This assistant does not expose selectable permissions."
         }
-        renderTrigger={renderTrigger}
+        controlRef={anchorRef}
       />
       {hasOptions ? (
-        <DropdownSheet title={sheetTitle} visible={isOpen} onClose={onClose}>
+        <AdaptiveSelect
+          title="Permissions"
+          visible={isOpen}
+          onClose={handleClose}
+          anchorRef={anchorRef}
+        >
           {modeOptions.map((mode) => {
             const isSelected = mode.id === selectedMode;
             return (
@@ -278,7 +431,7 @@ export function PermissionsDropdown({
                 ]}
                 onPress={() => {
                   onSelect(mode.id);
-                  onClose();
+                  handleClose();
                 }}
               >
                 <Text style={styles.dropdownSheetOptionLabel}>{mode.label}</Text>
@@ -290,16 +443,10 @@ export function PermissionsDropdown({
               </Pressable>
             );
           })}
-        </DropdownSheet>
+        </AdaptiveSelect>
       ) : null}
     </>
   );
-
-  if (!wrapInContainer) {
-    return <>{field}</>;
-  }
-
-  return <View style={[styles.selectorColumn, styles.selectorColumnFull]}>{field}</View>;
 }
 
 interface ModelDropdownProps {
@@ -307,15 +454,9 @@ interface ModelDropdownProps {
   selectedModel: string;
   isLoading: boolean;
   error: string | null;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
   onSelect: (modelId: string) => void;
   onClear: () => void;
   onRefresh: () => void;
-  label?: string;
-  renderTrigger?: DropdownTriggerRenderer;
-  wrapInContainer?: boolean;
 }
 
 export function ModelDropdown({
@@ -323,16 +464,13 @@ export function ModelDropdown({
   selectedModel,
   isLoading,
   error,
-  isOpen,
-  onOpen,
-  onClose,
   onSelect,
   onClear,
   onRefresh,
-  label = "Model",
-  renderTrigger,
-  wrapInContainer = true,
 }: ModelDropdownProps): ReactElement {
+  const [isOpen, setIsOpen] = useState(false);
+  const anchorRef = useRef<View>(null);
+
   const selectedLabel = selectedModel
     ? models.find((model) => model.id === selectedModel)?.label ?? selectedModel
     : "Automatic";
@@ -345,24 +483,27 @@ export function ModelDropdown({
         ? "This assistant did not expose selectable models."
         : undefined;
 
-  const field = (
+  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleClose = useCallback(() => setIsOpen(false), []);
+
+  return (
     <>
-      <DropdownField
-        label={label}
+      <SelectField
+        label="MODEL"
         value={selectedLabel}
         placeholder={placeholder}
-        onPress={onOpen}
+        onPress={handleOpen}
         disabled={false}
         errorMessage={error ?? undefined}
         helperText={helperText}
-        renderTrigger={renderTrigger}
+        controlRef={anchorRef}
       />
-      <DropdownSheet title="Model" visible={isOpen} onClose={onClose}>
+      <AdaptiveSelect title="Model" visible={isOpen} onClose={handleClose} anchorRef={anchorRef}>
         <Pressable
           style={styles.dropdownSheetOption}
           onPress={() => {
             onClear();
-            onClose();
+            handleClose();
           }}
         >
           <Text style={styles.dropdownSheetOptionLabel}>
@@ -383,7 +524,7 @@ export function ModelDropdown({
               ]}
               onPress={() => {
                 onSelect(model.id);
-                onClose();
+                handleClose();
               }}
             >
               <Text style={styles.dropdownSheetOptionLabel}>{model.label}</Text>
@@ -411,46 +552,33 @@ export function ModelDropdown({
             <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
           </View>
         ) : null}
-      </DropdownSheet>
+      </AdaptiveSelect>
     </>
   );
-
-  if (!wrapInContainer) {
-    return <>{field}</>;
-  }
-
-  return <View style={styles.selectorColumn}>{field}</View>;
 }
 
 interface WorkingDirectoryDropdownProps {
   workingDir: string;
   errorMessage: string;
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
   disabled: boolean;
   suggestedPaths: string[];
   onSelectPath: (value: string) => void;
-  label?: string;
-  renderTrigger?: DropdownTriggerRenderer;
-  wrapInContainer?: boolean;
 }
 
 export function WorkingDirectoryDropdown({
   workingDir,
   errorMessage,
-  isOpen,
-  onOpen,
-  onClose,
   disabled,
   suggestedPaths,
   onSelectPath,
-  label = "Working Directory",
-  renderTrigger,
-  wrapInContainer = true,
 }: WorkingDirectoryDropdownProps): ReactElement {
+  const [isOpen, setIsOpen] = useState(false);
+  const anchorRef = useRef<View>(null);
   const inputRef = useRef<TextInput | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleClose = useCallback(() => setIsOpen(false), []);
 
   useEffect(() => {
     if (isOpen) {
@@ -477,18 +605,18 @@ export function WorkingDirectoryDropdown({
   const handleSelect = useCallback(
     (path: string) => {
       onSelectPath(path);
-      onClose();
+      handleClose();
     },
-    [onClose, onSelectPath]
+    [handleClose, onSelectPath]
   );
 
-  const field = (
+  return (
     <>
-      <DropdownField
-        label={label}
+      <SelectField
+        label="WORKING DIRECTORY"
         value={workingDir}
         placeholder="/path/to/project"
-        onPress={onOpen}
+        onPress={handleOpen}
         disabled={disabled}
         errorMessage={errorMessage || undefined}
         helperText={
@@ -496,9 +624,14 @@ export function WorkingDirectoryDropdown({
             ? "Search directories from existing agents or paste a new path."
             : "No agent directories yet - search to add one."
         }
-        renderTrigger={renderTrigger}
+        controlRef={anchorRef}
       />
-      <DropdownSheet title="Working Directory" visible={isOpen} onClose={onClose}>
+      <AdaptiveSelect
+        title="Working Directory"
+        visible={isOpen}
+        onClose={handleClose}
+        anchorRef={anchorRef}
+      >
         <TextInput
           ref={inputRef}
           style={styles.dropdownSearchInput}
@@ -555,15 +688,9 @@ export function WorkingDirectoryDropdown({
             No agent directories match your search.
           </Text>
         ) : null}
-      </DropdownSheet>
+      </AdaptiveSelect>
     </>
   );
-
-  if (!wrapInContainer) {
-    return <>{field}</>;
-  }
-
-  return <View style={styles.formSection}>{field}</View>;
 }
 
 interface ToggleRowProps {
@@ -609,217 +736,53 @@ export function ToggleRow({
   );
 }
 
-export type IsolationMode = "none" | "branch" | "worktree";
-
-interface IsolationControlProps {
-  value: IsolationMode;
-  onChange: (mode: IsolationMode) => void;
-  disabled?: boolean;
-}
-
-export function IsolationControl({
-  value,
-  onChange,
-  disabled,
-}: IsolationControlProps): ReactElement {
-  const options: Array<{ id: IsolationMode; label: string }> = [
-    { id: "none", label: "None" },
-    { id: "branch", label: "Branch" },
-    { id: "worktree", label: "Worktree" },
-  ];
-
-  return (
-    <View style={[styles.segmentedControl, disabled && styles.segmentedControlDisabled]}>
-      {options.map((option) => {
-        const isSelected = option.id === value;
-        return (
-          <Pressable
-            key={option.id}
-            onPress={() => {
-              if (!disabled) {
-                onChange(option.id);
-              }
-            }}
-            style={[
-              styles.segmentedOption,
-              isSelected && styles.segmentedOptionSelected,
-            ]}
-          >
-            <Text
-              style={[
-                styles.segmentedOptionText,
-                isSelected && styles.segmentedOptionTextSelected,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
 export interface GitOptionsSectionProps {
-  baseBranch: string;
-  onBaseBranchChange: (value: string) => void;
-  branches: Array<{ name: string; isCurrent: boolean }>;
+  useWorktree: boolean;
+  onUseWorktreeChange: (value: boolean) => void;
+  worktreeSlug: string;
+  currentBranch: string | null;
   status: "idle" | "loading" | "ready" | "error";
   repoError: string | null;
-  helperText?: string | null;
-  warning: string | null;
-  isolationMode: IsolationMode;
-  onIsolationModeChange: (mode: IsolationMode) => void;
-  branchName: string;
-  onBranchNameChange: (value: string) => void;
-  worktreeSlug: string;
-  onWorktreeSlugChange: (value: string) => void;
   gitValidationError: string | null;
-  isGitDisabled?: boolean;
-  isBaseDropdownOpen: boolean;
-  onToggleBaseDropdown: () => void;
-  onCloseDropdown: () => void;
 }
 
 export function GitOptionsSection({
-  baseBranch,
-  onBaseBranchChange,
-  branches,
+  useWorktree,
+  onUseWorktreeChange,
+  worktreeSlug,
+  currentBranch,
   status,
   repoError,
-  helperText,
-  warning,
-  isolationMode,
-  onIsolationModeChange,
-  branchName,
-  onBranchNameChange,
-  worktreeSlug,
-  onWorktreeSlugChange,
   gitValidationError,
-  isGitDisabled,
-  isBaseDropdownOpen,
-  onToggleBaseDropdown,
-  onCloseDropdown,
 }: GitOptionsSectionProps): ReactElement {
-  const [branchSearch, setBranchSearch] = useState("");
-  const branchFilter = branchSearch.trim().toLowerCase();
-  const filteredBranches =
-    branchFilter.length === 0
-      ? branches
-      : branches.filter((branch) =>
-          branch.name.toLowerCase().includes(branchFilter)
-        );
-  const maxVisible = 30;
-  const currentBranchLabel =
-    branches.find((branch) => branch.isCurrent)?.name ?? "";
-  const baseInputRef = useRef<TextInput | null>(null);
-  const gitInputsDisabled = Boolean(isGitDisabled) || status === "loading";
-
-  // Show warning only for "branch" mode (requires clean state for checkout)
-  // Worktree mode doesn't require clean state
-  const showDirtyWarning = isolationMode === "branch" && warning;
-
-  useEffect(() => {
-    if (isBaseDropdownOpen) {
-      setBranchSearch("");
-      baseInputRef.current?.focus();
-    }
-  }, [isBaseDropdownOpen]);
+  const isLoading = status === "loading";
 
   return (
-    <View style={styles.formSection}>
-      <DropdownField
-        label="Git"
-        value={baseBranch}
-        placeholder={currentBranchLabel || "main"}
-        onPress={onToggleBaseDropdown}
-        disabled={gitInputsDisabled}
-        errorMessage={repoError}
-        warningMessage={!gitValidationError && !isGitDisabled ? (showDirtyWarning ? warning : null) : null}
-        helperText={
-          helperText ??
-          (status === "loading"
-            ? "Inspecting repository…"
-            : undefined)
-        }
-      />
-      <DropdownSheet
-        title="Base Branch"
-        visible={isBaseDropdownOpen}
-        onClose={onCloseDropdown}
+    <View style={styles.gitOptionsContainer}>
+      <Pressable
+        onPress={() => onUseWorktreeChange(!useWorktree)}
+        disabled={isLoading}
+        style={[styles.worktreeToggle, isLoading && styles.worktreeToggleDisabled]}
       >
-        <TextInput
-          ref={baseInputRef}
-          style={styles.dropdownSearchInput}
-          placeholder={currentBranchLabel || "main"}
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={branchSearch}
-          onChangeText={setBranchSearch}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {status === "loading" ? (
-          <View style={styles.dropdownLoading}>
-            <ActivityIndicator color={defaultTheme.colors.mutedForeground} />
-            <Text style={styles.helperText}>Inspecting repository…</Text>
-          </View>
-        ) : filteredBranches.length === 0 ? (
-          <Text style={styles.helperText}>
-            {branchFilter.length === 0
-              ? "No branches detected yet."
-              : "No branches match your search."}
+        <View style={[styles.checkbox, useWorktree && styles.checkboxChecked]}>
+          {useWorktree ? <View style={styles.checkboxDot} /> : null}
+        </View>
+        <View style={styles.worktreeToggleContent}>
+          <Text style={styles.worktreeToggleLabel}>Create worktree</Text>
+          <Text style={styles.worktreeToggleDescription}>
+            {isLoading
+              ? "Inspecting repository…"
+              : useWorktree && worktreeSlug
+                ? `Will create: ${worktreeSlug}`
+                : currentBranch
+                  ? `Run isolated from ${currentBranch}`
+                  : "Run in an isolated directory"}
           </Text>
-        ) : (
-          <View style={styles.dropdownSheetList}>
-            {filteredBranches.slice(0, maxVisible).map((branch) => {
-              const isActive = branch.name === baseBranch;
-              return (
-                <Pressable
-                  key={branch.name}
-                  style={[
-                    styles.dropdownSheetOption,
-                    isActive && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => {
-                    onBaseBranchChange(branch.name);
-                    onCloseDropdown();
-                  }}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel}>
-                    {branch.name}
-                    {branch.isCurrent ? "  (current)" : ""}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
-        {filteredBranches.length > maxVisible ? (
-          <Text style={styles.helperText}>
-            Showing first {maxVisible} matches. Keep typing to narrow it down.
-          </Text>
-        ) : null}
-      </DropdownSheet>
+        </View>
+      </Pressable>
 
-      <View style={styles.formSection}>
-        <Text style={styles.label}>Isolation</Text>
-        <IsolationControl
-          value={isolationMode}
-          onChange={onIsolationModeChange}
-          disabled={isGitDisabled}
-        />
-      </View>
-
-      {isolationMode !== "none" ? (
-        <TextInput
-          style={styles.input}
-          placeholder={isolationMode === "worktree" ? "worktree-name" : "feature-branch-name"}
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
-          value={isolationMode === "worktree" ? worktreeSlug : branchName}
-          onChangeText={isolationMode === "worktree" ? onWorktreeSlugChange : onBranchNameChange}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+      {repoError ? (
+        <Text style={styles.errorText}>{repoError}</Text>
       ) : null}
 
       {gitValidationError ? (
@@ -1016,32 +979,97 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  segmentedControl: {
-    flexDirection: "row",
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[1],
+  selectFieldContainer: {
+    gap: theme.spacing[2],
   },
-  segmentedControlDisabled: {
+  selectFieldControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.background,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  selectFieldControlDisabled: {
     opacity: theme.opacity[50],
   },
-  segmentedOption: {
+  selectFieldContent: {
     flex: 1,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
+    gap: theme.spacing[1],
   },
-  segmentedOptionSelected: {
-    backgroundColor: theme.colors.background,
-  },
-  segmentedOptionText: {
+  selectFieldLabel: {
     color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  selectFieldValue: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  selectFieldPlaceholder: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.base,
+  },
+  gitOptionsContainer: {
+    gap: theme.spacing[3],
+  },
+  worktreeToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    backgroundColor: theme.colors.background,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+  },
+  worktreeToggleDisabled: {
+    opacity: theme.opacity[50],
+  },
+  worktreeToggleContent: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  worktreeToggleLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
-  segmentedOptionTextSelected: {
-    color: theme.colors.foreground,
+  worktreeToggleDescription: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  desktopDropdownOverlay: {
+    flex: 1,
+  },
+  desktopDropdownBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  desktopDropdownContainer: {
+    backgroundColor: theme.colors.popover,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    maxHeight: 400,
+  },
+  desktopDropdownScroll: {
+    maxHeight: 400,
+  },
+  desktopDropdownScrollContent: {
+    padding: theme.spacing[2],
   },
 }));

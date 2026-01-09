@@ -158,18 +158,12 @@ export default function HomeScreen() {
     : undefined;
 
   const [openDropdown, setOpenDropdown] = useState<
-    "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch" | "agent" | null
+    "host" | "provider" | "mode" | "model" | "agent" | null
   >(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
-  const [baseBranch, setBaseBranch] = useState("");
-  const [isolationMode, setIsolationMode] = useState<"none" | "branch" | "worktree">("none");
-  const [branchName, setBranchName] = useState("");
-  const [worktreeSlug, setWorktreeSlug] = useState("");
-  const [branchNameEdited, setBranchNameEdited] = useState(false);
-  const [worktreeSlugEdited, setWorktreeSlugEdited] = useState(false);
-  const shouldSyncBaseBranchRef = useRef(true);
+  const [useWorktree, setUseWorktree] = useState(false);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -179,11 +173,8 @@ export default function HomeScreen() {
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
   }, []);
-
-  const createNewBranch = isolationMode === "branch" || isolationMode === "worktree";
-  const createWorktree = isolationMode === "worktree";
   const openDropdownSheet = useCallback(
-    (key: "host" | "provider" | "mode" | "model" | "workingDir" | "baseBranch" | "agent") => {
+    (key: "host" | "provider" | "mode" | "model" | "agent") => {
       setOpenDropdown(key);
     },
     []
@@ -350,59 +341,26 @@ export default function HomeScreen() {
   );
 
   const gitBlockingError = useMemo(() => {
-    if (isNonGitDirectory) {
+    if (!useWorktree || isNonGitDirectory) {
       return null;
     }
-    const trimmedBase = baseBranch.trim();
-    const currentBranch = repoInfo?.currentBranch ?? "";
-    const isCustomBase =
-      trimmedBase.length > 0 &&
-      (currentBranch.length === 0 || trimmedBase !== currentBranch);
-    const requiresBase = createNewBranch || createWorktree || isCustomBase;
-
-    if (requiresBase && !trimmedBase) {
-      return "Select a base branch before launching the agent";
+    const slug = slugifyWorktreeName(promptText);
+    if (!slug) {
+      return null;
     }
-
-    if (createNewBranch) {
-      const slug = branchName.trim();
-      const validation = validateWorktreeName(slug);
-      if (!slug || !validation.valid) {
-        return `Invalid branch name: ${
-          validation.error ?? "Must use lowercase letters, numbers, hyphens, or forward slashes"
-        }`;
-      }
+    const validation = validateWorktreeName(slug);
+    if (!validation.valid) {
+      return `Invalid worktree name: ${
+        validation.error ?? "Must use lowercase letters, numbers, or hyphens"
+      }`;
     }
-
-    if (createWorktree) {
-      const slug = (worktreeSlug || branchName).trim();
-      const validation = validateWorktreeName(slug);
-      if (!slug || !validation.valid) {
-        return `Invalid worktree name: ${
-          validation.error ?? "Must use lowercase letters, numbers, or hyphens"
-        }`;
-      }
-    }
-
-    if (!createWorktree && repoInfo?.isDirty) {
-      const intendsCheckout =
-        createNewBranch ||
-        (trimmedBase.length > 0 && trimmedBase !== repoInfo.currentBranch);
-      if (intendsCheckout) {
-        return "Working directory has uncommitted changes. Clean up or create a worktree first.";
-      }
-    }
-
     return null;
   }, [
-    baseBranch,
-    branchName,
-    createNewBranch,
-    createWorktree,
+    useWorktree,
     isNonGitDirectory,
-    repoInfo,
+    promptText,
+    slugifyWorktreeName,
     validateWorktreeName,
-    worktreeSlug,
   ]);
 
   useEffect(() => {
@@ -429,48 +387,10 @@ export default function HomeScreen() {
   ]);
 
   useEffect(() => {
-    if (!repoInfo) {
-      return;
+    if (isNonGitDirectory && useWorktree) {
+      setUseWorktree(false);
     }
-    setBaseBranch((prev) => {
-      if (shouldSyncBaseBranchRef.current || prev.trim().length === 0) {
-        shouldSyncBaseBranchRef.current = false;
-        return repoInfo.currentBranch ?? "";
-      }
-      return prev;
-    });
-  }, [repoInfo]);
-
-  useEffect(() => {
-    if (!isNonGitDirectory) {
-      return;
-    }
-    if (
-      isolationMode !== "none" ||
-      baseBranch.trim().length > 0 ||
-      branchName.trim().length > 0 ||
-      worktreeSlug.trim().length > 0
-    ) {
-      setIsolationMode("none");
-      setBaseBranch("");
-      setBranchName("");
-      setWorktreeSlug("");
-      setBranchNameEdited(false);
-      setWorktreeSlugEdited(false);
-      shouldSyncBaseBranchRef.current = true;
-    }
-  }, [
-    baseBranch,
-    branchName,
-    isolationMode,
-    isNonGitDirectory,
-    worktreeSlug,
-  ]);
-
-  const handleBaseBranchChange = useCallback((value: string) => {
-    setBaseBranch(value);
-    shouldSyncBaseBranchRef.current = false;
-  }, []);
+  }, [isNonGitDirectory, useWorktree]);
 
   const renderConfigRow = useCallback(
     ({ label, value, meta, onPress, disabled }: ConfigRowProps) => (
@@ -491,29 +411,6 @@ export default function HomeScreen() {
     ),
     [theme.colors.mutedForeground]
   );
-  const renderDropdownTrigger = useCallback(
-    ({
-      label,
-      value,
-      placeholder,
-      onPress,
-      disabled,
-    }: {
-      label: string;
-      value: string;
-      placeholder: string;
-      onPress: () => void;
-      disabled?: boolean;
-    }) =>
-      renderConfigRow({
-        label,
-        value: value || placeholder,
-        onPress,
-        disabled,
-      }),
-    [renderConfigRow]
-  );
-
   const pendingRequestIdRef = useRef<string | null>(null);
   const sessionMethods = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
@@ -567,26 +464,13 @@ export default function HomeScreen() {
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
       };
-      const trimmedBaseBranch = baseBranch.trim();
-      const shouldIncludeBase =
-        trimmedBaseBranch.length > 0 ||
-        createNewBranch ||
-        createWorktree;
-      const gitOptions =
-        shouldIncludeBase && !isNonGitDirectory
-          ? {
-              ...(trimmedBaseBranch ? { baseBranch: trimmedBaseBranch } : {}),
-              ...(createNewBranch
-                ? { createNewBranch: true, newBranchName: branchName.trim() }
-                : {}),
-              ...(createWorktree
-                ? {
-                    createWorktree: true,
-                    worktreeSlug: (worktreeSlug || branchName).trim(),
-                  }
-                : {}),
-            }
-          : undefined;
+      const worktreeSlug = slugifyWorktreeName(trimmedPrompt);
+      const gitOptions = useWorktree && !isNonGitDirectory && worktreeSlug
+        ? {
+            createWorktree: true,
+            worktreeSlug,
+          }
+        : undefined;
 
       void persistFormPreferences();
 
@@ -602,10 +486,8 @@ export default function HomeScreen() {
       });
     },
     [
-      baseBranch,
-      branchName,
-      createNewBranch,
-      createWorktree,
+      useWorktree,
+      slugifyWorktreeName,
       gitBlockingError,
       isDirectoryNotExists,
       isLoading,
@@ -618,7 +500,6 @@ export default function HomeScreen() {
       selectedServerId,
       sessionMethods,
       workingDir,
-      worktreeSlug,
     ]
   );
 
@@ -656,7 +537,6 @@ export default function HomeScreen() {
       }
       pendingRequestIdRef.current = null;
       setIsLoading(false);
-      setPromptText("");
       router.replace({
         pathname: "/agent/[serverId]/[agentId]",
         params: {
@@ -709,15 +589,9 @@ export default function HomeScreen() {
             <WorkingDirectoryDropdown
               workingDir={workingDir}
               errorMessage=""
-              isOpen={openDropdown === "workingDir"}
-              onOpen={() => openDropdownSheet("workingDir")}
-              onClose={closeDropdown}
               disabled={false}
               suggestedPaths={agentWorkingDirSuggestions}
               onSelectPath={setWorkingDirFromUser}
-              label="Working Directory"
-              wrapInContainer={false}
-              renderTrigger={renderDropdownTrigger}
             />
             {isDirectoryNotExists && (
               <View style={styles.warningContainer}>
@@ -733,54 +607,13 @@ export default function HomeScreen() {
             })}
             {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
               <GitOptionsSection
-                baseBranch={baseBranch}
-                onBaseBranchChange={handleBaseBranchChange}
-                branches={repoInfo?.branches ?? []}
+                useWorktree={useWorktree}
+                onUseWorktreeChange={setUseWorktree}
+                worktreeSlug={slugifyWorktreeName(promptText)}
+                currentBranch={repoInfo?.currentBranch ?? null}
                 status={repoInfoStatus}
                 repoError={repoInfoError}
-                helperText={gitHelperText}
-                isGitDisabled={Boolean(gitHelperText)}
-                warning={
-                  repoInfo?.isDirty
-                    ? "Working directory has uncommitted changes"
-                    : null
-                }
-                isolationMode={isolationMode}
-                onIsolationModeChange={(mode) => {
-                  setIsolationMode(mode);
-                  if (mode === "none") {
-                    setBranchName("");
-                    setWorktreeSlug("");
-                    setBranchNameEdited(false);
-                    setWorktreeSlugEdited(false);
-                  } else if (mode === "branch") {
-                    if (!branchNameEdited) {
-                      const slug = slugifyWorktreeName(baseBranch || "");
-                      setBranchName(slug);
-                    }
-                  } else if (mode === "worktree") {
-                    if (!worktreeSlugEdited) {
-                      const slug = slugifyWorktreeName(
-                        branchName || baseBranch || ""
-                      );
-                      setWorktreeSlug(slug);
-                    }
-                  }
-                }}
-                branchName={branchName}
-                onBranchNameChange={(value) => {
-                  setBranchName(slugifyWorktreeName(value));
-                  setBranchNameEdited(true);
-                }}
-                worktreeSlug={worktreeSlug}
-                onWorktreeSlugChange={(value) => {
-                  setWorktreeSlug(slugifyWorktreeName(value));
-                  setWorktreeSlugEdited(true);
-                }}
                 gitValidationError={gitBlockingError}
-                isBaseDropdownOpen={openDropdown === "baseBranch"}
-                onToggleBaseDropdown={() => openDropdownSheet("baseBranch")}
-                onCloseDropdown={closeDropdown}
               />
             ) : null}
           </View>
