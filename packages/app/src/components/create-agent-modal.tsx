@@ -5,6 +5,7 @@ import {
   useMemo,
   useCallback,
 } from "react";
+import { createNameId } from "mnemonic-id";
 import type { ReactElement, ReactNode } from "react";
 import {
   View,
@@ -338,6 +339,8 @@ function AgentFlowModal({
   const [isMounted, setIsMounted] = useState(isVisible);
   const [initialPrompt, setInitialPrompt] = useState("");
   const [useWorktree, setUseWorktree] = useState(false);
+  const [baseBranch, setBaseBranch] = useState("");
+  const [worktreeSlug, setWorktreeSlug] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<DropdownKey | null>(null);
@@ -386,6 +389,8 @@ function AgentFlowModal({
   const resetFormState = useCallback(() => {
     setInitialPrompt("");
     setUseWorktree(false);
+    setBaseBranch("");
+    setWorktreeSlug("");
     setErrorMessage("");
     setIsLoading(false);
     resetRepoInfo();
@@ -527,12 +532,12 @@ function AgentFlowModal({
     };
   }, [backdropOpacity]);
 
-  const slugifyWorktreeName = useCallback((input: string): string => {
-    return input
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  }, []);
+  const handleUseWorktreeChange = useCallback((value: boolean) => {
+    setUseWorktree(value);
+    if (value && !worktreeSlug) {
+      setWorktreeSlug(createNameId());
+    }
+  }, [worktreeSlug]);
 
   const validateWorktreeName = useCallback(
     (name: string): { valid: boolean; error?: string } => {
@@ -659,11 +664,10 @@ function AgentFlowModal({
     if (!useWorktree || isNonGitDirectory) {
       return null;
     }
-    const slug = slugifyWorktreeName(initialPrompt);
-    if (!slug) {
+    if (!worktreeSlug) {
       return null;
     }
-    const validation = validateWorktreeName(slug);
+    const validation = validateWorktreeName(worktreeSlug);
     if (!validation.valid) {
       return `Invalid worktree name: ${
         validation.error ?? "Must use lowercase letters, numbers, or hyphens"
@@ -673,10 +677,28 @@ function AgentFlowModal({
   }, [
     useWorktree,
     isNonGitDirectory,
-    initialPrompt,
-    slugifyWorktreeName,
+    worktreeSlug,
     validateWorktreeName,
   ]);
+
+  const baseBranchError = useMemo(() => {
+    if (!useWorktree || isNonGitDirectory || !baseBranch) {
+      return null;
+    }
+    const branches = repoInfo?.branches ?? [];
+    if (branches.length === 0) {
+      return null;
+    }
+    const branchExists = branches.some((b) => b.name === baseBranch);
+    if (!branchExists) {
+      return `Branch "${baseBranch}" not found in repository`;
+    }
+    return null;
+  }, [useWorktree, isNonGitDirectory, baseBranch, repoInfo?.branches]);
+
+  const handleBaseBranchChange = useCallback((value: string) => {
+    setBaseBranch(value);
+  }, []);
 
   const handleCreate = useCallback(async () => {
     const trimmedPath = workingDir.trim();
@@ -697,6 +719,11 @@ function AgentFlowModal({
 
     if (gitBlockingError) {
       setErrorMessage(gitBlockingError);
+      return;
+    }
+
+    if (baseBranchError) {
+      setErrorMessage(baseBranchError);
       return;
     }
 
@@ -733,11 +760,12 @@ function AgentFlowModal({
       ...(trimmedModel ? { model: trimmedModel } : {}),
     };
 
-    const worktreeSlug = slugifyWorktreeName(trimmedPrompt);
+    const effectiveBaseBranch = baseBranch.trim() || repoInfo?.currentBranch || undefined;
     const gitOptions = useWorktree && !isNonGitDirectory && worktreeSlug
       ? {
           createWorktree: true,
           worktreeSlug,
+          baseBranch: effectiveBaseBranch,
         }
       : undefined;
 
@@ -759,7 +787,9 @@ function AgentFlowModal({
     workingDir,
     initialPrompt,
     useWorktree,
-    slugifyWorktreeName,
+    baseBranch,
+    worktreeSlug,
+    repoInfo?.currentBranch,
     selectedMode,
     modeOptions,
     logOfflineDaemonAction,
@@ -772,6 +802,7 @@ function AgentFlowModal({
     selectedDaemonId,
     isNonGitDirectory,
     gitBlockingError,
+    baseBranchError,
     selectedModel,
   ]);
 
@@ -834,6 +865,7 @@ function AgentFlowModal({
     workingDirIsEmpty ||
     promptIsEmpty ||
     Boolean(gitBlockingError) ||
+    Boolean(baseBranchError) ||
     isLoading ||
     !isTargetDaemonReady;
   const headerPaddingTop = useMemo(
@@ -991,12 +1023,16 @@ function AgentFlowModal({
                   {!isNonGitDirectory ? (
                     <GitOptionsSection
                       useWorktree={useWorktree}
-                      onUseWorktreeChange={setUseWorktree}
-                      worktreeSlug={slugifyWorktreeName(initialPrompt)}
+                      onUseWorktreeChange={handleUseWorktreeChange}
+                      worktreeSlug={worktreeSlug}
                       currentBranch={repoInfo?.currentBranch ?? null}
+                      baseBranch={baseBranch}
+                      onBaseBranchChange={handleBaseBranchChange}
+                      branches={repoInfo?.branches ?? []}
                       status={repoInfoStatus}
                       repoError={repoInfoError}
                       gitValidationError={gitBlockingError}
+                      baseBranchError={baseBranchError}
                     />
                   ) : null}
                 </ScrollView>

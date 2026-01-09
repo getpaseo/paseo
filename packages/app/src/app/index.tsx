@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createNameId } from "mnemonic-id";
 import type { ImageAttachment } from "@/components/message-input";
 import {
   View,
   Text,
   Pressable,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -164,6 +166,8 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [useWorktree, setUseWorktree] = useState(false);
+  const [baseBranch, setBaseBranch] = useState("");
+  const [worktreeSlug, setWorktreeSlug] = useState("");
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -305,12 +309,12 @@ export default function HomeScreen() {
     ? "No git repository detected. Git options are disabled for this directory."
     : null;
 
-  const slugifyWorktreeName = useCallback((input: string): string => {
-    return input
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  }, []);
+  const handleUseWorktreeChange = useCallback((value: boolean) => {
+    setUseWorktree(value);
+    if (value && !worktreeSlug) {
+      setWorktreeSlug(createNameId());
+    }
+  }, [worktreeSlug]);
 
   const validateWorktreeName = useCallback(
     (name: string): { valid: boolean; error?: string } => {
@@ -344,11 +348,10 @@ export default function HomeScreen() {
     if (!useWorktree || isNonGitDirectory) {
       return null;
     }
-    const slug = slugifyWorktreeName(promptText);
-    if (!slug) {
+    if (!worktreeSlug) {
       return null;
     }
-    const validation = validateWorktreeName(slug);
+    const validation = validateWorktreeName(worktreeSlug);
     if (!validation.valid) {
       return `Invalid worktree name: ${
         validation.error ?? "Must use lowercase letters, numbers, or hyphens"
@@ -358,10 +361,28 @@ export default function HomeScreen() {
   }, [
     useWorktree,
     isNonGitDirectory,
-    promptText,
-    slugifyWorktreeName,
+    worktreeSlug,
     validateWorktreeName,
   ]);
+
+  const baseBranchError = useMemo(() => {
+    if (!useWorktree || isNonGitDirectory || !baseBranch) {
+      return null;
+    }
+    const branches = repoInfo?.branches ?? [];
+    if (branches.length === 0) {
+      return null;
+    }
+    const branchExists = branches.some((b) => b.name === baseBranch);
+    if (!branchExists) {
+      return `Branch "${baseBranch}" not found in repository`;
+    }
+    return null;
+  }, [useWorktree, isNonGitDirectory, baseBranch, repoInfo?.branches]);
+
+  const handleBaseBranchChange = useCallback((value: string) => {
+    setBaseBranch(value);
+  }, []);
 
   useEffect(() => {
     if (!shouldInspectRepo) {
@@ -447,6 +468,10 @@ export default function HomeScreen() {
         setErrorMessage(gitBlockingError);
         throw new Error(gitBlockingError);
       }
+      if (baseBranchError) {
+        setErrorMessage(baseBranchError);
+        throw new Error(baseBranchError);
+      }
       if (isLoading) {
         throw new Error("Already loading");
       }
@@ -464,11 +489,12 @@ export default function HomeScreen() {
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
       };
-      const worktreeSlug = slugifyWorktreeName(trimmedPrompt);
+      const effectiveBaseBranch = baseBranch.trim() || repoInfo?.currentBranch || undefined;
       const gitOptions = useWorktree && !isNonGitDirectory && worktreeSlug
         ? {
             createWorktree: true,
             worktreeSlug,
+            baseBranch: effectiveBaseBranch,
           }
         : undefined;
 
@@ -487,8 +513,11 @@ export default function HomeScreen() {
     },
     [
       useWorktree,
-      slugifyWorktreeName,
+      baseBranch,
+      worktreeSlug,
+      repoInfo?.currentBranch,
       gitBlockingError,
+      baseBranchError,
       isDirectoryNotExists,
       isLoading,
       isNonGitDirectory,
@@ -608,12 +637,16 @@ export default function HomeScreen() {
             {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
               <GitOptionsSection
                 useWorktree={useWorktree}
-                onUseWorktreeChange={setUseWorktree}
-                worktreeSlug={slugifyWorktreeName(promptText)}
+                onUseWorktreeChange={handleUseWorktreeChange}
+                worktreeSlug={worktreeSlug}
                 currentBranch={repoInfo?.currentBranch ?? null}
+                baseBranch={baseBranch}
+                onBaseBranchChange={handleBaseBranchChange}
+                branches={repoInfo?.branches ?? []}
                 status={repoInfoStatus}
                 repoError={repoInfoError}
                 gitValidationError={gitBlockingError}
+                baseBranchError={baseBranchError}
               />
             ) : null}
           </View>
@@ -780,6 +813,15 @@ export default function HomeScreen() {
           />
         </View>
       </View>
+
+      {isLoading ? (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingContent}>
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
+            <Text style={styles.loadingText}>Creating agent...</Text>
+          </View>
+        </View>
+      ) : null}
     </View>
   </FileDropZone>
   );
@@ -924,5 +966,24 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     marginBottom: theme.spacing[2],
+  },
+  loadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingContent: {
+    alignItems: "center",
+    gap: theme.spacing[4],
+  },
+  loadingText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
   },
 }));
