@@ -743,11 +743,6 @@ class ClaudeAgentSession implements AgentSession {
         url: agentControlUrl,
         ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
       },
-      playwright: {
-        type: "stdio",
-        command: "npx",
-        args: ["@playwright/mcp", "--headless", "--isolated"],
-      },
     };
 
     if (this.config.mcpServers) {

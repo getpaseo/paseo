@@ -684,16 +684,6 @@ export const SessionStateMessageSchema = z.object({
   type: z.literal("session_state"),
   payload: z.object({
     agents: z.array(AgentSnapshotPayloadSchema),
-    commands: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        workingDirectory: z.string(),
-        currentCommand: z.string(),
-        isDead: z.boolean(),
-        exitCode: z.number().nullable(),
-      })
-    ),
   }),
 });
 
