@@ -23,6 +23,10 @@ function serializeTask(task: Task): string {
     `created: ${task.created}`,
   ];
 
+  if (task.parentId) {
+    frontmatterLines.push(`parentId: ${task.parentId}`);
+  }
+
   if (task.assignee) {
     frontmatterLines.push(`assignee: ${task.assignee}`);
   }
@@ -31,19 +35,19 @@ function serializeTask(task: Task): string {
 
   const frontmatter = frontmatterLines.join("\n");
 
-  let body = "";
-  if (task.description) {
-    body += task.description + "\n";
+  let content = "";
+  if (task.body) {
+    content += task.body + "\n";
   }
 
   if (task.notes.length > 0) {
-    body += "\n## Notes\n";
+    content += "\n## Notes\n";
     for (const note of task.notes) {
-      body += `\n**${note.timestamp}**\n\n${note.content}\n`;
+      content += `\n**${note.timestamp}**\n\n${note.content}\n`;
     }
   }
 
-  return frontmatter + "\n\n" + body;
+  return frontmatter + "\n\n" + content;
 }
 
 function parseTask(content: string): Task {
@@ -53,7 +57,7 @@ function parseTask(content: string): Task {
   }
 
   const frontmatter = frontmatterMatch[1];
-  const body = content.slice(frontmatterMatch[0].length);
+  const fileBody = content.slice(frontmatterMatch[0].length);
 
   const getValue = (key: string): string => {
     const match = frontmatter.match(new RegExp(`^${key}: (.*)$`, "m"));
@@ -72,7 +76,7 @@ function parseTask(content: string): Task {
 
   // Parse notes from body
   const notes: Task["notes"] = [];
-  const notesSection = body.match(/## Notes\n([\s\S]*?)$/);
+  const notesSection = fileBody.match(/## Notes\n([\s\S]*?)$/);
   if (notesSection) {
     const noteMatches = notesSection[1].matchAll(
       /\*\*(\d{4}-\d{2}-\d{2}T[\d:.Z]+)\*\*\n\n([\s\S]*?)(?=\n\*\*\d{4}|$)/g
@@ -85,21 +89,23 @@ function parseTask(content: string): Task {
     }
   }
 
-  // Description is everything before ## Notes
-  let description = body;
+  // Body is everything before ## Notes (backwards compat: also check for old "description" field name)
+  let taskBody = fileBody;
   if (notesSection) {
-    description = body.slice(0, body.indexOf("## Notes")).trim();
+    taskBody = fileBody.slice(0, fileBody.indexOf("## Notes")).trim();
   }
-  description = description.trim();
+  taskBody = taskBody.trim();
 
   const assignee = getValue("assignee") as AgentType | "";
+  const parentId = getValue("parentId");
 
   return {
     id: getValue("id"),
     title: getValue("title"),
     status: getValue("status") as TaskStatus,
     deps,
-    description,
+    parentId: parentId || undefined,
+    body: taskBody,
     notes,
     created: getValue("created") || new Date().toISOString(),
     assignee: assignee || undefined,
@@ -148,7 +154,8 @@ export class FileTaskStore implements TaskStore {
           }
         }
       }
-      return tasks;
+      // Sort by created date (oldest first) for consistent ordering
+      return tasks.sort((a, b) => a.created.localeCompare(b.created));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return [];
@@ -190,6 +197,32 @@ export class FileTaskStore implements TaskStore {
 
     await traverse(id);
     return result;
+  }
+
+  async getAncestors(id: string): Promise<Task[]> {
+    const task = await this.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+
+    const ancestors: Task[] = [];
+    let currentId = task.parentId;
+
+    while (currentId) {
+      const parent = await this.get(currentId);
+      if (!parent) break;
+      ancestors.push(parent);
+      currentId = parent.parentId;
+    }
+
+    return ancestors;
+  }
+
+  async getChildren(id: string): Promise<Task[]> {
+    const allTasks = await this.list();
+    return allTasks
+      .filter((t) => t.parentId === id)
+      .sort((a, b) => a.created.localeCompare(b.created));
   }
 
   async getReady(scopeId?: string): Promise<Task[]> {
@@ -251,19 +284,28 @@ export class FileTaskStore implements TaskStore {
       candidates = await this.list();
     }
 
-    // Sort by created date (most recent first) for closed tasks
+    // Sort by created date (oldest first) for consistent ordering
     return candidates
       .filter((t) => t.status === "done")
-      .sort((a, b) => b.created.localeCompare(a.created));
+      .sort((a, b) => a.created.localeCompare(b.created));
   }
 
   async create(title: string, opts?: CreateTaskOptions): Promise<Task> {
+    // Validate parent exists if provided
+    if (opts?.parentId) {
+      const parent = await this.get(opts.parentId);
+      if (!parent) {
+        throw new Error(`Parent task not found: ${opts.parentId}`);
+      }
+    }
+
     const task: Task = {
       id: generateId(),
       title,
       status: opts?.status ?? "open",
       deps: opts?.deps ?? [],
-      description: opts?.description ?? "",
+      parentId: opts?.parentId,
+      body: opts?.body ?? "",
       notes: [],
       created: new Date().toISOString(),
       assignee: opts?.assignee,
@@ -312,6 +354,45 @@ export class FileTaskStore implements TaskStore {
 
     task.deps = task.deps.filter((d) => d !== depId);
     await this.writeTask(task);
+  }
+
+  async setParent(id: string, parentId: string | null): Promise<void> {
+    const task = await this.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+
+    if (parentId) {
+      const parent = await this.get(parentId);
+      if (!parent) {
+        throw new Error(`Parent task not found: ${parentId}`);
+      }
+      // Prevent circular reference
+      if (parentId === id) {
+        throw new Error("Task cannot be its own parent");
+      }
+      // Check that the new parent isn't a descendant of this task
+      const ancestors = await this.getAncestorsFrom(parentId);
+      if (ancestors.some((a) => a.id === id)) {
+        throw new Error("Cannot set parent: would create circular reference");
+      }
+    }
+
+    await this.update(id, { parentId: parentId ?? undefined });
+  }
+
+  private async getAncestorsFrom(id: string): Promise<Task[]> {
+    const ancestors: Task[] = [];
+    let currentId: string | undefined = id;
+
+    while (currentId) {
+      const task = await this.get(currentId);
+      if (!task) break;
+      ancestors.push(task);
+      currentId = task.parentId;
+    }
+
+    return ancestors;
   }
 
   async addNote(id: string, content: string): Promise<void> {

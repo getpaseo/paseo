@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 
 interface DiffViewerProps {
@@ -80,7 +81,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
   },
   lineText: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
   },

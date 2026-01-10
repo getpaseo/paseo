@@ -25,7 +25,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
 import { createMarkdownStyles, createCompactMarkdownStyles } from "@/styles/markdown-styles";
-import { Colors } from "@/constants/theme";
+import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
 import type { CommandDetails, EditEntry, ReadEntry } from "@/utils/tool-call-parsers";
@@ -162,7 +162,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 2,
     borderRadius: theme.borderRadius.sm,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: 13,
   },
   // Used in custom markdownRules for path chip styling
@@ -176,7 +176,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   pathChipText: {
     color: theme.colors.secondaryForeground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: 13,
   },
 }));
@@ -554,7 +554,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
   metadataText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     lineHeight: 16,
   },
 }));

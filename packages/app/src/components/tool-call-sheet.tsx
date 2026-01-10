@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
@@ -765,7 +766,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   fileBadgeText: {
     color: theme.colors.foreground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
   },
   diffContainer: {
@@ -786,7 +787,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[2],
   },
   scrollText: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     lineHeight: 18,
@@ -824,7 +825,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   metaValue: {
     color: theme.colors.foreground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
     flex: 1,
   },

@@ -15,6 +15,7 @@ import {
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 import Animated, { FadeIn, FadeOut, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
 import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
@@ -1160,7 +1161,7 @@ const permissionStyles = StyleSheet.create((theme) => ({
     letterSpacing: 0.5,
   },
   metadataValue: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
   },
   diffSection: {
@@ -1174,7 +1175,7 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
   },
   fileBadgeText: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
   },
   diffWrapper: {
@@ -1183,7 +1184,7 @@ const permissionStyles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   rawContentText: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
     lineHeight: 20,
   },

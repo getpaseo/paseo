@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { Fonts } from "@/constants/theme";
 import type { AgentActivity, GroupedTextMessage, MergedToolCall, SessionUpdate } from '@/types/agent-activity';
 
 interface AgentActivityItemProps {
@@ -346,7 +347,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   code: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
-    fontFamily: 'monospace',
+    fontFamily: Fonts.mono,
     backgroundColor: theme.colors.muted,
     padding: theme.spacing[2],
     borderRadius: theme.borderRadius.md,

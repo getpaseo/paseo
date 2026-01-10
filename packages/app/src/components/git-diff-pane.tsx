@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useId } from "react";
+import { useState, useCallback, useEffect, useId, useRef } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
+import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
@@ -19,6 +19,8 @@ import {
   type HighlightToken,
 } from "@/hooks/use-highlighted-diff-query";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
+import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
+import { Fonts } from "@/constants/theme";
 
 type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
@@ -120,8 +122,19 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
   const { theme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
   const horizontalScroll = useHorizontalScrollOptional();
   const scrollId = useId();
+  const scrollViewRef = useRef<ScrollViewType>(null);
+
+  // Get the close gesture ref from animation context (may not be available outside sidebar)
+  let closeGestureRef: React.MutableRefObject<any> | undefined;
+  try {
+    const animation = useExplorerSidebarAnimation();
+    closeGestureRef = animation.closeGestureRef;
+  } catch {
+    // Not inside ExplorerSidebarAnimationProvider, which is fine
+  }
 
   const toggleExpanded = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -139,9 +152,12 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (!horizontalScroll) return;
       const offsetX = event.nativeEvent.contentOffset.x;
-      horizontalScroll.registerScrollOffset(scrollId, offsetX);
+      // Track if we're at the left edge (with small threshold for float precision)
+      setIsAtLeftEdge(offsetX <= 1);
+      if (horizontalScroll) {
+        horizontalScroll.registerScrollOffset(scrollId, offsetX);
+      }
     },
     [horizontalScroll, scrollId]
   );
@@ -183,6 +199,7 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
       </Pressable>
       {isExpanded && (
         <ScrollView
+          ref={scrollViewRef}
           horizontal
           nestedScrollEnabled
           showsHorizontalScrollIndicator
@@ -192,6 +209,11 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
           onScroll={handleScroll}
           scrollEventThrottle={16}
           onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+          // When at left edge, wait for close gesture to fail before scrolling.
+          // The close gesture fails quickly on leftward swipes (failOffsetX=-10),
+          // so scrolling left works normally. On rightward swipes, close gesture
+          // activates and closes the sidebar.
+          waitFor={isAtLeftEdge && closeGestureRef?.current ? closeGestureRef : undefined}
         >
           <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
             {file.hunks.map((hunk, hunkIndex) =>
@@ -217,6 +239,20 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     serverId,
     agentId,
   });
+  // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+
+  const handleRefresh = useCallback(() => {
+    setIsManualRefresh(true);
+    refresh();
+  }, [refresh]);
+
+  // Reset manual refresh flag when fetch completes
+  useEffect(() => {
+    if (!isFetching && isManualRefresh) {
+      setIsManualRefresh(false);
+    }
+  }, [isFetching, isManualRefresh]);
 
   const agentExists = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.has(agentId) ?? false
@@ -239,8 +275,8 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
       testID="git-diff-scroll"
       refreshControl={
         <RefreshControl
-          refreshing={isFetching && !isLoading}
-          onRefresh={refresh}
+          refreshing={isManualRefresh && isFetching}
+          onRefresh={handleRefresh}
           tintColor={theme.colors.mutedForeground}
           colors={[theme.colors.primary]}
         />
@@ -354,7 +390,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     flex: 1,
   },
   newBadge: {
@@ -373,13 +409,13 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.green[400],
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   deletions: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.red[500],
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   diffContent: {
     borderTopWidth: theme.borderWidth[1],
@@ -398,7 +434,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   diffLineText: {
     fontSize: theme.fontSize.xs,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     color: theme.colors.foreground,
   },
   addLineContainer: {

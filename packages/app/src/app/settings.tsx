@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type DaemonProfile } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
@@ -82,7 +83,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   inputUrl: {
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   // Host card styles
   hostCard: {
@@ -110,7 +111,7 @@ const styles = StyleSheet.create((theme) => ({
   hostUrl: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   hostError: {
     color: theme.colors.palette.red[300],
