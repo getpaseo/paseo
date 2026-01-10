@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { View, Pressable, Text, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -36,6 +36,21 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     animateToClose,
     isGesturing,
   } = useSidebarAnimation();
+
+  // Track user-initiated refresh to avoid showing spinner on background revalidation
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+
+  const handleRefresh = useCallback(() => {
+    setIsManualRefresh(true);
+    refreshAll();
+  }, [refreshAll]);
+
+  // Reset manual refresh flag when revalidation completes
+  useEffect(() => {
+    if (!isRevalidating && isManualRefresh) {
+      setIsManualRefresh(false);
+    }
+  }, [isRevalidating, isManualRefresh]);
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -198,8 +213,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
               {/* Middle: scrollable agent list */}
               <AgentList
                 agents={limitedAgents}
-                isRefreshing={isRevalidating}
-                onRefresh={refreshAll}
+                isRefreshing={isManualRefresh && isRevalidating}
+                onRefresh={handleRefresh}
                 selectedAgentId={selectedAgentId}
                 onAgentSelect={handleAgentSelectMobile}
                 listFooterComponent={viewMoreButton}
@@ -246,8 +261,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       {/* Middle: scrollable agent list */}
       <AgentList
         agents={limitedAgents}
-        isRefreshing={isRevalidating}
-        onRefresh={refreshAll}
+        isRefreshing={isManualRefresh && isRevalidating}
+        onRefresh={handleRefresh}
         selectedAgentId={selectedAgentId}
         listFooterComponent={viewMoreButton}
       />

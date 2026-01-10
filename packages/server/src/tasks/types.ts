@@ -11,8 +11,9 @@ export interface Task {
   id: string; // random hash, e.g. "a1b2c3d4"
   title: string;
   status: TaskStatus;
-  deps: string[];
-  description: string; // long form markdown
+  deps: string[]; // task IDs this task depends on (must be done before this can start)
+  parentId?: string; // parent task ID for hierarchical structure (context inheritance)
+  body: string; // long form markdown document
   notes: Note[];
   created: string; // ISO date
   assignee?: AgentType; // optional agent override
@@ -20,8 +21,9 @@ export interface Task {
 
 export interface CreateTaskOptions {
   deps?: string[];
+  parentId?: string;
   status?: TaskStatus;
-  description?: string;
+  body?: string;
   assignee?: AgentType;
 }
 
@@ -30,6 +32,8 @@ export interface TaskStore {
   list(): Promise<Task[]>;
   get(id: string): Promise<Task | null>;
   getDepTree(id: string): Promise<Task[]>; // all descendants in dep graph
+  getAncestors(id: string): Promise<Task[]>; // parent chain from immediate parent to root
+  getChildren(id: string): Promise<Task[]>; // direct children of a task
   getReady(scopeId?: string): Promise<Task[]>; // open + all deps done, optionally scoped
   getBlocked(scopeId?: string): Promise<Task[]>; // open/in_progress but has unresolved deps
   getClosed(scopeId?: string): Promise<Task[]>; // done tasks, optionally scoped
@@ -39,6 +43,7 @@ export interface TaskStore {
   update(id: string, changes: Partial<Omit<Task, "id" | "created">>): Promise<Task>;
   addDep(id: string, depId: string): Promise<void>;
   removeDep(id: string, depId: string): Promise<void>;
+  setParent(id: string, parentId: string | null): Promise<void>;
   addNote(id: string, content: string): Promise<void>;
 
   // Status transitions

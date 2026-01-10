@@ -66,8 +66,10 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
       Gesture.Pan()
         .withRef(closeGestureRef)
         .enabled(isMobile && isOpen)
-        // Only activate after 15px horizontal movement (creates deadzone for taps)
-        .activeOffsetX([-15, 15])
+        // Only activate on rightward swipe (positive X), fail on leftward or vertical
+        // This allows ScrollViews using waitFor to scroll left normally
+        .activeOffsetX(15)
+        .failOffsetX(-10)
         .failOffsetY([-10, 10])
         .onStart(() => {
           isGesturing.value = true;

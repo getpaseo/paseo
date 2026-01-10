@@ -18,8 +18,10 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import { File as FSFile, Paths } from "expo-file-system";
+import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import {
   BottomSheetModal,
@@ -169,7 +171,16 @@ export function FileExplorerPane({
     status: "downloading" | "complete" | "error";
     fileName: string;
     message?: string;
+    progress?: {
+      percent: number;
+      bytesWritten: number;
+      totalBytes: number;
+      speed: number;
+      eta: number;
+    };
   } | null>(null);
+  const downloadStartTimeRef = useRef<number>(0);
+  const lastProgressRef = useRef<{ bytes: number; time: number } | null>(null);
   const downloadToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentIdRef = useRef(agentId);
   const viewModeRef = useRef(viewMode);
@@ -467,21 +478,59 @@ export function FileExplorerPane({
           return;
         }
 
+        downloadStartTimeRef.current = Date.now();
+        lastProgressRef.current = null;
         showDownloadToast({ status: "downloading", fileName: displayName });
 
         const targetFile = resolveDownloadTargetFile(fileName);
-        const downloadedFile = await FSFile.downloadFileAsync(
+        const downloadResumable = LegacyFileSystem.createDownloadResumable(
           downloadUrl,
-          targetFile,
+          targetFile.uri,
           downloadTarget.authHeader
             ? { headers: { Authorization: downloadTarget.authHeader } }
-            : undefined
+            : undefined,
+          (data) => {
+            const now = Date.now();
+            const { totalBytesWritten, totalBytesExpectedToWrite } = data;
+
+            if (totalBytesExpectedToWrite <= 0) {
+              return;
+            }
+
+            const percent = totalBytesWritten / totalBytesExpectedToWrite;
+            const elapsed = (now - downloadStartTimeRef.current) / 1000;
+            const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
+            const remaining = totalBytesExpectedToWrite - totalBytesWritten;
+            const eta = speed > 0 ? remaining / speed : 0;
+
+            lastProgressRef.current = { bytes: totalBytesWritten, time: now };
+
+            setDownloadToast((prev) =>
+              prev?.status === "downloading"
+                ? {
+                    ...prev,
+                    progress: {
+                      percent,
+                      bytesWritten: totalBytesWritten,
+                      totalBytes: totalBytesExpectedToWrite,
+                      speed,
+                      eta,
+                    },
+                  }
+                : prev
+            );
+          }
         );
+
+        const result = await downloadResumable.downloadAsync();
+        if (!result) {
+          throw new Error("Download was cancelled.");
+        }
 
         showDownloadToast({ status: "complete", fileName: displayName });
 
         if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(downloadedFile.uri, {
+          await Sharing.shareAsync(result.uri, {
             mimeType: tokenResponse.mimeType ?? undefined,
             dialogTitle: fileName ? `Share ${fileName}` : "Share file",
           });
@@ -947,11 +996,23 @@ export function FileExplorerPane({
               </Text>
               <Text style={styles.downloadToastStatus}>
                 {downloadToast.status === "downloading"
-                  ? "Downloading..."
+                  ? downloadToast.progress
+                    ? `${Math.round(downloadToast.progress.percent * 100)}% · ${formatSpeed(downloadToast.progress.speed)} · ${formatEta(downloadToast.progress.eta)}`
+                    : "Starting..."
                   : downloadToast.status === "complete"
                     ? "Download complete"
                     : downloadToast.message ?? "Download failed"}
               </Text>
+              {downloadToast.status === "downloading" && downloadToast.progress && (
+                <View style={styles.downloadProgressBar}>
+                  <View
+                    style={[
+                      styles.downloadProgressFill,
+                      { width: `${Math.round(downloadToast.progress.percent * 100)}%` },
+                    ]}
+                  />
+                </View>
+              )}
             </View>
             {downloadToast.status !== "downloading" && (
               <Pressable
@@ -981,6 +1042,28 @@ function formatFileSize({ size }: { size: number }): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond < 1024) {
+    return `${Math.round(bytesPerSecond)} B/s`;
+  }
+  if (bytesPerSecond < 1024 * 1024) {
+    return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  }
+  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 1) {
+    return "< 1s";
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${mins}m ${secs}s`;
 }
 
 function formatModifiedTime({ value }: { value: string }): string {
@@ -1241,7 +1324,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontSize: theme.fontSize.sm,
     color: theme.colors.mutedForeground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   backButton: {
     padding: theme.spacing[1],
@@ -1379,7 +1462,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   codeText: {
     color: theme.colors.foreground,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
     flexShrink: 0,
   },
@@ -1509,6 +1592,18 @@ const styles = StyleSheet.create((theme) => ({
   downloadToastStatus: {
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
+  },
+  downloadProgressBar: {
+    height: 3,
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.full,
+    marginTop: theme.spacing[1],
+    overflow: "hidden",
+  },
+  downloadProgressFill: {
+    height: "100%",
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.full,
   },
   downloadToastDismiss: {
     padding: theme.spacing[1],

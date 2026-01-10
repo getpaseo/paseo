@@ -8,6 +8,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useEffect } from "react";
 import { StyleSheet } from "react-native-unistyles";
+import { Fonts } from "@/constants/theme";
 
 export interface Artifact {
   id: string;
@@ -120,7 +121,7 @@ const styles = StyleSheet.create((theme) => ({
   codeText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
   metadataContainer: {
     backgroundColor: theme.colors.card,
@@ -148,7 +149,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
     flex: 1,
-    fontFamily: "monospace",
+    fontFamily: Fonts.mono,
   },
 }));
 

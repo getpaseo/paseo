@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, openSync } from "node:fs";
+import { appendFileSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FileTaskStore } from "./task-store.js";
 import type { AgentType, Task } from "./types.js";
 
 const TASKS_DIR = resolve(process.cwd(), ".tasks");
 const store = new FileTaskStore(TASKS_DIR);
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8").trim();
+}
 
 const program = new Command()
   .name("task")
@@ -17,12 +25,23 @@ const program = new Command()
     "after",
     `
 Examples:
-  # Create an epic with subtasks (top-down)
+  # Create an epic with subtasks (hierarchical)
   task create "Build auth system"
   task create "Add login endpoint" --parent abc123
   task create "Add logout endpoint" --parent abc123
 
-  # Create with dependencies (bottom-up)
+  # Create with body from stdin (use "-" for body)
+  cat spec.md | task create "Implement feature" --body -
+
+  # Update task body
+  task update abc123 --body "New body content"
+  cat updated-spec.md | task update abc123 --body -
+
+  # Move task to different parent
+  task move abc123 --parent def456
+  task move abc123 --root  # make it a root task
+
+  # Create with dependencies (separate from hierarchy)
   task create "Setup database"
   task create "Add user model" --deps def456
 
@@ -32,6 +51,9 @@ Examples:
   # Create as draft (not actionable until opened)
   task create "Future feature" --draft
   task open abc123  # make it actionable
+
+  # View task with parent context
+  task show abc123
 
   # View the work breakdown
   task tree abc123
@@ -47,30 +69,40 @@ Examples:
   task run abc123
   task run abc123 --agent codex
   task run --watch
+
+Body vs Notes:
+  The BODY is the task's markdown document - edit it while grooming/defining the task.
+  NOTES are timestamped entries added during implementation to document progress.
+
+  - While defining a task: edit the body with "task update <id> --body ..."
+  - While implementing: add notes with "task note <id> ..."
+  - When done: add a final note explaining what was done, then close
 `
   );
 
 program
   .command("create <title>")
   .description("Create a new task")
-  .option("-d, --description <text>", "Task description")
+  .option("-b, --body <text>", "Task body (use '-' to read from stdin)")
   .option("--deps <ids>", "Comma-separated dependency IDs")
-  .option("--parent <id>", "Parent task (parent will depend on this new task)")
+  .option("--parent <id>", "Parent task ID (for hierarchy)")
   .option("--assignee <agent>", "Agent to assign (claude or codex)")
   .option("--draft", "Create as draft (not actionable)")
   .action(async (title, opts) => {
+    let body = opts.body ?? "";
+    if (body === "-") {
+      body = await readStdin();
+    }
+
     const task = await store.create(title, {
-      description: opts.description,
+      body,
       deps: opts.deps
         ? opts.deps.split(",").map((s: string) => s.trim())
         : [],
+      parentId: opts.parent,
       status: opts.draft ? "draft" : "open",
       assignee: opts.assignee as AgentType | undefined,
     });
-
-    if (opts.parent) {
-      await store.addDep(opts.parent, task.id);
-    }
 
     console.log(task.id);
   });
@@ -80,38 +112,67 @@ program
   .alias("ls")
   .description("List all tasks")
   .option("-s, --status <status>", "Filter by status")
+  .option("--roots", "Show only root tasks (no parent)")
   .action(async (opts) => {
     const tasks = await store.list();
-    const filtered = opts.status
+    let filtered = opts.status
       ? tasks.filter((t) => t.status === opts.status)
       : tasks;
+
+    if (opts.roots) {
+      filtered = filtered.filter((t) => !t.parentId);
+    }
 
     for (const t of filtered) {
       const deps = t.deps.length ? ` <- [${t.deps.join(", ")}]` : "";
       const assignee = t.assignee ? ` @${t.assignee}` : "";
-      console.log(`${t.id}  [${t.status}]  ${t.title}${assignee}${deps}`);
+      const parent = t.parentId ? ` ^${t.parentId}` : "";
+      console.log(`${t.id}  [${t.status}]  ${t.title}${assignee}${parent}${deps}`);
     }
   });
 
 program
   .command("show <id>")
-  .description("Show task details")
+  .description("Show task details with parent context")
   .action(async (id) => {
     const task = await store.get(id);
     if (!task) {
       console.error(`Task not found: ${id}`);
       process.exit(1);
     }
+
+    // Get ancestors (parent chain from immediate to root)
+    const ancestors = await store.getAncestors(id);
+
+    // Print ancestors first (root to immediate parent)
+    if (ancestors.length > 0) {
+      console.log("# Parent Context\n");
+      for (const ancestor of ancestors.reverse()) {
+        console.log(`## ${ancestor.title} (${ancestor.id}) [${ancestor.status}]`);
+        if (ancestor.body) {
+          console.log(`\n${ancestor.body}`);
+        }
+        console.log("");
+      }
+      console.log("---\n");
+    }
+
+    // Print current task
+    console.log(`# ${task.title}\n`);
     console.log(`id: ${task.id}`);
-    console.log(`title: ${task.title}`);
     console.log(`status: ${task.status}`);
     console.log(`created: ${task.created}`);
     if (task.assignee) {
       console.log(`assignee: ${task.assignee}`);
     }
-    console.log(`deps: [${task.deps.join(", ")}]`);
-    if (task.description) {
-      console.log(`\n${task.description}`);
+    if (task.parentId) {
+      console.log(`parent: ${task.parentId}`);
+    }
+    if (task.deps.length) {
+      console.log(`deps: [${task.deps.join(", ")}]`);
+    }
+    if (task.body) {
+      console.log(`\n${task.body}`);
     }
     if (task.notes.length) {
       console.log("\n## Notes");
@@ -157,42 +218,65 @@ program
 
 program
   .command("tree <id>")
-  .description("Show dependency tree")
+  .description("Show task hierarchy with dependencies")
   .action(async (id) => {
     const root = await store.get(id);
     if (!root) {
       console.error(`Task not found: ${id}`);
       process.exit(1);
     }
-    console.log(`${root.id} [${root.status}] ${root.title}`);
 
-    const tree = await store.getDepTree(id);
-    const taskMap = new Map(tree.map((t) => [t.id, t]));
+    // Build a map of all tasks for dependency lookups
+    const allTasks = await store.list();
+    const taskMap = new Map(allTasks.map((t) => [t.id, t]));
 
-    const printed = new Set<string>();
-    const printDeps = async (taskId: string, prefix: string) => {
-      const task = await store.get(taskId);
-      if (!task) return;
-
-      const deps = task.deps.filter((d) => !printed.has(d));
-      for (let i = 0; i < deps.length; i++) {
-        const depId = deps[i];
-        const dep = taskMap.get(depId);
-        if (!dep) continue;
-
-        printed.add(depId);
-        const isLast = i === deps.length - 1;
-        const connector = isLast ? "└── " : "├── ";
-        const childPrefix = isLast ? "    " : "│   ";
-
-        console.log(
-          `${prefix}${connector}${dep.id} [${dep.status}] ${dep.title}`
-        );
-        await printDeps(depId, prefix + childPrefix);
+    // Print a task line with optional dependency info
+    const printTask = (task: Task, prefix: string, connector: string) => {
+      const assignee = task.assignee ? ` @${task.assignee}` : "";
+      console.log(
+        `${prefix}${connector}${task.id} [${task.status}] ${task.title}${assignee}`
+      );
+      // Print dependencies on next line with arrow
+      if (task.deps.length > 0) {
+        const depNames = task.deps
+          .map((depId) => {
+            const dep = taskMap.get(depId);
+            return dep ? `${dep.title} (${depId})` : depId;
+          })
+          .join(", ");
+        const depPrefix = prefix + (connector === "└── " ? "    " : "│   ");
+        console.log(`${depPrefix}→ depends on: ${depNames}`);
       }
     };
 
-    await printDeps(id, "");
+    // Print root task
+    const rootAssignee = root.assignee ? ` @${root.assignee}` : "";
+    console.log(`${root.id} [${root.status}] ${root.title}${rootAssignee}`);
+    if (root.deps.length > 0) {
+      const depNames = root.deps
+        .map((depId) => {
+          const dep = taskMap.get(depId);
+          return dep ? `${dep.title} (${depId})` : depId;
+        })
+        .join(", ");
+      console.log(`→ depends on: ${depNames}`);
+    }
+
+    // Recursively print children (hierarchy)
+    const printChildren = async (parentId: string, prefix: string) => {
+      const children = await store.getChildren(parentId);
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        const isLast = i === children.length - 1;
+        const connector = isLast ? "└── " : "├── ";
+        const childPrefix = prefix + (isLast ? "    " : "│   ");
+
+        printTask(child, prefix, connector);
+        await printChildren(child.id, childPrefix);
+      }
+    };
+
+    await printChildren(id, "");
   });
 
 program
@@ -209,6 +293,88 @@ program
   .action(async (id, depId) => {
     await store.removeDep(id, depId);
     console.log(`Removed: ${id} -> ${depId}`);
+  });
+
+program
+  .command("update <id>")
+  .description("Update task properties")
+  .option("-t, --title <text>", "New title")
+  .option("-b, --body <text>", "New body (use '-' to read from stdin)")
+  .option("--assignee <agent>", "New assignee (claude or codex)")
+  .action(async (id, opts) => {
+    const task = await store.get(id);
+    if (!task) {
+      console.error(`Task not found: ${id}`);
+      process.exit(1);
+    }
+
+    const changes: Partial<Task> = {};
+
+    if (opts.title) {
+      changes.title = opts.title;
+    }
+
+    if (opts.body !== undefined) {
+      changes.body = opts.body === "-" ? await readStdin() : opts.body;
+    }
+
+    if (opts.assignee) {
+      changes.assignee = opts.assignee as AgentType;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      console.error("No changes specified");
+      process.exit(1);
+    }
+
+    await store.update(id, changes);
+    console.log(`Updated: ${id}`);
+  });
+
+program
+  .command("move <id>")
+  .description("Move task to a different parent")
+  .option("--parent <id>", "New parent task ID")
+  .option("--root", "Make this a root task (remove parent)")
+  .action(async (id, opts) => {
+    if (!opts.parent && !opts.root) {
+      console.error("Must specify --parent <id> or --root");
+      process.exit(1);
+    }
+
+    if (opts.parent && opts.root) {
+      console.error("Cannot specify both --parent and --root");
+      process.exit(1);
+    }
+
+    await store.setParent(id, opts.root ? null : opts.parent);
+    if (opts.root) {
+      console.log(`${id} is now a root task`);
+    } else {
+      console.log(`${id} moved to parent ${opts.parent}`);
+    }
+  });
+
+program
+  .command("children <id>")
+  .description("List direct children of a task")
+  .action(async (id) => {
+    const task = await store.get(id);
+    if (!task) {
+      console.error(`Task not found: ${id}`);
+      process.exit(1);
+    }
+
+    const children = await store.getChildren(id);
+    if (children.length === 0) {
+      console.log("No children");
+      return;
+    }
+
+    for (const child of children) {
+      const assignee = child.assignee ? ` @${child.assignee}` : "";
+      console.log(`${child.id}  [${child.status}]  ${child.title}${assignee}`);
+    }
   });
 
 program
@@ -251,38 +417,52 @@ async function makePrompt(
 ): Promise<string> {
   const scopeArg = scopeId ? ` --scope ${scopeId}` : "";
 
+  // Build parent context from ancestor chain
+  const ancestors = await store.getAncestors(task.id);
+  let parentContext = "";
+  if (ancestors.length > 0) {
+    parentContext = "# Parent Context\n\n";
+    for (const ancestor of ancestors.reverse()) {
+      parentContext += `## ${ancestor.title} (${ancestor.id})\n`;
+      if (ancestor.body) {
+        parentContext += `\n${ancestor.body}\n`;
+      }
+      parentContext += "\n";
+    }
+    parentContext += "---\n\n";
+  }
+
   let scopeContext = "";
-  if (scopeId) {
+  if (scopeId && !ancestors.some((a) => a.id === scopeId)) {
     const scope = await store.get(scopeId);
     if (scope) {
       scopeContext = `Scope: ${scope.title} (${scopeId})
-${scope.description ? `\n${scope.description}\n` : ""}`;
+${scope.body ? `\n${scope.body}\n` : ""}`;
     }
   }
 
   return `Working directory: ${process.cwd()}
-${scopeContext}
----
+${scopeContext}${parentContext}
+# YOUR TASK (${task.id}): ${task.title}
 
-YOUR TASK (${task.id}): ${task.title}
-
-${task.description || "(no description)"}
+${task.body || "(no body)"}
 
 ---
 
 STEPS:
 1. UNDERSTAND CONTEXT FIRST - Before any implementation:
-   - Run \`task tree ${task.id}\` to see the full dependency graph
+   - Run \`task show ${task.id}\` to see full context with parent chain
+   - Run \`task children ${task.id}\` to see subtasks if any
    - Run \`task closed${scopeArg}\` to see completed sibling tasks
-   - Run \`task show <id>\` on completed tasks to read their notes
    - Understand what's been done, what decisions were made, what's planned
 2. Implement the task described above
 3. Add a note documenting what you did: \`task note ${task.id} "what you did"\`
 4. Mark complete: \`task close ${task.id}\`
 
 COMMANDS:
-- \`task tree <id>\` - see dependency graph from any task
-- \`task show <id>\` - view task details and notes
+- \`task show <id>\` - view task details with parent context
+- \`task children <id>\` - list subtasks
+- \`task update <id> --body "..."\` - update task body (for grooming/clarifying)
 - \`task closed${scopeArg}\` - list completed tasks in scope
 - \`task note ${task.id} "content"\` - add a note to your task
 - \`task close ${task.id}\` - mark your task done

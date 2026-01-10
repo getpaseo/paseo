@@ -1,4 +1,5 @@
 import type { Theme } from "./theme";
+import { Fonts } from "@/constants/theme";
 
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.
@@ -135,7 +136,7 @@ export function createMarkdownStyles(theme: Theme) {
       paddingHorizontal: theme.spacing[1],
       paddingVertical: 2,
       borderRadius: theme.borderRadius.sm,
-      fontFamily: "monospace",
+      fontFamily: Fonts.mono,
       fontSize: theme.fontSize.sm,
     },
 
@@ -144,7 +145,7 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.secondaryForeground,
       padding: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
-      fontFamily: "monospace",
+      fontFamily: Fonts.mono,
       fontSize: theme.fontSize.sm,
       marginVertical: theme.spacing[2],
     },
@@ -156,7 +157,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderRadius: theme.borderRadius.md,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      fontFamily: "monospace",
+      fontFamily: Fonts.mono,
       fontSize: theme.fontSize.sm,
       marginVertical: theme.spacing[3],
     },

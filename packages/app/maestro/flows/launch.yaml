@@ -1,0 +1,26 @@
+appId: com.moboudra.paseo
+---
+# Reusable flow to handle dev client screens after launchApp
+# Works with both release builds (no-ops) and dev builds
+
+# Handle dev launcher - tap localhost server (dev builds only)
+- tapOn:
+    text: ".*localhost.*"
+    optional: true
+
+# Dismiss dev menu intro modal
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+
+# Dismiss dev menu if it opens
+- runFlow:
+    when:
+      visible: "Go home"
+    commands:
+      - tapOn:
+          point: "50%,20%"
+
+- assertVisible: "New Agent"

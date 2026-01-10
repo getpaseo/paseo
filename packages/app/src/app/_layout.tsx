@@ -258,16 +258,13 @@ export default function RootLayout() {
                           screenOptions={{
                             headerShown: false,
                             animation: "none",
-                            gestureEnabled: true,
-                            gestureDirection: "horizontal",
-                            fullScreenGestureEnabled: true,
                           }}
                         >
                           <Stack.Screen name="index" />
                           <Stack.Screen name="agents" />
                           <Stack.Screen name="orchestrator" />
-                          <Stack.Screen name="agent/[id]" />
-                          <Stack.Screen name="agent/[serverId]/[agentId]" />
+                          <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
+                          <Stack.Screen name="agent/[serverId]/[agentId]" options={{ gestureEnabled: false }} />
                           <Stack.Screen name="settings" />
                           <Stack.Screen name="audio-test" />
                         </Stack>

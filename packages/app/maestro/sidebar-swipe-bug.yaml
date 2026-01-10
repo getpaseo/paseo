@@ -1,0 +1,74 @@
+appId: com.moboudra.paseo
+---
+- launchApp:
+    clearState: true
+- runFlow: flows/launch.yaml
+
+# Open left sidebar
+- swipe:
+    direction: RIGHT
+    duration: 300
+
+# Tap on an agent conversation
+- assertVisible:
+    text: ".*Build Production APK.*"
+- tapOn:
+    text: ".*Build Production APK.*"
+
+# Wait for chat to load
+- assertVisible: "Message agent..."
+
+# Swipe right-to-left to reveal git diff sidebar
+- swipe:
+    direction: LEFT
+    duration: 300
+
+# Assert diff sidebar is visible
+- assertVisible: "Changes"
+- assertVisible: "Files"
+- takeScreenshot: 01-diff-sidebar-open
+
+# TEST 1: Scroll diff vertically down (should work)
+# Tap on Files tab to switch, then back to Changes - proves interaction works
+- tapOn: "Files"
+- assertVisible: "Files"
+- tapOn: "Changes"
+- assertVisible: "Changes"
+- takeScreenshot: 02-tabs-work
+
+# TEST 2: Scroll diff content vertically (should work)
+- swipe:
+    start: "50%,70%"
+    end: "50%,30%"
+    duration: 300
+- assertVisible: "Changes"
+- takeScreenshot: 03-after-vertical-scroll
+
+# TEST 3: Scroll diff horizontally to the right (should work)
+- swipe:
+    start: "80%,50%"
+    end: "20%,50%"
+    duration: 300
+- assertVisible: "Changes"
+- takeScreenshot: 04-after-horizontal-scroll-right
+
+# TEST 4: Scroll diff back to left edge (scrollLeft = 0)
+- swipe:
+    start: "20%,50%"
+    end: "80%,50%"
+    duration: 300
+- swipe:
+    start: "20%,50%"
+    end: "80%,50%"
+    duration: 300
+- assertVisible: "Changes"
+- takeScreenshot: 05-back-at-left-edge
+
+# TEST 5 (BUG): At scrollLeft 0, swipe right should close sidebar
+# Currently fails - the gesture bounces the scrollview instead
+- swipe:
+    start: "10%,50%"
+    end: "90%,50%"
+    duration: 300
+- assertVisible: "Message agent..."
+- takeScreenshot: 06-sidebar-closed

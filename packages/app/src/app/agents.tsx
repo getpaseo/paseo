@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
@@ -7,6 +7,21 @@ import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 
 export default function AgentsScreen() {
   const { agents, isRevalidating, refreshAll } = useAggregatedAgents();
+
+  // Track user-initiated refresh to avoid showing spinner on background revalidation
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+
+  const handleRefresh = useCallback(() => {
+    setIsManualRefresh(true);
+    refreshAll();
+  }, [refreshAll]);
+
+  // Reset manual refresh flag when revalidation completes
+  useEffect(() => {
+    if (!isRevalidating && isManualRefresh) {
+      setIsManualRefresh(false);
+    }
+  }, [isRevalidating, isManualRefresh]);
 
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
@@ -21,8 +36,8 @@ export default function AgentsScreen() {
       <BackHeader title="All Agents" />
       <AgentList
         agents={sortedAgents}
-        isRefreshing={isRevalidating}
-        onRefresh={refreshAll}
+        isRefreshing={isManualRefresh && isRevalidating}
+        onRefresh={handleRefresh}
       />
     </View>
   );

@@ -25,7 +25,8 @@ describe("FileTaskStore", () => {
       expect(task.title).toBe("My first task");
       expect(task.status).toBe("open");
       expect(task.deps).toEqual([]);
-      expect(task.description).toBe("");
+      expect(task.parentId).toBeUndefined();
+      expect(task.body).toBe("");
       expect(task.notes).toEqual([]);
       expect(task.created).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(task.assignee).toBeUndefined();
@@ -47,14 +48,27 @@ describe("FileTaskStore", () => {
       expect(task.deps).toEqual([dep1.id, dep2.id]);
     });
 
-    it("creates a task with description", async () => {
-      const task = await store.create("Task with desc", {
-        description: "This is a **long** description\n\nWith multiple lines.",
+    it("creates a task with body", async () => {
+      const task = await store.create("Task with body", {
+        body: "This is a **long** body\n\nWith multiple lines.",
       });
 
-      expect(task.description).toBe(
-        "This is a **long** description\n\nWith multiple lines."
+      expect(task.body).toBe(
+        "This is a **long** body\n\nWith multiple lines."
       );
+    });
+
+    it("creates a task with parentId", async () => {
+      const parent = await store.create("Parent task");
+      const child = await store.create("Child task", { parentId: parent.id });
+
+      expect(child.parentId).toBe(parent.id);
+    });
+
+    it("throws when creating task with non-existent parent", async () => {
+      await expect(
+        store.create("Child", { parentId: "nonexistent" })
+      ).rejects.toThrow("Parent task not found");
     });
 
     it("creates a task with assignee", async () => {
@@ -138,13 +152,13 @@ describe("FileTaskStore", () => {
       expect(updated.id).toBe(task.id);
     });
 
-    it("updates task description", async () => {
+    it("updates task body", async () => {
       const task = await store.create("Task");
       const updated = await store.update(task.id, {
-        description: "New description",
+        body: "New body",
       });
 
-      expect(updated.description).toBe("New description");
+      expect(updated.body).toBe("New body");
     });
 
     it("updates task assignee", async () => {
@@ -656,7 +670,7 @@ describe("FileTaskStore", () => {
   describe("file persistence", () => {
     it("persists tasks across store instances", async () => {
       const task = await store.create("Persistent task", {
-        description: "With description",
+        body: "With body",
         assignee: "claude",
       });
       await store.addNote(task.id, "A note");
@@ -667,11 +681,152 @@ describe("FileTaskStore", () => {
 
       expect(retrieved).not.toBeNull();
       expect(retrieved?.title).toBe("Persistent task");
-      expect(retrieved?.description).toBe("With description");
+      expect(retrieved?.body).toBe("With body");
       expect(retrieved?.assignee).toBe("claude");
       expect(retrieved?.created).toBe(task.created);
       expect(retrieved?.notes).toHaveLength(1);
       expect(retrieved?.notes[0].content).toBe("A note");
+    });
+
+    it("persists parentId across store instances", async () => {
+      const parent = await store.create("Parent");
+      const child = await store.create("Child", { parentId: parent.id });
+
+      const store2 = new FileTaskStore(tempDir);
+      const retrieved = await store2.get(child.id);
+
+      expect(retrieved?.parentId).toBe(parent.id);
+    });
+  });
+
+  describe("parent-child hierarchy", () => {
+    describe("getAncestors", () => {
+      it("returns empty array for task with no parent", async () => {
+        const task = await store.create("Root task");
+
+        const ancestors = await store.getAncestors(task.id);
+
+        expect(ancestors).toEqual([]);
+      });
+
+      it("returns parent for child task", async () => {
+        const parent = await store.create("Parent");
+        const child = await store.create("Child", { parentId: parent.id });
+
+        const ancestors = await store.getAncestors(child.id);
+
+        expect(ancestors).toHaveLength(1);
+        expect(ancestors[0].id).toBe(parent.id);
+      });
+
+      it("returns full ancestor chain in order", async () => {
+        const grandparent = await store.create("Grandparent");
+        const parent = await store.create("Parent", {
+          parentId: grandparent.id,
+        });
+        const child = await store.create("Child", { parentId: parent.id });
+
+        const ancestors = await store.getAncestors(child.id);
+
+        expect(ancestors).toHaveLength(2);
+        expect(ancestors[0].id).toBe(parent.id);
+        expect(ancestors[1].id).toBe(grandparent.id);
+      });
+
+      it("throws for non-existent task", async () => {
+        await expect(store.getAncestors("nonexistent")).rejects.toThrow();
+      });
+    });
+
+    describe("getChildren", () => {
+      it("returns empty array for task with no children", async () => {
+        const task = await store.create("Leaf task");
+
+        const children = await store.getChildren(task.id);
+
+        expect(children).toEqual([]);
+      });
+
+      it("returns direct children", async () => {
+        const parent = await store.create("Parent");
+        const child1 = await store.create("Child 1", { parentId: parent.id });
+        const child2 = await store.create("Child 2", { parentId: parent.id });
+
+        const children = await store.getChildren(parent.id);
+
+        expect(children).toHaveLength(2);
+        expect(children.map((c) => c.id).sort()).toEqual(
+          [child1.id, child2.id].sort()
+        );
+      });
+
+      it("does not return grandchildren", async () => {
+        const grandparent = await store.create("Grandparent");
+        const parent = await store.create("Parent", {
+          parentId: grandparent.id,
+        });
+        await store.create("Grandchild", { parentId: parent.id });
+
+        const children = await store.getChildren(grandparent.id);
+
+        expect(children).toHaveLength(1);
+        expect(children[0].id).toBe(parent.id);
+      });
+    });
+
+    describe("setParent", () => {
+      it("sets parent on a task", async () => {
+        const parent = await store.create("Parent");
+        const task = await store.create("Task");
+
+        await store.setParent(task.id, parent.id);
+
+        const updated = await store.get(task.id);
+        expect(updated?.parentId).toBe(parent.id);
+      });
+
+      it("removes parent when set to null", async () => {
+        const parent = await store.create("Parent");
+        const task = await store.create("Task", { parentId: parent.id });
+
+        await store.setParent(task.id, null);
+
+        const updated = await store.get(task.id);
+        expect(updated?.parentId).toBeUndefined();
+      });
+
+      it("throws for non-existent task", async () => {
+        const parent = await store.create("Parent");
+
+        await expect(store.setParent("nonexistent", parent.id)).rejects.toThrow(
+          "Task not found"
+        );
+      });
+
+      it("throws for non-existent parent", async () => {
+        const task = await store.create("Task");
+
+        await expect(store.setParent(task.id, "nonexistent")).rejects.toThrow(
+          "Parent task not found"
+        );
+      });
+
+      it("throws when setting task as its own parent", async () => {
+        const task = await store.create("Task");
+
+        await expect(store.setParent(task.id, task.id)).rejects.toThrow(
+          "Task cannot be its own parent"
+        );
+      });
+
+      it("throws when creating circular reference", async () => {
+        const parent = await store.create("Parent");
+        const child = await store.create("Child", { parentId: parent.id });
+
+        await expect(store.setParent(parent.id, child.id)).rejects.toThrow(
+          "circular reference"
+        );
+      });
     });
   });
 });
