@@ -491,14 +491,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           placeholderTextColor={theme.colors.mutedForeground}
           style={[
             styles.textInput,
-            {
-              height: inputHeight,
-              minHeight: MIN_INPUT_HEIGHT,
-              maxHeight: MAX_INPUT_HEIGHT,
-            },
+            IS_WEB
+              ? {
+                  height: inputHeight,
+                  minHeight: MIN_INPUT_HEIGHT,
+                  maxHeight: MAX_INPUT_HEIGHT,
+                }
+              : {
+                  minHeight: MIN_INPUT_HEIGHT,
+                  maxHeight: MAX_INPUT_HEIGHT,
+                },
           ]}
           multiline
-          scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
+          scrollEnabled={IS_WEB ? inputHeight >= MAX_INPUT_HEIGHT : true}
           onContentSizeChange={handleContentSizeChange}
           editable={!isDictating && isConnected && !disabled}
           onKeyPress={
