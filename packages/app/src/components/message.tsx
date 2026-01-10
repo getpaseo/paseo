@@ -1168,12 +1168,8 @@ export const ToolCall = memo(function ToolCall({
       args,
       result,
       error,
-      parsedEditEntries,
-      parsedReadEntries,
-      parsedCommandDetails,
-      cwd,
     });
-  }, [openToolCall, toolName, kind, status, args, result, error, parsedEditEntries, parsedReadEntries, parsedCommandDetails, cwd]);
+  }, [openToolCall, toolName, kind, status, args, result, error]);
 
   // Dummy renderDetails to make badge tappable - actual content is rendered in the sheet
   const dummyRenderDetails = useCallback(() => null, []);

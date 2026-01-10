@@ -3,7 +3,7 @@ import { View, Text } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
-import type { DiffLine } from "@/utils/tool-call-parsers";
+import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
@@ -12,6 +12,8 @@ interface DiffViewerProps {
 }
 
 export function DiffViewer({ diffLines, maxHeight = 280, emptyLabel = "No changes to display" }: DiffViewerProps) {
+  const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
+
   if (!diffLines.length) {
     return (
       <View style={styles.emptyState}>
@@ -32,8 +34,9 @@ export function DiffViewer({ diffLines, maxHeight = 280, emptyLabel = "No change
         nestedScrollEnabled
         showsHorizontalScrollIndicator
         contentContainerStyle={styles.horizontalContent}
+        onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
       >
-        <View style={styles.linesContainer}>
+        <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
           {diffLines.map((line, index) => (
             <View
               key={`${line.type}-${index}`}
@@ -45,17 +48,36 @@ export function DiffViewer({ diffLines, maxHeight = 280, emptyLabel = "No change
                 line.type === "context" && styles.contextLine,
               ]}
             >
-              <Text
-                style={[
-                  styles.lineText,
-                  line.type === "header" && styles.headerText,
-                  line.type === "add" && styles.addText,
-                  line.type === "remove" && styles.removeText,
-                  line.type === "context" && styles.contextText,
-                ]}
-              >
-                {line.content}
-              </Text>
+              {line.segments ? (
+                <Text style={styles.lineText}>
+                  <Text style={line.type === "add" ? styles.addText : styles.removeText}>
+                    {line.content[0]}
+                  </Text>
+                  {line.segments.map((segment, segIdx) => (
+                    <Text
+                      key={segIdx}
+                      style={[
+                        line.type === "add" ? styles.addText : styles.removeText,
+                        segment.changed && (line.type === "add" ? styles.addHighlight : styles.removeHighlight),
+                      ]}
+                    >
+                      {segment.text}
+                    </Text>
+                  ))}
+                </Text>
+              ) : (
+                <Text
+                  style={[
+                    styles.lineText,
+                    line.type === "header" && styles.headerText,
+                    line.type === "add" && styles.addText,
+                    line.type === "remove" && styles.removeText,
+                    line.type === "context" && styles.contextText,
+                  ]}
+                >
+                  {line.content}
+                </Text>
+              )}
             </View>
           ))}
         </View>
@@ -92,16 +114,22 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.mutedForeground,
   },
   addLine: {
-    backgroundColor: theme.colors.palette.green[900],
+    backgroundColor: "rgba(46, 160, 67, 0.15)",
   },
   addText: {
-    color: theme.colors.palette.green[200],
+    color: theme.colors.foreground,
   },
   removeLine: {
-    backgroundColor: theme.colors.palette.red[900],
+    backgroundColor: "rgba(248, 81, 73, 0.1)",
   },
   removeText: {
-    color: theme.colors.palette.red[200],
+    color: theme.colors.foreground,
+  },
+  addHighlight: {
+    backgroundColor: "rgba(46, 160, 67, 0.4)",
+  },
+  removeHighlight: {
+    backgroundColor: "rgba(248, 81, 73, 0.35)",
   },
   contextLine: {
     backgroundColor: theme.colors.card,

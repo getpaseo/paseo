@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+export type DiffSegment = {
+  text: string;
+  changed: boolean;
+};
+
 export type DiffLine = {
   type: "add" | "remove" | "context" | "header";
   content: string;
+  segments?: DiffSegment[];
 };
 
 export type EditEntry = {
@@ -38,7 +44,112 @@ function splitIntoLines(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split("\n");
 }
 
-function buildLineDiff(originalText: string, updatedText: string): DiffLine[] {
+function splitIntoWords(text: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inWord = false;
+
+  for (const char of text) {
+    const isWordChar = /\w/.test(char);
+    if (isWordChar) {
+      if (!inWord && current) {
+        result.push(current);
+        current = "";
+      }
+      inWord = true;
+      current += char;
+    } else {
+      if (inWord && current) {
+        result.push(current);
+        current = "";
+      }
+      inWord = false;
+      current += char;
+    }
+  }
+  if (current) {
+    result.push(current);
+  }
+  return result;
+}
+
+function computeWordLevelDiff(oldLine: string, newLine: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
+  const oldWords = splitIntoWords(oldLine);
+  const newWords = splitIntoWords(newLine);
+
+  const m = oldWords.length;
+  const n = newWords.length;
+
+  // LCS to find common words
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = m - 1; i >= 0; i -= 1) {
+    for (let j = n - 1; j >= 0; j -= 1) {
+      if (oldWords[i] === newWords[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  // Mark which words are in LCS (unchanged)
+  const oldInLCS = new Set<number>();
+  const newInLCS = new Set<number>();
+
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (oldWords[i] === newWords[j]) {
+      oldInLCS.add(i);
+      newInLCS.add(j);
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+
+  // Build segments: consecutive unchanged or changed words merged
+  const buildSegments = (words: string[], inLCS: Set<number>): DiffSegment[] => {
+    if (words.length === 0) return [];
+
+    const segments: DiffSegment[] = [];
+    let currentText = "";
+    let currentChanged: boolean | null = null;
+
+    for (let idx = 0; idx < words.length; idx++) {
+      const word = words[idx];
+      const changed = !inLCS.has(idx);
+
+      if (currentChanged === null) {
+        currentText = word;
+        currentChanged = changed;
+      } else if (changed === currentChanged) {
+        currentText += word;
+      } else {
+        segments.push({ text: currentText, changed: currentChanged });
+        currentText = word;
+        currentChanged = changed;
+      }
+    }
+
+    if (currentText) {
+      segments.push({ text: currentText, changed: currentChanged ?? false });
+    }
+
+    return segments;
+  };
+
+  return {
+    oldSegments: buildSegments(oldWords, oldInLCS),
+    newSegments: buildSegments(newWords, newInLCS),
+  };
+}
+
+export function buildLineDiff(originalText: string, updatedText: string): DiffLine[] {
   const originalLines = splitIntoLines(originalText);
   const updatedLines = splitIntoLines(updatedText);
 
@@ -89,6 +200,22 @@ function buildLineDiff(originalText: string, updatedText: string): DiffLine[] {
   while (j < n) {
     diff.push({ type: "add", content: `+${updatedLines[j]}` });
     j += 1;
+  }
+
+  // Post-process to add word-level segments for adjacent remove/add pairs
+  for (let idx = 0; idx < diff.length - 1; idx++) {
+    const curr = diff[idx];
+    const next = diff[idx + 1];
+
+    if (curr.type === "remove" && next.type === "add") {
+      // Strip the leading -/+ from content for comparison
+      const oldLineText = curr.content.slice(1);
+      const newLineText = next.content.slice(1);
+
+      const { oldSegments, newSegments } = computeWordLevelDiff(oldLineText, newLineText);
+      curr.segments = oldSegments;
+      next.segments = newSegments;
+    }
   }
 
   return diff;
@@ -751,6 +878,118 @@ export function extractKeyValuePairs(result: unknown): KeyValuePair[] {
     key,
     value: stringifyValue(value),
   }));
+}
+
+// ---- Tool Call Display Discriminated Union ----
+
+const KeyValuePairsSchema = z.record(z.unknown()).transform((data) =>
+  Object.entries(data).map(([key, value]) => ({
+    key,
+    value: stringifyValue(value),
+  }))
+);
+
+// Shell input: { command: "pwd", description?: "..." }
+const ShellInputSchema = z.object({
+  command: z.union([z.string(), z.array(z.string())]),
+}).passthrough();
+
+// Shell result (when completed): { type: "command", command: "pwd", output: "..." }
+const ShellResultSchema = z.object({
+  type: z.literal("command"),
+  output: z.string(),
+}).passthrough();
+
+// Shell tool call display schema
+const ShellToolCallSchema = z
+  .object({
+    input: ShellInputSchema,
+    result: z.unknown(),
+  })
+  .transform((data) => {
+    const command = Array.isArray(data.input.command)
+      ? data.input.command.join(" ")
+      : data.input.command;
+
+    const resultParsed = ShellResultSchema.safeParse(data.result);
+    const output = resultParsed.success ? resultParsed.data.output : "";
+
+    return {
+      type: "shell" as const,
+      command,
+      output,
+    };
+  });
+
+// Edit input: { file_path: string, old_string: string, new_string: string }
+// Also supports old_str/new_str variants
+const EditInputSchema = z.union([
+  z.object({
+    file_path: z.string(),
+    old_string: z.string(),
+    new_string: z.string(),
+  }).passthrough(),
+  z.object({
+    file_path: z.string(),
+    old_str: z.string(),
+    new_str: z.string(),
+  }).passthrough(),
+]);
+
+// Edit result: { type: "file_edit", filePath: string, oldContent?: string, newContent?: string }
+const EditResultSchema = z.object({
+  type: z.literal("file_edit"),
+  filePath: z.string(),
+  oldContent: z.string().optional(),
+  newContent: z.string().optional(),
+}).passthrough();
+
+// Edit tool call display schema
+const EditToolCallSchema = z
+  .object({
+    input: EditInputSchema,
+    result: z.unknown(),
+  })
+  .transform((data): { type: "edit"; filePath: string; oldString: string; newString: string } => {
+    const filePath = data.input.file_path;
+    const oldString = "old_string" in data.input
+      ? (data.input as { old_string: string }).old_string
+      : (data.input as { old_str: string }).old_str;
+    const newString = "new_string" in data.input
+      ? (data.input as { new_string: string }).new_string
+      : (data.input as { new_str: string }).new_str;
+
+    return {
+      type: "edit",
+      filePath,
+      oldString,
+      newString,
+    };
+  });
+
+// Generic tool call display schema (fallback)
+const GenericToolCallSchema = z
+  .object({
+    input: z.unknown(),
+    result: z.unknown(),
+  })
+  .transform((data) => {
+    const inputPairs = KeyValuePairsSchema.safeParse(data.input);
+    const resultPairs = KeyValuePairsSchema.safeParse(data.result);
+
+    return {
+      type: "generic" as const,
+      input: inputPairs.success ? inputPairs.data : [],
+      output: resultPairs.success ? resultPairs.data : [],
+    };
+  });
+
+const ToolCallDisplaySchema = z.union([ShellToolCallSchema, EditToolCallSchema, GenericToolCallSchema]);
+
+export type ToolCallDisplay = z.infer<typeof ToolCallDisplaySchema>;
+
+export function parseToolCallDisplay(input: unknown, result: unknown): ToolCallDisplay {
+  return ToolCallDisplaySchema.parse({ input, result });
 }
 
 // ---- Principal Parameter Extraction ----
