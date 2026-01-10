@@ -27,6 +27,19 @@ function formatValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
+  // Extract content from tool_result objects
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    (value as { type: string }).type === "tool_result" &&
+    "content" in value
+  ) {
+    const content = (value as { content: unknown }).content;
+    if (typeof content === "string") {
+      return content;
+    }
+  }
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -66,7 +79,7 @@ export function ToolCallDetailsContent({
           contentContainerStyle={styles.jsonContent}
           showsHorizontalScrollIndicator={true}
         >
-          <Text style={styles.scrollText}>{display.command}</Text>
+          <Text selectable style={styles.scrollText}>{display.command}</Text>
         </ScrollView>
         {display.output ? (
           <ScrollView
@@ -80,7 +93,7 @@ export function ToolCallDetailsContent({
               nestedScrollEnabled
               showsHorizontalScrollIndicator={true}
             >
-              <Text style={styles.scrollText}>{display.output}</Text>
+              <Text selectable style={styles.scrollText}>{display.output}</Text>
             </ScrollView>
           </ScrollView>
         ) : null}
@@ -126,7 +139,7 @@ export function ToolCallDetailsContent({
               nestedScrollEnabled
               showsHorizontalScrollIndicator={true}
             >
-              <Text style={styles.scrollText}>{display.content}</Text>
+              <Text selectable style={styles.scrollText}>{display.content}</Text>
             </ScrollView>
           </ScrollView>
         ) : null}
@@ -151,7 +164,7 @@ export function ToolCallDetailsContent({
               contentContainerStyle={styles.jsonContent}
               showsHorizontalScrollIndicator={true}
             >
-              <Text style={styles.scrollText}>{pair.value}</Text>
+              <Text selectable style={styles.scrollText}>{pair.value}</Text>
             </ScrollView>
           </View>
         );
@@ -175,7 +188,7 @@ export function ToolCallDetailsContent({
               contentContainerStyle={styles.jsonContent}
               showsHorizontalScrollIndicator={true}
             >
-              <Text style={styles.scrollText}>{pair.value}</Text>
+              <Text selectable style={styles.scrollText}>{pair.value}</Text>
             </ScrollView>
           </View>
         );
@@ -195,7 +208,7 @@ export function ToolCallDetailsContent({
           contentContainerStyle={styles.jsonContent}
           showsHorizontalScrollIndicator={true}
         >
-          <Text style={[styles.scrollText, styles.errorText]}>
+          <Text selectable style={[styles.scrollText, styles.errorText]}>
             {errorText}
           </Text>
         </ScrollView>

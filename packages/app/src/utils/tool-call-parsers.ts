@@ -900,6 +900,13 @@ const ShellResultSchema = z.object({
   output: z.string(),
 }).passthrough();
 
+// Shell error result: { type: "tool_result", content: "Exit code 128\n...", is_error: true }
+const ShellErrorResultSchema = z.object({
+  type: z.literal("tool_result"),
+  content: z.string(),
+  is_error: z.literal(true),
+}).passthrough();
+
 // Shell tool call display schema
 const ShellToolCallSchema = z
   .object({
@@ -911,13 +918,30 @@ const ShellToolCallSchema = z
       ? data.input.command.join(" ")
       : data.input.command;
 
+    // Try parsing as success result first
     const resultParsed = ShellResultSchema.safeParse(data.result);
-    const output = resultParsed.success ? resultParsed.data.output : "";
+    if (resultParsed.success) {
+      return {
+        type: "shell" as const,
+        command,
+        output: resultParsed.data.output,
+      };
+    }
+
+    // Try parsing as error result
+    const errorParsed = ShellErrorResultSchema.safeParse(data.result);
+    if (errorParsed.success) {
+      return {
+        type: "shell" as const,
+        command,
+        output: errorParsed.data.content,
+      };
+    }
 
     return {
       type: "shell" as const,
       command,
-      output,
+      output: "",
     };
   });
 
