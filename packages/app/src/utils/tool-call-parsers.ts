@@ -967,6 +967,40 @@ const EditToolCallSchema = z
     };
   });
 
+// Read input: { file_path: string, offset?: number, limit?: number }
+const ReadInputSchema = z.object({
+  file_path: z.string(),
+  offset: z.number().optional(),
+  limit: z.number().optional(),
+}).passthrough();
+
+// Read result: { type: "file_read", filePath: string, content: string }
+const ReadResultSchema = z.object({
+  type: z.literal("file_read"),
+  filePath: z.string(),
+  content: z.string(),
+}).passthrough();
+
+// Read tool call display schema
+const ReadToolCallSchema = z
+  .object({
+    input: ReadInputSchema,
+    result: z.unknown(),
+  })
+  .transform((data): { type: "read"; filePath: string; content: string; offset?: number; limit?: number } => {
+    const filePath = data.input.file_path;
+    const resultParsed = ReadResultSchema.safeParse(data.result);
+    const content = resultParsed.success ? resultParsed.data.content : "";
+
+    return {
+      type: "read",
+      filePath,
+      content,
+      offset: data.input.offset,
+      limit: data.input.limit,
+    };
+  });
+
 // Generic tool call display schema (fallback)
 const GenericToolCallSchema = z
   .object({
@@ -984,7 +1018,7 @@ const GenericToolCallSchema = z
     };
   });
 
-const ToolCallDisplaySchema = z.union([ShellToolCallSchema, EditToolCallSchema, GenericToolCallSchema]);
+const ToolCallDisplaySchema = z.union([ShellToolCallSchema, EditToolCallSchema, ReadToolCallSchema, GenericToolCallSchema]);
 
 export type ToolCallDisplay = z.infer<typeof ToolCallDisplaySchema>;
 

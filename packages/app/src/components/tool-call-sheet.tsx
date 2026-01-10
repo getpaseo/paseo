@@ -218,6 +218,39 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
           ) : null}
         </View>
       );
+    } else if (toolCallDisplay.type === "read") {
+      // Read tool: show file path and content
+      sections.push(
+        <View key="read" style={styles.section}>
+          <Text style={styles.sectionTitle}>File</Text>
+          <View style={styles.fileBadge}>
+            <Text style={styles.fileBadgeText}>{toolCallDisplay.filePath}</Text>
+          </View>
+          {(toolCallDisplay.offset !== undefined || toolCallDisplay.limit !== undefined) ? (
+            <Text style={styles.rangeText}>
+              {toolCallDisplay.offset !== undefined ? `Offset: ${toolCallDisplay.offset}` : ""}
+              {toolCallDisplay.offset !== undefined && toolCallDisplay.limit !== undefined ? " • " : ""}
+              {toolCallDisplay.limit !== undefined ? `Limit: ${toolCallDisplay.limit}` : ""}
+            </Text>
+          ) : null}
+          {toolCallDisplay.content ? (
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={true}
+            >
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={true}
+              >
+                <Text style={styles.scrollText}>{toolCallDisplay.content}</Text>
+              </ScrollView>
+            </ScrollView>
+          ) : null}
+        </View>
+      );
     } else {
       // Generic tool: show input/output as key-value pairs
       if (toolCallDisplay.input.length > 0) {
@@ -412,6 +445,10 @@ const styles = StyleSheet.create((theme) => ({
   fileBadgeText: {
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.xs,
+  },
+  rangeText: {
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.xs,
   },
   diffContainer: {
