@@ -22,16 +22,16 @@ import {
   Search,
   Brain,
 } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
 import { createMarkdownStyles, createCompactMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
-import type { CommandDetails, EditEntry, ReadEntry } from "@/utils/tool-call-parsers";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
+import { ToolCallDetailsContent, useToolCallDetails } from "./tool-call-details";
 
 interface UserMessageProps {
   message: string;
@@ -845,7 +845,7 @@ interface ExpandableBadgeProps {
   secondaryLabel?: string;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
   isError?: boolean;
@@ -1110,9 +1110,6 @@ interface ToolCallProps {
   result?: any;
   error?: any;
   status: "executing" | "completed" | "failed";
-  parsedEditEntries?: EditEntry[];
-  parsedReadEntries?: ReadEntry[];
-  parsedCommandDetails?: CommandDetails | null;
   cwd?: string;
 }
 
@@ -1141,12 +1138,14 @@ export const ToolCall = memo(function ToolCall({
   result,
   error,
   status,
-  parsedEditEntries,
-  parsedReadEntries,
-  parsedCommandDetails,
   cwd,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Check if we're on mobile (use bottom sheet) or desktop (inline expand)
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   const kind = getToolKindFromName(toolName);
   const IconComponent = toolKindIcons[kind] || Wrench;
@@ -1157,33 +1156,56 @@ export const ToolCall = memo(function ToolCall({
     [args, cwd]
   );
 
-  // Check if there's any content to display in the sheet
+  // Check if there's any content to display
   const hasDetails = args !== undefined || result !== undefined || error !== undefined;
 
-  const handleOpenSheet = useCallback(() => {
-    openToolCall({
-      toolName,
-      kind,
-      status,
-      args,
-      result,
-      error,
-    });
-  }, [openToolCall, toolName, kind, status, args, result, error]);
+  // Parse tool call details for inline rendering
+  const { display, errorText } = useToolCallDetails({ args, result, error });
 
-  // Dummy renderDetails to make badge tappable - actual content is rendered in the sheet
-  const dummyRenderDetails = useCallback(() => null, []);
+  const handleToggle = useCallback(() => {
+    if (isMobile) {
+      // Mobile: open bottom sheet
+      openToolCall({
+        toolName,
+        kind,
+        status,
+        args,
+        result,
+        error,
+      });
+    } else {
+      // Desktop: toggle inline expansion
+      setIsExpanded((prev) => !prev);
+    }
+  }, [isMobile, openToolCall, toolName, kind, status, args, result, error]);
+
+  // Render inline details for desktop
+  const renderDetails = useCallback(() => {
+    if (isMobile) return null;
+    return (
+      <View style={toolCallInlineStyles.detailsContainer}>
+        <ToolCallDetailsContent display={display} errorText={errorText} maxHeight={400} />
+      </View>
+    );
+  }, [isMobile, display, errorText]);
 
   return (
     <ExpandableBadge
       label={toolName}
       secondaryLabel={principalParam}
       icon={IconComponent}
-      isExpanded={false}
-      onToggle={handleOpenSheet}
-      renderDetails={hasDetails ? dummyRenderDetails : undefined}
+      isExpanded={!isMobile && isExpanded}
+      onToggle={hasDetails ? handleToggle : undefined}
+      renderDetails={hasDetails && !isMobile ? renderDetails : (hasDetails ? () => null : undefined)}
       isLoading={status === "executing"}
       isError={status === "failed"}
     />
   );
 });
+
+const toolCallInlineStyles = StyleSheet.create((theme) => ({
+  detailsContainer: {
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+  },
+}));

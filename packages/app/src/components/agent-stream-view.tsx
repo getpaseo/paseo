@@ -280,9 +280,6 @@ export function AgentStreamView({
                 result={data.result}
                 error={data.error}
                 status={data.status as "executing" | "completed" | "failed"}
-                parsedEditEntries={data.parsedEdits}
-                parsedReadEntries={data.parsedReads}
-                parsedCommandDetails={data.parsedCommand ?? null}
                 cwd={agent.cwd}
               />
             );

@@ -7,17 +7,14 @@ import React, {
   ReactNode,
 } from "react";
 import { View, Text, Pressable } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
-import { Fonts } from "@/constants/theme";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
 } from "@gorhom/bottom-sheet";
 import { Pencil, Eye, SquareTerminal, Search, Wrench, X } from "lucide-react-native";
-import { parseToolCallDisplay, buildLineDiff, type DiffLine } from "@/utils/tool-call-parsers";
-import { DiffViewer } from "./diff-viewer";
+import { ToolCallDetailsContent, useToolCallDetails } from "./tool-call-details";
 
 // ----- Types -----
 
@@ -55,22 +52,6 @@ const toolKindIcons: Record<string, React.ComponentType<{ size?: number; color?:
   execute: SquareTerminal,
   search: Search,
 };
-
-// ----- Helper Functions -----
-
-function formatValue(value: unknown): string {
-  if (value === undefined) {
-    return "";
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
 
 // ----- Provider Component -----
 
@@ -150,184 +131,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     ? toolKindIcons[kind.toLowerCase()] || Wrench
     : Wrench;
 
-  const serializedError = useMemo(
-    () => (error !== undefined ? formatValue(error) : ""),
-    [error]
-  );
-
-  // Parse tool call display using discriminated union
-  const toolCallDisplay = useMemo(
-    () => parseToolCallDisplay(args, result),
-    [args, result]
-  );
-
-  // Compute diff lines for edit type
-  const editDiffLines = useMemo((): DiffLine[] => {
-    if (toolCallDisplay.type !== "edit") return [];
-    return buildLineDiff(toolCallDisplay.oldString, toolCallDisplay.newString);
-  }, [toolCallDisplay]);
-
-  // Render content sections
-  const renderSections = useCallback(() => {
-    const sections: ReactNode[] = [];
-
-    if (toolCallDisplay.type === "shell") {
-      // Shell tool: show command and output as single block
-      sections.push(
-        <View key="shell" style={styles.section}>
-          <Text style={styles.sectionTitle}>Command</Text>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            style={styles.jsonScroll}
-            contentContainerStyle={styles.jsonContent}
-            showsHorizontalScrollIndicator={true}
-          >
-            <Text style={styles.scrollText}>{toolCallDisplay.command}</Text>
-          </ScrollView>
-          {toolCallDisplay.output ? (
-            <ScrollView
-              style={styles.scrollArea}
-              contentContainerStyle={styles.scrollContent}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator={true}
-            >
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator={true}
-              >
-                <Text style={styles.scrollText}>{toolCallDisplay.output}</Text>
-              </ScrollView>
-            </ScrollView>
-          ) : null}
-        </View>
-      );
-    } else if (toolCallDisplay.type === "edit") {
-      // Edit tool: show file path and diff
-      sections.push(
-        <View key="edit" style={styles.section}>
-          <Text style={styles.sectionTitle}>File</Text>
-          <View style={styles.fileBadge}>
-            <Text style={styles.fileBadgeText}>{toolCallDisplay.filePath}</Text>
-          </View>
-          {editDiffLines.length > 0 ? (
-            <View style={styles.diffContainer}>
-              <DiffViewer diffLines={editDiffLines} maxHeight={300} />
-            </View>
-          ) : null}
-        </View>
-      );
-    } else if (toolCallDisplay.type === "read") {
-      // Read tool: show file path and content
-      sections.push(
-        <View key="read" style={styles.section}>
-          <Text style={styles.sectionTitle}>File</Text>
-          <View style={styles.fileBadge}>
-            <Text style={styles.fileBadgeText}>{toolCallDisplay.filePath}</Text>
-          </View>
-          {(toolCallDisplay.offset !== undefined || toolCallDisplay.limit !== undefined) ? (
-            <Text style={styles.rangeText}>
-              {toolCallDisplay.offset !== undefined ? `Offset: ${toolCallDisplay.offset}` : ""}
-              {toolCallDisplay.offset !== undefined && toolCallDisplay.limit !== undefined ? " • " : ""}
-              {toolCallDisplay.limit !== undefined ? `Limit: ${toolCallDisplay.limit}` : ""}
-            </Text>
-          ) : null}
-          {toolCallDisplay.content ? (
-            <ScrollView
-              style={styles.scrollArea}
-              contentContainerStyle={styles.scrollContent}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator={true}
-            >
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator={true}
-              >
-                <Text style={styles.scrollText}>{toolCallDisplay.content}</Text>
-              </ScrollView>
-            </ScrollView>
-          ) : null}
-        </View>
-      );
-    } else {
-      // Generic tool: show input/output as key-value pairs
-      if (toolCallDisplay.input.length > 0) {
-        sections.push(
-          <View key="input-header" style={styles.groupHeader}>
-            <Text style={styles.groupHeaderText}>Input</Text>
-          </View>
-        );
-        toolCallDisplay.input.forEach((pair, index) => {
-          sections.push(
-            <View key={`input-${index}-${pair.key}`} style={styles.section}>
-              <Text style={styles.sectionTitle}>{pair.key}</Text>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                style={styles.jsonScroll}
-                contentContainerStyle={styles.jsonContent}
-                showsHorizontalScrollIndicator={true}
-              >
-                <Text style={styles.scrollText}>{pair.value}</Text>
-              </ScrollView>
-            </View>
-          );
-        });
-      }
-
-      if (toolCallDisplay.output.length > 0) {
-        sections.push(
-          <View key="output-header" style={styles.groupHeader}>
-            <Text style={styles.groupHeaderText}>Output</Text>
-          </View>
-        );
-        toolCallDisplay.output.forEach((pair, index) => {
-          sections.push(
-            <View key={`output-${index}-${pair.key}`} style={styles.section}>
-              <Text style={styles.sectionTitle}>{pair.key}</Text>
-              <ScrollView
-                horizontal
-                nestedScrollEnabled
-                style={styles.jsonScroll}
-                contentContainerStyle={styles.jsonContent}
-                showsHorizontalScrollIndicator={true}
-              >
-                <Text style={styles.scrollText}>{pair.value}</Text>
-              </ScrollView>
-            </View>
-          );
-        });
-      }
-    }
-
-    // Always show errors if available
-    if (error !== undefined) {
-      sections.push(
-        <View key="error" style={styles.section}>
-          <Text style={[styles.sectionTitle, styles.errorText]}>Error</Text>
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            style={[styles.jsonScroll, styles.jsonScrollError]}
-            contentContainerStyle={styles.jsonContent}
-            showsHorizontalScrollIndicator={true}
-          >
-            <Text style={[styles.scrollText, styles.errorText]}>{serializedError}</Text>
-          </ScrollView>
-        </View>
-      );
-    }
-
-    if (sections.length === 0) {
-      return (
-        <Text style={styles.emptyStateText}>No additional details available</Text>
-      );
-    }
-
-    return sections;
-  }, [toolCallDisplay, editDiffLines, error, serializedError]);
+  const { display, errorText } = useToolCallDetails({ args, result, error });
 
   return (
     <View style={styles.container}>
@@ -349,7 +153,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         style={styles.content}
         contentContainerStyle={styles.contentContainer}
       >
-        {renderSections()}
+        <ToolCallDetailsContent display={display} errorText={errorText} />
       </BottomSheetScrollView>
     </View>
   );
@@ -406,92 +210,5 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[8],
-    gap: theme.spacing[6],
-  },
-  groupHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingBottom: theme.spacing[1],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  groupHeaderText: {
-    color: theme.colors.primary,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.bold,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  section: {
-    gap: theme.spacing[2],
-  },
-  sectionTitle: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  fileBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.base,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-  },
-  fileBadgeText: {
-    color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-  },
-  rangeText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.xs,
-  },
-  diffContainer: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.base,
-    overflow: "hidden",
-    backgroundColor: theme.colors.card,
-  },
-  scrollArea: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.base,
-    maxHeight: 260,
-    backgroundColor: theme.colors.card,
-  },
-  scrollContent: {
-    padding: theme.spacing[2],
-  },
-  scrollText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-    lineHeight: 18,
-  },
-  jsonScroll: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.base,
-    backgroundColor: theme.colors.card,
-  },
-  jsonScrollError: {
-    borderColor: theme.colors.destructive,
-  },
-  jsonContent: {
-    padding: theme.spacing[2],
-  },
-  errorText: {
-    color: theme.colors.destructive,
-  },
-  emptyStateText: {
-    color: theme.colors.mutedForeground,
-    fontSize: theme.fontSize.sm,
-    fontStyle: "italic",
   },
 }));
