@@ -6,7 +6,7 @@ import {
   useEffect,
   useMemo,
 } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
@@ -16,6 +16,7 @@ import {
   applyStreamEvent,
   generateMessageId,
   hydrateStreamState,
+  type StreamItem,
 } from "@/types/stream";
 import type {
   ActivityLogPayload,
@@ -28,8 +29,9 @@ import type { AgentLifecycleStatus } from "@server/server/agent/agent-manager";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type SessionState } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
+import { sendOsNotification } from "@/utils/os-notifications";
 
 // Re-export types from session-store for backward compatibility
 export type {
@@ -61,6 +63,110 @@ const derivePendingPermissionKey = (
     )}`;
 
   return `${agentId}:${fallbackId}`;
+};
+
+const NOTIFICATION_PREVIEW_LIMIT = 220;
+
+const normalizeNotificationText = (text: string): string =>
+  text.replace(/\s+/g, " ").trim();
+
+const truncateNotificationText = (text: string, limit: number): string => {
+  if (text.length <= limit) {
+    return text;
+  }
+  const trimmed = text.slice(0, Math.max(0, limit - 3)).trimEnd();
+  return trimmed.length > 0 ? `${trimmed}...` : text.slice(0, limit);
+};
+
+const buildNotificationPreview = (
+  text: string | null | undefined
+): string | null => {
+  if (!text) {
+    return null;
+  }
+  const normalized = normalizeNotificationText(text);
+  if (!normalized) {
+    return null;
+  }
+  return truncateNotificationText(normalized, NOTIFICATION_PREVIEW_LIMIT);
+};
+
+const safeStringify = (value: unknown): string | null => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+};
+
+const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item.kind === "assistant_message") {
+      return item.text;
+    }
+  }
+  return null;
+};
+
+const getLatestPermissionRequest = (
+  session: SessionState | undefined,
+  agentId: string
+): AgentPermissionRequest | null => {
+  if (!session) {
+    return null;
+  }
+
+  let latest: AgentPermissionRequest | null = null;
+  for (const pending of session.pendingPermissions.values()) {
+    if (pending.agentId === agentId) {
+      latest = pending.request;
+    }
+  }
+  if (latest) {
+    return latest;
+  }
+
+  const agentPending = session.agents.get(agentId)?.pendingPermissions;
+  if (agentPending && agentPending.length > 0) {
+    return agentPending[agentPending.length - 1] as AgentPermissionRequest;
+  }
+
+  return null;
+};
+
+const buildPermissionDetails = (
+  request: AgentPermissionRequest | null
+): string | null => {
+  if (!request) {
+    return null;
+  }
+  const title = request.title?.trim();
+  const description = request.description?.trim();
+  const details: string[] = [];
+  if (title) {
+    details.push(title);
+  }
+  if (description && description !== title) {
+    details.push(description);
+  }
+  if (details.length > 0) {
+    return details.join(" - ");
+  }
+
+  const inputPreview = request.input ? safeStringify(request.input) : null;
+  if (inputPreview) {
+    return inputPreview;
+  }
+
+  const metadataPreview = request.metadata
+    ? safeStringify(request.metadata)
+    : null;
+  if (metadataPreview) {
+    return metadataPreview;
+  }
+
+  return request.name?.trim() || request.kind;
 };
 
 type GitDiffResponseMessage = Extract<
@@ -328,6 +434,85 @@ export function SessionProvider({
   const hasRequestedInitialSnapshotRef = useRef(false);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
+  );
+  const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
+  const appStateRef = useRef(AppState.currentState);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      appStateRef.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  const notifyAgentAttention = useCallback(
+    (params: {
+      agentId: string;
+      reason: "finished" | "error" | "permission";
+      timestamp: string;
+    }) => {
+      const appState = appStateRef.current;
+      const session = useSessionStore.getState().sessions[serverId];
+      const focusedAgentId = session?.focusedAgentId ?? null;
+      if (params.reason === "error") {
+        return;
+      }
+      const isActive = appState ? appState === "active" : true;
+      const isAwayFromAgent = !isActive || focusedAgentId !== params.agentId;
+      if (!isAwayFromAgent) {
+        return;
+      }
+
+      const timestampMs = new Date(params.timestamp).getTime();
+      const lastNotified = attentionNotifiedRef.current.get(params.agentId);
+      if (lastNotified && lastNotified >= timestampMs) {
+        return;
+      }
+      attentionNotifiedRef.current.set(params.agentId, timestampMs);
+
+      const title =
+        params.reason === "permission"
+          ? "Agent needs permission"
+          : "Agent finished";
+      let preview: string | null = null;
+
+      if (params.reason === "finished") {
+        const head = session?.agentStreamHead.get(params.agentId) ?? [];
+        const tail = session?.agentStreamTail.get(params.agentId) ?? [];
+        const lastMessage =
+          findLatestAssistantMessageText(head) ??
+          findLatestAssistantMessageText(tail);
+        preview = buildNotificationPreview(lastMessage);
+      } else if (params.reason === "permission") {
+        const permissionRequest = getLatestPermissionRequest(
+          session,
+          params.agentId
+        );
+        preview = buildNotificationPreview(
+          buildPermissionDetails(permissionRequest)
+        );
+      }
+
+      const body =
+        preview ??
+        (params.reason === "permission"
+          ? "Permission requested."
+          : "Finished working.");
+
+      void sendOsNotification({
+        title,
+        body,
+        data: {
+          agentId: params.agentId,
+          serverId,
+          reason: params.reason,
+        },
+      });
+    },
+    [serverId]
   );
 
   // Buffer for streaming audio chunks
@@ -883,6 +1068,14 @@ export function SessionProvider({
 
       console.log("[Session] agent_stream", { agentId, event, timestamp });
 
+      if (event.type === "attention_required") {
+        notifyAgentAttention({
+          agentId,
+          reason: event.reason,
+          timestamp: event.timestamp,
+        });
+      }
+
       const session = useSessionStore.getState().sessions[serverId];
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
@@ -1431,6 +1624,7 @@ export function SessionProvider({
     updateConnectionStatus,
     getSession,
     saveDraftInput,
+    notifyAgentAttention,
   ]);
 
   const initializeAgent = useCallback(
