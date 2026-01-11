@@ -152,6 +152,25 @@ export type AgentRuntimeInfo = {
   extra?: AgentMetadata;
 };
 
+/**
+ * Represents a slash command available in an agent session.
+ * Commands are executed by sending them as prompts with / prefix.
+ */
+export type AgentSlashCommand = {
+  name: string;
+  description: string;
+  argumentHint: string;
+};
+
+/**
+ * Result from executing a slash command.
+ */
+export type AgentCommandResult = {
+  text: string;
+  timeline: AgentTimelineItem[];
+  usage?: AgentUsage;
+};
+
 export type AgentControlMcpConfig = {
   url: string;
   headers?: Record<string, string>;
@@ -213,6 +232,18 @@ export interface AgentSession {
    * (for parent-child agent relationships).
    */
   setManagedAgentId?(agentId: string): void;
+  /**
+   * List available slash commands for this session.
+   * Commands are provider-specific - Claude supports skills and built-in commands.
+   */
+  listCommands?(): Promise<AgentSlashCommand[]>;
+  /**
+   * Execute a slash command by name.
+   * The command name should NOT include the leading "/" - it will be added automatically.
+   * @param commandName The command name (e.g., "help", "context")
+   * @param args Optional arguments to pass to the command
+   */
+  executeCommand?(commandName: string, args?: string): Promise<AgentCommandResult>;
 }
 
 export interface ListModelsOptions {

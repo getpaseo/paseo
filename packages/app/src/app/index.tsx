@@ -10,6 +10,9 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { Monitor } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { AgentInputArea } from "@/components/agent-input-area";
@@ -79,8 +82,25 @@ type DraftAgentParams = {
 export default function HomeScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { connectionStates } = useDaemonConnections();
   const params = useLocalSearchParams<DraftAgentParams>();
+
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const bottomInset = useSharedValue(insets.bottom);
+
+  useEffect(() => {
+    bottomInset.value = insets.bottom;
+  }, [insets.bottom, bottomInset]);
+
+  const animatedKeyboardStyle = useAnimatedStyle(() => {
+    "worklet";
+    const absoluteHeight = Math.abs(keyboardHeight.value);
+    const shift = Math.max(0, absoluteHeight - bottomInset.value);
+    return {
+      transform: [{ translateY: -shift }],
+    };
+  });
 
   const resolvedServerId = getParamValue(params.serverId);
   const resolvedProvider = getValidProvider(getParamValue(params.provider));
@@ -569,7 +589,8 @@ export default function HomeScreen() {
             }
           />
 
-        <ScrollView style={styles.contentContainer} contentContainerStyle={styles.configScrollContent}>
+        <Animated.View style={[styles.contentContainer, animatedKeyboardStyle]}>
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.configScrollContent}>
           <View style={styles.configSection}>
             <WorkingDirectoryDropdown
               workingDir={workingDir}
@@ -658,6 +679,7 @@ export default function HomeScreen() {
             </View>
           ) : null}
         </ScrollView>
+        </Animated.View>
         <View style={styles.inputAreaWrapper}>
           <AgentInputArea
             agentId={DRAFT_AGENT_ID}
@@ -694,6 +716,10 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   contentContainer: {
+    flex: 1,
+    overflow: "hidden",
+  },
+  scrollView: {
     flex: 1,
   },
   inputAreaWrapper: {
