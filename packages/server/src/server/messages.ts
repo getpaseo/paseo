@@ -523,6 +523,12 @@ export const ClearAgentAttentionMessageSchema = z.object({
   agentId: z.union([z.string(), z.array(z.string())]),
 });
 
+export const ListCommandsRequestSchema = z.object({
+  type: z.literal("list_commands_request"),
+  agentId: z.string(),
+  requestId: z.string().optional(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   RealtimeAudioChunkMessageSchema,
@@ -550,6 +556,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileDownloadTokenRequestSchema,
   GitRepoInfoRequestMessageSchema,
   ClearAgentAttentionMessageSchema,
+  ListCommandsRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -805,6 +812,22 @@ export const ListProviderModelsResponseMessageSchema = z.object({
   }),
 });
 
+const AgentSlashCommandSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  argumentHint: z.string(),
+});
+
+export const ListCommandsResponseSchema = z.object({
+  type: z.literal("list_commands_response"),
+  payload: z.object({
+    agentId: z.string(),
+    commands: z.array(AgentSlashCommandSchema),
+    error: z.string().nullable(),
+    requestId: z.string().optional(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -830,6 +853,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileDownloadTokenResponseSchema,
   GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
+  ListCommandsResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -888,6 +912,8 @@ export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSc
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
+export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
+export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

@@ -36,6 +36,7 @@ import {
   ToolCall,
   AgentThoughtMessage,
   TodoListCard,
+  MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "./message";
 import { DiffViewer } from "./diff-viewer";
@@ -55,6 +56,10 @@ import {
 import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+
+const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
+const isToolSequenceItem = (item?: StreamItem) =>
+  item?.kind === "tool_call" || item?.kind === "thought";
 type PermissionResolvedMessage = Extract<
   SessionOutboundMessage,
   { type: "agent_permission_resolved" }
@@ -75,6 +80,7 @@ export function AgentStreamView({
   pendingPermissions,
 }: AgentStreamViewProps) {
   const flatListRef = useRef<FlatList<StreamItem>>(null);
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
@@ -257,43 +263,90 @@ export function AgentStreamView({
     setIsNearBottom(true);
   }
 
-  const renderStreamItem = useCallback(
-    ({ item }: ListRenderItemInfo<StreamItem>) => {
-      let content: React.ReactNode = null;
+  const flatListData = useMemo(() => {
+    return [...streamItems].reverse();
+  }, [streamItems]);
 
+  const tightGap = theme.spacing[1]; // 4px
+  const looseGap = theme.spacing[4]; // 16px
+
+  // In inverted lists, marginBottom renders as visual gap ABOVE the item.
+  // Index 0 is visually at the bottom, so use the item ABOVE (index + 1) to compute spacing.
+  const getGapAbove = useCallback(
+    (item: StreamItem, index: number) => {
+      const aboveItem = flatListData[index + 1];
+      if (!aboveItem) {
+        // This is the topmost item; nothing above it visually.
+        return 0;
+      }
+
+      // Same type groups get tight gap (4px)
+      if (isUserMessageItem(item) && isUserMessageItem(aboveItem)) {
+        return tightGap;
+      }
+
+      if (isToolSequenceItem(item) && isToolSequenceItem(aboveItem)) {
+        return tightGap;
+      }
+
+      // Different types get loose gap (16px)
+      return looseGap;
+    },
+    [flatListData, looseGap, tightGap]
+  );
+
+  const renderStreamItemContent = useCallback(
+    (item: StreamItem, index: number) => {
       switch (item.kind) {
-        case "user_message":
-          content = (
+        case "user_message": {
+          // In inverted list: index+1 is the item above, index-1 is below.
+          const prevItem = flatListData[index + 1];
+          const nextItem = flatListData[index - 1];
+          const isFirstInGroup = prevItem?.kind !== "user_message";
+          const isLastInGroup = nextItem?.kind !== "user_message";
+          return (
             <UserMessage
               message={item.text}
               timestamp={item.timestamp.getTime()}
+              isFirstInGroup={isFirstInGroup}
+              isLastInGroup={isLastInGroup}
             />
           );
-          break;
+        }
 
         case "assistant_message":
-          content = (
+          return (
             <AssistantMessage
               message={item.text}
               timestamp={item.timestamp.getTime()}
               onInlinePathPress={handleInlinePathPress}
             />
           );
-          break;
 
-        case "thought":
-          console.log("[AgentStreamView] renderStreamItem", { item });
-          content = (
-            <AgentThoughtMessage message={item.text} status={item.status} />
+        case "thought": {
+          // In inverted list: index+1 is the item above, index-1 is below.
+          const nextItem = flatListData[index - 1];
+          const isLastInSequence =
+            nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+          return (
+            <AgentThoughtMessage
+              message={item.text}
+              status={item.status}
+              isLastInSequence={isLastInSequence}
+            />
           );
-          break;
+        }
 
         case "tool_call": {
           const { payload } = item;
+          // In inverted list: index+1 is the item above, index-1 is below.
+          const nextItem = flatListData[index - 1];
+          const isLastInSequence =
+            nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
 
           if (payload.source === "agent") {
             const data = payload.data;
-            content = (
+            return (
               <ToolCall
                 toolName={data.name}
                 args={data.input}
@@ -301,24 +354,25 @@ export function AgentStreamView({
                 error={data.error}
                 status={data.status as "executing" | "completed" | "failed"}
                 cwd={agent.cwd}
-              />
-            );
-          } else {
-            const data = payload.data;
-            content = (
-              <ToolCall
-                toolName={data.toolName}
-                args={data.arguments}
-                result={data.result}
-                status={data.status}
+                isLastInSequence={isLastInSequence}
               />
             );
           }
-          break;
+
+          const data = payload.data;
+          return (
+            <ToolCall
+              toolName={data.toolName}
+              args={data.arguments}
+              result={data.result}
+              status={data.status}
+              isLastInSequence={isLastInSequence}
+            />
+          );
         }
 
         case "activity_log":
-          content = (
+          return (
             <ActivityLog
               type={item.activityType}
               message={item.message}
@@ -326,29 +380,44 @@ export function AgentStreamView({
               metadata={item.metadata}
             />
           );
-          break;
 
         case "todo_list":
-          content = (
+          return (
             <TodoListCard
               provider={item.provider}
               timestamp={item.timestamp.getTime()}
               items={item.items}
             />
           );
-          break;
 
         default:
-          content = null;
+          return null;
       }
+    },
+    [handleInlinePathPress, agent.cwd, flatListData]
+  );
 
+  const renderStreamItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<StreamItem>) => {
+      const content = renderStreamItemContent(item, index);
       if (!content) {
         return null;
       }
 
-      return <View style={stylesheet.streamItemWrapper}>{content}</View>;
+      const gap = getGapAbove(item, index);
+
+      return (
+        <View
+          style={[
+            stylesheet.streamItemWrapper,
+            gap ? { marginBottom: gap } : null,
+          ]}
+        >
+          {content}
+        </View>
+      );
     },
-    [handleInlinePathPress, agent.cwd]
+    [getGapAbove, renderStreamItemContent]
   );
 
   const pendingPermissionItems = useMemo(
@@ -391,18 +460,12 @@ export function AgentStreamView({
           ) : null}
 
           {hasHeadItems
-            ? [...streamHead].reverse().map((item) => {
-                const rendered = renderStreamItem({
-                  item,
-                  index: 0,
-                  separators: {
-                    highlight: () => {},
-                    unhighlight: () => {},
-                    updateProps: () => {},
-                  },
-                });
+            ? [...streamHead].reverse().map((item, index) => {
+                const rendered = renderStreamItemContent(item, index);
                 return rendered ? (
-                  <View key={item.id}>{rendered}</View>
+                  <View key={item.id} style={stylesheet.streamItemWrapper}>
+                    {rendered}
+                  </View>
                 ) : null;
               })
             : null}
@@ -414,12 +477,8 @@ export function AgentStreamView({
     showWorkingIndicator,
     wsOrInert,
     streamHead,
-    renderStreamItem,
+    renderStreamItemContent,
   ]);
-
-  const flatListData = useMemo(() => {
-    return [...streamItems].reverse();
-  }, [streamItems]);
 
   const flatListExtraData = useMemo(
     () => ({
@@ -432,39 +491,41 @@ export function AgentStreamView({
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
-        <FlatList
-          ref={flatListRef}
-          data={flatListData}
-          renderItem={renderStreamItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{
-            paddingVertical: 0,
-            flexGrow: 1,
-          }}
-          style={stylesheet.list}
-          onScroll={handleScroll}
-          onScrollBeginDrag={handleScrollBeginDrag}
-          onScrollEndDrag={handleScrollEnd}
-          onMomentumScrollBegin={handleMomentumScrollBegin}
-          onMomentumScrollEnd={handleScrollEnd}
-          scrollEventThrottle={16}
-          ListEmptyComponent={
-            <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
-              <Text style={stylesheet.emptyStateText}>
-                Start chatting with this agent...
-              </Text>
-            </View>
-          }
-          ListHeaderComponent={listHeaderComponent}
-          extraData={flatListExtraData}
-          maintainVisibleContentPosition={{
-            minIndexForVisible: 0,
-            autoscrollToTopThreshold: 40,
-          }}
-          initialNumToRender={12}
-          windowSize={10}
-          inverted
-        />
+        <MessageOuterSpacingProvider disableOuterSpacing>
+          <FlatList
+            ref={flatListRef}
+            data={flatListData}
+            renderItem={renderStreamItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{
+              paddingVertical: 0,
+              flexGrow: 1,
+            }}
+            style={stylesheet.list}
+            onScroll={handleScroll}
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScrollEndDrag={handleScrollEnd}
+            onMomentumScrollBegin={handleMomentumScrollBegin}
+            onMomentumScrollEnd={handleScrollEnd}
+            scrollEventThrottle={16}
+            ListEmptyComponent={
+              <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+                <Text style={stylesheet.emptyStateText}>
+                  Start chatting with this agent...
+                </Text>
+              </View>
+            }
+            ListHeaderComponent={listHeaderComponent}
+            extraData={flatListExtraData}
+            maintainVisibleContentPosition={{
+              minIndexForVisible: 0,
+              autoscrollToTopThreshold: 40,
+            }}
+            initialNumToRender={12}
+            windowSize={10}
+            inverted
+          />
+        </MessageOuterSpacingProvider>
 
         {/* Scroll to bottom button */}
         {!isNearBottom && (

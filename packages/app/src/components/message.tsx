@@ -1,5 +1,14 @@
 import { View, Text, Pressable, Animated } from "react-native";
-import { useState, useEffect, useRef, memo, useMemo, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  memo,
+  useMemo,
+  useCallback,
+  createContext,
+  useContext,
+} from "react";
 import type { ReactNode, ComponentType } from "react";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
@@ -46,15 +55,46 @@ import {
 interface UserMessageProps {
   message: string;
   timestamp: number;
+  isFirstInGroup?: boolean;
+  isLastInGroup?: boolean;
+  disableOuterSpacing?: boolean;
+}
+
+const MessageOuterSpacingContext = createContext(false);
+
+export function MessageOuterSpacingProvider({
+  disableOuterSpacing,
+  children,
+}: {
+  disableOuterSpacing: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <MessageOuterSpacingContext.Provider value={disableOuterSpacing}>
+      {children}
+    </MessageOuterSpacingContext.Provider>
+  );
+}
+
+function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
+  const contextValue = useContext(MessageOuterSpacingContext);
+  return disableOuterSpacing ?? contextValue;
 }
 
 const userMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    marginBottom: theme.spacing[4],
-    marginTop: theme.spacing[4],
     paddingHorizontal: theme.spacing[2],
+  },
+  containerSpacing: {
+    marginBottom: theme.spacing[1],
+  },
+  containerFirstInGroup: {
+    marginTop: theme.spacing[4],
+  },
+  containerLastInGroup: {
+    marginBottom: theme.spacing[4],
   },
   bubble: {
     backgroundColor: theme.colors.muted,
@@ -62,7 +102,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
-    maxWidth: "80%",
   },
   text: {
     color: theme.colors.foreground,
@@ -90,7 +129,12 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
 export const UserMessage = memo(function UserMessage({
   message,
   timestamp,
+  isFirstInGroup = true,
+  isLastInGroup = true,
+  disableOuterSpacing,
 }: UserMessageProps) {
+  const resolvedDisableOuterSpacing =
+    useDisableOuterSpacing(disableOuterSpacing);
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -121,7 +165,19 @@ export const UserMessage = memo(function UserMessage({
   }, []);
 
   return (
-    <View style={userMessageStylesheet.container}>
+    <View
+      style={[
+        userMessageStylesheet.container,
+        !resolvedDisableOuterSpacing &&
+          userMessageStylesheet.containerSpacing,
+        !resolvedDisableOuterSpacing &&
+          isFirstInGroup &&
+          userMessageStylesheet.containerFirstInGroup,
+        !resolvedDisableOuterSpacing &&
+          isLastInGroup &&
+          userMessageStylesheet.containerLastInGroup,
+      ]}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Copy message"
@@ -157,13 +213,16 @@ interface AssistantMessageProps {
   message: string;
   timestamp: number;
   onInlinePathPress?: (target: InlinePathTarget) => void;
+  disableOuterSpacing?: boolean;
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
-    marginBottom: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
+  },
+  containerSpacing: {
+    marginBottom: theme.spacing[4],
   },
   // Used in custom markdownRules for inline code styling
   markdownCodeInline: {
@@ -194,7 +253,12 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
 const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   container: {
     marginHorizontal: theme.spacing[2],
-    marginBottom: theme.spacing[2],
+  },
+  containerSpacing: {
+    marginBottom: theme.spacing[1],
+  },
+  containerLastInSequence: {
+    marginBottom: theme.spacing[4],
   },
   pressable: {
     borderRadius: theme.borderRadius.lg,
@@ -347,8 +411,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   message,
   timestamp,
   onInlinePathPress,
+  disableOuterSpacing,
 }: AssistantMessageProps) {
   const { theme } = useUnistyles();
+  const resolvedDisableOuterSpacing =
+    useDisableOuterSpacing(disableOuterSpacing);
   const lastPathRef = useRef<string | null>(null);
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
@@ -499,7 +566,13 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [onInlinePathPress]);
 
   return (
-    <View style={assistantMessageStylesheet.container}>
+    <View
+      style={[
+        assistantMessageStylesheet.container,
+        !resolvedDisableOuterSpacing &&
+          assistantMessageStylesheet.containerSpacing,
+      ]}
+    >
       <Markdown style={markdownStyles} rules={markdownRules}>
         {message}
       </Markdown>
@@ -516,14 +589,17 @@ interface ActivityLogProps {
   artifactType?: string;
   title?: string;
   onArtifactClick?: (artifactId: string) => void;
+  disableOuterSpacing?: boolean;
 }
 
 const activityLogStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     marginHorizontal: theme.spacing[2],
-    marginBottom: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
     overflow: "hidden",
+  },
+  pressableSpacing: {
+    marginBottom: theme.spacing[1],
   },
   pressableActive: {
     opacity: 0.7,
@@ -597,7 +673,10 @@ export const ActivityLog = memo(function ActivityLog({
   artifactType,
   title,
   onArtifactClick,
+  disableOuterSpacing,
 }: ActivityLogProps) {
+  const resolvedDisableOuterSpacing =
+    useDisableOuterSpacing(disableOuterSpacing);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const typeConfig = {
@@ -648,6 +727,8 @@ export const ActivityLog = memo(function ActivityLog({
       disabled={!isInteractive}
       style={[
         activityLogStylesheet.pressable,
+        !resolvedDisableOuterSpacing &&
+          activityLogStylesheet.pressableSpacing,
         config.bg,
         isInteractive && activityLogStylesheet.pressableActive,
       ]}
@@ -694,6 +775,7 @@ interface TodoListCardProps {
   provider: AgentProvider;
   timestamp: number;
   items: TodoEntry[];
+  disableOuterSpacing?: boolean;
 }
 
 function formatPlanTimestamp(timestamp: number): string {
@@ -711,6 +793,8 @@ function formatPlanTimestamp(timestamp: number): string {
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
   container: {
     marginHorizontal: theme.spacing[2],
+  },
+  containerSpacing: {
     marginBottom: theme.spacing[2],
   },
   card: {
@@ -799,7 +883,10 @@ export const TodoListCard = memo(function TodoListCard({
   provider,
   timestamp,
   items,
+  disableOuterSpacing,
 }: TodoListCardProps) {
+  const resolvedDisableOuterSpacing =
+    useDisableOuterSpacing(disableOuterSpacing);
   const providerLabel = useMemo(() => {
     const definition = getAgentProviderDefinition(provider);
     return definition?.label ?? provider;
@@ -818,7 +905,13 @@ export const TodoListCard = memo(function TodoListCard({
   const iconColor = theme.colors.background;
 
   return (
-    <View style={todoListCardStylesheet.container}>
+    <View
+      style={[
+        todoListCardStylesheet.container,
+        !resolvedDisableOuterSpacing &&
+          todoListCardStylesheet.containerSpacing,
+      ]}
+    >
       <View style={todoListCardStylesheet.card}>
         <View style={todoListCardStylesheet.header}>
           <View style={todoListCardStylesheet.headerMeta}>
@@ -877,6 +970,8 @@ export const TodoListCard = memo(function TodoListCard({
 interface AgentThoughtMessageProps {
   message: string;
   status?: ThoughtStatus;
+  isLastInSequence?: boolean;
+  disableOuterSpacing?: boolean;
 }
 
 interface ExpandableBadgeProps {
@@ -888,6 +983,8 @@ interface ExpandableBadgeProps {
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
   isError?: boolean;
+  isLastInSequence?: boolean;
+  disableOuterSpacing?: boolean;
 }
 
 const ExpandableBadge = memo(function ExpandableBadge({
@@ -899,8 +996,12 @@ const ExpandableBadge = memo(function ExpandableBadge({
   renderDetails,
   isLoading = false,
   isError = false,
+  isLastInSequence = false,
+  disableOuterSpacing,
 }: ExpandableBadgeProps) {
   const { theme } = useUnistyles();
+  const resolvedDisableOuterSpacing =
+    useDisableOuterSpacing(disableOuterSpacing);
   const hasDetails = Boolean(renderDetails);
   const detailContent = hasDetails && isExpanded ? renderDetails?.() : null;
 
@@ -956,7 +1057,16 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }
 
   return (
-    <View style={expandableBadgeStylesheet.container}>
+    <View
+      style={[
+        expandableBadgeStylesheet.container,
+        !resolvedDisableOuterSpacing &&
+          expandableBadgeStylesheet.containerSpacing,
+        !resolvedDisableOuterSpacing &&
+          isLastInSequence &&
+          expandableBadgeStylesheet.containerLastInSequence,
+      ]}
+    >
       <Pressable
         onPress={hasDetails ? onToggle : undefined}
         disabled={!hasDetails}
@@ -1016,6 +1126,8 @@ const agentThoughtStylesheet = StyleSheet.create((theme) => ({
 export const AgentThoughtMessage = memo(function AgentThoughtMessage({
   message,
   status = "ready",
+  isLastInSequence = false,
+  disableOuterSpacing,
 }: AgentThoughtMessageProps) {
   const { theme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1171,6 +1283,8 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
       onToggle={toggle}
       renderDetails={renderDetails}
       isLoading={status !== "ready"}
+      isLastInSequence={isLastInSequence}
+      disableOuterSpacing={disableOuterSpacing}
     />
   );
 });
@@ -1182,6 +1296,8 @@ interface ToolCallProps {
   error?: any;
   status: "executing" | "completed" | "failed";
   cwd?: string;
+  isLastInSequence?: boolean;
+  disableOuterSpacing?: boolean;
 }
 
 // Icon mapping for tool kinds
@@ -1212,6 +1328,8 @@ export const ToolCall = memo(function ToolCall({
   error,
   status,
   cwd,
+  isLastInSequence = false,
+  disableOuterSpacing,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1284,6 +1402,8 @@ export const ToolCall = memo(function ToolCall({
       }
       isLoading={status === "executing"}
       isError={status === "failed"}
+      isLastInSequence={isLastInSequence}
+      disableOuterSpacing={disableOuterSpacing}
     />
   );
 });

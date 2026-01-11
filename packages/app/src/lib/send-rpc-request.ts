@@ -105,6 +105,7 @@ const RESPONSE_TYPE_MAP: Record<string, SessionOutboundMessage["type"]> = {
   git_repo_info_request: "git_repo_info_response",
   list_provider_models_request: "list_provider_models_response",
   list_conversations_request: "list_conversations_response",
+  list_commands_request: "list_commands_response",
   create_agent_request: "agent_state",
   refresh_agent_request: "agent_state",
   initialize_agent_request: "initialize_agent_request",

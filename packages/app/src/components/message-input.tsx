@@ -64,6 +64,8 @@ export interface MessageInputProps {
   isAgentRunning?: boolean;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
+  /** Intercept key press events before default handling. Return true to prevent default. */
+  onKeyPress?: (event: { key: string; preventDefault: () => void }) => boolean;
 }
 
 export interface MessageInputRef {
@@ -110,6 +112,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       rightContent,
       isAgentRunning = false,
       onQueue,
+      onKeyPress: onKeyPressCallback,
     },
     ref
   ) {
@@ -383,6 +386,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
   function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
     if (!shouldHandleDesktopSubmit) return;
+
+    // Allow parent to intercept key events (e.g., for autocomplete navigation)
+    if (onKeyPressCallback) {
+      const handled = onKeyPressCallback({
+        key: event.nativeEvent.key,
+        preventDefault: () => event.preventDefault(),
+      });
+      if (handled) return;
+    }
+
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
 
     // Cmd+B or Ctrl+B: toggle sidebar

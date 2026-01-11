@@ -30,6 +30,8 @@ import {
 } from "./message-input";
 import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { Theme } from "@/styles/theme";
+import { CommandAutocomplete } from "./command-autocomplete";
+import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 
 type QueuedMessage = {
   id: string;
@@ -127,6 +129,33 @@ export function AgentInputArea({
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
+  const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+
+  // Command autocomplete logic
+  const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
+  const commandFilter = showCommandAutocomplete ? userInput.slice(1) : "";
+
+  // Prefetch commands when agent is available (not on new agent screen)
+  const isRealAgent = agentId && !agentId.startsWith("__");
+  const { commands } = useAgentCommandsQuery({
+    serverId,
+    agentId,
+    enabled: !!isRealAgent && !!serverId,
+  });
+
+  // Filter commands for keyboard navigation
+  const filteredCommands = useMemo(() => {
+    if (!showCommandAutocomplete) return [];
+    const filterLower = commandFilter.toLowerCase();
+    return commands.filter((cmd) =>
+      cmd.name.toLowerCase().includes(filterLower)
+    );
+  }, [commands, commandFilter, showCommandAutocomplete]);
+
+  // Reset selection when filter changes
+  useEffect(() => {
+    setCommandSelectedIndex(0);
+  }, [commandFilter]);
 
   const { pickImages } = useImageAttachmentPicker();
   const agentIdRef = useRef(agentId);
@@ -369,6 +398,64 @@ export function AgentInputArea({
     queueMessage(payload.text, payload.images);
   }, []);
 
+  // Handle command selection from autocomplete
+  const handleCommandSelect = useCallback(
+    (cmd: { name: string; description: string; argumentHint: string }) => {
+      setUserInput(`/${cmd.name} `);
+      messageInputRef.current?.focus();
+    },
+    [setUserInput]
+  );
+
+  // Handle keyboard navigation for command autocomplete
+  const handleCommandKeyPress = useCallback(
+    (event: { key: string; preventDefault: () => void }) => {
+      if (!showCommandAutocomplete || filteredCommands.length === 0) {
+        return false;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setCommandSelectedIndex((prev) =>
+          prev > 0 ? prev - 1 : filteredCommands.length - 1
+        );
+        return true;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setCommandSelectedIndex((prev) =>
+          prev < filteredCommands.length - 1 ? prev + 1 : 0
+        );
+        return true;
+      }
+
+      if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        const selected = filteredCommands[commandSelectedIndex];
+        if (selected) {
+          handleCommandSelect(selected);
+        }
+        return true;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setUserInput("");
+        return true;
+      }
+
+      return false;
+    },
+    [
+      showCommandAutocomplete,
+      filteredCommands,
+      commandSelectedIndex,
+      handleCommandSelect,
+      setUserInput,
+    ]
+  );
+
   const rightContent = (
     <>
       <Pressable
@@ -472,6 +559,17 @@ export function AgentInputArea({
             </View>
           )}
 
+          {/* Command autocomplete dropdown */}
+          {showCommandAutocomplete && isRealAgent && (
+            <CommandAutocomplete
+              serverId={serverId}
+              agentId={agentId}
+              filter={commandFilter}
+              selectedIndex={commandSelectedIndex}
+              onSelect={handleCommandSelect}
+            />
+          )}
+
           {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
           <MessageInput
             ref={messageInputRef}
@@ -492,6 +590,7 @@ export function AgentInputArea({
             rightContent={rightContent}
             isAgentRunning={isAgentRunning}
             onQueue={handleQueue}
+            onKeyPress={handleCommandKeyPress}
           />
         </View>
       </View>

@@ -12,6 +12,7 @@ import type {
   AgentPermissionResponse,
   AgentPersistenceHandle,
   AgentProvider,
+  AgentSlashCommand,
 } from "../agent/agent-sdk-types.js";
 import { getAgentProviderDefinition } from "../agent/provider-registry.js";
 
@@ -606,6 +607,41 @@ export class DaemonClient {
             provider: msg.payload.provider,
             models: msg.payload.models ?? [],
             fetchedAt: msg.payload.fetchedAt,
+            error: msg.payload.error ?? null,
+          };
+        }
+        return null;
+      },
+      30000,
+      { skipQueueBefore: startPosition }
+    );
+  }
+
+  // ============================================================================
+  // Commands
+  // ============================================================================
+
+  async listCommands(agentId: string): Promise<{
+    agentId: string;
+    commands: AgentSlashCommand[];
+    error: string | null;
+  }> {
+    const startPosition = this.messageQueue.length;
+
+    this.send({
+      type: "list_commands_request",
+      agentId,
+    });
+
+    return this.waitFor(
+      (msg) => {
+        if (
+          msg.type === "list_commands_response" &&
+          msg.payload.agentId === agentId
+        ) {
+          return {
+            agentId: msg.payload.agentId,
+            commands: msg.payload.commands ?? [],
             error: msg.payload.error ?? null,
           };
         }

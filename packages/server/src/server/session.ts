@@ -794,6 +794,10 @@ export class Session {
         case "clear_agent_attention":
           await this.handleClearAgentAttention(msg.agentId);
           break;
+
+        case "list_commands_request":
+          await this.handleListCommandsRequest(msg.agentId, msg.requestId);
+          break;
       }
     } catch (error: any) {
       console.error(
@@ -1815,6 +1819,73 @@ export class Session {
         error
       );
       // Don't throw - this is not critical
+    }
+  }
+
+  /**
+   * Handle list commands request for an agent
+   */
+  private async handleListCommandsRequest(agentId: string, requestId?: string): Promise<void> {
+    console.log(
+      `[Session ${this.clientId}] Handling list commands request for agent ${agentId}`
+    );
+
+    try {
+      const agents = this.agentManager.listAgents();
+      const agent = agents.find((a) => a.id === agentId);
+
+      if (!agent) {
+        this.emit({
+          type: "list_commands_response",
+          payload: {
+            agentId,
+            commands: [],
+            error: `Agent not found: ${agentId}`,
+            requestId,
+          },
+        });
+        return;
+      }
+
+      const session = agent.session;
+      if (!session || !session.listCommands) {
+        this.emit({
+          type: "list_commands_response",
+          payload: {
+            agentId,
+            commands: [],
+            error: `Agent does not support listing commands`,
+            requestId,
+          },
+        });
+        return;
+      }
+
+      const commands = await session.listCommands();
+
+      this.emit({
+        type: "list_commands_response",
+        payload: {
+          agentId,
+          commands,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error: any) {
+      console.error(
+        `[Session ${this.clientId}] Failed to list commands:`,
+        error
+      );
+      this.emit({
+        type: "list_commands_response",
+        payload: {
+          agentId,
+          commands: [],
+          error: error.message,
+          requestId,
+        },
+      });
     }
   }
 
