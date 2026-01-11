@@ -1,8 +1,14 @@
-import { execSync } from "node:child_process";
+import {
+  spawn,
+  execSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -13,6 +19,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentMode,
+  AgentModelDefinition,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -25,6 +32,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
+  ListModelsOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
@@ -4247,6 +4255,223 @@ export class CodexMcpAgentClient implements AgentClient {
     }
 
     return descriptors;
+  }
+
+  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const binaryPath = resolveCodexBinary();
+    const child = spawn(binaryPath, ["app-server"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    assertCodexChildHasPipes(child);
+
+    const client = new CodexAppServerClient(child);
+
+    try {
+      await client.request("initialize", {
+        clientInfo: {
+          name: "voice-dev",
+          title: "Voice Dev",
+          version: "0.0.0",
+        },
+      });
+
+      const response = await client.request("model/list", {});
+      if (!isCodexModelListResponse(response)) {
+        throw new Error("Unexpected Codex model list response");
+      }
+      return response.data.map((model) => ({
+        provider: "codex" as const,
+        id: model.id,
+        label: model.displayName,
+        description: model.description,
+        isDefault: model.isDefault,
+        metadata: {
+          model: model.model,
+          defaultReasoningEffort: model.defaultReasoningEffort,
+          supportedReasoningEfforts: model.supportedReasoningEfforts,
+        },
+      }));
+    } finally {
+      await client.dispose();
+    }
+  }
+}
+
+// ============================================================================
+// Codex model listing helpers
+// ============================================================================
+
+type CodexModelListResponse = {
+  data: CodexModelInfo[];
+  nextCursor: string | null;
+};
+
+type CodexModelInfo = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>;
+  defaultReasoningEffort: string;
+  isDefault: boolean;
+};
+
+type CodexPendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+function resolveCodexBinary(): string {
+  try {
+    const codexPath = execSync("which codex", { encoding: "utf8" }).trim();
+    if (codexPath) {
+      return codexPath;
+    }
+  } catch {
+    // Fall through to error
+  }
+  throw new Error(
+    "Codex CLI not found. Please install codex globally: npm install -g @openai/codex"
+  );
+}
+
+function assertCodexChildHasPipes(
+  child: ChildProcess
+): asserts child is ChildProcessWithoutNullStreams {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("Codex app-server must be started with stdio pipes");
+  }
+}
+
+function isCodexModelInfo(value: unknown): value is CodexModelInfo {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.model === "string" &&
+    typeof obj.displayName === "string" &&
+    typeof obj.description === "string" &&
+    typeof obj.defaultReasoningEffort === "string" &&
+    typeof obj.isDefault === "boolean" &&
+    Array.isArray(obj.supportedReasoningEfforts)
+  );
+}
+
+function isCodexModelListResponse(value: unknown): value is CodexModelListResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.data)) {
+    return false;
+  }
+  if (obj.nextCursor !== null && typeof obj.nextCursor !== "string") {
+    return false;
+  }
+  return obj.data.every((entry) => isCodexModelInfo(entry));
+}
+
+class CodexAppServerClient {
+  private readonly rl: readline.Interface;
+  private readonly pending = new Map<number, CodexPendingRequest>();
+  private nextId = 1;
+  private stderrBuffer = "";
+  private disposed = false;
+
+  constructor(private readonly child: ChildProcessWithoutNullStreams) {
+    this.rl = readline.createInterface({ input: child.stdout });
+    this.rl.on("line", (line) => this.handleLine(line));
+
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      this.stderrBuffer += chunk;
+    });
+
+    child.on("exit", (code, signal) => {
+      if (this.disposed) {
+        return;
+      }
+      const message = code === 0
+        ? "Codex app-server exited"
+        : `Codex app-server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`;
+      const error = new Error(this.stderrBuffer || message);
+      this.rejectAll(error);
+    });
+  }
+
+  async request(
+    method: string,
+    params: { [key: string]: unknown }
+  ): Promise<unknown> {
+    if (this.disposed) {
+      throw new Error("Codex app-server client is closed");
+    }
+    const id = this.nextId++;
+    const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
+    this.child.stdin.write(payload);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) {
+          return;
+        }
+        this.pending.delete(id);
+        reject(new Error(`Timeout waiting for '${method}' response`));
+      }, 60_000);
+      this.pending.set(id, { resolve, reject, timer });
+    });
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.rl.close();
+    if (this.child.stdin && !this.child.killed) {
+      this.child.stdin.end();
+      setTimeout(() => {
+        if (this.child.exitCode === null && !this.child.killed) {
+          this.child.kill("SIGINT");
+        }
+      }, 100);
+    }
+  }
+
+  private handleLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+    let message: { id?: number; result?: unknown; error?: { message?: string } };
+    try {
+      message = JSON.parse(trimmed);
+    } catch {
+      this.stderrBuffer += `\n[stdout] ${trimmed}`;
+      return;
+    }
+
+    if (message.id && this.pending.has(message.id)) {
+      const pending = this.pending.get(message.id)!;
+      this.pending.delete(message.id);
+      clearTimeout(pending.timer);
+      if (message.error) {
+        const error = new Error(message.error.message ?? "Codex RPC error");
+        pending.reject(error);
+      } else {
+        pending.resolve(message.result);
+      }
+    }
+  }
+
+  private rejectAll(error: Error): void {
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 }
 

@@ -84,8 +84,10 @@ export async function createTestPaseoDaemon(
 
   const close = async (): Promise<void> => {
     await daemon.close().catch(() => undefined);
-    await rm(paseoHome, { recursive: true, force: true });
-    await rm(staticDir, { recursive: true, force: true });
+    // Wait a bit for file handles to release
+    await new Promise((r) => setTimeout(r, 200));
+    await rm(paseoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
 
   return {

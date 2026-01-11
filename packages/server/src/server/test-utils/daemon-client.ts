@@ -13,7 +13,7 @@ import type {
   AgentPersistenceHandle,
   AgentProvider,
 } from "../agent/agent-sdk-types.js";
-import { getAgentProviderDefinition } from "../agent/provider-manifest.js";
+import { getAgentProviderDefinition } from "../agent/provider-registry.js";
 
 // ============================================================================
 // Configuration

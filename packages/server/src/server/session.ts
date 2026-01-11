@@ -36,7 +36,7 @@ import {
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { fetchProviderModelCatalog } from "./agent/model-catalog.js";
+import { fetchProviderModels } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
@@ -50,6 +50,7 @@ import type {
   AgentPersistenceHandle,
 } from "./agent/agent-sdk-types.js";
 import { AgentRegistry, type StoredAgentRecord } from "./agent/agent-registry.js";
+import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
@@ -81,7 +82,7 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
 const ACTIVE_TITLE_GENERATIONS = new Set<string>();
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
-const KNOWN_AGENT_PROVIDERS: AgentProvider[] = ["claude", "codex"];
+const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 const RESTART_EXIT_DELAY_MS = 250;
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
@@ -153,18 +154,14 @@ function convertPCMToWavBuffer(
   return wavBuffer;
 }
 
-function isKnownAgentProvider(value: string): value is AgentProvider {
-  return KNOWN_AGENT_PROVIDERS.includes(value as AgentProvider);
-}
-
 function coerceAgentProvider(value: string, agentId?: string): AgentProvider {
-  if (isKnownAgentProvider(value)) {
+  if (isValidAgentProvider(value)) {
     return value;
   }
   console.warn(
-    `[Session] Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to 'claude'`
+    `[Session] Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to '${DEFAULT_AGENT_PROVIDER}'`
   );
-  return "claude";
+  return DEFAULT_AGENT_PROVIDER;
 }
 
 function toAgentPersistenceHandle(
@@ -174,7 +171,7 @@ function toAgentPersistenceHandle(
     return null;
   }
   const provider = handle.provider;
-  if (!isKnownAgentProvider(provider)) {
+  if (!isValidAgentProvider(provider)) {
     console.warn(
       `[Session] Ignoring persistence handle with unknown provider '${provider}'`
     );
@@ -1583,7 +1580,7 @@ export class Session {
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
     try {
-      const models = await fetchProviderModelCatalog(msg.provider, {
+      const models = await fetchProviderModels(msg.provider, {
         cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
       });
       this.emit({

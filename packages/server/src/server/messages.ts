@@ -4,6 +4,7 @@ import {
   type ManagedAgent,
 } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
+import { AgentProviderSchema } from "./agent/provider-manifest.js";
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -11,15 +12,11 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
-  AgentProvider,
   AgentRuntimeInfo,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
 } from "./agent/agent-sdk-types.js";
-
-const AGENT_PROVIDERS: [AgentProvider, AgentProvider] = ["claude", "codex"];
-const AgentProviderSchema = z.enum(AGENT_PROVIDERS);
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
 

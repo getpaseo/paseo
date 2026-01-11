@@ -1,19 +1,32 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import {
-  fetchClaudeModelCatalog,
-  fetchCodexModelCatalog,
-} from "./model-catalog.js";
+  createDaemonTestContext,
+  type DaemonTestContext,
+} from "../test-utils/index.js";
 
-describe("provider model catalogs", () => {
+describe("provider model catalogs (e2e)", () => {
+  let ctx: DaemonTestContext;
+
+  beforeEach(async () => {
+    ctx = await createDaemonTestContext();
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  }, 60_000);
+
   test(
     "Claude catalog exposes Sonnet and Haiku variants",
     async () => {
-      const models = await fetchClaudeModelCatalog();
-      expect(models.length).toBeGreaterThan(0);
+      const result = await ctx.client.listProviderModels("claude");
 
-      const descriptions = models
-        .map((model) => `${model.label} ${model.description ?? ""}`.toLowerCase());
+      expect(result.error).toBeNull();
+      expect(result.models.length).toBeGreaterThan(0);
+
+      const descriptions = result.models.map(
+        (model) => `${model.label} ${model.description ?? ""}`.toLowerCase()
+      );
       expect(descriptions.some((text) => text.includes("sonnet 4.5"))).toBe(true);
       expect(descriptions.some((text) => text.includes("haiku"))).toBe(true);
     },
@@ -23,9 +36,34 @@ describe("provider model catalogs", () => {
   test(
     "Codex catalog exposes gpt-5.1-codex",
     async () => {
-      const models = await fetchCodexModelCatalog();
-      const ids = models.map((model) => model.id);
+      const result = await ctx.client.listProviderModels("codex");
+
+      expect(result.error).toBeNull();
+      const ids = result.models.map((model) => model.id);
       expect(ids).toContain("gpt-5.1-codex");
+    },
+    180_000
+  );
+
+  test(
+    "OpenCode catalog returns models from multiple providers",
+    async () => {
+      const result = await ctx.client.listProviderModels("opencode");
+
+      expect(result.error).toBeNull();
+      expect(result.models.length).toBeGreaterThan(0);
+
+      for (const model of result.models) {
+        expect(model.provider).toBe("opencode");
+        expect(model.id).toContain("/");
+        expect(model.label).toBeTruthy();
+        expect(model.metadata).toBeDefined();
+        expect(model.metadata?.providerId).toBeTruthy();
+        expect(model.metadata?.modelId).toBeTruthy();
+      }
+
+      const providerIds = new Set(result.models.map((m) => m.metadata?.providerId));
+      expect(providerIds.size).toBeGreaterThan(0);
     },
     180_000
   );

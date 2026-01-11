@@ -10,13 +10,14 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronRight, Monitor } from "lucide-react-native";
+import { Monitor } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { AgentInputArea } from "@/components/agent-input-area";
 import {
   DropdownSheet,
   GitOptionsSection,
   WorkingDirectoryDropdown,
+  AgentConfigRow,
 } from "@/components/agent-form/agent-form-dropdowns";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { useDaemonRequest } from "@/hooks/use-daemon-request";
@@ -73,14 +74,6 @@ type DraftAgentParams = {
   modeId?: string;
   model?: string;
   workingDir?: string;
-};
-
-type ConfigRowProps = {
-  label: string;
-  value: string;
-  meta?: string;
-  onPress: () => void;
-  disabled?: boolean;
 };
 
 export default function HomeScreen() {
@@ -160,9 +153,7 @@ export default function HomeScreen() {
     ? formatConnectionStatus(hostEntry.status)
     : undefined;
 
-  const [openDropdown, setOpenDropdown] = useState<
-    "host" | "provider" | "mode" | "model" | "agent" | null
-  >(null);
+  const [openDropdown, setOpenDropdown] = useState<"host" | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
@@ -178,12 +169,9 @@ export default function HomeScreen() {
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
   }, []);
-  const openDropdownSheet = useCallback(
-    (key: "host" | "provider" | "mode" | "model" | "agent") => {
-      setOpenDropdown(key);
-    },
-    []
-  );
+  const openDropdownSheet = useCallback((key: "host") => {
+    setOpenDropdown(key);
+  }, []);
   const closeDropdown = useCallback(() => {
     setOpenDropdown(null);
   }, []);
@@ -414,25 +402,6 @@ export default function HomeScreen() {
     }
   }, [isNonGitDirectory, useWorktree]);
 
-  const renderConfigRow = useCallback(
-    ({ label, value, meta, onPress, disabled }: ConfigRowProps) => (
-      <Pressable
-        style={[styles.configRow, disabled && styles.configRowDisabled]}
-        onPress={onPress}
-        disabled={disabled}
-      >
-        <View style={styles.configTextGroup}>
-          <Text style={styles.configLabel}>{label}</Text>
-          <Text style={styles.configValue} numberOfLines={1}>
-            {value}
-          </Text>
-          {meta ? <Text style={styles.configMeta}>{meta}</Text> : null}
-        </View>
-        <ChevronRight size={18} color={theme.colors.mutedForeground} />
-      </Pressable>
-    ),
-    [theme.colors.mutedForeground]
-  );
   const pendingRequestIdRef = useRef<string | null>(null);
   const sessionMethods = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
@@ -581,16 +550,6 @@ export default function HomeScreen() {
     };
   }, [router, selectedServerId, sessionWs]);
 
-  const selectedProviderLabel =
-    providerDefinitions.find((provider) => provider.id === selectedProvider)?.label ??
-    selectedProvider;
-  const selectedModeLabel =
-    modeOptions.length > 0
-      ? modeOptions.find((mode) => mode.id === selectedMode)?.label ??
-        modeOptions[0]?.label ??
-        "Default"
-      : "Automatic";
-
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
@@ -630,11 +589,18 @@ export default function HomeScreen() {
                 </Text>
               </View>
             )}
-            {renderConfigRow({
-              label: "Agent",
-              value: `${selectedProviderLabel} · ${selectedModel || "auto"} · ${selectedModeLabel}`,
-              onPress: () => openDropdownSheet("agent"),
-            })}
+            <AgentConfigRow
+              providerDefinitions={providerDefinitions}
+              selectedProvider={selectedProvider}
+              onSelectProvider={setProviderFromUser}
+              modeOptions={modeOptions}
+              selectedMode={selectedMode}
+              onSelectMode={setModeFromUser}
+              models={availableModels}
+              selectedModel={selectedModel}
+              isModelLoading={isModelLoading}
+              onSelectModel={setModelFromUser}
+            />
             {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
               <GitOptionsSection
                 useWorktree={useWorktree}
@@ -688,111 +654,6 @@ export default function HomeScreen() {
                 })}
               </View>
             )}
-          </DropdownSheet>
-
-          <DropdownSheet
-            title="Agent"
-            visible={openDropdown === "agent"}
-            onClose={closeDropdown}
-          >
-            <View style={styles.agentSheetSection}>
-              <Text style={styles.agentSheetSectionLabel}>Provider</Text>
-              <View style={styles.dropdownSheetList}>
-                {providerDefinitions.map((definition) => {
-                  const isSelected = definition.id === selectedProvider;
-                  return (
-                    <Pressable
-                      key={definition.id}
-                      style={[
-                        styles.dropdownSheetOption,
-                        isSelected && styles.dropdownSheetOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setProviderFromUser(definition.id);
-                      }}
-                    >
-                      <Text style={styles.dropdownSheetOptionLabel}>
-                        {definition.label}
-                      </Text>
-                      {definition.description ? (
-                        <Text style={styles.dropdownSheetOptionDescription}>
-                          {definition.description}
-                        </Text>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.agentSheetSection}>
-              <Text style={styles.agentSheetSectionLabel}>Model</Text>
-              <View style={styles.dropdownSheetList}>
-                <Pressable
-                  style={[
-                    styles.dropdownSheetOption,
-                    !selectedModel && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => setModelFromUser("")}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel}>
-                    Automatic (provider default)
-                  </Text>
-                </Pressable>
-                {availableModels.map((model) => {
-                  const isSelected = model.id === selectedModel;
-                  return (
-                    <Pressable
-                      key={model.id}
-                      style={[
-                        styles.dropdownSheetOption,
-                        isSelected && styles.dropdownSheetOptionSelected,
-                      ]}
-                      onPress={() => setModelFromUser(model.id)}
-                    >
-                      <Text style={styles.dropdownSheetOptionLabel}>
-                        {model.label}
-                      </Text>
-                      {model.description ? (
-                        <Text style={styles.dropdownSheetOptionDescription}>
-                          {model.description}
-                        </Text>
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            {modeOptions.length > 0 ? (
-              <View style={styles.agentSheetSection}>
-                <Text style={styles.agentSheetSectionLabel}>Mode</Text>
-                <View style={styles.dropdownSheetList}>
-                  {modeOptions.map((mode) => {
-                    const isSelected = mode.id === selectedMode;
-                    return (
-                      <Pressable
-                        key={mode.id}
-                        style={[
-                          styles.dropdownSheetOption,
-                          isSelected && styles.dropdownSheetOptionSelected,
-                        ]}
-                        onPress={() => setModeFromUser(mode.id)}
-                      >
-                        <Text style={styles.dropdownSheetOptionLabel}>
-                          {mode.label}
-                        </Text>
-                        {mode.description ? (
-                          <Text style={styles.dropdownSheetOptionDescription}>
-                            {mode.description}
-                          </Text>
-                        ) : null}
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-            ) : null}
           </DropdownSheet>
 
           {errorMessage ? (
@@ -854,39 +715,6 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: MAX_CONTENT_WIDTH,
     alignSelf: "center",
     width: "100%",
-  },
-  configRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-  },
-  configRowDisabled: {
-    opacity: theme.opacity[50],
-  },
-  configTextGroup: {
-    flex: 1,
-    gap: theme.spacing[1],
-    marginRight: theme.spacing[2],
-  },
-  configLabel: {
-    fontSize: theme.fontSize.xs,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: theme.colors.mutedForeground,
-  },
-  configValue: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foreground,
-  },
-  configMeta: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
   },
   dropdownHelper: {
     fontSize: theme.fontSize.sm,
@@ -962,15 +790,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   hostStatusDotOnline: {
     backgroundColor: theme.colors.palette.green[500],
-  },
-  agentSheetSection: {
-    marginBottom: theme.spacing[4],
-  },
-  agentSheetSectionLabel: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.foreground,
-    marginBottom: theme.spacing[2],
   },
   loadingOverlay: {
     position: "absolute",

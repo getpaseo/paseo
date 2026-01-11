@@ -1,6 +1,6 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 
-export type AgentProvider = "codex" | "claude";
+export type AgentProvider = string;
 
 export type AgentMetadata = { [key: string]: unknown };
 
@@ -215,10 +215,15 @@ export interface AgentSession {
   setManagedAgentId?(agentId: string): void;
 }
 
+export interface ListModelsOptions {
+  cwd?: string;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
   createSession(config: AgentSessionConfig): Promise<AgentSession>;
   resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>): Promise<AgentSession>;
+  listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
 }

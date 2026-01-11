@@ -4,9 +4,10 @@ import {
   Text,
   ActivityIndicator,
   Pressable,
-  RefreshControl,
+  FlatList,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type ListRenderItem,
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -258,6 +259,18 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     state.sessions[serverId]?.agents?.has(agentId) ?? false
   );
 
+  const renderFileSection: ListRenderItem<ParsedDiffFile> = useCallback(
+    ({ item, index }) => (
+      <DiffFileSection file={item} testID={`diff-file-${index}`} />
+    ),
+    []
+  );
+
+  const keyExtractor = useCallback(
+    (item: ParsedDiffFile, index: number) => `${item.path}-${index}`,
+    []
+  );
+
   if (!agentExists) {
     return (
       <View style={styles.errorContainer}>
@@ -269,40 +282,45 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const hasChanges = files.length > 0;
   const errorMessage = isError && error instanceof Error ? error.message : null;
 
-  return (
-    <ScrollView
-      style={styles.scrollView}
-      testID="git-diff-scroll"
-      refreshControl={
-        <RefreshControl
-          refreshing={isManualRefresh && isFetching}
-          onRefresh={handleRefresh}
-          tintColor={theme.colors.mutedForeground}
-          colors={[theme.colors.primary]}
-        />
-      }
-    >
-      <View style={styles.contentContainer} testID="git-diff-content">
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" />
-            <Text style={styles.loadingText}>Loading changes...</Text>
-          </View>
-        ) : isError ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{errorMessage ?? "Failed to load changes"}</Text>
-          </View>
-        ) : !hasChanges ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No changes</Text>
-          </View>
-        ) : (
-          files.map((file, fileIndex) => (
-            <DiffFileSection key={fileIndex} file={file} testID={`diff-file-${fileIndex}`} />
-          ))
-        )}
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" />
+        <Text style={styles.loadingText}>Loading changes...</Text>
       </View>
-    </ScrollView>
+    );
+  }
+
+  if (isError) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{errorMessage ?? "Failed to load changes"}</Text>
+      </View>
+    );
+  }
+
+  if (!hasChanges) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyText}>No changes</Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={files}
+      renderItem={renderFileSection}
+      keyExtractor={keyExtractor}
+      style={styles.scrollView}
+      contentContainerStyle={styles.contentContainer}
+      testID="git-diff-scroll"
+      onRefresh={handleRefresh}
+      refreshing={isManualRefresh && isFetching}
+      initialNumToRender={3}
+      maxToRenderPerBatch={3}
+      windowSize={5}
+    />
   );
 }
 

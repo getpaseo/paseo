@@ -1538,4 +1538,38 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
     },
     180_000
   );
+
+  test(
+    "listModels returns models with required fields",
+    async () => {
+      const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
+      const client = new CodexMcpAgentClient();
+      const models = await client.listModels();
+
+      // HARD ASSERT: Returns an array
+      expect(Array.isArray(models)).toBe(true);
+
+      // HARD ASSERT: At least one model is returned
+      expect(models.length).toBeGreaterThan(0);
+
+      // HARD ASSERT: Each model has required fields with correct types
+      for (const model of models) {
+        expect(model.provider).toBe("codex");
+        expect(typeof model.id).toBe("string");
+        expect(model.id.length).toBeGreaterThan(0);
+        expect(typeof model.label).toBe("string");
+        expect(model.label.length).toBeGreaterThan(0);
+      }
+
+      // HARD ASSERT: Exactly one model is marked as default
+      const defaultModels = models.filter((m) => m.isDefault === true);
+      expect(defaultModels.length).toBe(1);
+
+      // HARD ASSERT: Default model has metadata with model info
+      const defaultModel = defaultModels[0];
+      expect(defaultModel.metadata).toBeTruthy();
+      expect(typeof defaultModel.metadata?.model).toBe("string");
+    },
+    60_000
+  );
 });

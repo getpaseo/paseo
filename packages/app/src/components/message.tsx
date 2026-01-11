@@ -22,16 +22,26 @@ import {
   Search,
   Brain,
 } from "lucide-react-native";
-import { StyleSheet, useUnistyles, UnistylesRuntime } from "react-native-unistyles";
+import {
+  StyleSheet,
+  useUnistyles,
+  UnistylesRuntime,
+} from "react-native-unistyles";
 import { baseColors, theme } from "@/styles/theme";
-import { createMarkdownStyles, createCompactMarkdownStyles } from "@/styles/markdown-styles";
+import {
+  createMarkdownStyles,
+  createCompactMarkdownStyles,
+} from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
-import { ToolCallDetailsContent, useToolCallDetails } from "./tool-call-details";
+import {
+  ToolCallDetailsContent,
+  useToolCallDetails,
+} from "./tool-call-details";
 
 interface UserMessageProps {
   message: string;
@@ -259,13 +269,17 @@ function isLikelyPathToken(value: string): boolean {
     return false;
   }
 
-  const looksLikeDir = value.endsWith("/") || value.startsWith("./") || value.startsWith("../");
+  const looksLikeDir =
+    value.endsWith("/") || value.startsWith("./") || value.startsWith("../");
 
   return hasExtension || looksLikeDir || value.includes("/");
 }
 
 function normalizeInlinePathValue(value: string): string | null {
-  const trimmed = value.trim().replace(/^['"`]/, "").replace(/['"`]$/, "");
+  const trimmed = value
+    .trim()
+    .replace(/^['"`]/, "")
+    .replace(/['"`]$/, "");
   if (!trimmed) {
     return null;
   }
@@ -290,7 +304,9 @@ function parseInlinePathToken(
       return null;
     }
     const lineStart = parseInt(rangeOnlyMatch[1], 10);
-    const lineEnd = rangeOnlyMatch[2] ? parseInt(rangeOnlyMatch[2], 10) : undefined;
+    const lineEnd = rangeOnlyMatch[2]
+      ? parseInt(rangeOnlyMatch[2], 10)
+      : undefined;
     return {
       raw: rawValue,
       path: basePath,
@@ -335,10 +351,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const { theme } = useUnistyles();
   const lastPathRef = useRef<string | null>(null);
 
-  const markdownStyles = useMemo(
-    () => createMarkdownStyles(theme),
-    [theme]
-  );
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownRules = useMemo(() => {
     return {
@@ -360,7 +373,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.textgroup]}
+          selectable
+        >
           {children}
         </Text>
       ),
@@ -371,7 +388,11 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.code_block]}
+          selectable
+        >
           {node.content}
         </Text>
       ),
@@ -402,7 +423,10 @@ export const AssistantMessage = memo(function AssistantMessage({
           return (
             <Text
               key={node.key}
-              style={[inheritedStyles, assistantMessageStylesheet.markdownCodeInline]}
+              style={[
+                inheritedStyles,
+                assistantMessageStylesheet.markdownCodeInline,
+              ]}
               selectable
             >
               {content}
@@ -415,7 +439,10 @@ export const AssistantMessage = memo(function AssistantMessage({
             key={node.key}
             onPress={() => parsed && onInlinePathPress?.(parsed)}
             selectable={false}
-            style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
+            style={[
+              assistantMessageStylesheet.pathChip,
+              assistantMessageStylesheet.pathChipText,
+            ]}
           >
             {content}
           </Text>
@@ -460,7 +487,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         return (
           <View key={node.key} style={styles.list_item}>
             <Text style={iconStyle}>{bullet}</Text>
-            <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>
+            <View
+              style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
+            >
               {children}
             </View>
           </View>
@@ -781,7 +810,10 @@ export const TodoListCard = memo(function TodoListCard({
     [items]
   );
 
-  const timestampLabel = useMemo(() => formatPlanTimestamp(timestamp), [timestamp]);
+  const timestampLabel = useMemo(
+    () => formatPlanTimestamp(timestamp),
+    [timestamp]
+  );
 
   const iconColor = theme.colors.background;
 
@@ -791,10 +823,14 @@ export const TodoListCard = memo(function TodoListCard({
         <View style={todoListCardStylesheet.header}>
           <View style={todoListCardStylesheet.headerMeta}>
             <Text style={todoListCardStylesheet.title}>Plan</Text>
-            <Text style={todoListCardStylesheet.timestamp}>{timestampLabel}</Text>
+            <Text style={todoListCardStylesheet.timestamp}>
+              {timestampLabel}
+            </Text>
           </View>
           <View style={todoListCardStylesheet.providerBadge}>
-            <Text style={todoListCardStylesheet.providerText}>{providerLabel}</Text>
+            <Text style={todoListCardStylesheet.providerText}>
+              {providerLabel}
+            </Text>
           </View>
         </View>
         <Text style={todoListCardStylesheet.progressText}>
@@ -809,7 +845,10 @@ export const TodoListCard = memo(function TodoListCard({
             </Text>
           ) : (
             items.map((item, idx) => (
-              <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
+              <View
+                key={`${item.text}-${idx}`}
+                style={todoListCardStylesheet.itemRow}
+              >
                 <View
                   style={[
                     todoListCardStylesheet.checkbox,
@@ -889,10 +928,14 @@ const ExpandableBadge = memo(function ExpandableBadge({
     };
   }, [isLoading, spinAnim]);
 
-  const spin = spinAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
+  const spin = useMemo(
+    () =>
+      spinAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "360deg"],
+      }),
+    [spinAnim]
+  );
 
   const IconComponent = icon;
   const iconColor = isError
@@ -921,7 +964,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
         accessibilityState={hasDetails ? { expanded: isExpanded } : undefined}
         style={({ pressed }) => [
           expandableBadgeStylesheet.pressable,
-          pressed && hasDetails ? expandableBadgeStylesheet.pressablePressed : null,
+          pressed && hasDetails
+            ? expandableBadgeStylesheet.pressablePressed
+            : null,
         ]}
       >
         <View style={expandableBadgeStylesheet.headerRow}>
@@ -930,7 +975,10 @@ const ExpandableBadge = memo(function ExpandableBadge({
             {label}
           </Text>
           {secondaryLabel ? (
-            <Text style={expandableBadgeStylesheet.secondaryLabel} numberOfLines={1}>
+            <Text
+              style={expandableBadgeStylesheet.secondaryLabel}
+              numberOfLines={1}
+            >
               {secondaryLabel}
             </Text>
           ) : (
@@ -948,7 +996,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
           ) : null}
         </View>
         {detailContent ? (
-          <View style={expandableBadgeStylesheet.detailWrapper}>{detailContent}</View>
+          <View style={expandableBadgeStylesheet.detailWrapper}>
+            {detailContent}
+          </View>
         ) : null}
       </Pressable>
     </View>
@@ -963,7 +1013,10 @@ const agentThoughtStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, status = "ready" }: AgentThoughtMessageProps) {
+export const AgentThoughtMessage = memo(function AgentThoughtMessage({
+  message,
+  status = "ready",
+}: AgentThoughtMessageProps) {
   const { theme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(false);
   const markdownContent = useMemo(() => message?.trim() ?? "", [message]);
@@ -996,7 +1049,11 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, 
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.textgroup]}
+          selectable
+        >
           {children}
         </Text>
       ),
@@ -1007,7 +1064,11 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, 
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.code_block]}
+          selectable
+        >
           {node.content}
         </Text>
       ),
@@ -1029,7 +1090,11 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, 
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_inline]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.code_inline]}
+          selectable
+        >
           {node.content}
         </Text>
       ),
@@ -1072,7 +1137,9 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, 
         return (
           <View key={node.key} style={styles.list_item}>
             <Text style={iconStyle}>{bullet}</Text>
-            <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>
+            <View
+              style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
+            >
               {children}
             </View>
           </View>
@@ -1083,7 +1150,11 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({ message, 
 
   const renderDetails = useCallback(() => {
     if (!markdownContent) {
-      return <Text style={agentThoughtStylesheet.emptyText}>No captured thinking</Text>;
+      return (
+        <Text style={agentThoughtStylesheet.emptyText}>
+          No captured thinking
+        </Text>
+      );
     }
     return (
       <Markdown style={markdownStyles} rules={markdownRules}>
@@ -1124,13 +1195,15 @@ const toolKindIcons: Record<string, any> = {
 // Derive tool kind from tool name for icon selection
 function getToolKindFromName(toolName: string): string {
   const lower = toolName.toLowerCase();
-  if (lower === "read" || lower === "read_file" || lower.startsWith("read")) return "read";
-  if (lower === "edit" || lower === "write" || lower === "apply_patch") return "edit";
+  if (lower === "read" || lower === "read_file" || lower.startsWith("read"))
+    return "read";
+  if (lower === "edit" || lower === "write" || lower === "apply_patch")
+    return "edit";
   if (lower === "bash" || lower === "shell") return "execute";
-  if (lower === "grep" || lower === "glob" || lower === "web_search") return "search";
+  if (lower === "grep" || lower === "glob" || lower === "web_search")
+    return "search";
   return "tool";
 }
-
 
 export const ToolCall = memo(function ToolCall({
   toolName,
@@ -1145,7 +1218,8 @@ export const ToolCall = memo(function ToolCall({
 
   // Check if we're on mobile (use bottom sheet) or desktop (inline expand)
   const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+    UnistylesRuntime.breakpoint === "xs" ||
+    UnistylesRuntime.breakpoint === "sm";
 
   const kind = getToolKindFromName(toolName);
   const IconComponent = toolKindIcons[kind] || Wrench;
@@ -1157,7 +1231,8 @@ export const ToolCall = memo(function ToolCall({
   );
 
   // Check if there's any content to display
-  const hasDetails = args !== undefined || result !== undefined || error !== undefined;
+  const hasDetails =
+    args !== undefined || result !== undefined || error !== undefined;
 
   // Parse tool call details for inline rendering
   const { display, errorText } = useToolCallDetails({ args, result, error });
@@ -1184,7 +1259,11 @@ export const ToolCall = memo(function ToolCall({
     if (isMobile) return null;
     return (
       <View style={toolCallInlineStyles.detailsContainer}>
-        <ToolCallDetailsContent display={display} errorText={errorText} maxHeight={400} />
+        <ToolCallDetailsContent
+          display={display}
+          errorText={errorText}
+          maxHeight={400}
+        />
       </View>
     );
   }, [isMobile, display, errorText]);
@@ -1196,7 +1275,13 @@ export const ToolCall = memo(function ToolCall({
       icon={IconComponent}
       isExpanded={!isMobile && isExpanded}
       onToggle={hasDetails ? handleToggle : undefined}
-      renderDetails={hasDetails && !isMobile ? renderDetails : (hasDetails ? () => null : undefined)}
+      renderDetails={
+        hasDetails && !isMobile
+          ? renderDetails
+          : hasDetails
+          ? () => null
+          : undefined
+      }
       isLoading={status === "executing"}
       isError={status === "failed"}
     />
