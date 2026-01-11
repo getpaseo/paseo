@@ -1307,3 +1307,40 @@ function rawContainsText(raw: unknown, text: string, depth = 0): boolean {
 // NOTE: Turn handoff integration tests are covered by the daemon E2E test:
 // "interrupting message should produce coherent text without garbling from race condition"
 // in daemon.e2e.test.ts which exercises the full flow through the WebSocket API.
+
+describe("ClaudeAgentClient.listModels", () => {
+  test(
+    "returns models with required fields",
+    async () => {
+      const client = new ClaudeAgentClient();
+      const models = await client.listModels();
+
+      // HARD ASSERT: Returns an array
+      expect(Array.isArray(models)).toBe(true);
+
+      // HARD ASSERT: At least one model is returned
+      expect(models.length).toBeGreaterThan(0);
+
+      // HARD ASSERT: Each model has required fields with correct types
+      for (const model of models) {
+        expect(model.provider).toBe("claude");
+        expect(typeof model.id).toBe("string");
+        expect(model.id.length).toBeGreaterThan(0);
+        expect(typeof model.label).toBe("string");
+        expect(model.label.length).toBeGreaterThan(0);
+      }
+
+      // HARD ASSERT: Contains known Claude model IDs
+      const modelIds = models.map((m) => m.id);
+      const hasKnownModel = modelIds.some(
+        (id) =>
+          id.includes("claude") ||
+          id.includes("sonnet") ||
+          id.includes("opus") ||
+          id.includes("haiku")
+      );
+      expect(hasKnownModel).toBe(true);
+    },
+    60_000
+  );
+});

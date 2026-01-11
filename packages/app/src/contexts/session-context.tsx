@@ -1,4 +1,11 @@
-import { createContext, useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
+import {
+  createContext,
+  useRef,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
@@ -6,7 +13,7 @@ import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import { useSessionRpc } from "@/hooks/use-session-rpc";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import {
-  applyStreamEventWithBuffer,
+  applyStreamEvent,
   generateMessageId,
   hydrateStreamState,
 } from "@/types/stream";
@@ -17,12 +24,8 @@ import type {
   WSInboundMessage,
   SessionOutboundMessage,
 } from "@server/server/messages";
-import type {
-  AgentLifecycleStatus,
-} from "@server/server/agent/agent-manager";
-import type {
-  AgentPermissionRequest,
-} from "@server/server/agent/agent-sdk-types";
+import type { AgentLifecycleStatus } from "@server/server/agent/agent-manager";
+import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
@@ -42,13 +45,20 @@ export type {
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
-const derivePendingPermissionKey = (agentId: string, request: AgentPermissionRequest) => {
+const derivePendingPermissionKey = (
+  agentId: string,
+  request: AgentPermissionRequest
+) => {
   const fallbackId =
     request.id ||
-    (typeof request.metadata?.id === "string" ? request.metadata.id : undefined) ||
+    (typeof request.metadata?.id === "string"
+      ? request.metadata.id
+      : undefined) ||
     request.name ||
     request.title ||
-    `${request.kind}:${JSON.stringify(request.input ?? request.metadata ?? {})}`;
+    `${request.kind}:${JSON.stringify(
+      request.input ?? request.metadata ?? {}
+    )}`;
 
   return `${agentId}:${fallbackId}`;
 };
@@ -81,9 +91,13 @@ const getSessionSnapshotStorageKey = (serverId: string): string => {
   return `${SESSION_SNAPSHOT_STORAGE_PREFIX}${serverId}`;
 };
 
-async function loadPersistedSessionSnapshot(serverId: string): Promise<PersistedSessionSnapshot | null> {
+async function loadPersistedSessionSnapshot(
+  serverId: string
+): Promise<PersistedSessionSnapshot | null> {
   try {
-    const raw = await AsyncStorage.getItem(getSessionSnapshotStorageKey(serverId));
+    const raw = await AsyncStorage.getItem(
+      getSessionSnapshotStorageKey(serverId)
+    );
     if (!raw) {
       return null;
     }
@@ -93,28 +107,47 @@ async function loadPersistedSessionSnapshot(serverId: string): Promise<Persisted
     }
     return parsed;
   } catch (error) {
-    console.error(`[Session] Failed to load persisted snapshot for ${serverId}`, error);
+    console.error(
+      `[Session] Failed to load persisted snapshot for ${serverId}`,
+      error
+    );
     return null;
   }
 }
 
-async function persistSessionSnapshot(serverId: string, snapshot: { agents: AgentSnapshotPayload[] }) {
+async function persistSessionSnapshot(
+  serverId: string,
+  snapshot: { agents: AgentSnapshotPayload[] }
+) {
   try {
     const payload: PersistedSessionSnapshot = {
       agents: snapshot.agents,
       savedAt: new Date().toISOString(),
     };
-    await AsyncStorage.setItem(getSessionSnapshotStorageKey(serverId), JSON.stringify(payload));
+    await AsyncStorage.setItem(
+      getSessionSnapshotStorageKey(serverId),
+      JSON.stringify(payload)
+    );
   } catch (error) {
-    console.error(`[Session] Failed to persist snapshot for ${serverId}`, error);
+    console.error(
+      `[Session] Failed to persist snapshot for ${serverId}`,
+      error
+    );
   }
 }
 
-function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string) {
+function normalizeAgentSnapshot(
+  snapshot: AgentSnapshotPayload,
+  serverId: string
+) {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
-  const lastUserMessageAt = snapshot.lastUserMessageAt ? new Date(snapshot.lastUserMessageAt) : null;
-  const attentionTimestamp = snapshot.attentionTimestamp ? new Date(snapshot.attentionTimestamp) : null;
+  const lastUserMessageAt = snapshot.lastUserMessageAt
+    ? new Date(snapshot.lastUserMessageAt)
+    : null;
+  const attentionTimestamp = snapshot.attentionTimestamp
+    ? new Date(snapshot.attentionTimestamp)
+    : null;
   return {
     serverId,
     id: snapshot.id,
@@ -169,9 +202,16 @@ export interface SessionContextValue {
   audioPlayer: ReturnType<typeof useAudioPlayer>;
   setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
   requestGitDiff: (agentId: string) => void;
-  requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
+  requestDirectoryListing: (
+    agentId: string,
+    path: string,
+    options?: { recordHistory?: boolean }
+  ) => void;
   requestFilePreview: (agentId: string, path: string) => void;
-  requestFileDownloadToken: (agentId: string, path: string) => Promise<FileDownloadTokenResponseMessage["payload"]>;
+  requestFileDownloadToken: (
+    agentId: string,
+    path: string
+  ) => Promise<FileDownloadTokenResponseMessage["payload"]>;
   navigateExplorerBack: (agentId: string) => string | null;
   requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
   restartServer: (reason?: string) => void;
@@ -199,7 +239,11 @@ export interface SessionContextValue {
     requestId?: string;
   }) => void;
   setAgentMode: (agentId: string, modeId: string) => void;
-  respondToPermission: (agentId: string, requestId: string, response: any) => void;
+  respondToPermission: (
+    agentId: string,
+    requestId: string,
+    response: any
+  ) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -211,27 +255,45 @@ interface SessionProviderProps {
 }
 
 // SessionProvider: Pure WebSocket message handler that updates Zustand store
-export function SessionProvider({ children, serverUrl, serverId }: SessionProviderProps) {
+export function SessionProvider({
+  children,
+  serverUrl,
+  serverId,
+}: SessionProviderProps) {
   const ws = useWebSocket(serverUrl);
   const wsIsConnected = ws.isConnected;
-  const {
-    updateConnectionStatus,
-  } = useDaemonConnections();
+  const { updateConnectionStatus } = useDaemonConnections();
 
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
   const clearSession = useSessionStore((state) => state.clearSession);
   const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
   const setMessages = useSessionStore((state) => state.setMessages);
-  const setCurrentAssistantMessage = useSessionStore((state) => state.setCurrentAssistantMessage);
-  const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
-  const setAgentStreamingBuffer = useSessionStore((state) => state.setAgentStreamingBuffer);
-  const clearAgentStreamingBuffer = useSessionStore((state) => state.clearAgentStreamingBuffer);
-  const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
-  const setHasHydratedAgents = useSessionStore((state) => state.setHasHydratedAgents);
+  const setCurrentAssistantMessage = useSessionStore(
+    (state) => state.setCurrentAssistantMessage
+  );
+  const setAgentStreamTail = useSessionStore(
+    (state) => state.setAgentStreamTail
+  );
+  const setAgentStreamHead = useSessionStore(
+    (state) => state.setAgentStreamHead
+  );
+  const clearAgentStreamHead = useSessionStore(
+    (state) => state.clearAgentStreamHead
+  );
+  const setInitializingAgents = useSessionStore(
+    (state) => state.setInitializingAgents
+  );
+  const setHasHydratedAgents = useSessionStore(
+    (state) => state.setHasHydratedAgents
+  );
   const setAgents = useSessionStore((state) => state.setAgents);
-  const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
-  const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
+  const setAgentLastActivity = useSessionStore(
+    (state) => state.setAgentLastActivity
+  );
+  const setPendingPermissions = useSessionStore(
+    (state) => state.setPendingPermissions
+  );
   const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
   const setProviderModels = useSessionStore((state) => state.setProviderModels);
@@ -250,12 +312,23 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   });
 
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
-  const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
+  const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(
+    new Map()
+  );
   const providerModelRequestIdsRef = useRef<Map<any, string>>(new Map());
-  const sendAgentMessageRef = useRef<((agentId: string, message: string, images?: Array<{ uri: string; mimeType?: string }>) => Promise<void>) | null>(null);
+  const sendAgentMessageRef = useRef<
+    | ((
+        agentId: string,
+        message: string,
+        images?: Array<{ uri: string; mimeType?: string }>
+      ) => Promise<void>)
+    | null
+  >(null);
   const hasHydratedSnapshotRef = useRef(false);
   const hasRequestedInitialSnapshotRef = useRef(false);
-  const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // Buffer for streaming audio chunks
   interface AudioChunk {
@@ -271,7 +344,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     initializeSession(serverId, ws, audioPlayer);
   }, [serverId, ws, audioPlayer, initializeSession]);
 
-  const updateSessionWebSocket = useSessionStore((state) => state.updateSessionWebSocket);
+  const updateSessionWebSocket = useSessionStore(
+    (state) => state.updateSessionWebSocket
+  );
   useEffect(() => {
     updateSessionWebSocket(serverId, ws);
   }, [serverId, ws, updateSessionWebSocket]);
@@ -292,12 +367,21 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     }
 
     if (ws.lastError) {
-      updateConnectionStatus(serverId, { status: "error", lastError: ws.lastError });
+      updateConnectionStatus(serverId, {
+        status: "error",
+        lastError: ws.lastError,
+      });
       return;
     }
 
     updateConnectionStatus(serverId, { status: "offline" });
-  }, [serverId, updateConnectionStatus, ws.isConnected, ws.isConnecting, ws.lastError]);
+  }, [
+    serverId,
+    updateConnectionStatus,
+    ws.isConnected,
+    ws.isConnecting,
+    ws.lastError,
+  ]);
 
   // If the socket drops mid-initialization, clear pending flags
   useEffect(() => {
@@ -423,16 +507,22 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     }),
     matchResponse: (message, context) =>
       message.payload.status === "agent_initialized" &&
-      (message.payload as { agentId?: string }).agentId === context.params?.agentId &&
-      (message.payload as { requestId?: string }).requestId === context.requestId,
+      (message.payload as { agentId?: string }).agentId ===
+        context.params?.agentId &&
+      (message.payload as { requestId?: string }).requestId ===
+        context.requestId,
     getRequestKey: (params) => params?.agentId ?? "default",
     selectData: (message) => ({
       agentId: (message.payload as { agentId?: string }).agentId ?? "",
-      lifecycle: (message.payload as { agentStatus?: AgentLifecycleStatus }).agentStatus,
+      lifecycle: (message.payload as { agentStatus?: AgentLifecycleStatus })
+        .agentStatus,
     }),
     extractError: (message) =>
       message.payload.status === "error"
-        ? new Error((message.payload as { message?: string }).message ?? "Refresh failed")
+        ? new Error(
+            (message.payload as { message?: string }).message ??
+              "Refresh failed"
+          )
         : null,
     timeoutMs: 15000,
     keepPreviousData: false,
@@ -553,7 +643,12 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     let retryCount = 0;
 
     const requestSessionState = () => {
-      console.log(`[Session] Requesting session_state (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`, { serverId });
+      console.log(
+        `[Session] Requesting session_state (attempt ${retryCount + 1}/${
+          MAX_RETRIES + 1
+        })`,
+        { serverId }
+      );
 
       ws.send({
         type: "session",
@@ -570,23 +665,29 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       sessionStateTimeoutRef.current = setTimeout(() => {
         if (retryCount < MAX_RETRIES) {
           retryCount++;
-          console.warn(`[Session] session_state timeout, retrying in ${RETRY_DELAY_MS}ms`, {
-            serverId,
-            attempt: retryCount,
-            maxRetries: MAX_RETRIES,
-          });
+          console.warn(
+            `[Session] session_state timeout, retrying in ${RETRY_DELAY_MS}ms`,
+            {
+              serverId,
+              attempt: retryCount,
+              maxRetries: MAX_RETRIES,
+            }
+          );
 
           setTimeout(() => {
             requestSessionState();
           }, RETRY_DELAY_MS);
         } else {
-          console.error(`[Session] session_state failed after ${MAX_RETRIES} retries`, { serverId });
+          console.error(
+            `[Session] session_state failed after ${MAX_RETRIES} retries`,
+            { serverId }
+          );
 
           setHasHydratedAgents(serverId, true);
           updateConnectionStatus(serverId, {
             status: "online",
             lastOnlineAt: new Date().toISOString(),
-            sessionReady: true
+            sessionReady: true,
           });
         }
       }, TIMEOUT_MS);
@@ -600,7 +701,13 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         sessionStateTimeoutRef.current = null;
       }
     };
-  }, [wsIsConnected, ws, serverId, setHasHydratedAgents, updateConnectionStatus]);
+  }, [
+    wsIsConnected,
+    ws,
+    serverId,
+    setHasHydratedAgents,
+    updateConnectionStatus,
+  ]);
 
   // WebSocket message handlers - directly update Zustand store
   useEffect(() => {
@@ -616,7 +723,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
       const { agents: agentsList } = message.payload;
 
-      console.log("[Session] ✅ Received session_state:", agentsList.length, "agents");
+      console.log(
+        "[Session] ✅ Received session_state:",
+        agentsList.length,
+        "agents"
+      );
       setInitializingAgents(serverId, new Map());
 
       const agents = new Map();
@@ -641,12 +752,14 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       }
 
       setPendingPermissions(serverId, pendingPermissions);
-      setAgentStreamState(serverId, (prev) => {
+      setAgentStreamTail(serverId, (prev) => {
         if (prev.size === 0) {
           return prev;
         }
 
-        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        const validAgentIds = new Set(
+          agentsList.map((snapshot) => snapshot.id)
+        );
         let changed = false;
         const next = new Map(prev);
 
@@ -659,12 +772,14 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
         return changed ? next : prev;
       });
-      setAgentStreamingBuffer(serverId, (prev) => {
+      setAgentStreamHead(serverId, (prev) => {
         if (prev.size === 0) {
           return prev;
         }
 
-        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        const validAgentIds = new Set(
+          agentsList.map((snapshot) => snapshot.id)
+        );
         let changed = false;
         const next = new Map(prev);
 
@@ -682,7 +797,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           return prev;
         }
 
-        const validAgentIds = new Set(agentsList.map((snapshot) => snapshot.id));
+        const validAgentIds = new Set(
+          agentsList.map((snapshot) => snapshot.id)
+        );
         let changed = false;
         const next = new Map(prev);
 
@@ -697,7 +814,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       });
       void persistSessionSnapshot(serverId, { agents: agentsList });
       setHasHydratedAgents(serverId, true);
-      updateConnectionStatus(serverId, { status: "online", lastOnlineAt: new Date().toISOString(), sessionReady: true });
+      updateConnectionStatus(serverId, {
+        status: "online",
+        lastOnlineAt: new Date().toISOString(),
+        sessionReady: true,
+      });
     });
 
     const unsubAgentState = ws.on("agent_state", (message) => {
@@ -737,7 +858,11 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         const queue = session?.queuedMessages.get(agent.id);
         if (queue && queue.length > 0) {
           const [next, ...rest] = queue;
-          console.log("[Session] Flushing queued message for agent:", agent.id, next.text);
+          console.log(
+            "[Session] Flushing queued message for agent:",
+            agent.id,
+            next.text
+          );
           if (sendAgentMessageRef.current) {
             void sendAgentMessageRef.current(agent.id, next.text, next.images);
           }
@@ -756,31 +881,31 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       const { agentId, event, timestamp } = message.payload;
       const parsedTimestamp = new Date(timestamp);
 
-      console.log("[Session] agent_stream", { agentId, eventType: event.type });
+      console.log("[Session] agent_stream", { agentId, event, timestamp });
 
       const session = useSessionStore.getState().sessions[serverId];
-      const currentStream = session?.agentStreamState.get(agentId) ?? [];
-      const currentBuffer = session?.agentStreamingBuffer.get(agentId) ?? null;
-      const { stream, buffer, changedStream, changedBuffer } = applyStreamEventWithBuffer({
-        state: currentStream,
-        buffer: currentBuffer,
+      const currentTail = session?.agentStreamTail.get(agentId) ?? [];
+      const currentHead = session?.agentStreamHead.get(agentId) ?? [];
+      const { tail, head, changedTail, changedHead } = applyStreamEvent({
+        tail: currentTail,
+        head: currentHead,
         event: event as AgentStreamEventPayload,
         timestamp: parsedTimestamp,
       });
 
-      if (changedStream) {
-        setAgentStreamState(serverId, (prev) => {
+      if (changedTail) {
+        setAgentStreamTail(serverId, (prev) => {
           const next = new Map(prev);
-          next.set(agentId, stream);
+          next.set(agentId, tail);
           return next;
         });
       }
 
-      if (changedBuffer) {
-        setAgentStreamingBuffer(serverId, (prev) => {
+      if (changedHead) {
+        setAgentStreamHead(serverId, (prev) => {
           const next = new Map(prev);
-          if (buffer) {
-            next.set(agentId, buffer);
+          if (head.length > 0) {
+            next.set(agentId, head);
           } else {
             next.delete(agentId);
           }
@@ -803,38 +928,41 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       // on status changes, which is sufficient for sorting and display purposes.
     });
 
-    const unsubAgentStreamSnapshot = ws.on("agent_stream_snapshot", (message) => {
-      if (message.type !== "agent_stream_snapshot") return;
-      const { agentId, events } = message.payload;
+    const unsubAgentStreamSnapshot = ws.on(
+      "agent_stream_snapshot",
+      (message) => {
+        if (message.type !== "agent_stream_snapshot") return;
+        const { agentId, events } = message.payload;
 
-      console.log("[Session] agent_stream_snapshot", {
-        agentId,
-        eventCount: events.length,
-      });
+        console.log("[Session] agent_stream_snapshot", {
+          agentId,
+          eventCount: events.length,
+        });
 
-      const hydrated = hydrateStreamState(
-        events.map(({ event, timestamp }) => ({
-          event: event as AgentStreamEventPayload,
-          timestamp: new Date(timestamp),
-        }))
-      );
+        const hydrated = hydrateStreamState(
+          events.map(({ event, timestamp }) => ({
+            event: event as AgentStreamEventPayload,
+            timestamp: new Date(timestamp),
+          }))
+        );
 
-      setAgentStreamState(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, hydrated);
-        return next;
-      });
-      clearAgentStreamingBuffer(serverId, agentId);
+        setAgentStreamTail(serverId, (prev) => {
+          const next = new Map(prev);
+          next.set(agentId, hydrated);
+          return next;
+        });
+        clearAgentStreamHead(serverId, agentId);
 
-      setInitializingAgents(serverId, (prev) => {
-        if (!prev.has(agentId)) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(agentId, false);
-        return next;
-      });
-    });
+        setInitializingAgents(serverId, (prev) => {
+          if (!prev.has(agentId)) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
+      }
+    );
 
     const unsubStatus = ws.on("status", (message) => {
       if (message.type !== "status") return;
@@ -857,40 +985,59 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       }
     });
 
-    const unsubPermissionRequest = ws.on("agent_permission_request", (message) => {
-      if (message.type !== "agent_permission_request") return;
-      const { agentId, request } = message.payload;
+    const unsubPermissionRequest = ws.on(
+      "agent_permission_request",
+      (message) => {
+        if (message.type !== "agent_permission_request") return;
+        const { agentId, request } = message.payload;
 
-      console.log("[Session] Permission request:", request.id, "for agent:", agentId);
+        console.log(
+          "[Session] Permission request:",
+          request.id,
+          "for agent:",
+          agentId
+        );
 
-      setPendingPermissions(serverId, (prev) => {
-        const next = new Map(prev);
-        const key = derivePendingPermissionKey(agentId, request);
-        next.set(key, { key, agentId, request });
-        return next;
-      });
-    });
+        setPendingPermissions(serverId, (prev) => {
+          const next = new Map(prev);
+          const key = derivePendingPermissionKey(agentId, request);
+          next.set(key, { key, agentId, request });
+          return next;
+        });
+      }
+    );
 
-    const unsubPermissionResolved = ws.on("agent_permission_resolved", (message) => {
-      if (message.type !== "agent_permission_resolved") return;
-      const { requestId, agentId } = message.payload;
+    const unsubPermissionResolved = ws.on(
+      "agent_permission_resolved",
+      (message) => {
+        if (message.type !== "agent_permission_resolved") return;
+        const { requestId, agentId } = message.payload;
 
-      console.log("[Session] Permission resolved:", requestId, "for agent:", agentId);
+        console.log(
+          "[Session] Permission resolved:",
+          requestId,
+          "for agent:",
+          agentId
+        );
 
-      setPendingPermissions(serverId, (prev) => {
-        const next = new Map(prev);
-        const derivedKey = `${agentId}:${requestId}`;
-        if (!next.delete(derivedKey)) {
-          for (const [key, pending] of next.entries()) {
-            if (pending.agentId === agentId && pending.request.id === requestId) {
-              next.delete(key);
-              break;
+        setPendingPermissions(serverId, (prev) => {
+          const next = new Map(prev);
+          const derivedKey = `${agentId}:${requestId}`;
+          if (!next.delete(derivedKey)) {
+            for (const [key, pending] of next.entries()) {
+              if (
+                pending.agentId === agentId &&
+                pending.request.id === requestId
+              ) {
+                next.delete(key);
+                break;
+              }
             }
           }
-        }
-        return next;
-      });
-    });
+          return next;
+        });
+      }
+    );
 
     const unsubAudioOutput = ws.on("audio_output", async (message) => {
       if (message.type !== "audio_output") return;
@@ -915,15 +1062,19 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       });
 
       if (!isFinalChunk) {
-        console.log(`[Session] Buffered chunk ${chunkIndex} for group ${playbackGroupId}`);
+        console.log(
+          `[Session] Buffered chunk ${chunkIndex} for group ${playbackGroupId}`
+        );
         return;
       }
 
-      console.log(`[Session] Received final chunk for group ${playbackGroupId}, total chunks: ${buffer.length}`);
+      console.log(
+        `[Session] Received final chunk for group ${playbackGroupId}, total chunks: ${buffer.length}`
+      );
       buffer.sort((a, b) => a.chunkIndex - b.chunkIndex);
 
       let playbackFailed = false;
-      const chunkIds = buffer.map(chunk => chunk.id);
+      const chunkIds = buffer.map((chunk) => chunk.id);
 
       try {
         const mimeType =
@@ -949,7 +1100,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           offset += chunk.length;
         }
 
-        console.log(`[Session] Playing concatenated audio: ${buffer.length} chunks, ${totalSize} bytes`);
+        console.log(
+          `[Session] Playing concatenated audio: ${buffer.length} chunks, ${totalSize} bytes`
+        );
 
         const audioBlob = {
           type: mimeType,
@@ -1108,7 +1261,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
 
     const unsubChunk = ws.on("assistant_chunk", (message) => {
       if (message.type !== "assistant_chunk") return;
-      setCurrentAssistantMessage(serverId, (prev) => prev + message.payload.chunk);
+      setCurrentAssistantMessage(
+        serverId,
+        (prev) => prev + message.payload.chunk
+      );
     });
 
     const unsubTranscription = ws.on("transcription_result", (message) => {
@@ -1117,7 +1273,9 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       const transcriptText = message.payload.text.trim();
 
       if (!transcriptText) {
-        console.log("[Session] Empty transcription (false positive) - ignoring");
+        console.log(
+          "[Session] Empty transcription (false positive) - ignoring"
+        );
       } else {
         console.log("[Session] Transcription received - stopping playback");
         audioPlayer.stop();
@@ -1132,8 +1290,10 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         if (message.type !== "list_provider_models_response") {
           return;
         }
-        const { provider, models, error, fetchedAt, requestId } = message.payload;
-        const latestRequestId = providerModelRequestIdsRef.current.get(provider);
+        const { provider, models, error, fetchedAt, requestId } =
+          message.payload;
+        const latestRequestId =
+          providerModelRequestIdsRef.current.get(provider);
         if (latestRequestId && requestId && requestId !== latestRequestId) {
           return;
         }
@@ -1182,7 +1342,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         };
       });
 
-      setAgentStreamState(serverId, (prev) => {
+      setAgentStreamTail(serverId, (prev) => {
         if (!prev.has(agentId)) {
           return prev;
         }
@@ -1190,7 +1350,7 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
         next.delete(agentId);
         return next;
       });
-      clearAgentStreamingBuffer(serverId, agentId);
+      clearAgentStreamHead(serverId, agentId);
 
       // Remove draft input
       saveDraftInput(agentId, { text: "", images: [] });
@@ -1250,26 +1410,46 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
       unsubProviderModels();
       unsubAgentDeleted();
     };
-  }, [ws, audioPlayer, serverId, setIsPlayingAudio, setMessages, setCurrentAssistantMessage, setAgentStreamState, setAgentStreamingBuffer, clearAgentStreamingBuffer, setInitializingAgents, setAgents, setAgentLastActivity, setPendingPermissions, setGitDiffs, setFileExplorer, setProviderModels, setHasHydratedAgents, updateConnectionStatus, getSession, saveDraftInput]);
+  }, [
+    ws,
+    audioPlayer,
+    serverId,
+    setIsPlayingAudio,
+    setMessages,
+    setCurrentAssistantMessage,
+    setAgentStreamTail,
+    setAgentStreamHead,
+    clearAgentStreamHead,
+    setInitializingAgents,
+    setAgents,
+    setAgentLastActivity,
+    setPendingPermissions,
+    setGitDiffs,
+    setFileExplorer,
+    setProviderModels,
+    setHasHydratedAgents,
+    updateConnectionStatus,
+    getSession,
+    saveDraftInput,
+  ]);
 
-  const initializeAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
-    console.log("[Session] initializeAgent called", { agentId, requestId });
-    setInitializingAgents(serverId, (prev) => {
-      const next = new Map(prev);
-      next.set(agentId, true);
-      return next;
-    });
+  const initializeAgent = useCallback(
+    ({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+      console.log("[Session] initializeAgent called", { agentId, requestId });
+      setInitializingAgents(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, true);
+        return next;
+      });
 
-    setAgentStreamState(serverId, (prev) => {
-      const next = new Map(prev);
-      next.set(agentId, []);
-      return next;
-    });
-    clearAgentStreamingBuffer(serverId, agentId);
+      setAgentStreamTail(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, []);
+        return next;
+      });
+      clearAgentStreamHead(serverId, agentId);
 
-    initializeAgentRpc
-      .send({ agentId })
-      .catch((error) => {
+      initializeAgentRpc.send({ agentId }).catch((error) => {
         console.warn("[Session] initializeAgent failed", { agentId, error });
         setInitializingAgents(serverId, (prev) => {
           const next = new Map(prev);
@@ -1277,404 +1457,514 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
           return next;
         });
       });
-  }, [serverId, initializeAgentRpc, setAgentStreamState, setInitializingAgents, clearAgentStreamingBuffer]);
+    },
+    [
+      serverId,
+      initializeAgentRpc,
+      setAgentStreamTail,
+      setInitializingAgents,
+      clearAgentStreamHead,
+    ]
+  );
 
-  const refreshAgent = useCallback(({ agentId, requestId }: { agentId: string; requestId?: string }) => {
-    setInitializingAgents(serverId, (prev) => {
-      const next = new Map(prev);
-      next.set(agentId, true);
-      return next;
-    });
-
-    setAgentStreamState(serverId, (prev) => {
-      const next = new Map(prev);
-      next.set(agentId, []);
-      return next;
-    });
-    clearAgentStreamingBuffer(serverId, agentId);
-
-    refreshAgentRequest
-      .execute({ agentId }, { requestKeyOverride: agentId, dedupe: false })
-      .catch((error) => {
-        console.warn("[Session] refreshAgent failed", { agentId, error });
-        setInitializingAgents(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, false);
-          return next;
-        });
+  const refreshAgent = useCallback(
+    ({ agentId, requestId }: { agentId: string; requestId?: string }) => {
+      setInitializingAgents(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, true);
+        return next;
       });
-  }, [serverId, refreshAgentRequest, setAgentStreamState, setInitializingAgents, clearAgentStreamingBuffer]);
 
-  const requestProviderModels = useCallback((provider: any, options?: { cwd?: string }) => {
-    const requestId = generateMessageId();
-    providerModelRequestIdsRef.current.set(provider, requestId);
-    setProviderModels(serverId, (prev) => {
-      const next = new Map(prev);
-      const current =
-        prev.get(provider) ?? {
+      setAgentStreamTail(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, []);
+        return next;
+      });
+      clearAgentStreamHead(serverId, agentId);
+
+      refreshAgentRequest
+        .execute({ agentId }, { requestKeyOverride: agentId, dedupe: false })
+        .catch((error) => {
+          console.warn("[Session] refreshAgent failed", { agentId, error });
+          setInitializingAgents(serverId, (prev) => {
+            const next = new Map(prev);
+            next.set(agentId, false);
+            return next;
+          });
+        });
+    },
+    [
+      serverId,
+      refreshAgentRequest,
+      setAgentStreamTail,
+      setInitializingAgents,
+      clearAgentStreamHead,
+    ]
+  );
+
+  const requestProviderModels = useCallback(
+    (provider: any, options?: { cwd?: string }) => {
+      const requestId = generateMessageId();
+      providerModelRequestIdsRef.current.set(provider, requestId);
+      setProviderModels(serverId, (prev) => {
+        const next = new Map(prev);
+        const current = prev.get(provider) ?? {
           models: null,
           fetchedAt: null,
           error: null,
           isLoading: false,
         };
-      next.set(provider, {
-        ...current,
-        isLoading: true,
-        error: null,
+        next.set(provider, {
+          ...current,
+          isLoading: true,
+          error: null,
+        });
+        return next;
       });
-      return next;
-    });
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "list_provider_models_request",
-        provider,
-        ...(options?.cwd ? { cwd: options.cwd } : {}),
-        requestId,
-      },
-    };
-    ws.send(msg);
-  }, [serverId, ws, setProviderModels]);
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "list_provider_models_request",
+          provider,
+          ...(options?.cwd ? { cwd: options.cwd } : {}),
+          requestId,
+        },
+      };
+      ws.send(msg);
+    },
+    [serverId, ws, setProviderModels]
+  );
 
-  const encodeImages = useCallback(async (
-    images?: Array<{ uri: string; mimeType?: string }>
-  ) => {
-    if (!images || images.length === 0) {
-      return undefined;
-    }
-    const encodedImages = await Promise.all(
-      images.map(async ({ uri, mimeType }) => {
-        try {
-          const data = await (async () => {
-            if (Platform.OS === "web") {
-              if (uri.startsWith("data:")) {
-                const [, base64] = uri.split(",", 2);
-                if (!base64) {
-                  throw new Error("Malformed data URI for image.");
+  const encodeImages = useCallback(
+    async (images?: Array<{ uri: string; mimeType?: string }>) => {
+      if (!images || images.length === 0) {
+        return undefined;
+      }
+      const encodedImages = await Promise.all(
+        images.map(async ({ uri, mimeType }) => {
+          try {
+            const data = await (async () => {
+              if (Platform.OS === "web") {
+                if (uri.startsWith("data:")) {
+                  const [, base64] = uri.split(",", 2);
+                  if (!base64) {
+                    throw new Error("Malformed data URI for image.");
+                  }
+                  return base64;
                 }
+                const response = await fetch(uri);
+                if (!response.ok) {
+                  throw new Error(`Failed to fetch image: ${response.status}`);
+                }
+                const blob = await response.blob();
+                const base64 = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    if (typeof reader.result !== "string") {
+                      reject(new Error("Unexpected FileReader result type."));
+                      return;
+                    }
+                    const [, resultBase64] = reader.result.split(",", 2);
+                    if (!resultBase64) {
+                      reject(new Error("Failed to read image data as base64."));
+                      return;
+                    }
+                    resolve(resultBase64);
+                  };
+                  reader.onerror = () => {
+                    reject(
+                      reader.error ?? new Error("Failed to read image data.")
+                    );
+                  };
+                  reader.readAsDataURL(blob);
+                });
                 return base64;
               }
-              const response = await fetch(uri);
-              if (!response.ok) {
-                throw new Error(`Failed to fetch image: ${response.status}`);
-              }
-              const blob = await response.blob();
-              const base64 = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => {
-                  if (typeof reader.result !== "string") {
-                    reject(new Error("Unexpected FileReader result type."));
-                    return;
-                  }
-                  const [, resultBase64] = reader.result.split(",", 2);
-                  if (!resultBase64) {
-                    reject(new Error("Failed to read image data as base64."));
-                    return;
-                  }
-                  resolve(resultBase64);
-                };
-                reader.onerror = () => {
-                  reject(reader.error ?? new Error("Failed to read image data."));
-                };
-                reader.readAsDataURL(blob);
-              });
-              return base64;
-            }
-            const file = new File(uri);
-            return await file.base64();
-          })();
-          return {
-            data,
-            mimeType: mimeType ?? "image/jpeg",
-          };
-        } catch (error) {
-          console.error("[Session] Failed to convert image:", error);
-          return null;
-        }
-      })
-    );
-    const validImages = encodedImages.filter(
-      (entry): entry is { data: string; mimeType: string } => entry !== null
-    );
-    return validImages.length > 0 ? validImages : undefined;
-  }, []);
+              const file = new File(uri);
+              return await file.base64();
+            })();
+            return {
+              data,
+              mimeType: mimeType ?? "image/jpeg",
+            };
+          } catch (error) {
+            console.error("[Session] Failed to convert image:", error);
+            return null;
+          }
+        })
+      );
+      const validImages = encodedImages.filter(
+        (entry): entry is { data: string; mimeType: string } => entry !== null
+      );
+      return validImages.length > 0 ? validImages : undefined;
+    },
+    []
+  );
 
-  const sendAgentMessage = useCallback(async (
-    agentId: string,
-    message: string,
-    images?: Array<{ uri: string; mimeType?: string }>
-  ) => {
-    const messageId = generateMessageId();
+  const sendAgentMessage = useCallback(
+    async (
+      agentId: string,
+      message: string,
+      images?: Array<{ uri: string; mimeType?: string }>
+    ) => {
+      const messageId = generateMessageId();
 
-    setAgentStreamState(serverId, (prev) => {
-      const currentStream = prev.get(agentId) || [];
-      const nextItem: any = {
-        kind: "user_message",
-        id: messageId,
-        text: message,
-        timestamp: new Date(),
-      };
-      const updated = new Map(prev);
-      updated.set(agentId, [...currentStream, nextItem]);
-      return updated;
-    });
+      setAgentStreamTail(serverId, (prev) => {
+        const currentStream = prev.get(agentId) || [];
+        const nextItem: any = {
+          kind: "user_message",
+          id: messageId,
+          text: message,
+          timestamp: new Date(),
+        };
+        const updated = new Map(prev);
+        updated.set(agentId, [...currentStream, nextItem]);
+        return updated;
+      });
 
-    const imagesData = await encodeImages(images);
-
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "send_agent_message",
-        agentId,
-        text: message,
-        messageId,
-        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-      },
-    };
-    ws.send(msg);
-  }, [encodeImages, serverId, ws, setAgentStreamState]);
-
-  // Keep the ref updated so the agent_state handler can call it
-  sendAgentMessageRef.current = sendAgentMessage;
-
-  const cancelAgentRun = useCallback((agentId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "cancel_agent_request",
-        agentId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
-  const deleteAgent = useCallback((agentId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "delete_agent_request",
-        agentId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
-  const restartServer = useCallback((reason?: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "restart_server_request",
-        ...(reason && reason.trim().length > 0 ? { reason } : {}),
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
-
-  const sendAgentAudio = useCallback(async (
-    agentId: string | undefined,
-    audioBlob: Blob,
-    requestId?: string,
-    options?: { mode?: "transcribe_only" | "auto_run" }
-  ) => {
-    try {
-      const isSocketConnected = ws.getConnectionState ? ws.getConnectionState().isConnected : ws.isConnected;
-      if (!isSocketConnected) {
-        throw new Error("WebSocket is disconnected");
-      }
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binary);
-
-      const deriveFormat = (mimeType: string | undefined): string => {
-        if (!mimeType || mimeType.length === 0) {
-          return "webm";
-        }
-        const slashIndex = mimeType.indexOf("/");
-        let formatPart = slashIndex >= 0 ? mimeType.slice(slashIndex + 1) : mimeType;
-        const semicolonIndex = formatPart.indexOf(";");
-        if (semicolonIndex >= 0) {
-          formatPart = formatPart.slice(0, semicolonIndex);
-        }
-        return formatPart.trim().length > 0 ? formatPart.trim() : "webm";
-      };
-
-      const format = deriveFormat(audioBlob.type);
+      const imagesData = await encodeImages(images);
 
       const msg: WSInboundMessage = {
         type: "session",
         message: {
-          type: "send_agent_audio",
-          ...(agentId ? { agentId } : {}),
-          audio: base64Audio,
-          format,
-          isLast: true,
-          requestId,
-          ...(options?.mode ? { mode: options.mode } : {}),
+          type: "send_agent_message",
+          agentId,
+          text: message,
+          messageId,
+          ...(imagesData && imagesData.length > 0
+            ? { images: imagesData }
+            : {}),
         },
       };
       ws.send(msg);
+    },
+    [encodeImages, serverId, ws, setAgentStreamTail]
+  );
 
-      console.log("[Session] Sent audio:", agentId ?? "(no agent)", format, audioBlob.size, "bytes", requestId ? `(requestId: ${requestId})` : "");
-    } catch (error) {
-      console.error("[Session] Failed to send audio:", error);
-      throw error;
-    }
-  }, [ws]);
+  // Keep the ref updated so the agent_state handler can call it
+  sendAgentMessageRef.current = sendAgentMessage;
 
-  const createAgent = useCallback(async ({ config, initialPrompt, images, git, worktreeName, requestId }: { config: any; initialPrompt: string; images?: Array<{ uri: string; mimeType?: string }>; git?: any; worktreeName?: string; requestId?: string }) => {
-    console.log("[Session] createAgent called with images:", images?.length ?? 0, images);
-    const trimmedPrompt = initialPrompt.trim();
-    let imagesData: Array<{ data: string; mimeType: string }> | undefined;
-    try {
-      imagesData = await encodeImages(images);
-      console.log("[Session] encodeImages result:", imagesData?.length ?? 0, imagesData?.map(img => ({ dataLength: img.data?.length ?? 0, mimeType: img.mimeType })));
-    } catch (error) {
-      console.error("[Session] Failed to prepare images for agent creation:", error);
-    }
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "create_agent_request",
-        config,
-        ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
-        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-        ...(git ? { git } : {}),
-        ...(worktreeName ? { worktreeName } : {}),
-        ...(requestId ? { requestId } : {}),
-      },
-    };
-    console.log("[Session] createAgent message has images:", 'images' in msg.message, (msg.message as any).images?.length);
-    ws.send(msg);
-  }, [encodeImages, ws]);
+  const cancelAgentRun = useCallback(
+    (agentId: string) => {
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "cancel_agent_request",
+          agentId,
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
 
-  const setAgentMode = useCallback((agentId: string, modeId: string) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "set_agent_mode",
-        agentId,
-        modeId,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
+  const deleteAgent = useCallback(
+    (agentId: string) => {
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "delete_agent_request",
+          agentId,
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
 
-  const respondToPermission = useCallback((agentId: string, requestId: string, response: any) => {
-    const msg: WSInboundMessage = {
-      type: "session",
-      message: {
-        type: "agent_permission_response",
-        agentId,
-        requestId,
-        response,
-      },
-    };
-    ws.send(msg);
-  }, [ws]);
+  const restartServer = useCallback(
+    (reason?: string) => {
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "restart_server_request",
+          ...(reason && reason.trim().length > 0 ? { reason } : {}),
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
 
-  const setVoiceDetectionFlags = useCallback((isDetecting: boolean, isSpeaking: boolean) => {
-    isDetectingRef.current = isDetecting;
-    isSpeakingRef.current = isSpeaking;
-  }, []);
+  const sendAgentAudio = useCallback(
+    async (
+      agentId: string | undefined,
+      audioBlob: Blob,
+      requestId?: string,
+      options?: { mode?: "transcribe_only" | "auto_run" }
+    ) => {
+      try {
+        const isSocketConnected = ws.getConnectionState
+          ? ws.getConnectionState().isConnected
+          : ws.isConnected;
+        if (!isSocketConnected) {
+          throw new Error("WebSocket is disconnected");
+        }
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Audio = btoa(binary);
 
-  const requestGitDiff = useCallback((agentId: string) => {
-    gitDiffRequest
-      .execute({ agentId })
-      .then((result) => {
-        setGitDiffs(serverId, (prev) => new Map(prev).set(result.agentId, result.diff));
-      })
-      .catch((error) => {
-        setGitDiffs(serverId, (prev) => new Map(prev).set(agentId, `Error: ${error.message}`));
-      });
-  }, [serverId, gitDiffRequest, setGitDiffs]);
+        const deriveFormat = (mimeType: string | undefined): string => {
+          if (!mimeType || mimeType.length === 0) {
+            return "webm";
+          }
+          const slashIndex = mimeType.indexOf("/");
+          let formatPart =
+            slashIndex >= 0 ? mimeType.slice(slashIndex + 1) : mimeType;
+          const semicolonIndex = formatPart.indexOf(";");
+          if (semicolonIndex >= 0) {
+            formatPart = formatPart.slice(0, semicolonIndex);
+          }
+          return formatPart.trim().length > 0 ? formatPart.trim() : "webm";
+        };
 
-  const requestDirectoryListing = useCallback((agentId: string, path: string, options?: { recordHistory?: boolean }) => {
-    const normalizedPath = path && path.length > 0 ? path : ".";
-    const shouldRecordHistory = options?.recordHistory ?? true;
+        const format = deriveFormat(audioBlob.type);
 
-    updateExplorerState(agentId, (state: any) => ({
-      ...state,
-      isLoading: true,
-      lastError: null,
-      pendingRequest: { path: normalizedPath, mode: "list" },
-      currentPath: normalizedPath,
-      history: shouldRecordHistory ? pushHistory(state.history, normalizedPath) : state.history,
-      lastVisitedPath: normalizedPath,
-    }));
+        const msg: WSInboundMessage = {
+          type: "session",
+          message: {
+            type: "send_agent_audio",
+            ...(agentId ? { agentId } : {}),
+            audio: base64Audio,
+            format,
+            isLast: true,
+            requestId,
+            ...(options?.mode ? { mode: options.mode } : {}),
+          },
+        };
+        ws.send(msg);
 
-    directoryListingRequest
-      .execute({ agentId, path: normalizedPath })
-      .then((payload) => {
-        updateExplorerState(agentId, (state: any) => {
-          const nextState: any = {
+        console.log(
+          "[Session] Sent audio:",
+          agentId ?? "(no agent)",
+          format,
+          audioBlob.size,
+          "bytes",
+          requestId ? `(requestId: ${requestId})` : ""
+        );
+      } catch (error) {
+        console.error("[Session] Failed to send audio:", error);
+        throw error;
+      }
+    },
+    [ws]
+  );
+
+  const createAgent = useCallback(
+    async ({
+      config,
+      initialPrompt,
+      images,
+      git,
+      worktreeName,
+      requestId,
+    }: {
+      config: any;
+      initialPrompt: string;
+      images?: Array<{ uri: string; mimeType?: string }>;
+      git?: any;
+      worktreeName?: string;
+      requestId?: string;
+    }) => {
+      console.log(
+        "[Session] createAgent called with images:",
+        images?.length ?? 0,
+        images
+      );
+      const trimmedPrompt = initialPrompt.trim();
+      let imagesData: Array<{ data: string; mimeType: string }> | undefined;
+      try {
+        imagesData = await encodeImages(images);
+        console.log(
+          "[Session] encodeImages result:",
+          imagesData?.length ?? 0,
+          imagesData?.map((img) => ({
+            dataLength: img.data?.length ?? 0,
+            mimeType: img.mimeType,
+          }))
+        );
+      } catch (error) {
+        console.error(
+          "[Session] Failed to prepare images for agent creation:",
+          error
+        );
+      }
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "create_agent_request",
+          config,
+          ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
+          ...(imagesData && imagesData.length > 0
+            ? { images: imagesData }
+            : {}),
+          ...(git ? { git } : {}),
+          ...(worktreeName ? { worktreeName } : {}),
+          ...(requestId ? { requestId } : {}),
+        },
+      };
+      console.log(
+        "[Session] createAgent message has images:",
+        "images" in msg.message,
+        (msg.message as any).images?.length
+      );
+      ws.send(msg);
+    },
+    [encodeImages, ws]
+  );
+
+  const setAgentMode = useCallback(
+    (agentId: string, modeId: string) => {
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "set_agent_mode",
+          agentId,
+          modeId,
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
+
+  const respondToPermission = useCallback(
+    (agentId: string, requestId: string, response: any) => {
+      const msg: WSInboundMessage = {
+        type: "session",
+        message: {
+          type: "agent_permission_response",
+          agentId,
+          requestId,
+          response,
+        },
+      };
+      ws.send(msg);
+    },
+    [ws]
+  );
+
+  const setVoiceDetectionFlags = useCallback(
+    (isDetecting: boolean, isSpeaking: boolean) => {
+      isDetectingRef.current = isDetecting;
+      isSpeakingRef.current = isSpeaking;
+    },
+    []
+  );
+
+  const requestGitDiff = useCallback(
+    (agentId: string) => {
+      gitDiffRequest
+        .execute({ agentId })
+        .then((result) => {
+          setGitDiffs(serverId, (prev) =>
+            new Map(prev).set(result.agentId, result.diff)
+          );
+        })
+        .catch((error) => {
+          setGitDiffs(serverId, (prev) =>
+            new Map(prev).set(agentId, `Error: ${error.message}`)
+          );
+        });
+    },
+    [serverId, gitDiffRequest, setGitDiffs]
+  );
+
+  const requestDirectoryListing = useCallback(
+    (agentId: string, path: string, options?: { recordHistory?: boolean }) => {
+      const normalizedPath = path && path.length > 0 ? path : ".";
+      const shouldRecordHistory = options?.recordHistory ?? true;
+
+      updateExplorerState(agentId, (state: any) => ({
+        ...state,
+        isLoading: true,
+        lastError: null,
+        pendingRequest: { path: normalizedPath, mode: "list" },
+        currentPath: normalizedPath,
+        history: shouldRecordHistory
+          ? pushHistory(state.history, normalizedPath)
+          : state.history,
+        lastVisitedPath: normalizedPath,
+      }));
+
+      directoryListingRequest
+        .execute({ agentId, path: normalizedPath })
+        .then((payload) => {
+          updateExplorerState(agentId, (state: any) => {
+            const nextState: any = {
+              ...state,
+              isLoading: false,
+              lastError: payload.error ?? null,
+              pendingRequest: null,
+              directories: state.directories,
+              files: state.files,
+            };
+
+            if (!payload.error && payload.directory) {
+              const directories = new Map(state.directories);
+              directories.set(payload.directory.path, payload.directory);
+              nextState.directories = directories;
+            }
+
+            return nextState;
+          });
+        })
+        .catch((error) => {
+          updateExplorerState(agentId, (state: any) => ({
             ...state,
             isLoading: false,
-            lastError: payload.error ?? null,
+            lastError: error.message,
             pendingRequest: null,
-            directories: state.directories,
-            files: state.files,
-          };
-
-          if (!payload.error && payload.directory) {
-            const directories = new Map(state.directories);
-            directories.set(payload.directory.path, payload.directory);
-            nextState.directories = directories;
-          }
-
-          return nextState;
+          }));
         });
-      })
-      .catch((error) => {
-        updateExplorerState(agentId, (state: any) => ({
-          ...state,
-          isLoading: false,
-          lastError: error.message,
-          pendingRequest: null,
-        }));
-      });
-  }, [directoryListingRequest, updateExplorerState]);
+    },
+    [directoryListingRequest, updateExplorerState]
+  );
 
-  const requestFilePreview = useCallback((agentId: string, path: string) => {
-    const normalizedPath = path && path.length > 0 ? path : ".";
-    updateExplorerState(agentId, (state: any) => ({
-      ...state,
-      isLoading: true,
-      pendingRequest: { path: normalizedPath, mode: "file" },
-    }));
+  const requestFilePreview = useCallback(
+    (agentId: string, path: string) => {
+      const normalizedPath = path && path.length > 0 ? path : ".";
+      updateExplorerState(agentId, (state: any) => ({
+        ...state,
+        isLoading: true,
+        pendingRequest: { path: normalizedPath, mode: "file" },
+      }));
 
-    filePreviewRequest
-      .execute({ agentId, path: normalizedPath })
-      .then((payload) => {
-        updateExplorerState(agentId, (state: any) => {
-          const nextState: any = {
+      filePreviewRequest
+        .execute({ agentId, path: normalizedPath })
+        .then((payload) => {
+          updateExplorerState(agentId, (state: any) => {
+            const nextState: any = {
+              ...state,
+              isLoading: false,
+              pendingRequest: null,
+              directories: state.directories,
+              files: state.files,
+            };
+
+            if (!payload.error && payload.file) {
+              const files = new Map(state.files);
+              files.set(payload.file.path, payload.file);
+              nextState.files = files;
+            }
+
+            return nextState;
+          });
+        })
+        .catch((error) => {
+          updateExplorerState(agentId, (state: any) => ({
             ...state,
             isLoading: false,
             pendingRequest: null,
-            directories: state.directories,
-            files: state.files,
-          };
-
-          if (!payload.error && payload.file) {
-            const files = new Map(state.files);
-            files.set(payload.file.path, payload.file);
-            nextState.files = files;
-          }
-
-          return nextState;
+          }));
         });
-      })
-      .catch((error) => {
-        updateExplorerState(agentId, (state: any) => ({
-          ...state,
-          isLoading: false,
-          pendingRequest: null,
-        }));
-      });
-  }, [filePreviewRequest, updateExplorerState]);
+    },
+    [filePreviewRequest, updateExplorerState]
+  );
 
   const requestFileDownloadToken = useCallback(
     (agentId: string, path: string) => {
@@ -1683,64 +1973,67 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
     [fileDownloadTokenRequest]
   );
 
-  const navigateExplorerBack = useCallback((agentId: string) => {
-    let targetPath: string | null = null;
+  const navigateExplorerBack = useCallback(
+    (agentId: string) => {
+      let targetPath: string | null = null;
 
-    updateExplorerState(agentId, (state: any) => {
-      if (!state.history || state.history.length <= 1) {
-        return state;
+      updateExplorerState(agentId, (state: any) => {
+        if (!state.history || state.history.length <= 1) {
+          return state;
+        }
+
+        const nextHistory = state.history.slice(0, -1);
+        targetPath = nextHistory[nextHistory.length - 1] ?? ".";
+
+        return {
+          ...state,
+          isLoading: true,
+          lastError: null,
+          pendingRequest: { path: targetPath, mode: "list" },
+          currentPath: targetPath,
+          history: nextHistory,
+          lastVisitedPath: targetPath,
+        };
+      });
+
+      if (!targetPath) {
+        return null;
       }
 
-      const nextHistory = state.history.slice(0, -1);
-      targetPath = nextHistory[nextHistory.length - 1] ?? ".";
+      directoryListingRequest
+        .execute({ agentId, path: targetPath })
+        .then((payload) => {
+          updateExplorerState(agentId, (state: any) => {
+            const nextState: any = {
+              ...state,
+              isLoading: false,
+              lastError: payload.error ?? null,
+              pendingRequest: null,
+              directories: state.directories,
+              files: state.files,
+            };
 
-      return {
-        ...state,
-        isLoading: true,
-        lastError: null,
-        pendingRequest: { path: targetPath, mode: "list" },
-        currentPath: targetPath,
-        history: nextHistory,
-        lastVisitedPath: targetPath,
-      };
-    });
+            if (!payload.error && payload.directory) {
+              const directories = new Map(state.directories);
+              directories.set(payload.directory.path, payload.directory);
+              nextState.directories = directories;
+            }
 
-    if (!targetPath) {
-      return null;
-    }
-
-    directoryListingRequest
-      .execute({ agentId, path: targetPath })
-      .then((payload) => {
-        updateExplorerState(agentId, (state: any) => {
-          const nextState: any = {
+            return nextState;
+          });
+        })
+        .catch((error) => {
+          updateExplorerState(agentId, (state: any) => ({
             ...state,
             isLoading: false,
-            lastError: payload.error ?? null,
+            lastError: error.message,
             pendingRequest: null,
-            directories: state.directories,
-            files: state.files,
-          };
-
-          if (!payload.error && payload.directory) {
-            const directories = new Map(state.directories);
-            directories.set(payload.directory.path, payload.directory);
-            nextState.directories = directories;
-          }
-
-          return nextState;
+          }));
         });
-      })
-      .catch((error) => {
-        updateExplorerState(agentId, (state: any) => ({
-          ...state,
-          isLoading: false,
-          lastError: error.message,
-          pendingRequest: null,
-        }));
-      });
-    return targetPath;
-  }, [directoryListingRequest, updateExplorerState]);
+      return targetPath;
+    },
+    [directoryListingRequest, updateExplorerState]
+  );
 
   const refreshSession = useCallback(() => {
     console.log(`[Session] Manual refresh requested for ${serverId}`);
@@ -1812,54 +2105,55 @@ export function SessionProvider({ children, serverUrl, serverId }: SessionProvid
   // Sync imperative methods to Zustand store so components can access them via selectors
   // Memoize the methods object to avoid infinite re-renders (object reference must be stable)
   const setSessionMethods = useSessionStore((state) => state.setSessionMethods);
-  const methods = useMemo(() => ({
-    setVoiceDetectionFlags,
-    requestGitDiff,
-    requestDirectoryListing,
-    requestFilePreview,
-    requestFileDownloadToken,
-    navigateExplorerBack,
-    requestProviderModels,
-    restartServer,
-    initializeAgent,
-    refreshAgent,
-    refreshSession,
-    cancelAgentRun,
-    sendAgentMessage,
-    sendAgentAudio,
-    deleteAgent,
-    createAgent,
-    setAgentMode,
-    respondToPermission,
-  }), [
-    setVoiceDetectionFlags,
-    requestGitDiff,
-    requestDirectoryListing,
-    requestFilePreview,
-    requestFileDownloadToken,
-    navigateExplorerBack,
-    requestProviderModels,
-    restartServer,
-    initializeAgent,
-    refreshAgent,
-    refreshSession,
-    cancelAgentRun,
-    sendAgentMessage,
-    sendAgentAudio,
-    deleteAgent,
-    createAgent,
-    setAgentMode,
-    respondToPermission,
-  ]);
+  const methods = useMemo(
+    () => ({
+      setVoiceDetectionFlags,
+      requestGitDiff,
+      requestDirectoryListing,
+      requestFilePreview,
+      requestFileDownloadToken,
+      navigateExplorerBack,
+      requestProviderModels,
+      restartServer,
+      initializeAgent,
+      refreshAgent,
+      refreshSession,
+      cancelAgentRun,
+      sendAgentMessage,
+      sendAgentAudio,
+      deleteAgent,
+      createAgent,
+      setAgentMode,
+      respondToPermission,
+    }),
+    [
+      setVoiceDetectionFlags,
+      requestGitDiff,
+      requestDirectoryListing,
+      requestFilePreview,
+      requestFileDownloadToken,
+      navigateExplorerBack,
+      requestProviderModels,
+      restartServer,
+      initializeAgent,
+      refreshAgent,
+      refreshSession,
+      cancelAgentRun,
+      sendAgentMessage,
+      sendAgentAudio,
+      deleteAgent,
+      createAgent,
+      setAgentMode,
+      respondToPermission,
+    ]
+  );
 
   useEffect(() => {
     setSessionMethods(serverId, methods);
   }, [serverId, setSessionMethods, methods]);
 
   return (
-    <SessionContext.Provider value={value}>
-      {children}
-    </SessionContext.Provider>
+    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
   );
 }
 

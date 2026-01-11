@@ -21,7 +21,7 @@ import {
 } from "../messages.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import { AGENT_PROVIDER_DEFINITIONS } from "./provider-manifest.js";
+import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import { AgentRegistry } from "./agent-registry.js";
 import { createWorktree } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";

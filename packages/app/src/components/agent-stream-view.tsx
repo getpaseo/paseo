@@ -16,7 +16,17 @@ import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
-import Animated, { FadeIn, FadeOut, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
 import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
 import {
@@ -72,19 +82,22 @@ export function AgentStreamView({
   const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
-  const { open: openExplorer, setActiveTab: setExplorerTab } = useExplorerSidebarStore();
+  const { open: openExplorer, setActiveTab: setExplorerTab } =
+    useExplorerSidebarStore();
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
 
   // Get ws for connection status
   const ws = useSessionStore((state) => state.sessions[resolvedServerId]?.ws);
-  const streamingBuffer = useSessionStore((state) =>
-    state.sessions[resolvedServerId]?.agentStreamingBuffer?.get(agentId)
+  const streamHead = useSessionStore((state) =>
+    state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId)
   );
 
   // Get methods for file operations
-  const methods = useSessionStore((state) => state.sessions[resolvedServerId]?.methods);
+  const methods = useSessionStore(
+    (state) => state.sessions[resolvedServerId]?.methods
+  );
   const requestDirectoryListing = methods?.requestDirectoryListing;
   const requestFilePreview = methods?.requestFilePreview;
 
@@ -109,8 +122,12 @@ export function AgentStreamView({
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
-  const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations ? undefined : FadeIn.duration(200);
-  const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations ? undefined : FadeOut.duration(200);
+  const scrollIndicatorFadeIn = shouldDisableEntryExitAnimations
+    ? undefined
+    : FadeIn.duration(200);
+  const scrollIndicatorFadeOut = shouldDisableEntryExitAnimations
+    ? undefined
+    : FadeOut.duration(200);
 
   useEffect(() => {
     hasScrolledInitially.current = false;
@@ -265,7 +282,10 @@ export function AgentStreamView({
           break;
 
         case "thought":
-          content = <AgentThoughtMessage message={item.text} status={item.status} />;
+          console.log("[AgentStreamView] renderStreamItem", { item });
+          content = (
+            <AgentThoughtMessage message={item.text} status={item.status} />
+          );
           break;
 
         case "tool_call": {
@@ -343,9 +363,9 @@ export function AgentStreamView({
 
   const listHeaderComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
-    const hasStreaming = !!streamingBuffer;
+    const hasHeadItems = streamHead && streamHead.length > 0;
 
-    if (!hasPermissions && !showWorkingIndicator && !hasStreaming) {
+    if (!hasPermissions && !showWorkingIndicator && !hasHeadItems) {
       return null;
     }
 
@@ -355,7 +375,11 @@ export function AgentStreamView({
           {hasPermissions ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
-                <PermissionRequestCard key={permission.key} permission={permission} ws={wsOrInert} />
+                <PermissionRequestCard
+                  key={permission.key}
+                  permission={permission}
+                  ws={wsOrInert}
+                />
               ))}
             </View>
           ) : null}
@@ -366,19 +390,32 @@ export function AgentStreamView({
             </View>
           ) : null}
 
-          {hasStreaming ? (
-            <View style={stylesheet.streamItemWrapper}>
-              <AssistantMessage
-                message={streamingBuffer.text}
-                timestamp={streamingBuffer.timestamp.getTime()}
-                onInlinePathPress={handleInlinePathPress}
-              />
-            </View>
-          ) : null}
+          {hasHeadItems
+            ? [...streamHead].reverse().map((item) => {
+                const rendered = renderStreamItem({
+                  item,
+                  index: 0,
+                  separators: {
+                    highlight: () => {},
+                    unhighlight: () => {},
+                    updateProps: () => {},
+                  },
+                });
+                return rendered ? (
+                  <View key={item.id}>{rendered}</View>
+                ) : null;
+              })
+            : null}
         </View>
       </View>
     );
-  }, [pendingPermissionItems, showWorkingIndicator, wsOrInert, streamingBuffer, handleInlinePathPress]);
+  }, [
+    pendingPermissionItems,
+    showWorkingIndicator,
+    wsOrInert,
+    streamHead,
+    renderStreamItem,
+  ]);
 
   const flatListData = useMemo(() => {
     return [...streamItems].reverse();
@@ -457,9 +494,7 @@ export function AgentStreamView({
 function normalizeInlinePath(
   rawPath: string,
   cwd?: string
-):
-  | { directory: string; file?: string }
-  | null {
+): { directory: string; file?: string } | null {
   if (!rawPath) {
     return null;
   }
@@ -506,7 +541,10 @@ function normalizePathInput(value: string | undefined): string | null {
     return null;
   }
 
-  const trimmed = value.trim().replace(/^['"`]/, "").replace(/['"`]$/, "");
+  const trimmed = value
+    .trim()
+    .replace(/^['"`]/, "")
+    .replace(/['"`]$/, "");
   if (!trimmed) {
     return null;
   }
@@ -516,7 +554,11 @@ function normalizePathInput(value: string | undefined): string | null {
 
 function resolvePathAgainstCwd(pathValue: string, cwd?: string): string | null {
   const normalizedCwd = normalizePathInput(cwd);
-  if (!normalizedCwd || !isAbsolutePath(pathValue) || !isAbsolutePath(normalizedCwd)) {
+  if (
+    !normalizedCwd ||
+    !isAbsolutePath(pathValue) ||
+    !isAbsolutePath(normalizedCwd)
+  ) {
     return null;
   }
 
@@ -616,7 +658,9 @@ function PermissionRequestCard({
   const { request } = permission;
   const title = request.title ?? request.name ?? "Permission Required";
   const description = request.description ?? "";
-  const inputPreview = request.input ? JSON.stringify(request.input, null, 2) : null;
+  const inputPreview = request.input
+    ? JSON.stringify(request.input, null, 2)
+    : null;
 
   const planMarkdown = useMemo(() => {
     if (!request) {
@@ -651,10 +695,7 @@ function PermissionRequestCard({
     [request]
   );
 
-  const markdownStyles = useMemo(
-    () => createMarkdownStyles(theme),
-    [theme]
-  );
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownRules = useMemo(() => {
     return {
@@ -676,7 +717,11 @@ function PermissionRequestCard({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.textgroup]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.textgroup]}
+          selectable
+        >
           {children}
         </Text>
       ),
@@ -687,7 +732,11 @@ function PermissionRequestCard({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_block]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.code_block]}
+          selectable
+        >
           {node.content}
         </Text>
       ),
@@ -709,7 +758,11 @@ function PermissionRequestCard({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_inline]} selectable>
+        <Text
+          key={node.key}
+          style={[inheritedStyles, styles.code_inline]}
+          selectable
+        >
           {node.content}
         </Text>
       ),
@@ -752,7 +805,10 @@ function PermissionRequestCard({
         return (
           <View key={node.key} style={[styles.list_item, { flexShrink: 0 }]}>
             <Text style={iconStyle}>{bullet}</Text>
-            <Text style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]} selectable>
+            <Text
+              style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
+              selectable
+            >
               {children}
             </Text>
           </View>
@@ -799,7 +855,10 @@ function PermissionRequestCard({
           response,
         })
         .catch((error) => {
-          console.error("[PermissionRequestCard] Failed to respond to permission:", error);
+          console.error(
+            "[PermissionRequestCard] Failed to respond to permission:",
+            error
+          );
         });
     },
     [permission.agentId, permission.request.id, permissionResponse]
@@ -815,19 +874,33 @@ function PermissionRequestCard({
         },
       ]}
     >
-      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>
+      <Text
+        style={[permissionStyles.title, { color: theme.colors.foreground }]}
+      >
         {title}
       </Text>
 
       {description ? (
-        <Text style={[permissionStyles.description, { color: theme.colors.mutedForeground }]}>
+        <Text
+          style={[
+            permissionStyles.description,
+            { color: theme.colors.mutedForeground },
+          ]}
+        >
           {description}
         </Text>
       ) : null}
 
       {planMarkdown ? (
         <View style={permissionStyles.section}>
-          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Proposed Plan</Text>
+          <Text
+            style={[
+              permissionStyles.sectionTitle,
+              { color: theme.colors.mutedForeground },
+            ]}
+          >
+            Proposed Plan
+          </Text>
           <View
             style={[
               permissionStyles.contentCard,
@@ -837,26 +910,59 @@ function PermissionRequestCard({
               },
             ]}
           >
-            <Markdown style={markdownStyles} rules={markdownRules}>{planMarkdown}</Markdown>
+            <Markdown style={markdownStyles} rules={markdownRules}>
+              {planMarkdown}
+            </Markdown>
           </View>
         </View>
       ) : null}
 
       {commandDetails ? (
         <View style={permissionStyles.section}>
-          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Command</Text>
+          <Text
+            style={[
+              permissionStyles.sectionTitle,
+              { color: theme.colors.mutedForeground },
+            ]}
+          >
+            Command
+          </Text>
           {commandDetails.command ? (
             <View style={permissionStyles.metadataRow}>
-              <Text style={[permissionStyles.metadataLabel, { color: theme.colors.mutedForeground }]}>Command</Text>
-              <Text style={[permissionStyles.metadataValue, { color: theme.colors.foreground }]}>
+              <Text
+                style={[
+                  permissionStyles.metadataLabel,
+                  { color: theme.colors.mutedForeground },
+                ]}
+              >
+                Command
+              </Text>
+              <Text
+                style={[
+                  permissionStyles.metadataValue,
+                  { color: theme.colors.foreground },
+                ]}
+              >
                 {commandDetails.command}
               </Text>
             </View>
           ) : null}
           {commandDetails.cwd ? (
             <View style={permissionStyles.metadataRow}>
-              <Text style={[permissionStyles.metadataLabel, { color: theme.colors.mutedForeground }]}>Directory</Text>
-              <Text style={[permissionStyles.metadataValue, { color: theme.colors.foreground }]}>
+              <Text
+                style={[
+                  permissionStyles.metadataLabel,
+                  { color: theme.colors.mutedForeground },
+                ]}
+              >
+                Directory
+              </Text>
+              <Text
+                style={[
+                  permissionStyles.metadataValue,
+                  { color: theme.colors.foreground },
+                ]}
+              >
                 {commandDetails.cwd}
               </Text>
             </View>
@@ -866,9 +972,19 @@ function PermissionRequestCard({
 
       {editEntries.length > 0 ? (
         <View style={permissionStyles.section}>
-          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Proposed Changes</Text>
+          <Text
+            style={[
+              permissionStyles.sectionTitle,
+              { color: theme.colors.mutedForeground },
+            ]}
+          >
+            Proposed Changes
+          </Text>
           {editEntries.map((entry, index) => (
-            <View key={`${entry.filePath ?? "change"}-${index}`} style={permissionStyles.diffSection}>
+            <View
+              key={`${entry.filePath ?? "change"}-${index}`}
+              style={permissionStyles.diffSection}
+            >
               {entry.filePath ? (
                 <View
                   style={[
@@ -879,7 +995,12 @@ function PermissionRequestCard({
                     },
                   ]}
                 >
-                  <Text style={[permissionStyles.fileBadgeText, { color: theme.colors.foreground }]}>
+                  <Text
+                    style={[
+                      permissionStyles.fileBadgeText,
+                      { color: theme.colors.foreground },
+                    ]}
+                  >
                     {entry.filePath}
                   </Text>
                 </View>
@@ -902,7 +1023,14 @@ function PermissionRequestCard({
 
       {readEntries.length > 0 ? (
         <View style={permissionStyles.section}>
-          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>File Content</Text>
+          <Text
+            style={[
+              permissionStyles.sectionTitle,
+              { color: theme.colors.mutedForeground },
+            ]}
+          >
+            File Content
+          </Text>
           {readEntries.map((entry, index) => (
             <View
               key={`${entry.filePath ?? "content"}-${index}`}
@@ -918,13 +1046,21 @@ function PermissionRequestCard({
                 <Text
                   style={[
                     permissionStyles.metadataLabel,
-                    { color: theme.colors.mutedForeground, marginBottom: theme.spacing[1] },
+                    {
+                      color: theme.colors.mutedForeground,
+                      marginBottom: theme.spacing[1],
+                    },
                   ]}
                 >
                   {entry.filePath}
                 </Text>
               ) : null}
-              <Text style={[permissionStyles.rawContentText, { color: theme.colors.foreground }]}>
+              <Text
+                style={[
+                  permissionStyles.rawContentText,
+                  { color: theme.colors.foreground },
+                ]}
+              >
                 {entry.content}
               </Text>
             </View>
@@ -934,7 +1070,14 @@ function PermissionRequestCard({
 
       {inputPreview ? (
         <View style={permissionStyles.section}>
-          <Text style={[permissionStyles.sectionTitle, { color: theme.colors.mutedForeground }]}>Raw Request</Text>
+          <Text
+            style={[
+              permissionStyles.sectionTitle,
+              { color: theme.colors.mutedForeground },
+            ]}
+          >
+            Raw Request
+          </Text>
           <View
             style={[
               permissionStyles.contentCard,
@@ -944,7 +1087,12 @@ function PermissionRequestCard({
               },
             ]}
           >
-            <Text style={[permissionStyles.rawContentText, { color: theme.colors.foreground }]}>
+            <Text
+              style={[
+                permissionStyles.rawContentText,
+                { color: theme.colors.foreground },
+              ]}
+            >
               {inputPreview}
             </Text>
           </View>
@@ -970,7 +1118,10 @@ function PermissionRequestCard({
           disabled={isResponding}
         >
           {isResponding ? (
-            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.primaryForeground}
+            />
           ) : (
             <Text
               style={[
@@ -996,7 +1147,10 @@ function PermissionRequestCard({
           disabled={isResponding}
         >
           {isResponding ? (
-            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.primaryForeground}
+            />
           ) : (
             <Text
               style={[
@@ -1012,7 +1166,6 @@ function PermissionRequestCard({
     </View>
   );
 }
-
 
 const stylesheet = StyleSheet.create((theme) => ({
   container: {

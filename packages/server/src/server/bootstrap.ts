@@ -14,11 +14,10 @@ import { initializeTTS, type TTSConfig } from "./agent/tts-openai.js";
 import { listConversations, deleteConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
-import { ClaudeAgentClient } from "./agent/providers/claude-agent.js";
-import { CodexMcpAgentClient } from "./agent/providers/codex-mcp-agent.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { createAllClients } from "./agent/provider-registry.js";
 import type {
   AgentClient,
   AgentControlMcpConfig,
@@ -189,8 +188,7 @@ export async function createPaseoDaemon(
   const agentRegistry = new AgentRegistry(config.agentRegistryPath);
   const agentManager = new AgentManager({
     clients: {
-      claude: new ClaudeAgentClient(),
-      codex: new CodexMcpAgentClient(),
+      ...createAllClients(),
       ...config.agentClients,
     },
     registry: agentRegistry,

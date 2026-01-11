@@ -29,7 +29,11 @@ export function generateMessageId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
-function createTimelineId(prefix: string, text: string, timestamp: Date): string {
+function createTimelineId(
+  prefix: string,
+  text: string,
+  timestamp: Date
+): string {
   return `${prefix}_${timestamp.getTime()}_${simpleHash(text)}`;
 }
 
@@ -132,7 +136,9 @@ export type AgentToolCallItem = ToolCallItem & {
   payload: { source: "agent"; data: AgentToolCallData };
 };
 
-export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem {
+export function isAgentToolCallItem(
+  item: StreamItem
+): item is AgentToolCallItem {
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
@@ -210,7 +216,11 @@ function appendUserMessage(
   return [...state, nextItem];
 }
 
-function appendAssistantMessage(state: StreamItem[], text: string, timestamp: Date): StreamItem[] {
+function appendAssistantMessage(
+  state: StreamItem[],
+  text: string,
+  timestamp: Date
+): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
     return state;
@@ -240,7 +250,11 @@ function appendAssistantMessage(state: StreamItem[], text: string, timestamp: Da
   return [...state, item];
 }
 
-function appendThought(state: StreamItem[], text: string, timestamp: Date): StreamItem[] {
+function appendThought(
+  state: StreamItem[],
+  text: string,
+  timestamp: Date
+): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
     return state;
@@ -298,9 +312,7 @@ function mergeToolCallRaw(existingRaw: unknown, nextRaw: unknown): unknown {
   return [existingRaw, nextRaw];
 }
 
-function computeParsedToolPayload(
-  result: unknown
-): {
+function computeParsedToolPayload(result: unknown): {
   parsedEdits?: EditEntry[];
   parsedReads?: ReadEntry[];
   parsedCommand?: CommandDetails | null;
@@ -335,14 +347,16 @@ function findExistingAgentToolCallIndex(
       (entry) =>
         entry.kind === "tool_call" &&
         entry.payload.source === "agent" &&
-        normalizeComparableString(entry.payload.data.callId) === normalizedCallId
+        normalizeComparableString(entry.payload.data.callId) ===
+          normalizedCallId
     );
     if (existingIndex >= 0) {
       return existingIndex;
     }
   }
 
-  const fallbackCandidates: Array<{ index: number; item: AgentToolCallItem }> = [];
+  const fallbackCandidates: Array<{ index: number; item: AgentToolCallItem }> =
+    [];
   const metadataMatches: Array<{ index: number; item: AgentToolCallItem }> = [];
   for (let i = 0; i < state.length; i += 1) {
     const entry = state[i];
@@ -351,8 +365,7 @@ function findExistingAgentToolCallIndex(
     }
     const payload = entry.payload.data;
     const providerMatches =
-      payload.provider === data.provider &&
-      payload.name === data.name;
+      payload.provider === data.provider && payload.name === data.name;
     if (providerMatches) {
       metadataMatches.push({ index: i, item: entry as AgentToolCallItem });
     }
@@ -397,7 +410,11 @@ function appendAgentToolCall(
     callId: callId ?? data.callId,
   };
 
-  const existingIndex = findExistingAgentToolCallIndex(state, callId ?? null, payloadData);
+  const existingIndex = findExistingAgentToolCallIndex(
+    state,
+    callId ?? null,
+    payloadData
+  );
 
   if (existingIndex >= 0) {
     const next = [...state];
@@ -429,7 +446,8 @@ function appendAgentToolCall(
           callId: payloadData.callId ?? existing.payload.data.callId,
           parsedEdits: parsed.parsedEdits ?? existing.payload.data.parsedEdits,
           parsedReads: parsed.parsedReads ?? existing.payload.data.parsedReads,
-          parsedCommand: parsed.parsedCommand ?? existing.payload.data.parsedCommand,
+          parsedCommand:
+            parsed.parsedCommand ?? existing.payload.data.parsedCommand,
         },
       },
     };
@@ -469,7 +487,8 @@ function isPermissionToolCall(raw: unknown): boolean {
   return candidate.name === "permission_request";
 }
 
-const FAILED_STATUS_PATTERN = /fail|error|deny|reject|cancel|abort|exception|refus/;
+const FAILED_STATUS_PATTERN =
+  /fail|error|deny|reject|cancel|abort|exception|refus/;
 const COMPLETED_STATUS_PATTERN =
   /complete|success|granted|applied|done|resolved|finish|succeed|ok/;
 
@@ -552,8 +571,8 @@ function inferStatusFromRaw(raw: unknown): "completed" | "failed" | null {
       typeof record.exitCode === "number"
         ? record.exitCode
         : typeof record.exit_code === "number"
-          ? record.exit_code
-          : null;
+        ? record.exit_code
+        : null;
     if (exitCode !== null) {
       return exitCode === 0 ? "completed" : "failed";
     }
@@ -657,7 +676,10 @@ function extractToolCallId(raw: unknown, depth = 0): string | null {
   return null;
 }
 
-function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
+function appendActivityLog(
+  state: StreamItem[],
+  entry: ActivityLogItem
+): StreamItem[] {
   const index = state.findIndex((existing) => existing.id === entry.id);
   if (index >= 0) {
     const next = [...state];
@@ -679,7 +701,11 @@ function appendTodoList(
   }));
 
   const lastItem = state[state.length - 1];
-  if (lastItem && lastItem.kind === "todo_list" && lastItem.provider === provider) {
+  if (
+    lastItem &&
+    lastItem.kind === "todo_list" &&
+    lastItem.provider === provider
+  ) {
     const next = [...state];
     const updated: TodoListItem = {
       ...lastItem,
@@ -722,7 +748,12 @@ export function reduceStreamUpdate(
       let nextState = state;
       switch (item.type) {
         case "user_message":
-          nextState = appendUserMessage(state, item.text, timestamp, item.messageId);
+          nextState = appendUserMessage(
+            state,
+            item.text,
+            timestamp,
+            item.messageId
+          );
           break;
         case "assistant_message":
           nextState = appendAssistantMessage(state, item.text, timestamp);
@@ -790,18 +821,30 @@ export function reduceStreamUpdate(
 export function hydrateStreamState(
   events: Array<{ event: AgentStreamEventPayload; timestamp: Date }>
 ): StreamItem[] {
-  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp }) => {
-    return reduceStreamUpdate(state, event, timestamp);
-  }, []);
+  const hydrated = events.reduce<StreamItem[]>(
+    (state, { event, timestamp }) => {
+      return reduceStreamUpdate(state, event, timestamp);
+    },
+    []
+  );
 
   return finalizeActiveThoughts(hydrated);
 }
 
-export type StreamingBufferEntry = {
-  id: string;
-  text: string;
-  timestamp: Date;
-};
+/**
+ * Streamable item kinds - items that can be incrementally streamed
+ * and should be buffered in the head before committing to tail.
+ */
+type StreamableKind = "assistant_message" | "thought";
+
+const STREAMABLE_KINDS = new Set<StreamItem["kind"]>([
+  "assistant_message",
+  "thought",
+]);
+
+function isStreamableKind(kind: StreamItem["kind"]): kind is StreamableKind {
+  return STREAMABLE_KINDS.has(kind);
+}
 
 const STREAM_COMPLETION_EVENTS = new Set<AgentStreamEventPayload["type"]>([
   "turn_completed",
@@ -809,23 +852,189 @@ const STREAM_COMPLETION_EVENTS = new Set<AgentStreamEventPayload["type"]>([
   "turn_canceled",
 ]);
 
-function appendCompletedAssistantMessage(
-  state: StreamItem[],
-  buffer: StreamingBufferEntry
+/**
+ * Determine what kind of StreamItem an event would produce
+ */
+function getEventItemKind(
+  event: AgentStreamEventPayload
+): StreamItem["kind"] | null {
+  if (event.type !== "timeline") {
+    return null;
+  }
+  switch (event.item.type) {
+    case "user_message":
+      return "user_message";
+    case "assistant_message":
+      return "assistant_message";
+    case "reasoning":
+      return "thought";
+    case "tool_call":
+      return "tool_call";
+    case "todo":
+      return "todo_list";
+    case "error":
+      return "activity_log";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Finalize head items before flushing to tail.
+ * Marks thoughts as "ready" since they're no longer being streamed.
+ */
+function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
+  return head.map((item) => {
+    if (item.kind === "thought" && item.status !== "ready") {
+      return { ...item, status: "ready" as ThoughtStatus };
+    }
+    return item;
+  });
+}
+
+/**
+ * Flush head items to tail, avoiding duplicates.
+ */
+function flushHeadToTail(
+  tail: StreamItem[],
+  head: StreamItem[]
 ): StreamItem[] {
-  if (state.some((item) => item.id === buffer.id)) {
-    return state;
+  if (head.length === 0) {
+    return tail;
   }
 
-  const entry: AssistantMessageItem = {
-    kind: "assistant_message",
-    id: buffer.id,
-    text: buffer.text,
-    timestamp: buffer.timestamp,
+  const finalized = finalizeHeadItems(head);
+  const tailIds = new Set(tail.map((item) => item.id));
+  const newItems = finalized.filter((item) => !tailIds.has(item.id));
+
+  if (newItems.length === 0) {
+    return tail;
+  }
+
+  return [...tail, ...newItems];
+}
+
+/**
+ * Determine if the head should be flushed based on incoming event kind.
+ * Flush when a different kind arrives or when the incoming kind is not streamable.
+ */
+function shouldFlushHead(
+  head: StreamItem[],
+  incomingKind: StreamItem["kind"] | null
+): boolean {
+  if (head.length === 0) {
+    return false;
+  }
+
+  // Non-timeline events don't trigger flush (except completion events handled separately)
+  if (incomingKind === null) {
+    return false;
+  }
+
+  const lastHeadItem = head[head.length - 1];
+
+  // If incoming is not streamable, flush current head
+  if (!isStreamableKind(incomingKind)) {
+    return true;
+  }
+
+  // If incoming kind is different from current head kind, flush
+  if (lastHeadItem.kind !== incomingKind) {
+    return true;
+  }
+
+  return false;
+}
+
+export interface ApplyStreamEventResult {
+  tail: StreamItem[];
+  head: StreamItem[];
+  changedTail: boolean;
+  changedHead: boolean;
+}
+
+/**
+ * Apply a stream event using head/tail model.
+ *
+ * - Tail: committed history (rarely changes during streaming)
+ * - Head: active streaming items (frequently updated)
+ *
+ * Both use the same reduceStreamUpdate function. The difference is:
+ * - Streamable items (assistant_message, thought) go to head
+ * - Non-streamable items flush head to tail first, then go to tail
+ * - Turn completion events flush head to tail
+ */
+export function applyStreamEvent(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+}): ApplyStreamEventResult {
+  const { tail, head, event, timestamp } = params;
+  let nextTail = tail;
+  let nextHead = head;
+  let changedTail = false;
+  let changedHead = false;
+
+  const flushHead = () => {
+    if (nextHead.length === 0) {
+      return;
+    }
+    const flushed = flushHeadToTail(nextTail, nextHead);
+    if (flushed !== nextTail) {
+      nextTail = flushed;
+      changedTail = true;
+    }
+    nextHead = [];
+    changedHead = true;
   };
 
-  return [...state, entry];
+  // Handle turn completion events - flush everything
+  if (STREAM_COMPLETION_EVENTS.has(event.type)) {
+    flushHead();
+    // Also finalize any remaining thoughts in tail
+    const finalized = finalizeActiveThoughts(nextTail);
+    if (finalized !== nextTail) {
+      nextTail = finalized;
+      changedTail = true;
+    }
+    return { tail: nextTail, head: nextHead, changedTail, changedHead };
+  }
+
+  const incomingKind = getEventItemKind(event);
+
+  // Check if we need to flush head before processing this event
+  if (shouldFlushHead(nextHead, incomingKind)) {
+    flushHead();
+  }
+
+  // For streamable kinds, apply to head
+  if (incomingKind !== null && isStreamableKind(incomingKind)) {
+    const reduced = reduceStreamUpdate(nextHead, event, timestamp);
+    if (reduced !== nextHead) {
+      nextHead = reduced;
+      changedHead = true;
+    }
+    return { tail: nextTail, head: nextHead, changedTail, changedHead };
+  }
+
+  // For non-streamable kinds or non-timeline events, apply to tail
+  const reduced = reduceStreamUpdate(nextTail, event, timestamp);
+  if (reduced !== nextTail) {
+    nextTail = reduced;
+    changedTail = true;
+  }
+
+  return { tail: nextTail, head: nextHead, changedTail, changedHead };
 }
+
+// Legacy export for backwards compatibility during migration
+// TODO: Remove after all consumers are updated
+export type StreamingBufferEntry = {
+  id: string;
+  text: string;
+  timestamp: Date;
+};
 
 export function applyStreamEventWithBuffer(params: {
   state: StreamItem[];
@@ -838,73 +1047,36 @@ export function applyStreamEventWithBuffer(params: {
   changedStream: boolean;
   changedBuffer: boolean;
 } {
-  const { state, buffer, event, timestamp } = params;
-  let nextStream = state;
-  let nextBuffer = buffer;
-  let changedStream = false;
-  let changedBuffer = false;
+  // Convert legacy buffer to head
+  const head: StreamItem[] = params.buffer
+    ? [
+        {
+          kind: "assistant_message" as const,
+          id: params.buffer.id,
+          text: params.buffer.text,
+          timestamp: params.buffer.timestamp,
+        },
+      ]
+    : [];
 
-  const commitBuffer = () => {
-    if (!nextBuffer) {
-      return;
-    }
-    const next = appendCompletedAssistantMessage(nextStream, nextBuffer);
-    if (next !== nextStream) {
-      nextStream = next;
-      changedStream = true;
-    }
-    nextBuffer = null;
-    changedBuffer = true;
+  const result = applyStreamEvent({
+    tail: params.state,
+    head,
+    event: params.event,
+    timestamp: params.timestamp,
+  });
+
+  // Convert head back to legacy buffer format
+  const lastHead = result.head[result.head.length - 1];
+  const newBuffer: StreamingBufferEntry | null =
+    lastHead && lastHead.kind === "assistant_message"
+      ? { id: lastHead.id, text: lastHead.text, timestamp: lastHead.timestamp }
+      : null;
+
+  return {
+    stream: result.tail,
+    buffer: newBuffer,
+    changedStream: result.changedTail,
+    changedBuffer: result.changedHead,
   };
-
-  if (event.type === "timeline") {
-    if (event.item.type === "assistant_message") {
-      const { chunk, hasContent } = normalizeChunk(event.item.text);
-      if (!chunk) {
-        return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
-      }
-      if (!hasContent && !nextBuffer) {
-        return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
-      }
-      if (nextBuffer) {
-        const updatedText = `${nextBuffer.text}${chunk}`;
-        if (updatedText !== nextBuffer.text) {
-          nextBuffer = { ...nextBuffer, text: updatedText };
-          changedBuffer = true;
-        }
-      } else {
-        const idSeed = chunk.trim() || chunk;
-        nextBuffer = {
-          id: createUniqueTimelineId(nextStream, "assistant", idSeed, timestamp),
-          text: chunk,
-          timestamp,
-        };
-        changedBuffer = true;
-      }
-      return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
-    }
-
-    if (nextBuffer) {
-      commitBuffer();
-    }
-
-    const reduced = reduceStreamUpdate(nextStream, event, timestamp);
-    if (reduced !== nextStream) {
-      nextStream = reduced;
-      changedStream = true;
-    }
-    return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
-  }
-
-  if (STREAM_COMPLETION_EVENTS.has(event.type)) {
-    commitBuffer();
-    return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
-  }
-
-  const reduced = reduceStreamUpdate(nextStream, event, timestamp);
-  if (reduced !== nextStream) {
-    nextStream = reduced;
-    changedStream = true;
-  }
-  return { stream: nextStream, buffer: nextBuffer, changedStream, changedBuffer };
 }

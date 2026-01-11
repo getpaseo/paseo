@@ -8,6 +8,7 @@ import {
   type AgentDefinition,
   type CanUseTool,
   type McpServerConfig,
+  type ModelInfo,
   type Options,
   type PermissionMode,
   type PermissionResult,
@@ -25,6 +26,7 @@ import type {
   AgentClient,
   AgentMetadata,
   AgentMode,
+  AgentModelDefinition,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPermissionUpdate,
@@ -38,6 +40,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
+  ListModelsOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
@@ -322,6 +325,37 @@ export class ClaudeAgentClient implements AgentClient {
       defaults: this.defaults,
       handle,
     });
+  }
+
+  async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const prompt = (async function* empty() {})();
+    const claudeOptions: Options = {
+      cwd: options?.cwd ?? process.cwd(),
+      permissionMode: "plan",
+      includePartialMessages: false,
+    };
+
+    const claudeQuery = query({ prompt, options: claudeOptions });
+    try {
+      const models: ModelInfo[] = await claudeQuery.supportedModels();
+      return models.map((model) => ({
+        provider: "claude" as const,
+        id: model.value,
+        label: model.displayName,
+        description: model.description,
+        metadata: {
+          description: model.description,
+        },
+      }));
+    } finally {
+      if (typeof claudeQuery.return === "function") {
+        try {
+          await claudeQuery.return();
+        } catch {
+          // ignore shutdown errors
+        }
+      }
+    }
   }
 
   async listPersistedAgents(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {

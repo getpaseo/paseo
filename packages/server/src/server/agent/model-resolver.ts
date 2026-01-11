@@ -1,4 +1,4 @@
-import { fetchProviderModelCatalog } from "./model-catalog.js";
+import { fetchProviderModels } from "./provider-registry.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { expandTilde } from "../../utils/path.js";
 
@@ -17,7 +17,7 @@ export async function resolveAgentModel(
   }
 
   try {
-    const models = await fetchProviderModelCatalog(options.provider, {
+    const models = await fetchProviderModels(options.provider, {
       cwd: options.cwd ? expandTilde(options.cwd) : undefined,
     });
     const preferred = models.find((model) => model.isDefault) ?? models[0];

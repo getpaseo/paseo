@@ -212,9 +212,9 @@ export interface SessionState {
   messages: MessageEntry[];
   currentAssistantMessage: string;
 
-  // Stream state
-  agentStreamState: Map<string, StreamItem[]>;
-  agentStreamingBuffer: Map<string, { id: string; text: string; timestamp: Date }>;
+  // Stream state (head/tail model)
+  agentStreamTail: Map<string, StreamItem[]>;
+  agentStreamHead: Map<string, StreamItem[]>;
 
   // Initializing agents
   initializingAgents: Map<string, boolean>;
@@ -270,17 +270,10 @@ interface SessionStoreActions {
   setMessages: (serverId: string, messages: MessageEntry[] | ((prev: MessageEntry[]) => MessageEntry[])) => void;
   setCurrentAssistantMessage: (serverId: string, message: string | ((prev: string) => string)) => void;
 
-  // Stream state
-  setAgentStreamState: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
-  setAgentStreamingBuffer: (
-    serverId: string,
-    state:
-      | Map<string, { id: string; text: string; timestamp: Date }>
-      | ((
-          prev: Map<string, { id: string; text: string; timestamp: Date }>
-        ) => Map<string, { id: string; text: string; timestamp: Date }>)
-  ) => void;
-  clearAgentStreamingBuffer: (serverId: string, agentId: string) => void;
+  // Stream state (head/tail model)
+  setAgentStreamTail: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
+  setAgentStreamHead: (serverId: string, state: Map<string, StreamItem[]> | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>)) => void;
+  clearAgentStreamHead: (serverId: string, agentId: string) => void;
 
   // Initializing agents
   setInitializingAgents: (serverId: string, state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>)) => void;
@@ -362,8 +355,8 @@ function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, aud
     focusedAgentId: null,
     messages: [],
     currentAssistantMessage: "",
-    agentStreamState: new Map(),
-    agentStreamingBuffer: new Map(),
+    agentStreamTail: new Map(),
+    agentStreamHead: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
     pendingPermissions: new Map(),
@@ -524,66 +517,66 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
-    // Stream state
-    setAgentStreamState: (serverId, state) => {
+    // Stream state (head/tail model)
+    setAgentStreamTail: (serverId, state) => {
       set((prev) => {
         const session = prev.sessions[serverId];
         if (!session) {
           return prev;
         }
-        const nextState = typeof state === "function" ? state(session.agentStreamState) : state;
-        if (session.agentStreamState === nextState) {
+        const nextState = typeof state === "function" ? state(session.agentStreamTail) : state;
+        if (session.agentStreamTail === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setAgentStreamState", serverId, { agentCount: nextState.size });
+        logSessionStoreUpdate("setAgentStreamTail", serverId, { agentCount: nextState.size });
         return {
           ...prev,
           sessions: {
             ...prev.sessions,
-            [serverId]: { ...session, agentStreamState: nextState },
+            [serverId]: { ...session, agentStreamTail: nextState },
           },
         };
       });
     },
 
-    setAgentStreamingBuffer: (serverId, state) => {
+    setAgentStreamHead: (serverId, state) => {
       set((prev) => {
         const session = prev.sessions[serverId];
         if (!session) {
           return prev;
         }
-        const nextState = typeof state === "function" ? state(session.agentStreamingBuffer) : state;
-        if (session.agentStreamingBuffer === nextState) {
+        const nextState = typeof state === "function" ? state(session.agentStreamHead) : state;
+        if (session.agentStreamHead === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setAgentStreamingBuffer", serverId, { agentCount: nextState.size });
+        logSessionStoreUpdate("setAgentStreamHead", serverId, { agentCount: nextState.size });
         return {
           ...prev,
           sessions: {
             ...prev.sessions,
-            [serverId]: { ...session, agentStreamingBuffer: nextState },
+            [serverId]: { ...session, agentStreamHead: nextState },
           },
         };
       });
     },
 
-    clearAgentStreamingBuffer: (serverId, agentId) => {
+    clearAgentStreamHead: (serverId, agentId) => {
       set((prev) => {
         const session = prev.sessions[serverId];
         if (!session) {
           return prev;
         }
-        if (!session.agentStreamingBuffer.has(agentId)) {
+        if (!session.agentStreamHead.has(agentId)) {
           return prev;
         }
-        const nextBuffer = new Map(session.agentStreamingBuffer);
-        nextBuffer.delete(agentId);
-        logSessionStoreUpdate("clearAgentStreamingBuffer", serverId, { agentId });
+        const nextHead = new Map(session.agentStreamHead);
+        nextHead.delete(agentId);
+        logSessionStoreUpdate("clearAgentStreamHead", serverId, { agentId });
         return {
           ...prev,
           sessions: {
             ...prev.sessions,
-            [serverId]: { ...session, agentStreamingBuffer: nextBuffer },
+            [serverId]: { ...session, agentStreamHead: nextHead },
           },
         };
       });

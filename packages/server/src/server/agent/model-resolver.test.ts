@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAgentModel } from "./model-resolver.js";
 
-vi.mock("./model-catalog.js", () => ({
-  fetchProviderModelCatalog: vi.fn(),
+vi.mock("./provider-registry.js", () => ({
+  fetchProviderModels: vi.fn(),
 }));
 
-import { fetchProviderModelCatalog } from "./model-catalog.js";
+import { fetchProviderModels } from "./provider-registry.js";
 
-const mockedFetch = vi.mocked(fetchProviderModelCatalog);
+const mockedFetch = vi.mocked(fetchProviderModels);
 
 describe("resolveAgentModel", () => {
   beforeEach(() => {

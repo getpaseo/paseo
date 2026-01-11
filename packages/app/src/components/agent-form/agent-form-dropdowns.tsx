@@ -301,6 +301,308 @@ export function AdaptiveSelect({
   );
 }
 
+interface ComboSelectOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+interface ComboSelectProps {
+  label: string;
+  title: string;
+  value: string;
+  options: ComboSelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  allowCustomValue?: boolean;
+  isLoading?: boolean;
+  onSelect: (id: string) => void;
+}
+
+export function ComboSelect({
+  label,
+  title,
+  value,
+  options,
+  placeholder,
+  disabled,
+  allowCustomValue = false,
+  isLoading,
+  onSelect,
+}: ComboSelectProps): ReactElement {
+  const [isOpen, setIsOpen] = useState(false);
+  const anchorRef = useRef<View>(null);
+  const inputRef = useRef<TextInput | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const selectedOption = options.find((opt) => opt.id === value);
+  const displayValue = selectedOption?.label ?? (value || "");
+
+  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+    setSearchQuery("");
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQuery("");
+      inputRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedSearch) {
+      return options;
+    }
+    return options.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(normalizedSearch) ||
+        opt.id.toLowerCase().includes(normalizedSearch) ||
+        opt.description?.toLowerCase().includes(normalizedSearch)
+    );
+  }, [options, normalizedSearch]);
+
+  const hasMatches = filteredOptions.length > 0;
+  const sanitizedSearchValue = searchQuery.trim();
+  const showCustomOption =
+    allowCustomValue &&
+    sanitizedSearchValue.length > 0 &&
+    !options.some(
+      (opt) =>
+        opt.id.toLowerCase() === sanitizedSearchValue.toLowerCase() ||
+        opt.label.toLowerCase() === sanitizedSearchValue.toLowerCase()
+    );
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      onSelect(id);
+      handleClose();
+    },
+    [handleClose, onSelect]
+  );
+
+  return (
+    <>
+      <CompactSelectField
+        label={label}
+        value={displayValue}
+        placeholder={placeholder}
+        onPress={handleOpen}
+        disabled={disabled}
+        isLoading={isLoading}
+        controlRef={anchorRef}
+      />
+      <AdaptiveSelect
+        title={title}
+        visible={isOpen}
+        onClose={handleClose}
+        anchorRef={anchorRef}
+      >
+        <TextInput
+          ref={inputRef}
+          style={styles.dropdownSearchInput}
+          placeholder={`Search ${label.toLowerCase()}...`}
+          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {showCustomOption ? (
+          <View style={styles.dropdownSheetList}>
+            <Pressable
+              style={styles.dropdownSheetOption}
+              onPress={() => handleSelect(sanitizedSearchValue)}
+            >
+              <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
+                {`Use "${sanitizedSearchValue}"`}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {hasMatches ? (
+          <View style={styles.dropdownSheetList}>
+            {filteredOptions.map((opt) => {
+              const isSelected = opt.id === value;
+              return (
+                <Pressable
+                  key={opt.id}
+                  style={[
+                    styles.dropdownSheetOption,
+                    isSelected && styles.dropdownSheetOptionSelected,
+                  ]}
+                  onPress={() => handleSelect(opt.id)}
+                >
+                  <Text style={styles.dropdownSheetOptionLabel}>{opt.label}</Text>
+                  {opt.description ? (
+                    <Text style={styles.dropdownSheetOptionDescription}>
+                      {opt.description}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : !showCustomOption ? (
+          <Text style={styles.helperText}>No options match your search.</Text>
+        ) : null}
+        {isLoading ? (
+          <View style={styles.dropdownSheetLoading}>
+            <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
+          </View>
+        ) : null}
+      </AdaptiveSelect>
+    </>
+  );
+}
+
+interface CompactSelectFieldProps {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  isLoading?: boolean;
+  controlRef?: React.RefObject<View | null>;
+}
+
+function CompactSelectField({
+  label,
+  value,
+  placeholder,
+  onPress,
+  disabled,
+  isLoading,
+  controlRef,
+}: CompactSelectFieldProps): ReactElement {
+  return (
+    <Pressable
+      ref={controlRef}
+      onPress={onPress}
+      disabled={disabled}
+      style={[styles.compactSelectControl, disabled && styles.compactSelectControlDisabled]}
+    >
+      <Text style={styles.compactSelectLabel}>{label}</Text>
+      {isLoading ? (
+        <ActivityIndicator size="small" color={defaultTheme.colors.mutedForeground} />
+      ) : (
+        <Text
+          style={value ? styles.compactSelectValue : styles.compactSelectPlaceholder}
+          numberOfLines={1}
+        >
+          {value || placeholder || "Select..."}
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
+interface AgentConfigRowProps {
+  providerDefinitions: AgentProviderDefinition[];
+  selectedProvider: AgentProvider;
+  onSelectProvider: (provider: AgentProvider) => void;
+  modeOptions: AgentMode[];
+  selectedMode: string;
+  onSelectMode: (modeId: string) => void;
+  models: AgentModelDefinition[];
+  selectedModel: string;
+  isModelLoading: boolean;
+  onSelectModel: (modelId: string) => void;
+  disabled?: boolean;
+}
+
+export function AgentConfigRow({
+  providerDefinitions,
+  selectedProvider,
+  onSelectProvider,
+  modeOptions,
+  selectedMode,
+  onSelectMode,
+  models,
+  selectedModel,
+  isModelLoading,
+  onSelectModel,
+  disabled,
+}: AgentConfigRowProps): ReactElement {
+  const providerOptions: ComboSelectOption[] = useMemo(
+    () =>
+      providerDefinitions.map((def) => ({
+        id: def.id,
+        label: def.label,
+        description: def.description,
+      })),
+    [providerDefinitions]
+  );
+
+  const modeSelectOptions: ComboSelectOption[] = useMemo(() => {
+    if (modeOptions.length === 0) {
+      return [{ id: "", label: "Default", description: "Provider default mode" }];
+    }
+    return modeOptions.map((mode) => ({
+      id: mode.id,
+      label: mode.label,
+      description: mode.description,
+    }));
+  }, [modeOptions]);
+
+  const modelSelectOptions: ComboSelectOption[] = useMemo(() => {
+    const opts: ComboSelectOption[] = [
+      { id: "", label: "Auto", description: "Provider default model" },
+    ];
+    for (const model of models) {
+      opts.push({
+        id: model.id,
+        label: model.label,
+        description: model.description,
+      });
+    }
+    return opts;
+  }, [models]);
+
+  const effectiveSelectedMode = selectedMode || (modeOptions.length > 0 ? modeOptions[0]?.id : "");
+
+  return (
+    <View style={styles.agentConfigRow}>
+      <View style={styles.agentConfigColumn}>
+        <ComboSelect
+          label="PROVIDER"
+          title="Select Provider"
+          value={selectedProvider}
+          options={providerOptions}
+          placeholder="Select..."
+          disabled={disabled}
+          onSelect={onSelectProvider}
+        />
+      </View>
+      <View style={styles.agentConfigColumn}>
+        <ComboSelect
+          label="MODEL"
+          title="Select Model"
+          value={selectedModel}
+          options={modelSelectOptions}
+          placeholder="Auto"
+          disabled={disabled}
+          isLoading={isModelLoading}
+          onSelect={onSelectModel}
+        />
+      </View>
+      <View style={styles.agentConfigColumn}>
+        <ComboSelect
+          label="MODE"
+          title="Select Mode"
+          value={effectiveSelectedMode}
+          options={modeSelectOptions}
+          placeholder="Default"
+          disabled={disabled || modeOptions.length === 0}
+          onSelect={onSelectMode}
+        />
+      </View>
+    </View>
+  );
+}
+
 interface AssistantDropdownProps {
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider;
@@ -1183,5 +1485,39 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopDropdownScrollContent: {
     padding: theme.spacing[2],
+  },
+  agentConfigRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  agentConfigColumn: {
+    flex: 1,
+  },
+  compactSelectControl: {
+    backgroundColor: theme.colors.background,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    gap: theme.spacing[1],
+  },
+  compactSelectControlDisabled: {
+    opacity: theme.opacity[50],
+  },
+  compactSelectLabel: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  compactSelectValue: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  compactSelectPlaceholder: {
+    color: theme.colors.mutedForeground,
+    fontSize: theme.fontSize.sm,
   },
 }));

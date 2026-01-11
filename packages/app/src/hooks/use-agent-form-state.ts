@@ -131,6 +131,8 @@ export function useAgentFormState(
     setSelectedProvider(provider);
     userEditedPreferencesRef.current.model = true;
     setSelectedModel("");
+    userEditedPreferencesRef.current.mode = true;
+    setSelectedMode("");
   }, []);
 
   const setModeFromUser = useCallback((modeId: string) => {

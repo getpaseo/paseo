@@ -308,10 +308,10 @@ function AgentScreenContent({
     return children;
   }, [allAgents, resolvedAgentId]);
 
-  // Select only the specific stream state - use stable empty array to avoid infinite loop
+  // Select only the specific stream tail - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
     resolvedAgentId
-      ? state.sessions[serverId]?.agentStreamState?.get(resolvedAgentId)
+      ? state.sessions[serverId]?.agentStreamTail?.get(resolvedAgentId)
       : undefined
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
