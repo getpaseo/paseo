@@ -49,6 +49,7 @@ import {
   useExplorerSidebarStore,
   type SortOption,
 } from "@/stores/explorer-sidebar-store";
+import { formatTimeAgo } from "@/utils/time";
 
 const MAX_CONCURRENT_THUMBNAILS = 2;
 const THUMBNAIL_TIMEOUT_MS = 15000;
@@ -706,8 +707,7 @@ export function FileExplorerPane({
                 {item.name}
               </Text>
               <Text style={styles.entryMeta} numberOfLines={1}>
-                {item.kind.toUpperCase()} · {formatFileSize({ size: item.size })} ·{" "}
-                {formatModifiedTime({ value: item.modifiedAt })}
+                {formatFileSize({ size: item.size })} · {formatTimeAgo(new Date(item.modifiedAt))}
               </Text>
             </View>
           </View>
@@ -827,9 +827,19 @@ export function FileExplorerPane({
           {error ? (
             <View style={styles.centerState}>
               <Text style={styles.errorText}>{error}</Text>
-              <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </Pressable>
+              <View style={styles.errorActions}>
+                <Pressable style={styles.retryButton} onPress={handleRetryDirectory}>
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
+                {activePath !== "." && (
+                  <Pressable
+                    style={styles.goToWorkspaceButton}
+                    onPress={() => requestDirectoryListing?.(agentId, ".")}
+                  >
+                    <Text style={styles.goToWorkspaceButtonText}>Go to workspace</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
           ) : showInitialListLoading ? (
             <View style={styles.centerState}>
@@ -1064,14 +1074,6 @@ function formatEta(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
   return `${mins}m ${secs}s`;
-}
-
-function formatModifiedTime({ value }: { value: string }): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
 }
 
 type EntryDisplayKind = "directory" | "image" | "text" | "other";
@@ -1375,6 +1377,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
+  errorActions: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
   retryButton: {
     borderRadius: theme.borderRadius.full,
     borderWidth: theme.borderWidth[1],
@@ -1384,6 +1390,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   retryButtonText: {
     color: theme.colors.primary,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  goToWorkspaceButton: {
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+  },
+  goToWorkspaceButtonText: {
+    color: theme.colors.mutedForeground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
