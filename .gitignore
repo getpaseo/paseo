@@ -46,3 +46,6 @@ coverage/
 
 # Local Claude configuration
 CLAUDE.local.md
+
+# Task CLI
+.tasks/
