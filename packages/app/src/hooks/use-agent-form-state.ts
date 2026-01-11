@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
@@ -13,6 +12,7 @@ import type { WSInboundMessage } from "@server/server/messages";
 import type { ProviderModelState } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { generateMessageId } from "@/types/stream";
+import { useFormPreferences } from "./use-form-preferences";
 
 export type CreateAgentInitialValues = {
   workingDir?: string;
@@ -42,13 +42,6 @@ type UseAgentFormStateResult = {
   workingDir: string;
   setWorkingDir: (value: string) => void;
   setWorkingDirFromUser: (value: string) => void;
-  userEditedPreferencesRef: React.MutableRefObject<{
-    provider: boolean;
-    mode: boolean;
-    model: boolean;
-    workingDir: boolean;
-    serverId: boolean;
-  }>;
   providerDefinitions: AgentProviderDefinition[];
   providerDefinitionMap: Map<AgentProvider, AgentProviderDefinition>;
   agentDefinition?: AgentProviderDefinition;
@@ -65,8 +58,6 @@ type UseAgentFormStateResult = {
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
 };
-
-const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
 
 const providerDefinitions = AGENT_PROVIDER_DEFINITIONS;
 const providerDefinitionMap = new Map<AgentProvider, AgentProviderDefinition>(
@@ -88,6 +79,14 @@ export function useAgentFormState(
     isTargetDaemonReady = true,
   } = options;
 
+  const {
+    preferences,
+    isLoading: isPreferencesLoading,
+    getProviderPreferences,
+    updatePreferences,
+    updateProviderPreferences,
+  } = useFormPreferences();
+
   const [selectedServerId, setSelectedServerId] = useState<string | null>(
     initialServerId
   );
@@ -99,14 +98,7 @@ export function useAgentFormState(
   );
   const [selectedModel, setSelectedModel] = useState("");
 
-  const formPreferencesHydratedRef = useRef(false);
-  const userEditedPreferencesRef = useRef({
-    provider: false,
-    mode: false,
-    model: false,
-    workingDir: false,
-    serverId: false,
-  });
+  const hasHydratedRef = useRef(false);
   const hasAppliedInitialValuesRef = useRef(false);
   const providerModelRequestTimersRef = useRef<
     Map<string, ReturnType<typeof setTimeout>>
@@ -121,34 +113,52 @@ export function useAgentFormState(
     []
   );
 
-  const setSelectedServerIdFromUser = useCallback((value: string | null) => {
-    userEditedPreferencesRef.current.serverId = true;
-    setSelectedServerId(value);
-  }, []);
+  const setSelectedServerIdFromUser = useCallback(
+    (value: string | null) => {
+      setSelectedServerId(value);
+      void updatePreferences({ serverId: value ?? undefined });
+    },
+    [updatePreferences]
+  );
 
-  const setProviderFromUser = useCallback((provider: AgentProvider) => {
-    userEditedPreferencesRef.current.provider = true;
-    setSelectedProvider(provider);
-    userEditedPreferencesRef.current.model = true;
-    setSelectedModel("");
-    userEditedPreferencesRef.current.mode = true;
-    setSelectedMode("");
-  }, []);
+  const setProviderFromUser = useCallback(
+    (provider: AgentProvider) => {
+      setSelectedProvider(provider);
+      void updatePreferences({ provider });
 
-  const setModeFromUser = useCallback((modeId: string) => {
-    userEditedPreferencesRef.current.mode = true;
-    setSelectedMode(modeId);
-  }, []);
+      // Restore per-provider preferences if available
+      const providerPrefs = getProviderPreferences(provider);
+      const providerDef = providerDefinitionMap.get(provider);
 
-  const setModelFromUser = useCallback((modelId: string) => {
-    userEditedPreferencesRef.current.model = true;
-    setSelectedModel(modelId);
-  }, []);
+      setSelectedModel(providerPrefs?.model ?? "");
+      setSelectedMode(providerPrefs?.mode ?? providerDef?.defaultModeId ?? "");
+    },
+    [getProviderPreferences, updatePreferences]
+  );
 
-  const setWorkingDirFromUser = useCallback((value: string) => {
-    userEditedPreferencesRef.current.workingDir = true;
-    setWorkingDir(value);
-  }, []);
+  const setModeFromUser = useCallback(
+    (modeId: string) => {
+      setSelectedMode(modeId);
+      void updateProviderPreferences(selectedProvider, { mode: modeId });
+    },
+    [selectedProvider, updateProviderPreferences]
+  );
+
+  const setModelFromUser = useCallback(
+    (modelId: string) => {
+      setSelectedModel(modelId);
+      void updateProviderPreferences(selectedProvider, { model: modelId });
+    },
+    [selectedProvider, updateProviderPreferences]
+  );
+
+  const setWorkingDirFromUser = useCallback(
+    (value: string) => {
+      setWorkingDir(value);
+      void updatePreferences({ workingDir: value });
+    },
+    [updatePreferences]
+  );
 
   const applyInitialValues = useCallback(() => {
     if (!isCreateFlow || !initialValues) {
@@ -156,23 +166,18 @@ export function useAgentFormState(
     }
 
     if (Object.prototype.hasOwnProperty.call(initialValues, "workingDir")) {
-      const providedWorkingDir = initialValues.workingDir ?? "";
-      userEditedPreferencesRef.current.workingDir = true;
-      setWorkingDir(providedWorkingDir);
+      setWorkingDir(initialValues.workingDir ?? "");
     }
 
     if (initialValues.provider && providerDefinitionMap.has(initialValues.provider)) {
-      userEditedPreferencesRef.current.provider = true;
       setSelectedProvider(initialValues.provider);
     }
 
     if (typeof initialValues.modeId === "string" && initialValues.modeId.length > 0) {
-      userEditedPreferencesRef.current.mode = true;
       setSelectedMode(initialValues.modeId);
     }
 
     if (typeof initialValues.model === "string" && initialValues.model.length > 0) {
-      userEditedPreferencesRef.current.model = true;
       setSelectedModel(initialValues.model);
     }
   }, [initialValues, isCreateFlow]);
@@ -199,163 +204,46 @@ export function useAgentFormState(
     });
   }, [requestProviderModels, selectedProvider, workingDir]);
 
+  // Hydrate form state from preferences once loaded
   useEffect(() => {
-    let isActive = true;
-    const hydratePreferences = async () => {
-      try {
-        const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
-        if (!stored || !isActive) {
-          return;
-        }
-        const parsed = JSON.parse(stored) as {
-          workingDir?: string;
-          provider?: AgentProvider;
-          mode?: string;
-          model?: string;
-          serverId?: string;
-        };
-        if (
-          parsed.provider &&
-          providerDefinitionMap.has(parsed.provider) &&
-          !userEditedPreferencesRef.current.provider
-        ) {
-          setSelectedProvider(parsed.provider);
-        }
-        if (typeof parsed.mode === "string" && !userEditedPreferencesRef.current.mode) {
-          setSelectedMode(parsed.mode);
-        }
-        if (
-          typeof parsed.workingDir === "string" &&
-          !userEditedPreferencesRef.current.workingDir
-        ) {
-          setWorkingDir(parsed.workingDir);
-        }
-        if (typeof parsed.model === "string" && !userEditedPreferencesRef.current.model) {
-          setSelectedModel(parsed.model);
-        }
-        if (
-          typeof parsed.serverId === "string" &&
-          !userEditedPreferencesRef.current.serverId
-        ) {
-          setSelectedServerId(parsed.serverId);
-        }
-      } catch (error) {
-        console.error(
-          "[useAgentFormState] Failed to hydrate form preferences:",
-          error
-        );
-      } finally {
-        if (isActive) {
-          formPreferencesHydratedRef.current = true;
-        }
-      }
-    };
-    void hydratePreferences();
-    return () => {
-      isActive = false;
-    };
-  }, []);
+    if (isPreferencesLoading || hasHydratedRef.current) return;
+    hasHydratedRef.current = true;
 
-  useEffect(() => {
-    if (!formPreferencesHydratedRef.current) {
-      return;
-    }
-    const persist = async () => {
-      const nextPayload: {
-        workingDir?: string;
-        provider?: AgentProvider;
-        mode?: string;
-        model?: string;
-        serverId?: string;
-      } = {};
-      if (userEditedPreferencesRef.current.workingDir) {
-        nextPayload.workingDir = workingDir;
-      }
-      if (userEditedPreferencesRef.current.provider) {
-        nextPayload.provider = selectedProvider;
-      }
-      if (userEditedPreferencesRef.current.mode) {
-        nextPayload.mode = selectedMode;
-      }
-      if (userEditedPreferencesRef.current.model) {
-        nextPayload.model = selectedModel;
-      }
-      if (userEditedPreferencesRef.current.serverId) {
-        nextPayload.serverId = selectedServerId ?? undefined;
-      }
-      if (Object.keys(nextPayload).length === 0) {
-        return;
-      }
-      try {
-        const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
-        const parsed = stored
-          ? (JSON.parse(stored) as Record<string, unknown>)
-          : {};
-        await AsyncStorage.setItem(
-          FORM_PREFERENCES_STORAGE_KEY,
-          JSON.stringify({
-            ...parsed,
-            ...nextPayload,
-          })
-        );
-      } catch (error) {
-        console.error(
-          "[useAgentFormState] Failed to persist form preferences:",
-          error
-        );
-      }
-    };
-    void persist();
-  }, [selectedMode, selectedProvider, workingDir, selectedModel, selectedServerId]);
+    const activeProvider =
+      preferences.provider &&
+      providerDefinitionMap.has(preferences.provider as AgentProvider)
+        ? (preferences.provider as AgentProvider)
+        : DEFAULT_PROVIDER;
+
+    const providerPrefs = preferences.providerPreferences?.[activeProvider];
+    const providerDef = providerDefinitionMap.get(activeProvider);
+
+    setSelectedProvider(activeProvider);
+    if (preferences.workingDir) setWorkingDir(preferences.workingDir);
+    setSelectedMode(providerPrefs?.mode ?? providerDef?.defaultModeId ?? "");
+    if (providerPrefs?.model) setSelectedModel(providerPrefs.model);
+    if (preferences.serverId) setSelectedServerId(preferences.serverId);
+  }, [isPreferencesLoading, preferences]);
 
   const persistFormPreferences = useCallback(async () => {
-    const payload: {
-      workingDir?: string;
-      provider?: AgentProvider;
-      mode?: string;
-      model?: string;
-      serverId?: string;
-    } = {};
-
-    if (typeof workingDir === "string") {
-      payload.workingDir = workingDir;
-    }
-    if (selectedProvider) {
-      payload.provider = selectedProvider;
-    }
-    if (typeof selectedMode === "string") {
-      payload.mode = selectedMode;
-    }
-    if (typeof selectedModel === "string") {
-      payload.model = selectedModel;
-    }
-    if (selectedServerId) {
-      payload.serverId = selectedServerId;
-    }
-
-    if (Object.keys(payload).length === 0) {
-      return;
-    }
-
-    try {
-      const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
-      const parsed = stored
-        ? (JSON.parse(stored) as Record<string, unknown>)
-        : {};
-      await AsyncStorage.setItem(
-        FORM_PREFERENCES_STORAGE_KEY,
-        JSON.stringify({
-          ...parsed,
-          ...payload,
-        })
-      );
-    } catch (error) {
-      console.error(
-        "[useAgentFormState] Failed to persist form preferences:",
-        error
-      );
-    }
-  }, [selectedMode, selectedModel, selectedProvider, selectedServerId, workingDir]);
+    await updatePreferences({
+      workingDir,
+      provider: selectedProvider,
+      serverId: selectedServerId ?? undefined,
+    });
+    await updateProviderPreferences(selectedProvider, {
+      mode: selectedMode,
+      model: selectedModel,
+    });
+  }, [
+    selectedMode,
+    selectedModel,
+    selectedProvider,
+    selectedServerId,
+    workingDir,
+    updatePreferences,
+    updateProviderPreferences,
+  ]);
 
   const clearQueuedProviderModelRequest = useCallback((serverId: string | null) => {
     if (!serverId) {
@@ -489,7 +377,6 @@ export function useAgentFormState(
       workingDir,
       setWorkingDir,
       setWorkingDirFromUser,
-      userEditedPreferencesRef,
       providerDefinitions,
       providerDefinitionMap,
       agentDefinition,
@@ -520,6 +407,7 @@ export function useAgentFormState(
       setProviderFromUser,
       setModeFromUser,
       setModelFromUser,
+      setWorkingDirFromUser,
       workingDir,
       workingDirIsEmpty,
       persistFormPreferences,

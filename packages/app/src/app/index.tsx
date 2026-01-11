@@ -119,7 +119,6 @@ export default function HomeScreen() {
     modelError,
     refreshProviderModels,
     persistFormPreferences,
-    userEditedPreferencesRef,
   } = useAgentFormState({
     initialServerId: resolvedServerId ?? null,
     initialValues,
@@ -139,11 +138,8 @@ export default function HomeScreen() {
     if (!isValidModel) {
       return;
     }
-    if (userEditedPreferencesRef.current.model) {
-      return;
-    }
     setModelFromUser(resolvedModel);
-  }, [availableModels, resolvedModel, setModelFromUser, userEditedPreferencesRef]);
+  }, [availableModels, resolvedModel, setModelFromUser]);
   const hostEntry = selectedServerId
     ? connectionStates.get(selectedServerId)
     : undefined;
