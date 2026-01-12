@@ -1,13 +1,11 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import type { useAudioPlayer } from "@/hooks/use-audio-player";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
-import type {
-  AgentLifecycleStatus,
-} from "@server/server/agent/agent-manager";
+import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
   AgentPermissionResponse,
   AgentSessionConfig,
@@ -18,7 +16,7 @@ import type {
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
-import type { FileDownloadTokenResponse, GitSetupOptions } from "@server/server/messages";
+import type { FileDownloadTokenResponse, GitSetupOptions } from "@server/shared/messages";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 // Re-export types that were in session-context
@@ -151,12 +149,21 @@ export interface AgentFileExplorerState {
   lastVisitedPath: string;
 }
 
+export interface DaemonConnectionSnapshot {
+  isConnected: boolean;
+  isConnecting: boolean;
+  lastError: string | null;
+}
+
 // Per-session state
 export interface SessionState {
   serverId: string;
 
-  // WebSocket (immutable reference)
-  ws: UseWebSocketReturn | null;
+  // Daemon client (immutable reference)
+  client: DaemonClientV2 | null;
+
+  // Connection snapshot (mutable)
+  connection: DaemonConnectionSnapshot;
 
   // Audio player (immutable reference)
   audioPlayer: ReturnType<typeof useAudioPlayer> | null;
@@ -255,10 +262,11 @@ interface SessionStoreState {
 // Action types
 interface SessionStoreActions {
   // Session management
-  initializeSession: (serverId: string, ws: UseWebSocketReturn, audioPlayer: ReturnType<typeof useAudioPlayer>) => void;
+  initializeSession: (serverId: string, client: DaemonClientV2, audioPlayer: ReturnType<typeof useAudioPlayer>) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
-  updateSessionWebSocket: (serverId: string, ws: UseWebSocketReturn) => void;
+  updateSessionClient: (serverId: string, client: DaemonClientV2) => void;
+  updateSessionConnection: (serverId: string, connection: DaemonConnectionSnapshot) => void;
 
   // Audio state
   setIsPlayingAudio: (serverId: string, playing: boolean) => void;
@@ -343,11 +351,24 @@ function logSessionStoreUpdate(
 }
 
 
+function createDefaultConnectionSnapshot(client?: DaemonClientV2 | null): DaemonConnectionSnapshot {
+  if (!client) {
+    return { isConnected: false, isConnecting: false, lastError: null };
+  }
+  const state = client.getConnectionState();
+  return {
+    isConnected: state.status === "connected",
+    isConnecting: state.status === "connecting",
+    lastError: state.status === "disconnected" ? state.reason ?? client.lastError ?? null : null,
+  };
+}
+
 // Helper to create initial session state
-function createInitialSessionState(serverId: string, ws: UseWebSocketReturn, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
+function createInitialSessionState(serverId: string, client: DaemonClientV2, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
   return {
     serverId,
-    ws,
+    client,
+    connection: createDefaultConnectionSnapshot(client),
     audioPlayer,
     methods: null,
     hasHydratedAgents: false,
@@ -375,7 +396,7 @@ export const useSessionStore = create<SessionStore>()(
     agentLastActivity: new Map(),
 
     // Session management
-    initializeSession: (serverId, ws, audioPlayer) => {
+    initializeSession: (serverId, client, audioPlayer) => {
       set((prev) => {
         if (prev.sessions[serverId]) {
           return prev;
@@ -385,7 +406,7 @@ export const useSessionStore = create<SessionStore>()(
           ...prev,
           sessions: {
             ...prev.sessions,
-            [serverId]: createInitialSessionState(serverId, ws, audioPlayer),
+            [serverId]: createInitialSessionState(serverId, client, audioPlayer),
           },
         };
       });
@@ -403,7 +424,7 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
-    updateSessionWebSocket: (serverId, ws) => {
+    updateSessionClient: (serverId, client) => {
       set((prev) => {
         const session = prev.sessions[serverId];
 
@@ -411,14 +432,14 @@ export const useSessionStore = create<SessionStore>()(
           return prev;
         }
 
-        if (session.ws === ws) {
+        if (session.client === client) {
           return prev;
         }
 
-        logSessionStoreUpdate("updateSessionWebSocket", serverId, {
-          wasNull: session.ws === null,
-          isNowConnected: ws.isConnected,
-          isNowConnecting: ws.isConnecting,
+        logSessionStoreUpdate("updateSessionClient", serverId, {
+          wasNull: session.client === null,
+          isNowConnected: client.isConnected,
+          isNowConnecting: client.isConnecting,
         });
 
         return {
@@ -427,7 +448,34 @@ export const useSessionStore = create<SessionStore>()(
             ...prev.sessions,
             [serverId]: {
               ...session,
-              ws,
+              client,
+            },
+          },
+        };
+      });
+    },
+
+    updateSessionConnection: (serverId, connection) => {
+      set((prev) => {
+        const session = prev.sessions[serverId];
+        if (!session) {
+          return prev;
+        }
+        if (
+          session.connection.isConnected === connection.isConnected &&
+          session.connection.isConnecting === connection.isConnecting &&
+          session.connection.lastError === connection.lastError
+        ) {
+          return prev;
+        }
+        logSessionStoreUpdate("updateSessionConnection", serverId, connection);
+        return {
+          ...prev,
+          sessions: {
+            ...prev.sessions,
+            [serverId]: {
+              ...session,
+              connection,
             },
           },
         };

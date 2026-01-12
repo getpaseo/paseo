@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import { useQuery } from "@tanstack/react-query";
 import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -51,9 +52,7 @@ import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import type { Agent } from "@/stores/session-store";
-import { useDaemonRequest } from "@/hooks/use-daemon-request";
 import type { StreamItem } from "@/types/stream";
-import type { SessionOutboundMessage } from "@server/server/messages";
 import {
   buildAgentNavigationKey,
   endNavigationTiming,
@@ -61,14 +60,11 @@ import {
   startNavigationTiming,
 } from "@/utils/navigation-timing";
 import { extractAgentModel } from "@/utils/extract-agent-model";
+import { startPerfMonitor } from "@/utils/perf-monitor";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
-type GitRepoInfoResponseMessage = Extract<
-  SessionOutboundMessage,
-  { type: "git_repo_info_response" }
->;
 
 type BranchStatus = "idle" | "loading" | "ready" | "error";
 
@@ -203,6 +199,15 @@ function AgentScreenContent({
   } = useExplorerSidebarAnimation();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      return;
+    }
+    const scope = `agent:${serverId}:${agentId ?? "unknown"}`;
+    const stop = startPerfMonitor(scope);
+    return stop;
+  }, [serverId, agentId]);
 
   // Swipe-left gesture to open explorer sidebar on mobile
   const explorerOpenGesture = useMemo(
@@ -339,8 +344,12 @@ function AgentScreenContent({
     return filtered;
   }, [allPendingPermissions, resolvedAgentId]);
 
-  // Get ws for connection status
-  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+  const isConnected = useSessionStore(
+    (state) => state.sessions[serverId]?.connection.isConnected ?? false
+  );
 
   // Get methods
   const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
@@ -372,55 +381,44 @@ function AgentScreenContent({
   const agentModel = extractAgentModel(agent);
   const modelDisplayValue = agentModel ?? "Unknown";
 
-  const gitRepoInfoRequest = useDaemonRequest<
-    { cwd: string },
-    { cwd: string; currentBranch: string | null },
-    GitRepoInfoResponseMessage
-  >({
-    ws: ws!,
-    responseType: "git_repo_info_response",
-    buildRequest: ({ params, requestId }) => ({
-      type: "session",
-      message: {
-        type: "git_repo_info_request",
-        cwd: params?.cwd ?? ".",
-        requestId,
-      },
-    }),
-    getRequestKey: (params) => params?.cwd ?? "default",
-    selectData: (message) => ({
-      cwd: message.payload.cwd,
-      currentBranch: message.payload.currentBranch ?? null,
-    }),
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    keepPreviousData: false,
+  const repoInfoQuery = useQuery({
+    queryKey: ["gitRepoInfo", serverId, agent?.cwd ?? ""],
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getGitRepoInfo({
+        cwd: agent?.cwd ?? ".",
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return {
+        cwd: payload.cwd,
+        currentBranch: payload.currentBranch ?? null,
+      };
+    },
+    enabled: Boolean(client && isConnected && agent?.cwd),
+    retry: false,
   });
-  const { execute: fetchGitRepoInfo, reset: resetGitRepoInfo } =
-    gitRepoInfoRequest;
+  const { refetch: refetchRepoInfo } = repoInfoQuery;
   const branchStatus: BranchStatus = !agent?.cwd
     ? "idle"
-    : gitRepoInfoRequest.status === "loading"
+    : repoInfoQuery.isPending || repoInfoQuery.isFetching
     ? "loading"
-    : gitRepoInfoRequest.status === "error"
+    : repoInfoQuery.isError
     ? "error"
-    : gitRepoInfoRequest.status === "success"
+    : repoInfoQuery.isSuccess
     ? "ready"
     : "idle";
-  const branchLabel = gitRepoInfoRequest.data?.currentBranch ?? null;
-  const branchError = gitRepoInfoRequest.error?.message ?? null;
+  const branchLabel = repoInfoQuery.data?.currentBranch ?? null;
+  const branchError = repoInfoQuery.error instanceof Error
+    ? repoInfoQuery.error.message
+    : null;
   const branchDisplayValue =
     branchStatus === "error"
       ? branchError ?? "Unavailable"
       : branchLabel ?? "Unknown";
-
-  useEffect(() => {
-    if (!agent?.cwd) {
-      resetGitRepoInfo();
-      return;
-    }
-    fetchGitRepoInfo({ cwd: agent.cwd }).catch(() => {});
-  }, [agent?.cwd, fetchGitRepoInfo, resetGitRepoInfo]);
 
   useEffect(() => {
     if (!resolvedAgentId) {
@@ -447,7 +445,7 @@ function AgentScreenContent({
     }
 
     // Skip if not connected - will re-run when connection is established
-    if (!ws?.isConnected) {
+    if (!isConnected) {
       return;
     }
 
@@ -472,7 +470,7 @@ function AgentScreenContent({
     });
 
     initializeAgent({ agentId: resolvedAgentId });
-  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, ws?.isConnected]);
+  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, isConnected]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -487,7 +485,7 @@ function AgentScreenContent({
 
   // Clear attention when agent finishes while user is viewing this screen
   useEffect(() => {
-    if (!resolvedAgentId || !agent || !ws) {
+    if (!resolvedAgentId || !agent || !client) {
       return;
     }
 
@@ -498,9 +496,9 @@ function AgentScreenContent({
     // If agent transitioned from running to idle while we're viewing,
     // immediately clear attention since user witnessed the completion
     if (previousStatus === "running" && currentStatus === "idle") {
-      ws.clearAgentAttention(resolvedAgentId);
+      client.clearAgentAttention(resolvedAgentId);
     }
-  }, [resolvedAgentId, agent?.status, ws]);
+  }, [resolvedAgentId, agent?.status, client]);
 
   const recalculateMenuPosition = useCallback(
     (onMeasured?: () => void) => {
@@ -552,13 +550,13 @@ function AgentScreenContent({
 
   const handleOpenMenu = useCallback(() => {
     if (agent?.cwd) {
-      fetchGitRepoInfo({ cwd: agent.cwd }).catch(() => {});
+      refetchRepoInfo().catch(() => {});
     }
 
     recalculateMenuPosition(() => {
       setMenuVisible(true);
     });
-  }, [agent?.cwd, fetchGitRepoInfo, recalculateMenuPosition]);
+  }, [agent?.cwd, recalculateMenuPosition, refetchRepoInfo]);
 
   const handleCloseMenu = useCallback(() => {
     setMenuVisible(false);

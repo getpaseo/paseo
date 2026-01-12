@@ -285,23 +285,13 @@ describe("daemon E2E", () => {
 
         // Send first message to start the agent
         ctx.client.clearMessageQueue();
-        const startPosition = ctx.client.getMessageQueue().length;
         await ctx.client.sendMessage(agent.id, "List the files in the current directory.");
 
         // Wait for agent to start running
-        await ctx.client.waitFor(
-          (msg) => {
-            if (
-              msg.type === "agent_state" &&
-              msg.payload.id === agent.id &&
-              msg.payload.status === "running"
-            ) {
-              return msg.payload;
-            }
-            return null;
-          },
-          10000,
-          { skipQueueBefore: startPosition }
+        await ctx.client.waitForAgentState(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          10000
         );
 
         // Cancel while running
@@ -310,19 +300,11 @@ describe("daemon E2E", () => {
         // Wait for agent to become idle after cancellation
         // Don't use waitForAgentIdle because it requires seeing "running" first,
         // but we already saw it above. Just wait for "idle" or "error".
-        await ctx.client.waitFor(
-          (msg) => {
-            if (
-              msg.type === "agent_state" &&
-              msg.payload.id === agent.id &&
-              (msg.payload.status === "idle" || msg.payload.status === "error")
-            ) {
-              return msg.payload;
-            }
-            return null;
-          },
-          30000,
-          { skipQueueBefore: startPosition }
+        await ctx.client.waitForAgentState(
+          agent.id,
+          (snapshot) =>
+            snapshot.status === "idle" || snapshot.status === "error",
+          30000
         );
 
         // Now send another message - this should work
@@ -1489,7 +1471,10 @@ describe("daemon E2E", () => {
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "original content\n");
         execSync("git add test.txt", { cwd, stdio: "pipe" });
-        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
 
         // Modify the file (creates unstaged changes)
         writeFileSync(testFile, "modified content\n");
@@ -1536,7 +1521,10 @@ describe("daemon E2E", () => {
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "content\n");
         execSync("git add test.txt", { cwd, stdio: "pipe" });
-        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
 
         // Create agent in the git repo (no modifications)
         const agent = await ctx.client.createAgent({
@@ -1606,7 +1594,10 @@ describe("daemon E2E", () => {
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "original content\n");
         execSync("git add test.txt", { cwd, stdio: "pipe" });
-        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
 
         // Modify the file (makes repo dirty)
         writeFileSync(testFile, "modified content\n");
@@ -1655,7 +1646,10 @@ describe("daemon E2E", () => {
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "content\n");
         execSync("git add test.txt", { cwd, stdio: "pipe" });
-        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
 
         // Create agent in the git repo
         const agent = await ctx.client.createAgent({
@@ -2414,7 +2408,10 @@ describe("daemon E2E", () => {
         execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
         writeFileSync(path.join(cwd, "README.md"), "# Test\n");
         execSync("git add .", { cwd, stdio: "pipe" });
-        execSync("git commit -m 'Initial commit'", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
 
         // === STEP 1: Run external codex exec with a memorable number ===
         // We use spawn so we can send input and capture output
@@ -2688,7 +2685,8 @@ describe("daemon E2E", () => {
       writeFileSync(historyPath, `${historyLines.join("\n")}\n`, "utf8");
 
       try {
-        const persisted = await ctx.client.listPersistedAgents();
+        const persisted =
+          await ctx.daemon.daemon.agentManager.listPersistedAgents();
         const claudeEntry = persisted.find((item) => item.sessionId === sessionId);
 
         expect(claudeEntry).toBeTruthy();
@@ -2754,7 +2752,8 @@ describe("daemon E2E", () => {
       writeFileSync(rolloutPath, `${lines.join("\n")}\n`, "utf8");
 
       try {
-        const persisted = await ctx.client.listPersistedAgents();
+        const persisted =
+          await ctx.daemon.daemon.agentManager.listPersistedAgents();
         const codexEntry = persisted.find(
           (item) => item.provider === "codex" && item.sessionId === sessionId
         );

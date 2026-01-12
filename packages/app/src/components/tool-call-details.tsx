@@ -3,6 +3,7 @@ import { View, Text } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
+import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import {
   parseToolCallDisplay,
   buildLineDiff,
@@ -18,7 +19,82 @@ export interface ToolCallDetailsData {
   error?: unknown;
 }
 
+const TOOL_CALL_DETAILS_LOG_TAG = "[ToolCallDetails]";
+const TOOL_CALL_DETAILS_DURATION_THRESHOLD_MS = 8;
+const TOOL_CALL_DETAILS_SIZE_THRESHOLD = 20000;
+
+type ToolCallDisplaySummary = {
+  displayType: ToolCallDisplay["type"];
+  totalChars: number;
+  detail: Record<string, unknown>;
+};
+
+function summarizeToolCallDisplay(display: ToolCallDisplay): ToolCallDisplaySummary {
+  switch (display.type) {
+    case "shell": {
+      const commandLength = display.command.length;
+      const outputLength = display.output.length;
+      return {
+        displayType: display.type,
+        totalChars: commandLength + outputLength,
+        detail: {
+          commandLength,
+          outputLength,
+        },
+      };
+    }
+    case "edit": {
+      const oldLength = display.oldString.length;
+      const newLength = display.newString.length;
+      return {
+        displayType: display.type,
+        totalChars: oldLength + newLength,
+        detail: {
+          filePath: display.filePath,
+          oldLength,
+          newLength,
+        },
+      };
+    }
+    case "read": {
+      const contentLength = display.content.length;
+      return {
+        displayType: display.type,
+        totalChars: contentLength,
+        detail: {
+          filePath: display.filePath,
+          contentLength,
+          offset: display.offset,
+          limit: display.limit,
+        },
+      };
+    }
+    case "generic": {
+      const inputPairs = display.input.length;
+      const outputPairs = display.output.length;
+      const inputChars = display.input.reduce((sum, pair) => sum + pair.value.length, 0);
+      const outputChars = display.output.reduce((sum, pair) => sum + pair.value.length, 0);
+      return {
+        displayType: display.type,
+        totalChars: inputChars + outputChars,
+        detail: {
+          inputPairs,
+          outputPairs,
+          inputChars,
+          outputChars,
+        },
+      };
+    }
+    default:
+      return assertNever(display);
+  }
+}
+
 // ---- Helper ----
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled tool call display: ${JSON.stringify(value)}`);
+}
 
 function formatValue(value: unknown): string {
   if (value === undefined) {
@@ -231,8 +307,27 @@ export function useToolCallDetails(data: ToolCallDetailsData) {
   const { args, result, error } = data;
 
   return useMemo(() => {
+    const shouldLog = isPerfLoggingEnabled();
+    const startMs = shouldLog ? getNowMs() : 0;
     const display = parseToolCallDisplay(args, result);
     const errorText = error !== undefined ? formatValue(error) : undefined;
+    if (shouldLog) {
+      const durationMs = getNowMs() - startMs;
+      const summary = summarizeToolCallDisplay(display);
+      if (
+        durationMs >= TOOL_CALL_DETAILS_DURATION_THRESHOLD_MS ||
+        summary.totalChars >= TOOL_CALL_DETAILS_SIZE_THRESHOLD
+      ) {
+        perfLog(TOOL_CALL_DETAILS_LOG_TAG, {
+          event: "parse",
+          durationMs: Math.round(durationMs),
+          displayType: summary.displayType,
+          totalChars: summary.totalChars,
+          errorLength: errorText ? errorText.length : 0,
+          ...summary.detail,
+        });
+      }
+    }
     return { display, errorText };
   }, [args, result, error]);
 }

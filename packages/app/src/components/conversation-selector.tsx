@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Modal,
   View,
@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { MessageSquare, X, Plus, Trash2 } from "lucide-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StyleSheet } from "react-native-unistyles";
-import type { UseWebSocketReturn } from "../hooks/use-websocket";
+import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 
 const STORAGE_KEY = "@paseo:conversation-id";
 
@@ -26,107 +26,97 @@ interface Conversation {
 interface ConversationSelectorProps {
   currentConversationId: string | null;
   onSelectConversation: (conversationId: string | null) => void;
-  websocket: UseWebSocketReturn;
+  client: DaemonClientV2 | null;
 }
 
 export function ConversationSelector({
   currentConversationId,
   onSelectConversation,
-  websocket,
+  client,
 }: ConversationSelectorProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Listen for conversation list responses
-  useEffect(() => {
-    const unsubscribe = websocket.on(
-      "list_conversations_response",
-      (message) => {
-        if (message.type !== "list_conversations_response") return;
-        setConversations(message.payload.conversations);
-        setIsLoading(false);
-      }
-    );
+  const fetchConversations = useCallback(async () => {
+    setIsLoading(true);
 
-    return unsubscribe;
-  }, [websocket]);
+    if (!client) {
+      setIsLoading(false);
+      Alert.alert("Error", "Daemon unavailable.");
+      return;
+    }
 
-  // Listen for delete conversation responses
-  useEffect(() => {
-    const unsubscribe = websocket.on(
-      "delete_conversation_response",
-      (message) => {
-        if (message.type !== "delete_conversation_response") return;
-        console.log("[ConversationSelector] Delete response:", message.payload);
-        if (message.payload.success) {
-          // Refresh conversations list
-          fetchConversations();
-
-          // If we deleted the current conversation, start a new one
-          if (message.payload.conversationId === currentConversationId) {
-            handleNewConversation();
-          }
-        } else {
-          Alert.alert(
-            "Error",
-            `Failed to delete conversation: ${message.payload.error}`
-          );
-        }
-      }
-    );
-
-    return unsubscribe;
-  }, [websocket, currentConversationId]);
+    try {
+      console.log("[ConversationSelector] Fetching conversations");
+      const response = await client.listConversations();
+      setConversations(response.conversations);
+    } catch (error) {
+      console.error(
+        "[ConversationSelector] Failed to list conversations:",
+        error
+      );
+      Alert.alert("Error", "Failed to load conversations.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [client]);
 
   // Fetch conversations when modal opens
   useEffect(() => {
     if (isOpen) {
-      fetchConversations();
+      void fetchConversations();
     }
-  }, [isOpen]);
+  }, [fetchConversations, isOpen]);
 
-  function fetchConversations() {
-    setIsLoading(true);
-    console.log(
-      "[ConversationSelector] Requesting conversations via WebSocket"
-    );
-    websocket.send({
-      type: "session",
-      message: {
-        type: "list_conversations_request",
-      },
-    });
-  }
+  const handleDeleteConversation = useCallback(
+    (id: string) => {
+      Alert.alert(
+        "Delete Conversation",
+        "Are you sure you want to delete this conversation?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => {
+              if (!client) {
+                Alert.alert("Error", "Daemon unavailable.");
+                return;
+              }
 
-  function handleDeleteConversation(id: string) {
-    Alert.alert(
-      "Delete Conversation",
-      "Are you sure you want to delete this conversation?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            console.log(
-              "[ConversationSelector] Deleting conversation via WebSocket:",
-              id
-            );
-            websocket.send({
-              type: "session",
-              message: {
-                type: "delete_conversation_request",
-                conversationId: id,
-              },
-            });
+              console.log("[ConversationSelector] Deleting conversation:", id);
+              void (async () => {
+                try {
+                  const response = await client.deleteConversation(id);
+                  if (response.success) {
+                    await fetchConversations();
+                    if (response.conversationId === currentConversationId) {
+                      await handleNewConversation();
+                    }
+                  } else {
+                    Alert.alert(
+                      "Error",
+                      `Failed to delete conversation: ${response.error}`
+                    );
+                  }
+                } catch (error) {
+                  console.error(
+                    "[ConversationSelector] Failed to delete conversation:",
+                    error
+                  );
+                  Alert.alert("Error", "Failed to delete conversation.");
+                }
+              })();
+            },
           },
-        },
-      ]
-    );
-  }
+        ]
+      );
+    },
+    [currentConversationId, fetchConversations, handleNewConversation, client]
+  );
 
-  function handleClearAll() {
+  const handleClearAll = useCallback(() => {
     Alert.alert(
       "Clear All Conversations",
       "Are you sure you want to delete all conversations?",
@@ -136,31 +126,36 @@ export function ConversationSelector({
           text: "Clear All",
           style: "destructive",
           onPress: () => {
-            console.log(
-              "[ConversationSelector] Clearing all conversations via WebSocket"
-            );
-            // Delete all conversations
-            conversations.forEach((conv) => {
-              websocket.send({
-                type: "session",
-                message: {
-                  type: "delete_conversation_request",
-                  conversationId: conv.id,
-                },
-              });
-            });
+            if (!client) {
+              Alert.alert("Error", "Daemon unavailable.");
+              return;
+            }
 
-            // Clear local state
-            setConversations([]);
-
-            // Start new conversation
-            handleNewConversation();
-            setIsOpen(false);
+            console.log("[ConversationSelector] Clearing all conversations");
+            void (async () => {
+              setIsLoading(true);
+              try {
+                for (const conv of conversations) {
+                  await client.deleteConversation(conv.id);
+                }
+                setConversations([]);
+                await handleNewConversation();
+                setIsOpen(false);
+              } catch (error) {
+                console.error(
+                  "[ConversationSelector] Failed to clear conversations:",
+                  error
+                );
+                Alert.alert("Error", "Failed to clear conversations.");
+              } finally {
+                setIsLoading(false);
+              }
+            })();
           },
         },
       ]
     );
-  }
+  }, [conversations, handleNewConversation, client]);
 
   async function handleSelectConversation(id: string) {
     try {

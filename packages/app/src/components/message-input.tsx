@@ -26,7 +26,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import type { SessionContextValue } from "@/contexts/session-context";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
@@ -51,7 +51,7 @@ export interface MessageInputProps {
   images?: ImageAttachment[];
   onPickImages?: () => void;
   onRemoveImage?: (index: number) => void;
-  ws: UseWebSocketReturn;
+  client: DaemonClientV2 | null;
   sendAgentAudio: SessionContextValue["sendAgentAudio"];
   placeholder?: string;
   autoFocus?: boolean;
@@ -103,7 +103,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       images = [],
       onPickImages,
       onRemoveImage,
-      ws,
+      client,
       sendAgentAudio,
       placeholder = "Message...",
       autoFocus = false,
@@ -179,18 +179,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   }, []);
 
   const canStartDictation = useCallback(() => {
-    const socketConnected = ws.getConnectionState
-      ? ws.getConnectionState().isConnected
-      : ws.isConnected;
+    const socketConnected = client?.isConnected ?? false;
     return socketConnected && !disabled;
-  }, [ws, disabled]);
+  }, [client, disabled]);
 
   const canConfirmDictation = useCallback(() => {
-    const socketConnected = ws.getConnectionState
-      ? ws.getConnectionState().isConnected
-      : ws.isConnected;
+    const socketConnected = client?.isConnected ?? false;
     return socketConnected;
-  }, [ws]);
+  }, [client]);
 
   const {
     isRecording: isDictating,
@@ -205,7 +201,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     discardFailedDictation,
   } = useDictation({
     sendAgentAudio,
-    ws,
+    client,
     mode: "transcribe_only",
     onTranscript: handleDictationTranscript,
     onError: handleDictationError,
@@ -455,9 +451,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   const hasImages = images.length > 0;
   const hasSendableContent = value.trim().length > 0 || hasImages;
   const shouldShowSendButton = hasSendableContent;
-  const isConnected = ws.getConnectionState
-    ? ws.getConnectionState().isConnected
-    : ws.isConnected;
+  const isConnected = client?.isConnected ?? false;
 
   return (
     <View style={styles.container}>

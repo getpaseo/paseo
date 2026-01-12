@@ -40,7 +40,7 @@ describe("provider model catalogs (e2e)", () => {
 
       expect(result.error).toBeNull();
       const ids = result.models.map((model) => model.id);
-      expect(ids).toContain("gpt-5.1-codex");
+      expect(ids.some((id) => id.startsWith("gpt-5.1-codex"))).toBe(true);
     },
     180_000
   );

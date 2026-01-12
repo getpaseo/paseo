@@ -45,6 +45,7 @@ import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, ThoughtStatus } from "@/types/stream";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
+import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
 import {
@@ -1307,6 +1308,8 @@ const toolKindIcons: Record<string, any> = {
   execute: SquareTerminal,
   search: Search,
 };
+const TOOL_CALL_LOG_TAG = "[ToolCall]";
+const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
 
 // Derive tool kind from tool name for icon selection
 function getToolKindFromName(toolName: string): string {
@@ -1333,6 +1336,7 @@ export const ToolCall = memo(function ToolCall({
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(false);
+  const toggleStartRef = useRef<number | null>(null);
 
   // Check if we're on mobile (use bottom sheet) or desktop (inline expand)
   const isMobile =
@@ -1356,6 +1360,9 @@ export const ToolCall = memo(function ToolCall({
   const { display, errorText } = useToolCallDetails({ args, result, error });
 
   const handleToggle = useCallback(() => {
+    if (!isMobile && isPerfLoggingEnabled()) {
+      toggleStartRef.current = getNowMs();
+    }
     if (isMobile) {
       // Mobile: open bottom sheet
       openToolCall({
@@ -1371,6 +1378,33 @@ export const ToolCall = memo(function ToolCall({
       setIsExpanded((prev) => !prev);
     }
   }, [isMobile, openToolCall, toolName, kind, status, args, result, error]);
+
+  useEffect(() => {
+    if (isMobile || !isPerfLoggingEnabled()) {
+      return;
+    }
+    const startMs = toggleStartRef.current;
+    if (startMs === null) {
+      return;
+    }
+    toggleStartRef.current = null;
+    const logCommit = () => {
+      const durationMs = getNowMs() - startMs;
+      if (durationMs >= TOOL_CALL_COMMIT_THRESHOLD_MS) {
+        perfLog(TOOL_CALL_LOG_TAG, {
+          event: isExpanded ? "expand_commit" : "collapse_commit",
+          toolName,
+          kind,
+          durationMs: Math.round(durationMs),
+        });
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => logCommit());
+    } else {
+      logCommit();
+    }
+  }, [isExpanded, isMobile, toolName, kind]);
 
   // Render inline details for desktop
   const renderDetails = useCallback(() => {

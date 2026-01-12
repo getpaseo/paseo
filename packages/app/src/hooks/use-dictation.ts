@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 
 import type { SessionContextValue } from "@/contexts/session-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
-import { useSessionRpc } from "@/hooks/use-session-rpc";
-import type { RpcFailureReason, RpcRetryAttemptEvent } from "@/hooks/use-session-rpc";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { TranscriptionResultMessage } from "@server/shared/messages";
 import { generateMessageId } from "@/types/stream";
 
 export type DictationStatus = "idle" | "recording" | "uploading" | "retrying" | "failed";
 
+type DictationRetryReason = "dispatch" | "timeout" | "response" | "disconnected";
+
 export type DictationRetryInfo = {
   attempt: number;
   maxAttempts: number;
-  reason: RpcFailureReason;
+  reason: DictationRetryReason;
   errorMessage: string;
   nextRetryMs: number;
 };
@@ -33,7 +35,7 @@ export type DictationOutcome =
 export type UseDictationOptions = {
   agentId?: string;
   sendAgentAudio: SessionContextValue["sendAgentAudio"];
-  ws: UseWebSocketReturn;
+  client: DaemonClientV2 | null;
   mode?: "transcribe_only" | "auto_run";
   onTranscript: (text: string, meta: { requestId: string }) => void;
   onError?: (error: Error) => void;
@@ -74,6 +76,31 @@ const RETRY_BACKOFF_FACTOR = 1.8;
 const RETRY_JITTER_MS = 400;
 const TRANSCRIPTION_TIMEOUT_MS = 120000;
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const computeRetryDelayMs = (attempt: number): number => {
+  const exponential = RETRY_BASE_DELAY_MS * RETRY_BACKOFF_FACTOR ** Math.max(0, attempt - 1);
+  const capped = Math.min(RETRY_MAX_DELAY_MS, exponential);
+  if (RETRY_JITTER_MS <= 0) {
+    return capped;
+  }
+  return capped + Math.floor(Math.random() * RETRY_JITTER_MS);
+};
+
+const isTimeoutError = (error: Error): boolean =>
+  /timed out|timeout/i.test(error.message);
+
+class DictationAttemptError extends Error {
+  public readonly reason: DictationRetryReason;
+
+  constructor(reason: DictationRetryReason, error: Error) {
+    super(error.message);
+    this.name = "DictationAttemptError";
+    this.reason = reason;
+    (this as Error & { cause?: Error }).cause = error;
+  }
+}
+
 const toError = (error: unknown): Error => {
   if (error instanceof Error) {
     return error;
@@ -91,6 +118,8 @@ type CapturedAudioPayload = {
   durationSeconds: number;
   recordedAt: number;
 };
+
+type TranscriptionPayload = TranscriptionResultMessage["payload"];
 
 const deriveFormatFromMime = (mimeType?: string): string => {
   if (!mimeType || mimeType.length === 0) {
@@ -117,7 +146,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const {
     agentId,
     sendAgentAudio,
-    ws,
+    client,
     mode = "transcribe_only",
     onTranscript,
     onError,
@@ -142,11 +171,111 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [lastOutcome, setLastOutcome] = useState<DictationOutcome | null>(null);
   const maxRetryAttempts = MAX_AUTO_RETRY_ATTEMPTS;
 
-  const { waitForResponse: waitForTranscriptionResponse, reset: resetTranscriptionRpc } = useSessionRpc({
-    ws,
-    requestType: "send_agent_audio",
-    responseType: "transcription_result",
+  const transcriptionMutation = useMutation({
+    mutationFn: async (requestId: string): Promise<TranscriptionPayload> => {
+      const capturedAudio = pendingAudioRef.current;
+      if (!capturedAudio) {
+        throw new Error("No recorded audio available for transcription");
+      }
+
+      setRetryAttempt(1);
+      setRetryInfo(null);
+
+      let attempt = 1;
+
+      while (attempt <= MAX_AUTO_RETRY_ATTEMPTS) {
+        try {
+          if (!client) {
+            throw new DictationAttemptError(
+              "disconnected",
+              new Error("Daemon client unavailable")
+            );
+          }
+          if (!client.isConnected) {
+            throw new DictationAttemptError(
+              "disconnected",
+              new Error("Daemon client is disconnected")
+            );
+          }
+
+          console.info("[useDictation] sending transcription request", {
+            requestId,
+            attempt,
+            agentId,
+            size: capturedAudio.sizeBytes,
+            durationSeconds: capturedAudio.durationSeconds,
+          });
+
+          setStatus("uploading");
+          setRetryAttempt(attempt);
+
+          try {
+            const transcriptionPromise = client.waitForTranscriptionResult(
+              requestId,
+              TRANSCRIPTION_TIMEOUT_MS
+            );
+            try {
+              await sendAgentAudio(agentId, capturedAudio.blob, requestId, {
+                mode,
+              });
+            } catch (error) {
+              transcriptionPromise.catch(() => {});
+              throw new DictationAttemptError("dispatch", toError(error));
+            }
+
+            return await transcriptionPromise;
+          } catch (error) {
+            const normalized = toError(error);
+            const reason: DictationRetryReason = isTimeoutError(normalized)
+              ? "timeout"
+              : "response";
+            throw new DictationAttemptError(reason, normalized);
+          }
+        } catch (error) {
+          const attemptError =
+            error instanceof DictationAttemptError
+              ? error
+              : new DictationAttemptError("response", toError(error));
+
+          if (attempt >= MAX_AUTO_RETRY_ATTEMPTS) {
+            throw attemptError;
+          }
+
+          const nextAttempt = attempt + 1;
+          const delayMs = computeRetryDelayMs(nextAttempt);
+          const info: DictationRetryInfo = {
+            attempt: nextAttempt,
+            maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+            reason: attemptError.reason,
+            errorMessage: attemptError.message,
+            nextRetryMs: delayMs,
+          };
+
+          setStatus("retrying");
+          setRetryAttempt(nextAttempt);
+          setRetryInfo(info);
+          onRetryAttemptRef.current?.(info);
+          console.warn("[useDictation] retry scheduled", {
+            requestId,
+            attempt: nextAttempt,
+            maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+            reason: attemptError.reason,
+            error: attemptError.message,
+            nextRetryMs: delayMs,
+          });
+
+          await sleep(delayMs);
+          attempt = nextAttempt;
+        }
+      }
+
+      throw new Error("Failed to complete transcription");
+    },
   });
+  const {
+    mutateAsync: runTranscription,
+    reset: resetTranscriptionMutation,
+  } = transcriptionMutation;
 
   const pendingAudioRef = useRef<CapturedAudioPayload | null>(null);
   const handleAudioLevel = useCallback((level: number) => {
@@ -254,69 +383,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, []);
 
   const transmitDictation = useCallback(
-    async (requestId: string) => {
-      const capturedAudio = pendingAudioRef.current;
-      if (!capturedAudio) {
-        throw new Error("No recorded audio available for transcription");
-      }
-
-      setRetryAttempt(1);
-      setRetryInfo(null);
-
-      console.info("[useDictation] sending transcription request", {
-        requestId,
-        attempt: 1,
-        agentId,
-        size: capturedAudio.sizeBytes,
-        durationSeconds: capturedAudio.durationSeconds,
-      });
-
-      const transcription = await waitForTranscriptionResponse({
-        requestId,
-        dispatch: async (_id, attempt) => {
-          setStatus("uploading");
-          setRetryAttempt(attempt);
-          await sendAgentAudio(agentId, capturedAudio.blob, requestId, { mode });
-        },
-        retry: {
-          maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
-          baseDelayMs: RETRY_BASE_DELAY_MS,
-          maxDelayMs: RETRY_MAX_DELAY_MS,
-          backoffFactor: RETRY_BACKOFF_FACTOR,
-          jitterMs: RETRY_JITTER_MS,
-          shouldRetry: ({ attempt, maxAttempts }) => attempt < maxAttempts,
-          onRetryAttempt: (event: RpcRetryAttemptEvent) => {
-            setStatus("retrying");
-            setRetryAttempt(event.attempt);
-            const info: DictationRetryInfo = {
-              attempt: event.attempt,
-              maxAttempts: event.maxAttempts,
-              reason: event.reason,
-              errorMessage: event.error.message,
-              nextRetryMs: event.nextDelayMs,
-            };
-            setRetryInfo(info);
-            onRetryAttemptRef.current?.(info);
-            console.warn("[useDictation] retry scheduled", {
-              requestId,
-              attempt: event.attempt,
-              maxAttempts: event.maxAttempts,
-              reason: event.reason,
-              error: event.error.message,
-              nextRetryMs: event.nextDelayMs,
-            });
-          },
-        },
-        timeoutMs: TRANSCRIPTION_TIMEOUT_MS,
-      });
-
-      return transcription;
-    },
-    [agentId, mode, onRetryAttemptRef, sendAgentAudio, waitForTranscriptionResponse]
+    async (requestId: string) => runTranscription(requestId),
+    [runTranscription]
   );
 
   const handleTranscriptionSuccess = useCallback(
-    (transcription: Awaited<ReturnType<typeof waitForTranscriptionResponse>>, requestId: string) => {
+    (transcription: TranscriptionPayload, requestId: string) => {
       pendingRequestIdRef.current = null;
       setPendingRequestId(null);
       setIsProcessing(false);
@@ -516,7 +588,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       const transcription = await transmitDictation(requestId);
       handleTranscriptionSuccess(transcription, requestId);
     } catch (err) {
-      resetTranscriptionRpc();
+      resetTranscriptionMutation();
       handleDictationFailure(err, requestId);
     }
   }, [
@@ -526,7 +598,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     mode,
     handleDictationFailure,
     handleTranscriptionSuccess,
-    resetTranscriptionRpc,
+    resetTranscriptionMutation,
     stopDurationTracking,
     stopRecorder,
     transmitDictation,
@@ -551,13 +623,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       const transcription = await transmitDictation(requestId);
       handleTranscriptionSuccess(transcription, requestId);
     } catch (err) {
-      resetTranscriptionRpc();
+      resetTranscriptionMutation();
       handleDictationFailure(err, requestId);
     }
   }, [
     handleDictationFailure,
     handleTranscriptionSuccess,
-    resetTranscriptionRpc,
+    resetTranscriptionMutation,
     transmitDictation,
   ]);
 
@@ -591,8 +663,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setFailedRecording(null);
     pendingAudioRef.current = null;
     setLastOutcome(null);
-    resetTranscriptionRpc();
-  }, [resetTranscriptionRpc, stopDurationTracking]);
+    resetTranscriptionMutation();
+  }, [resetTranscriptionMutation, stopDurationTracking]);
 
   const cancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -624,8 +696,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setRetryAttempt(0);
     setRetryInfo(null);
     setFailedRecording(null);
-    resetTranscriptionRpc();
-  }, [agentId, resetTranscriptionRpc]);
+    resetTranscriptionMutation();
+  }, [agentId, resetTranscriptionMutation]);
 
   useEffect(() => {
     return () => {

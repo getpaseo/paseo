@@ -7,7 +7,7 @@ import {
   type ToolCallStatus,
   isAgentToolCallItem,
 } from "./stream";
-import type { AgentStreamEventPayload } from "@server/server/messages";
+import type { AgentStreamEventPayload } from "@server/shared/messages";
 
 type HarnessUpdate = { event: AgentStreamEventPayload; timestamp: Date };
 

@@ -12,6 +12,7 @@ export default defineConfig({
     hookTimeout: 30000,
     globals: true,
     environment: "node",
+    setupFiles: [path.resolve(__dirname, "./src/test-utils/vitest-setup.ts")],
     pool: "threads",
     poolOptions: {
       threads: {

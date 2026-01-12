@@ -4,6 +4,7 @@ import path from "path";
 export default defineConfig({
   test: {
     environment: "node",
+    exclude: ["e2e/**"],
     /**
      * Expo pulls in native tooling (xcode, etc.) that executes files relying on `process.send`.
      * Vitest's default worker pool uses worker_threads, which intentionally stub that API and

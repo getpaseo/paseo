@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useId, useRef } from "react";
+import { useState, useCallback, useEffect, useId, useMemo, useRef, memo } from "react";
 import {
   View,
   Text,
@@ -22,6 +22,12 @@ import {
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { Fonts } from "@/constants/theme";
+import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
+
+const DIFF_PANE_LOG_TAG = "[GitDiffPane]";
+const DIFF_FILE_LOG_TAG = "[DiffFileSection]";
+const DIFF_FILE_LOG_LINE_THRESHOLD = 500;
+const DIFF_FILE_LOG_TOKEN_THRESHOLD = 5000;
 
 type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
@@ -81,7 +87,8 @@ function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
 
 interface DiffFileSectionProps {
   file: ParsedDiffFile;
-  defaultExpanded?: boolean;
+  isExpanded: boolean;
+  onToggle: (path: string) => void;
   testID?: string;
 }
 
@@ -119,14 +126,41 @@ function DiffLineView({ line }: { line: DiffLine }) {
   );
 }
 
-function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSectionProps) {
+const DiffFileSection = memo(function DiffFileSection({
+  file,
+  isExpanded,
+  onToggle,
+  testID,
+}: DiffFileSectionProps) {
   const { theme } = useUnistyles();
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
   const horizontalScroll = useHorizontalScrollOptional();
   const scrollId = useId();
   const scrollViewRef = useRef<ScrollViewType>(null);
+  const expandStartRef = useRef<number | null>(null);
+
+  const { hunkCount, lineCount, tokenCount } = useMemo(() => {
+    let totalLines = 0;
+    let totalTokens = 0;
+    for (const hunk of file.hunks) {
+      totalLines += hunk.lines.length;
+      for (const line of hunk.lines) {
+        if (line.tokens) {
+          totalTokens += line.tokens.length;
+        }
+      }
+    }
+    return {
+      hunkCount: file.hunks.length,
+      lineCount: totalLines,
+      tokenCount: totalTokens,
+    };
+  }, [file]);
+
+  const shouldLogFileMetrics =
+    lineCount >= DIFF_FILE_LOG_LINE_THRESHOLD ||
+    tokenCount >= DIFF_FILE_LOG_TOKEN_THRESHOLD;
 
   // Get the close gesture ref from animation context (may not be available outside sidebar)
   let closeGestureRef: React.MutableRefObject<any> | undefined;
@@ -138,8 +172,46 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
   }
 
   const toggleExpanded = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
+    if (isPerfLoggingEnabled() && shouldLogFileMetrics) {
+      expandStartRef.current = getNowMs();
+      perfLog(DIFF_FILE_LOG_TAG, {
+        event: "toggle",
+        path: file.path,
+        nextExpanded: !isExpanded,
+        hunkCount,
+        lineCount,
+        tokenCount,
+      });
+    }
+    onToggle(file.path);
+  }, [file.path, onToggle, isExpanded, hunkCount, lineCount, tokenCount, shouldLogFileMetrics]);
+
+  useEffect(() => {
+    if (!isPerfLoggingEnabled() || !shouldLogFileMetrics) {
+      return;
+    }
+    const startMs = expandStartRef.current;
+    if (startMs === null) {
+      return;
+    }
+    expandStartRef.current = null;
+    const logCommit = () => {
+      const durationMs = getNowMs() - startMs;
+      perfLog(DIFF_FILE_LOG_TAG, {
+        event: isExpanded ? "expand_commit" : "collapse_commit",
+        path: file.path,
+        durationMs: Math.round(durationMs),
+        hunkCount,
+        lineCount,
+        tokenCount,
+      });
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => logCommit());
+    } else {
+      logCommit();
+    }
+  }, [isExpanded, file.path, hunkCount, lineCount, tokenCount, shouldLogFileMetrics]);
 
   // Register/unregister scroll offset tracking
   useEffect(() => {
@@ -227,7 +299,7 @@ function DiffFileSection({ file, defaultExpanded = true, testID }: DiffFileSecti
       )}
     </View>
   );
-}
+});
 
 interface GitDiffPaneProps {
   serverId: string;
@@ -242,11 +314,42 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   });
   // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
   const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const [expandedByPath, setExpandedByPath] = useState<Record<string, boolean>>({});
+  const diffMetrics = useMemo(() => {
+    let hunkCount = 0;
+    let lineCount = 0;
+    let tokenCount = 0;
+    for (const file of files) {
+      hunkCount += file.hunks.length;
+      for (const hunk of file.hunks) {
+        lineCount += hunk.lines.length;
+        for (const line of hunk.lines) {
+          if (line.tokens) {
+            tokenCount += line.tokens.length;
+          }
+        }
+      }
+    }
+    return {
+      fileCount: files.length,
+      hunkCount,
+      lineCount,
+      tokenCount,
+    };
+  }, [files]);
+  const lastMetricsKeyRef = useRef<string | null>(null);
 
   const handleRefresh = useCallback(() => {
     setIsManualRefresh(true);
     refresh();
   }, [refresh]);
+
+  const handleToggleExpanded = useCallback((path: string) => {
+    setExpandedByPath((prev) => ({
+      ...prev,
+      [path]: !prev[path],
+    }));
+  }, []);
 
   // Reset manual refresh flag when fetch completes
   useEffect(() => {
@@ -255,21 +358,45 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     }
   }, [isFetching, isManualRefresh]);
 
+  useEffect(() => {
+    if (!isPerfLoggingEnabled()) {
+      return;
+    }
+    const metricsKey = `${diffMetrics.fileCount}:${diffMetrics.hunkCount}:${diffMetrics.lineCount}:${diffMetrics.tokenCount}`;
+    if (lastMetricsKeyRef.current === metricsKey) {
+      return;
+    }
+    lastMetricsKeyRef.current = metricsKey;
+    perfLog(DIFF_PANE_LOG_TAG, {
+      event: "files_snapshot",
+      serverId,
+      agentId,
+      fileCount: diffMetrics.fileCount,
+      hunkCount: diffMetrics.hunkCount,
+      lineCount: diffMetrics.lineCount,
+      tokenCount: diffMetrics.tokenCount,
+      isLoading,
+      isFetching,
+    });
+  }, [agentId, diffMetrics, isFetching, isLoading, serverId]);
+
   const agentExists = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.has(agentId) ?? false
   );
 
   const renderFileSection: ListRenderItem<ParsedDiffFile> = useCallback(
     ({ item, index }) => (
-      <DiffFileSection file={item} testID={`diff-file-${index}`} />
+      <DiffFileSection
+        file={item}
+        isExpanded={expandedByPath[item.path] ?? false}
+        onToggle={handleToggleExpanded}
+        testID={`diff-file-${index}`}
+      />
     ),
-    []
+    [expandedByPath, handleToggleExpanded]
   );
 
-  const keyExtractor = useCallback(
-    (item: ParsedDiffFile, index: number) => `${item.path}-${index}`,
-    []
-  );
+  const keyExtractor = useCallback((item: ParsedDiffFile) => item.path, []);
 
   if (!agentExists) {
     return (
@@ -312,6 +439,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
       data={files}
       renderItem={renderFileSection}
       keyExtractor={keyExtractor}
+      extraData={expandedByPath}
       style={styles.scrollView}
       contentContainerStyle={styles.contentContainer}
       testID="git-diff-scroll"
