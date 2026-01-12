@@ -284,10 +284,10 @@ export class FileTaskStore implements TaskStore {
       candidates = await this.list();
     }
 
-    // Sort by created date (oldest first) for consistent ordering
+    // Sort by created date (most recent first) for consistent ordering
     return candidates
       .filter((t) => t.status === "done")
-      .sort((a, b) => a.created.localeCompare(b.created));
+      .sort((a, b) => b.created.localeCompare(a.created));
   }
 
   async create(title: string, opts?: CreateTaskOptions): Promise<Task> {

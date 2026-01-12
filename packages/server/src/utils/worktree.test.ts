@@ -21,7 +21,7 @@ describe("createWorktree", () => {
     execSync("git config user.name 'Test'", { cwd: repoDir });
     execSync("echo 'hello' > file.txt", { cwd: repoDir });
     execSync("git add .", { cwd: repoDir });
-    execSync("git commit -m 'initial'", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir });
   });
 
   afterEach(() => {
@@ -113,7 +113,7 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git commit -m 'add paseo.json'", { cwd: repoDir });
+    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", { cwd: repoDir });
 
     const result = await createWorktree({
       branchName: "main",
@@ -138,7 +138,7 @@ describe("createWorktree", () => {
       },
     };
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync("git add paseo.json && git commit -m 'add paseo.json'", { cwd: repoDir });
+    execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", { cwd: repoDir });
 
     const expectedWorktreePath = join(tempDir, "test-repo-fail-test");
 

@@ -21,7 +21,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
+import { DaemonClientV2 } from "@server/client/daemon-client-v2";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -351,70 +351,38 @@ export default function SettingsScreen() {
     []
   );
 
-  const testServerConnection = useCallback((url: string, timeoutMs = 5000) => {
-    return new Promise<void>((resolve, reject) => {
-      let wsConnection: WebSocket | null = null;
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      let settled = false;
-
-      const cleanup = () => {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-        if (wsConnection) {
-          wsConnection.onopen = null;
-          wsConnection.onerror = null;
-          wsConnection.onclose = null;
-          try {
-            wsConnection.close();
-          } catch {
-            // no-op
-          }
-        }
-      };
-
-      const succeed = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-
-      const fail = (message: string) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(new Error(message));
-      };
-
-      try {
-        wsConnection = new WebSocket(url);
-      } catch {
-        fail("Failed to create connection");
-        return;
-      }
-
-      timeoutId = setTimeout(() => {
-        fail("Connection timeout - server did not respond");
-      }, timeoutMs);
-
-      wsConnection.onopen = () => succeed();
-      wsConnection.onerror = (event) => {
-        const errorMessage =
-          (event && typeof event === "object" && "message" in event && typeof (event as any).message === "string"
-            ? (event as any).message
-            : null) || "Connection failed - check URL and network";
-        console.error("[Settings] WebSocket test error", { url, errorMessage, event });
-        fail(errorMessage);
-      };
-      wsConnection.onclose = (event) => {
-        const reason =
-          (event && typeof event.reason === "string" && event.reason.trim().length > 0 ? event.reason.trim() : null) ||
-          `Connection failed (code ${event?.code ?? "unknown"})`;
-        console.error("[Settings] WebSocket test closed", { url, code: event?.code, reason });
-        fail(reason);
-      };
+  const testServerConnection = useCallback(async (url: string, timeoutMs = 5000) => {
+    const client = new DaemonClientV2({
+      url,
+      suppressSendErrors: true,
+      reconnect: { enabled: false },
     });
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error("Connection timeout - server did not respond"));
+        }, timeoutMs);
+
+        client
+          .connect()
+          .then(resolve)
+          .catch((error) => {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Connection failed - check URL and network";
+            console.error("[Settings] Daemon test error", { url, message });
+            reject(new Error(message));
+          });
+      });
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      await client.close();
+    }
   }, []);
 
   const handleOpenDaemonForm = useCallback((profile?: DaemonProfile) => {
@@ -635,7 +603,7 @@ export default function SettingsScreen() {
                   />
                 </View>
                 <View style={styles.formField}>
-                  <Text style={styles.label}>WebSocket URL</Text>
+                  <Text style={styles.label}>Host URL</Text>
                   <TextInput
                     style={[styles.input, styles.inputUrl]}
                     value={daemonForm.wsUrl}
@@ -762,16 +730,18 @@ function DaemonCard({
           : theme.colors.mutedForeground;
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
-  const daemonWs = useSessionStore((state) => state.sessions[daemon.id]?.ws);
+  const daemonConnection = useSessionStore(
+    (state) => state.sessions[daemon.id]?.connection ?? null
+  );
   const restartServerFn = useSessionStore((state) => state.sessions[daemon.id]?.methods?.restartServer);
   const [isRestarting, setIsRestarting] = useState(false);
-  const wsIsConnectedRef = useRef(daemonWs?.isConnected ?? false);
+  const isConnected = daemonConnection?.isConnected ?? false;
+  const isConnectedRef = useRef(isConnected);
   const isTesting = testState?.status === "testing";
-  const sessionIsConnected = daemonWs?.isConnected ?? false;
 
   useEffect(() => {
-    wsIsConnectedRef.current = sessionIsConnected;
-  }, [sessionIsConnected]);
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   const waitForDaemonRestart = useCallback(async () => {
     const maxAttempts = 12;
@@ -779,14 +749,14 @@ function DaemonCard({
     const disconnectTimeoutMs = 7000;
     const reconnectTimeoutMs = 10000;
 
-    if (wsIsConnectedRef.current) {
-      await waitForCondition(() => !wsIsConnectedRef.current, disconnectTimeoutMs);
+    if (isConnectedRef.current) {
+      await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
     }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await testServerConnection(daemon.wsUrl);
-        const reconnected = await waitForCondition(() => wsIsConnectedRef.current, reconnectTimeoutMs);
+        const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
 
         if (isScreenMountedRef.current) {
           setIsRestarting(false);
@@ -827,7 +797,7 @@ function DaemonCard({
       return;
     }
 
-    if (!wsIsConnectedRef.current) {
+    if (!isConnectedRef.current) {
       Alert.alert(
         "Host offline",
         "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting."

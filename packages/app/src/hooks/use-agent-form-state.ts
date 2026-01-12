@@ -8,10 +8,8 @@ import type {
   AgentModelDefinition,
   AgentProvider,
 } from "@server/server/agent/agent-sdk-types";
-import type { WSInboundMessage } from "@server/server/messages";
 import type { ProviderModelState } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import { generateMessageId } from "@/types/stream";
 import { useFormPreferences } from "./use-form-preferences";
 
 export type CreateAgentInitialValues = {
@@ -267,7 +265,7 @@ export function useAgentFormState(
       }
 
       const sessionState = getSessionState(serverId);
-      if (!sessionState?.ws?.isConnected) {
+      if (!sessionState?.connection?.isConnected) {
         clearQueuedProviderModelRequest(serverId);
         return;
       }
@@ -281,18 +279,9 @@ export function useAgentFormState(
       const delayMs = options?.delayMs ?? 0;
       const trigger = () => {
         providerModelRequestTimersRef.current.delete(serverId);
-
-        const requestId = generateMessageId();
-        const message: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "list_provider_models_request",
-            provider: selectedProvider,
-            ...(options?.cwd ? { cwd: options.cwd } : {}),
-            requestId,
-          },
-        };
-        sessionState.ws?.send(message);
+        sessionState.methods?.requestProviderModels(selectedProvider, {
+          ...(options?.cwd ? { cwd: options.cwd } : {}),
+        });
       };
       clearQueuedProviderModelRequest(serverId);
       if (delayMs > 0) {

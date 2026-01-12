@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import {
+  AGENT_LIFECYCLE_STATUSES,
+  type AgentLifecycleStatus,
+} from "../../shared/agent-lifecycle.js";
 
 import type {
   AgentCapabilityFlags,
@@ -24,16 +28,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { AgentRegistry } from "./agent-registry.js";
 
-export const AGENT_LIFECYCLE_STATUSES = [
-  "initializing",
-  "idle",
-  "running",
-  "error",
-  "closed",
-] as const;
-
-export type AgentLifecycleStatus =
-  (typeof AGENT_LIFECYCLE_STATUSES)[number];
+export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }

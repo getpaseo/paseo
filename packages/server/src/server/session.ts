@@ -699,19 +699,19 @@ export class Session {
           break;
 
         case "load_conversation_request":
-          await this.handleLoadConversation();
+          await this.handleLoadConversation(msg.requestId);
           break;
 
         case "list_conversations_request":
-          await this.handleListConversations();
+          await this.handleListConversations(msg.requestId);
           break;
 
         case "delete_conversation_request":
-          await this.handleDeleteConversation(msg.conversationId);
+          await this.handleDeleteConversation(msg.conversationId, msg.requestId);
           break;
 
         case "delete_agent_request":
-          await this.handleDeleteAgentRequest(msg.agentId);
+          await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
           break;
 
         case "set_realtime_mode":
@@ -747,9 +747,9 @@ export class Session {
         await this.handleCancelAgentRequest(msg.agentId);
         break;
 
-      case "restart_server_request":
-        await this.handleRestartServerRequest(msg.reason);
-        break;
+        case "restart_server_request":
+          await this.handleRestartServerRequest(msg.requestId, msg.reason);
+          break;
 
       case "initialize_agent_request":
         await this.handleInitializeAgentRequest(msg.agentId, msg.requestId);
@@ -819,13 +819,14 @@ export class Session {
   /**
    * Load existing conversation
    */
-  public async handleLoadConversation(): Promise<void> {
+  public async handleLoadConversation(requestId: string): Promise<void> {
     // This is handled during construction, but we emit a confirmation message
     this.emit({
       type: "conversation_loaded",
       payload: {
         conversationId: this.conversationId,
         messageCount: this.messages.length,
+        requestId,
       },
     });
 
@@ -836,7 +837,7 @@ export class Session {
   /**
    * List all conversations
    */
-  public async handleListConversations(): Promise<void> {
+  public async handleListConversations(requestId: string): Promise<void> {
     try {
       const conversations = await listConversations();
       this.emit({
@@ -847,6 +848,7 @@ export class Session {
             lastUpdated: conv.lastUpdated.toISOString(),
             messageCount: conv.messageCount,
           })),
+          requestId,
         },
       });
     } catch (error: any) {
@@ -869,7 +871,10 @@ export class Session {
   /**
    * Delete a conversation
    */
-  public async handleDeleteConversation(conversationId: string): Promise<void> {
+  public async handleDeleteConversation(
+    conversationId: string,
+    requestId: string
+  ): Promise<void> {
     try {
       await deleteConversation(conversationId);
       this.emit({
@@ -877,6 +882,7 @@ export class Session {
         payload: {
           conversationId,
           success: true,
+          requestId,
         },
       });
       console.log(
@@ -893,12 +899,16 @@ export class Session {
           conversationId,
           success: false,
           error: error.message,
+          requestId,
         },
       });
     }
   }
 
-  private async handleRestartServerRequest(reason?: string): Promise<void> {
+  private async handleRestartServerRequest(
+    requestId: string,
+    reason?: string
+  ): Promise<void> {
     if (restartRequested) {
       console.log(
         `[Session ${this.clientId}] Restart already requested, ignoring duplicate`
@@ -914,6 +924,7 @@ export class Session {
     if (reason && reason.trim().length > 0) {
       payload.reason = reason;
     }
+    payload.requestId = requestId;
 
     console.warn(`[Session ${this.clientId}] Restart requested via websocket`);
     this.emit({
@@ -934,7 +945,10 @@ export class Session {
     }, RESTART_EXIT_DELAY_MS);
   }
 
-  private async handleDeleteAgentRequest(agentId: string): Promise<void> {
+  private async handleDeleteAgentRequest(
+    agentId: string,
+    requestId: string
+  ): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Deleting agent ${agentId} from registry`
     );
@@ -962,6 +976,7 @@ export class Session {
       type: "agent_deleted",
       payload: {
         agentId,
+        requestId,
       },
     });
   }
@@ -1104,7 +1119,7 @@ export class Session {
 
       if (!shouldAutoRun) {
         console.log(
-          `[Session ${this.clientId}] Completed transcription for agent ${logAgentId} (requestId: ${requestId ?? "n/a"})`
+        `[Session ${this.clientId}] Completed transcription for agent ${logAgentId} (requestId: ${requestId})`
         );
         return;
       }
@@ -1171,7 +1186,7 @@ export class Session {
    */
   private async handleInitializeAgentRequest(
     agentId: string,
-    requestId?: string
+    requestId: string
   ): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Initializing agent ${agentId} on demand`
@@ -1393,9 +1408,13 @@ export class Session {
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.refreshAgentFromPersistence(
-          agentId
-        );
+        if (existing.persistence) {
+          snapshot = await this.agentManager.refreshAgentFromPersistence(
+            agentId
+          );
+        } else {
+          snapshot = existing;
+        }
       } else {
         const record = await this.agentRegistry.get(agentId);
         if (!record) {
@@ -1564,6 +1583,7 @@ export class Session {
           branches,
           currentBranch: currentBranch || null,
           isDirty,
+          error: null,
         },
       });
     } catch (error) {
@@ -1592,8 +1612,9 @@ export class Session {
         payload: {
           provider: msg.provider,
           models,
+          error: null,
           fetchedAt,
-          ...(msg.requestId ? { requestId: msg.requestId } : {}),
+          requestId: msg.requestId,
         },
       });
     } catch (error) {
@@ -1607,7 +1628,7 @@ export class Session {
           provider: msg.provider,
           error: (error as Error)?.message ?? String(error),
           fetchedAt,
-          ...(msg.requestId ? { requestId: msg.requestId } : {}),
+          requestId: msg.requestId,
         },
       });
     }
@@ -1825,7 +1846,7 @@ export class Session {
   /**
    * Handle list commands request for an agent
    */
-  private async handleListCommandsRequest(agentId: string, requestId?: string): Promise<void> {
+  private async handleListCommandsRequest(agentId: string, requestId: string): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Handling list commands request for agent ${agentId}`
     );
@@ -1927,7 +1948,7 @@ export class Session {
   /**
    * Handle git diff request for an agent
    */
-  private async handleGitDiffRequest(agentId: string, requestId?: string): Promise<void> {
+  private async handleGitDiffRequest(agentId: string, requestId: string): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Handling git diff request for agent ${agentId}`
     );
@@ -2019,7 +2040,7 @@ export class Session {
    */
   private async handleHighlightedDiffRequest(
     agentId: string,
-    requestId?: string
+    requestId: string
   ): Promise<void> {
     console.log(
       `[Session ${this.clientId}] Handling highlighted diff request for agent ${agentId}`
@@ -2117,7 +2138,7 @@ export class Session {
   private async handleFileExplorerRequest(
     request: FileExplorerRequest
   ): Promise<void> {
-    const { agentId, path: requestedPath = ".", mode } = request;
+    const { agentId, path: requestedPath = ".", mode, requestId } = request;
 
     console.log(
       `[Session ${this.clientId}] Handling file explorer request for agent ${agentId} (${mode} ${requestedPath})`
@@ -2137,6 +2158,7 @@ export class Session {
             directory: null,
             file: null,
             error: `Agent not found: ${agentId}`,
+            requestId,
           },
         });
         return;
@@ -2157,6 +2179,7 @@ export class Session {
             directory,
             file: null,
             error: null,
+            requestId,
           },
         });
       } else {
@@ -2174,6 +2197,7 @@ export class Session {
             directory: null,
             file,
             error: null,
+            requestId,
           },
         });
       }
@@ -2191,6 +2215,7 @@ export class Session {
           directory: null,
           file: null,
           error: error.message,
+          requestId,
         },
       });
     }
@@ -2223,7 +2248,7 @@ export class Session {
             mimeType: null,
             size: null,
             error: `Agent not found: ${agentId}`,
-            ...(requestId ? { requestId } : {}),
+            requestId,
           },
         });
         return;
@@ -2253,7 +2278,7 @@ export class Session {
           mimeType: entry.mimeType,
           size: entry.size,
           error: null,
-          ...(requestId ? { requestId } : {}),
+          requestId,
         },
       });
     } catch (error: any) {
@@ -2271,7 +2296,7 @@ export class Session {
           mimeType: null,
           size: null,
           error: error.message,
-          ...(requestId ? { requestId } : {}),
+          requestId,
         },
       });
     }
@@ -2590,6 +2615,7 @@ export class Session {
           text: result.text,
           language: result.language,
           duration: result.duration,
+          requestId: uuidv4(),
           avgLogprob: result.avgLogprob,
           isLowConfidence: result.isLowConfidence,
           byteLength: result.byteLength,
@@ -2645,6 +2671,7 @@ export class Session {
     let assistantResponse = "";
     let pendingTTS: Promise<void> | null = null;
     let textBuffer = "";
+    let sawTextDelta = false;
 
     const flushTextBuffer = () => {
       if (textBuffer.length > 0) {
@@ -2741,6 +2768,7 @@ export class Session {
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
+            sawTextDelta = true;
             // Accumulate text in buffer
             textBuffer += chunk.text;
             assistantResponse += chunk.text;
@@ -2856,6 +2884,23 @@ export class Session {
                 error: part.error,
               },
             },
+          });
+        }
+      }
+
+      if (!sawTextDelta) {
+        let fallbackText = "";
+        try {
+          fallbackText = (await result.text).trim();
+        } catch {
+          fallbackText = "";
+        }
+        if (fallbackText.length > 0) {
+          textBuffer += fallbackText;
+          assistantResponse += fallbackText;
+          this.emit({
+            type: "assistant_chunk",
+            payload: { chunk: fallbackText },
           });
         }
       }

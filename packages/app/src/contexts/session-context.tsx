@@ -5,12 +5,12 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useState,
 } from "react";
 import { AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useWebSocket, type UseWebSocketReturn } from "@/hooks/use-websocket";
-import { useDaemonRequest } from "@/hooks/use-daemon-request";
-import { useSessionRpc } from "@/hooks/use-session-rpc";
+import { useMutation } from "@tanstack/react-query";
+import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import {
   applyStreamEvent,
@@ -22,14 +22,18 @@ import type {
   ActivityLogPayload,
   AgentSnapshotPayload,
   AgentStreamEventPayload,
-  WSInboundMessage,
   SessionOutboundMessage,
-} from "@server/server/messages";
-import type { AgentLifecycleStatus } from "@server/server/agent/agent-manager";
+} from "@server/shared/messages";
+import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
+import type { DaemonClientV2, ConnectionState } from "@server/client/daemon-client-v2";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
-import { useSessionStore, type SessionState } from "@/stores/session-store";
+import {
+  useSessionStore,
+  type SessionState,
+  type DaemonConnectionSnapshot,
+} from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
 
@@ -109,6 +113,15 @@ const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
   return null;
 };
 
+const mapConnectionState = (
+  state: ConnectionState,
+  lastError: string | null
+): DaemonConnectionSnapshot => ({
+  isConnected: state.status === "connected",
+  isConnecting: state.status === "connecting",
+  lastError: state.status === "disconnected" ? state.reason ?? lastError : null,
+});
+
 const getLatestPermissionRequest = (
   session: SessionState | undefined,
   agentId: string
@@ -169,22 +182,15 @@ const buildPermissionDetails = (
   return request.name?.trim() || request.kind;
 };
 
-type GitDiffResponseMessage = Extract<
-  SessionOutboundMessage,
-  { type: "git_diff_response" }
->;
-
-type FileExplorerResponseMessage = Extract<
+type FileExplorerPayload = Extract<
   SessionOutboundMessage,
   { type: "file_explorer_response" }
->;
+>["payload"];
 
-type FileDownloadTokenResponseMessage = Extract<
+type FileDownloadTokenPayload = Extract<
   SessionOutboundMessage,
   { type: "file_download_token_response" }
->;
-
-type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
+>["payload"];
 
 const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
 
@@ -304,7 +310,7 @@ const pushHistory = (history: string[], path: string): string[] => {
 // Lightweight context for imperative APIs only (no state)
 export interface SessionContextValue {
   serverId: string;
-  ws: UseWebSocketReturn;
+  client: DaemonClientV2;
   audioPlayer: ReturnType<typeof useAudioPlayer>;
   setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
   requestGitDiff: (agentId: string) => void;
@@ -317,7 +323,7 @@ export interface SessionContextValue {
   requestFileDownloadToken: (
     agentId: string,
     path: string
-  ) => Promise<FileDownloadTokenResponseMessage["payload"]>;
+  ) => Promise<FileDownloadTokenPayload>;
   navigateExplorerBack: (agentId: string) => string | null;
   requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
   restartServer: (reason?: string) => void;
@@ -360,14 +366,17 @@ interface SessionProviderProps {
   serverId: string;
 }
 
-// SessionProvider: Pure WebSocket message handler that updates Zustand store
+// SessionProvider: Daemon client message handler that updates Zustand store
 export function SessionProvider({
   children,
   serverUrl,
   serverId,
 }: SessionProviderProps) {
-  const ws = useWebSocket(serverUrl);
-  const wsIsConnected = ws.isConnected;
+  const client = useDaemonClient(serverUrl);
+  const [connectionSnapshot, setConnectionSnapshot] =
+    useState<DaemonConnectionSnapshot>(() =>
+      mapConnectionState(client.getConnectionState(), client.lastError)
+    );
   const { updateConnectionStatus } = useDaemonConnections();
 
   // Zustand store actions
@@ -407,6 +416,10 @@ export function SessionProvider({
   const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const getSession = useSessionStore((state) => state.getSession);
+  const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
+  const updateSessionConnection = useSessionStore(
+    (state) => state.updateSessionConnection
+  );
 
   // State for voice detection flags (will be set by RealtimeContext)
   const isDetectingRef = useRef(false);
@@ -524,21 +537,29 @@ export function SessionProvider({
   }
   const audioChunkBuffersRef = useRef<Map<string, AudioChunk[]>>(new Map());
 
+  useEffect(() => {
+    const unsubscribe = client.subscribeConnectionStatus((state) => {
+      setConnectionSnapshot(mapConnectionState(state, client.lastError));
+    });
+    return unsubscribe;
+  }, [client]);
+
+  useEffect(() => {
+    updateSessionConnection(serverId, connectionSnapshot);
+  }, [serverId, connectionSnapshot, updateSessionConnection]);
+
   // Initialize session in store
   useEffect(() => {
-    initializeSession(serverId, ws, audioPlayer);
-  }, [serverId, ws, audioPlayer, initializeSession]);
+    initializeSession(serverId, client, audioPlayer);
+  }, [serverId, client, audioPlayer, initializeSession]);
 
-  const updateSessionWebSocket = useSessionStore(
-    (state) => state.updateSessionWebSocket
-  );
   useEffect(() => {
-    updateSessionWebSocket(serverId, ws);
-  }, [serverId, ws, updateSessionWebSocket]);
+    updateSessionClient(serverId, client);
+  }, [serverId, client, updateSessionClient]);
 
   // Connection status tracking
   useEffect(() => {
-    if (ws.isConnected) {
+    if (connectionSnapshot.isConnected) {
       updateConnectionStatus(serverId, {
         status: "online",
         lastOnlineAt: new Date().toISOString(),
@@ -546,15 +567,15 @@ export function SessionProvider({
       return;
     }
 
-    if (ws.isConnecting) {
+    if (connectionSnapshot.isConnecting) {
       updateConnectionStatus(serverId, { status: "connecting" });
       return;
     }
 
-    if (ws.lastError) {
+    if (connectionSnapshot.lastError) {
       updateConnectionStatus(serverId, {
         status: "error",
-        lastError: ws.lastError,
+        lastError: connectionSnapshot.lastError,
       });
       return;
     }
@@ -563,17 +584,17 @@ export function SessionProvider({
   }, [
     serverId,
     updateConnectionStatus,
-    ws.isConnected,
-    ws.isConnecting,
-    ws.lastError,
+    connectionSnapshot.isConnected,
+    connectionSnapshot.isConnecting,
+    connectionSnapshot.lastError,
   ]);
 
-  // If the socket drops mid-initialization, clear pending flags
+  // If the client drops mid-initialization, clear pending flags
   useEffect(() => {
-    if (!ws.isConnected) {
+    if (!connectionSnapshot.isConnected) {
       setInitializingAgents(serverId, new Map());
     }
-  }, [serverId, ws.isConnected, setInitializingAgents]);
+  }, [serverId, connectionSnapshot.isConnected, setInitializingAgents]);
 
   useEffect(() => {
     return () => {
@@ -648,171 +669,99 @@ export function SessionProvider({
     [serverId, setFileExplorer]
   );
 
-  const gitDiffRequest = useDaemonRequest<
-    { agentId: string },
-    { agentId: string; diff: string },
-    GitDiffResponseMessage
-  >({
-    ws,
-    responseType: "git_diff_response",
-    buildRequest: ({ params }) => ({
-      type: "session",
-      message: {
-        type: "git_diff_request",
-        agentId: params?.agentId ?? "",
-      },
-    }),
-    matchResponse: (message, context) =>
-      message.payload.agentId === context.params?.agentId,
-    getRequestKey: (params) => params?.agentId ?? "default",
-    selectData: (message) => ({
-      agentId: message.payload.agentId,
-      diff: message.payload.diff ?? "",
-    }),
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    timeoutMs: 10000,
-    keepPreviousData: false,
-  });
-
-  const refreshAgentRequest = useDaemonRequest<
-    { agentId: string },
-    { agentId: string; lifecycle: AgentLifecycleStatus | undefined },
-    StatusMessage
-  >({
-    ws,
-    responseType: "status",
-    buildRequest: ({ params, requestId }) => ({
-      type: "session",
-      message: {
-        type: "refresh_agent_request",
-        agentId: params?.agentId ?? "",
-        requestId,
-      },
-    }),
-    matchResponse: (message, context) =>
-      message.payload.status === "agent_initialized" &&
-      (message.payload as { agentId?: string }).agentId ===
-        context.params?.agentId &&
-      (message.payload as { requestId?: string }).requestId ===
-        context.requestId,
-    getRequestKey: (params) => params?.agentId ?? "default",
-    selectData: (message) => ({
-      agentId: (message.payload as { agentId?: string }).agentId ?? "",
-      lifecycle: (message.payload as { agentStatus?: AgentLifecycleStatus })
-        .agentStatus,
-    }),
-    extractError: (message) =>
-      message.payload.status === "error"
-        ? new Error(
-            (message.payload as { message?: string }).message ??
-              "Refresh failed"
-          )
-        : null,
-    timeoutMs: 15000,
-    keepPreviousData: false,
-  });
-
-  const directoryListingRequest = useDaemonRequest<
-    { agentId: string; path: string },
-    FileExplorerResponseMessage["payload"],
-    FileExplorerResponseMessage
-  >({
-    ws,
-    responseType: "file_explorer_response",
-    buildRequest: ({ params }) => ({
-      type: "session",
-      message: {
-        type: "file_explorer_request",
-        agentId: params?.agentId ?? "",
-        path: params?.path,
-        mode: "list",
-      },
-    }),
-    matchResponse: (message, context) =>
-      message.payload.mode === "list" &&
-      message.payload.agentId === context.params?.agentId &&
-      message.payload.path === context.params?.path,
-    getRequestKey: (params) =>
-      params ? `${params.agentId}:list:${params.path}` : "default",
-    selectData: (message) => message.payload,
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    timeoutMs: 10000,
-    keepPreviousData: false,
-  });
-
-  const filePreviewRequest = useDaemonRequest<
-    { agentId: string; path: string },
-    FileExplorerResponseMessage["payload"],
-    FileExplorerResponseMessage
-  >({
-    ws,
-    responseType: "file_explorer_response",
-    buildRequest: ({ params }) => ({
-      type: "session",
-      message: {
-        type: "file_explorer_request",
-        agentId: params?.agentId ?? "",
-        path: params?.path,
-        mode: "file",
-      },
-    }),
-    matchResponse: (message, context) =>
-      message.payload.mode === "file" &&
-      message.payload.agentId === context.params?.agentId &&
-      message.payload.path === context.params?.path,
-    getRequestKey: (params) =>
-      params ? `${params.agentId}:file:${params.path}` : "default",
-    selectData: (message) => message.payload,
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    timeoutMs: 10000,
-    keepPreviousData: false,
-  });
-
-  const fileDownloadTokenRequest = useDaemonRequest<
-    { agentId: string; path: string },
-    FileDownloadTokenResponseMessage["payload"],
-    FileDownloadTokenResponseMessage
-  >({
-    ws,
-    responseType: "file_download_token_response",
-    buildRequest: ({ params, requestId }) => ({
-      type: "session",
-      message: {
-        type: "file_download_token_request",
-        agentId: params?.agentId ?? "",
-        path: params?.path ?? "",
-        requestId,
-      },
-    }),
-    matchResponse: (message, context) => {
-      if (message.payload.requestId) {
-        return message.payload.requestId === context.requestId;
+  const gitDiffMutation = useMutation({
+    mutationFn: async ({ agentId }: { agentId: string }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required");
       }
-      return (
-        message.payload.agentId === context.params?.agentId &&
-        message.payload.path === context.params?.path
-      );
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getGitDiff(agentId);
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return { agentId: payload.agentId, diff: payload.diff ?? "" };
     },
-    getRequestKey: (params) =>
-      params ? `${params.agentId}:download:${params.path}` : "default",
-    selectData: (message) => message.payload,
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    timeoutMs: 10000,
-    keepPreviousData: false,
   });
 
-  const initializeAgentRpc = useSessionRpc({
-    ws,
-    requestType: "initialize_agent_request",
-    responseType: "initialize_agent_request",
+  const refreshAgentMutation = useMutation({
+    mutationFn: async ({ agentId }: { agentId: string }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required");
+      }
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      return await client.refreshAgent(agentId);
+    },
+  });
+
+  const directoryListingMutation = useMutation({
+    mutationFn: async ({ agentId, path }: { agentId: string; path: string }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required");
+      }
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const resolvedPath = path && path.length > 0 ? path : ".";
+      const payload = await client.exploreFileSystem(
+        agentId,
+        resolvedPath,
+        "list"
+      );
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload;
+    },
+  });
+
+  const filePreviewMutation = useMutation({
+    mutationFn: async ({ agentId, path }: { agentId: string; path: string }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required");
+      }
+      if (!path) {
+        throw new Error("File path is required");
+      }
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.exploreFileSystem(
+        agentId,
+        path,
+        "file"
+      );
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload;
+    },
+  });
+
+  const fileDownloadTokenMutation = useMutation({
+    mutationFn: async ({ agentId, path }: { agentId: string; path: string }) => {
+      if (!agentId) {
+        throw new Error("Agent id is required");
+      }
+      if (!path) {
+        throw new Error("File path is required");
+      }
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.requestDownloadToken(agentId, path);
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload;
+    },
   });
 
   useEffect(() => {
-    if (!wsIsConnected) {
+    if (!connectionSnapshot.isConnected) {
       hasRequestedInitialSnapshotRef.current = false;
       return;
     }
@@ -834,14 +783,11 @@ export function SessionProvider({
         })`,
         { serverId }
       );
-
-      ws.send({
-        type: "session",
-        message: {
-          type: "load_conversation_request",
-          conversationId: ws.conversationId ?? "",
-        },
-      });
+      void client
+        .loadConversation(client.currentConversationId ?? undefined)
+        .catch((error) => {
+          console.warn("[Session] session_state request failed:", error);
+        });
 
       if (sessionStateTimeoutRef.current) {
         clearTimeout(sessionStateTimeoutRef.current);
@@ -886,19 +832,13 @@ export function SessionProvider({
         sessionStateTimeoutRef.current = null;
       }
     };
-  }, [
-    wsIsConnected,
-    ws,
-    serverId,
-    setHasHydratedAgents,
-    updateConnectionStatus,
-  ]);
+  }, [connectionSnapshot.isConnected, client, serverId, setHasHydratedAgents, updateConnectionStatus]);
 
-  // WebSocket message handlers - directly update Zustand store
+  // Daemon message handlers - directly update Zustand store
   useEffect(() => {
     console.log("[Session] Setting up session_state listener for", serverId);
 
-    const unsubSessionState = ws.on("session_state", (message) => {
+    const unsubSessionState = client.on("session_state", (message) => {
       if (message.type !== "session_state") return;
 
       if (sessionStateTimeoutRef.current) {
@@ -1006,7 +946,7 @@ export function SessionProvider({
       });
     });
 
-    const unsubAgentState = ws.on("agent_state", (message) => {
+    const unsubAgentState = client.on("agent_state", (message) => {
       if (message.type !== "agent_state") return;
       const snapshot = message.payload;
       const agent = normalizeAgentSnapshot(snapshot, serverId);
@@ -1061,7 +1001,7 @@ export function SessionProvider({
       previousAgentStatusRef.current.set(agent.id, agent.status);
     });
 
-    const unsubAgentStream = ws.on("agent_stream", (message) => {
+    const unsubAgentStream = client.on("agent_stream", (message) => {
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp } = message.payload;
       const parsedTimestamp = new Date(timestamp);
@@ -1121,7 +1061,7 @@ export function SessionProvider({
       // on status changes, which is sufficient for sorting and display purposes.
     });
 
-    const unsubAgentStreamSnapshot = ws.on(
+    const unsubAgentStreamSnapshot = client.on(
       "agent_stream_snapshot",
       (message) => {
         if (message.type !== "agent_stream_snapshot") return;
@@ -1157,7 +1097,7 @@ export function SessionProvider({
       }
     );
 
-    const unsubStatus = ws.on("status", (message) => {
+    const unsubStatus = client.on("status", (message) => {
       if (message.type !== "status") return;
       const status = message.payload.status;
       if (status === "agent_initialized" && "agentId" in message.payload) {
@@ -1178,7 +1118,7 @@ export function SessionProvider({
       }
     });
 
-    const unsubPermissionRequest = ws.on(
+    const unsubPermissionRequest = client.on(
       "agent_permission_request",
       (message) => {
         if (message.type !== "agent_permission_request") return;
@@ -1200,7 +1140,7 @@ export function SessionProvider({
       }
     );
 
-    const unsubPermissionResolved = ws.on(
+    const unsubPermissionResolved = client.on(
       "agent_permission_resolved",
       (message) => {
         if (message.type !== "agent_permission_resolved") return;
@@ -1232,7 +1172,7 @@ export function SessionProvider({
       }
     );
 
-    const unsubAudioOutput = ws.on("audio_output", async (message) => {
+    const unsubAudioOutput = client.on("audio_output", async (message) => {
       if (message.type !== "audio_output") return;
       const data = message.payload;
       const playbackGroupId = data.groupId ?? data.id;
@@ -1268,6 +1208,18 @@ export function SessionProvider({
 
       let playbackFailed = false;
       const chunkIds = buffer.map((chunk) => chunk.id);
+
+      const confirmAudioPlayed = (ids: string[]) => {
+        if (!client) {
+          console.warn("[Session] audio_played skipped: daemon unavailable");
+          return;
+        }
+        ids.forEach((chunkId) => {
+          void client.audioPlayed(chunkId).catch((error) => {
+            console.warn("[Session] Failed to confirm audio playback:", error);
+          });
+        });
+      };
 
       try {
         const mimeType =
@@ -1307,30 +1259,12 @@ export function SessionProvider({
 
         await audioPlayer.play(audioBlob);
 
-        for (const chunkId of chunkIds) {
-          const confirmMessage: WSInboundMessage = {
-            type: "session",
-            message: {
-              type: "audio_played",
-              id: chunkId,
-            },
-          };
-          ws.send(confirmMessage);
-        }
+        confirmAudioPlayed(chunkIds);
       } catch (error: any) {
         playbackFailed = true;
         console.error("[Session] Audio playback error:", error);
 
-        for (const chunkId of chunkIds) {
-          const confirmMessage: WSInboundMessage = {
-            type: "session",
-            message: {
-              type: "audio_played",
-              id: chunkId,
-            },
-          };
-          ws.send(confirmMessage);
-        }
+        confirmAudioPlayed(chunkIds);
       } finally {
         audioChunkBuffersRef.current.delete(playbackGroupId);
         activeAudioGroupsRef.current.delete(playbackGroupId);
@@ -1341,7 +1275,7 @@ export function SessionProvider({
       }
     });
 
-    const unsubActivity = ws.on("activity_log", (message) => {
+    const unsubActivity = client.on("activity_log", (message) => {
       if (message.type !== "activity_log") return;
       const data = message.payload;
 
@@ -1452,7 +1386,7 @@ export function SessionProvider({
       ]);
     });
 
-    const unsubChunk = ws.on("assistant_chunk", (message) => {
+    const unsubChunk = client.on("assistant_chunk", (message) => {
       if (message.type !== "assistant_chunk") return;
       setCurrentAssistantMessage(
         serverId,
@@ -1460,7 +1394,7 @@ export function SessionProvider({
       );
     });
 
-    const unsubTranscription = ws.on("transcription_result", (message) => {
+    const unsubTranscription = client.on("transcription_result", (message) => {
       if (message.type !== "transcription_result") return;
 
       const transcriptText = message.payload.text.trim();
@@ -1477,7 +1411,7 @@ export function SessionProvider({
       }
     });
 
-    const unsubProviderModels = ws.on(
+    const unsubProviderModels = client.on(
       "list_provider_models_response",
       (message) => {
         if (message.type !== "list_provider_models_response") {
@@ -1506,7 +1440,7 @@ export function SessionProvider({
       }
     );
 
-    const unsubAgentDeleted = ws.on("agent_deleted", (message) => {
+    const unsubAgentDeleted = client.on("agent_deleted", (message) => {
       if (message.type !== "agent_deleted") {
         return;
       }
@@ -1604,7 +1538,7 @@ export function SessionProvider({
       unsubAgentDeleted();
     };
   }, [
-    ws,
+    client,
     audioPlayer,
     serverId,
     setIsPlayingAudio,
@@ -1642,23 +1576,28 @@ export function SessionProvider({
         return next;
       });
       clearAgentStreamHead(serverId, agentId);
-
-      initializeAgentRpc.send({ agentId }).catch((error) => {
-        console.warn("[Session] initializeAgent failed", { agentId, error });
+      if (!client) {
+        console.warn("[Session] initializeAgent skipped: daemon unavailable");
         setInitializingAgents(serverId, (prev) => {
           const next = new Map(prev);
           next.set(agentId, false);
           return next;
         });
-      });
+        return;
+      }
+
+      client
+        .initializeAgent(agentId, requestId)
+        .catch((error) => {
+          console.warn("[Session] initializeAgent failed", { agentId, error });
+          setInitializingAgents(serverId, (prev) => {
+            const next = new Map(prev);
+            next.set(agentId, false);
+            return next;
+          });
+        });
     },
-    [
-      serverId,
-      initializeAgentRpc,
-      setAgentStreamTail,
-      setInitializingAgents,
-      clearAgentStreamHead,
-    ]
+    [serverId, client, setAgentStreamTail, setInitializingAgents, clearAgentStreamHead]
   );
 
   const refreshAgent = useCallback(
@@ -1676,8 +1615,8 @@ export function SessionProvider({
       });
       clearAgentStreamHead(serverId, agentId);
 
-      refreshAgentRequest
-        .execute({ agentId }, { requestKeyOverride: agentId, dedupe: false })
+      refreshAgentMutation
+        .mutateAsync({ agentId })
         .catch((error) => {
           console.warn("[Session] refreshAgent failed", { agentId, error });
           setInitializingAgents(serverId, (prev) => {
@@ -1689,7 +1628,7 @@ export function SessionProvider({
     },
     [
       serverId,
-      refreshAgentRequest,
+      refreshAgentMutation,
       setAgentStreamTail,
       setInitializingAgents,
       clearAgentStreamHead,
@@ -1715,18 +1654,51 @@ export function SessionProvider({
         });
         return next;
       });
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "list_provider_models_request",
-          provider,
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
-          requestId,
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn(
+          "[Session] requestProviderModels skipped: daemon unavailable",
+          { provider }
+        );
+        providerModelRequestIdsRef.current.delete(provider);
+        setProviderModels(serverId, (prev) => {
+          const next = new Map(prev);
+          const current = prev.get(provider) ?? {
+            models: null,
+            fetchedAt: null,
+            error: null,
+            isLoading: false,
+          };
+          next.set(provider, {
+            ...current,
+            error: "Daemon unavailable",
+            isLoading: false,
+          });
+          return next;
+        });
+        return;
+      }
+      void client
+        .listProviderModels(provider, { cwd: options?.cwd, requestId })
+        .catch((error) => {
+          providerModelRequestIdsRef.current.delete(provider);
+          setProviderModels(serverId, (prev) => {
+            const next = new Map(prev);
+            const current = next.get(provider) ?? {
+              models: null,
+              fetchedAt: null,
+              error: null,
+              isLoading: false,
+            };
+            next.set(provider, {
+              ...current,
+              error: error instanceof Error ? error.message : String(error),
+              isLoading: false,
+            });
+            return next;
+          });
+        });
     },
-    [serverId, ws, setProviderModels]
+    [serverId, client, setProviderModels]
   );
 
   const encodeImages = useCallback(
@@ -1817,22 +1789,22 @@ export function SessionProvider({
       });
 
       const imagesData = await encodeImages(images);
-
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "send_agent_message",
-          agentId,
-          text: message,
+      if (!client) {
+        console.warn("[Session] sendAgentMessage skipped: daemon unavailable");
+        return;
+      }
+      void client
+        .sendAgentMessage(agentId, message, {
           messageId,
           ...(imagesData && imagesData.length > 0
             ? { images: imagesData }
             : {}),
-        },
-      };
-      ws.send(msg);
+        })
+        .catch((error) => {
+          console.error("[Session] Failed to send agent message:", error);
+        });
     },
-    [encodeImages, serverId, ws, setAgentStreamTail]
+    [encodeImages, serverId, client, setAgentStreamTail]
   );
 
   // Keep the ref updated so the agent_state handler can call it
@@ -1840,44 +1812,41 @@ export function SessionProvider({
 
   const cancelAgentRun = useCallback(
     (agentId: string) => {
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "cancel_agent_request",
-          agentId,
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn("[Session] cancelAgent skipped: daemon unavailable");
+        return;
+      }
+      void client.cancelAgent(agentId).catch((error) => {
+        console.error("[Session] Failed to cancel agent:", error);
+      });
     },
-    [ws]
+    [client]
   );
 
   const deleteAgent = useCallback(
     (agentId: string) => {
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "delete_agent_request",
-          agentId,
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn("[Session] deleteAgent skipped: daemon unavailable");
+        return;
+      }
+      void client.deleteAgent(agentId).catch((error) => {
+        console.error("[Session] Failed to delete agent:", error);
+      });
     },
-    [ws]
+    [client]
   );
 
   const restartServer = useCallback(
     (reason?: string) => {
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "restart_server_request",
-          ...(reason && reason.trim().length > 0 ? { reason } : {}),
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn("[Session] restartServer skipped: daemon unavailable");
+        return;
+      }
+      void client.restartServer(reason).catch((error) => {
+        console.error("[Session] Failed to restart server:", error);
+      });
     },
-    [ws]
+    [client]
   );
 
   const sendAgentAudio = useCallback(
@@ -1888,12 +1857,13 @@ export function SessionProvider({
       options?: { mode?: "transcribe_only" | "auto_run" }
     ) => {
       try {
-        const isSocketConnected = ws.getConnectionState
-          ? ws.getConnectionState().isConnected
-          : ws.isConnected;
-        if (!isSocketConnected) {
-          throw new Error("WebSocket is disconnected");
+        if (!client) {
+          throw new Error("Daemon client unavailable");
         }
+        if (!client.isConnected) {
+          throw new Error("Daemon client is disconnected");
+        }
+        const resolvedRequestId = requestId ?? generateMessageId();
         const arrayBuffer = await audioBlob.arrayBuffer();
         const bytes = new Uint8Array(arrayBuffer);
         let binary = "";
@@ -1917,20 +1887,14 @@ export function SessionProvider({
         };
 
         const format = deriveFormat(audioBlob.type);
-
-        const msg: WSInboundMessage = {
-          type: "session",
-          message: {
-            type: "send_agent_audio",
-            ...(agentId ? { agentId } : {}),
-            audio: base64Audio,
-            format,
-            isLast: true,
-            requestId,
-            ...(options?.mode ? { mode: options.mode } : {}),
-          },
-        };
-        ws.send(msg);
+        await client.sendAgentAudio({
+          ...(agentId ? { agentId } : {}),
+          audio: base64Audio,
+          format,
+          isLast: true,
+          requestId: resolvedRequestId,
+          ...(options?.mode ? { mode: options.mode } : {}),
+        });
 
         console.log(
           "[Session] Sent audio:",
@@ -1938,14 +1902,14 @@ export function SessionProvider({
           format,
           audioBlob.size,
           "bytes",
-          requestId ? `(requestId: ${requestId})` : ""
+          `(requestId: ${resolvedRequestId})`
         );
       } catch (error) {
         console.error("[Session] Failed to send audio:", error);
         throw error;
       }
     },
-    [ws]
+    [client]
   );
 
   const createAgent = useCallback(
@@ -1969,6 +1933,10 @@ export function SessionProvider({
         images?.length ?? 0,
         images
       );
+      if (!client) {
+        console.warn("[Session] createAgent skipped: daemon unavailable");
+        return;
+      }
       const trimmedPrompt = initialPrompt.trim();
       let imagesData: Array<{ data: string; mimeType: string }> | undefined;
       try {
@@ -1987,10 +1955,8 @@ export function SessionProvider({
           error
         );
       }
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "create_agent_request",
+      void client
+        .createAgent({
           config,
           ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
           ...(imagesData && imagesData.length > 0
@@ -1999,47 +1965,40 @@ export function SessionProvider({
           ...(git ? { git } : {}),
           ...(worktreeName ? { worktreeName } : {}),
           ...(requestId ? { requestId } : {}),
-        },
-      };
-      console.log(
-        "[Session] createAgent message has images:",
-        "images" in msg.message,
-        (msg.message as any).images?.length
-      );
-      ws.send(msg);
+        })
+        .catch((error) => {
+          console.error("[Session] Failed to create agent:", error);
+        });
     },
-    [encodeImages, ws]
+    [encodeImages, client]
   );
 
   const setAgentMode = useCallback(
     (agentId: string, modeId: string) => {
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "set_agent_mode",
-          agentId,
-          modeId,
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn("[Session] setAgentMode skipped: daemon unavailable");
+        return;
+      }
+      void client.setAgentMode(agentId, modeId).catch((error) => {
+        console.error("[Session] Failed to set agent mode:", error);
+      });
     },
-    [ws]
+    [client]
   );
 
   const respondToPermission = useCallback(
     (agentId: string, requestId: string, response: any) => {
-      const msg: WSInboundMessage = {
-        type: "session",
-        message: {
-          type: "agent_permission_response",
-          agentId,
-          requestId,
-          response,
-        },
-      };
-      ws.send(msg);
+      if (!client) {
+        console.warn("[Session] respondToPermission skipped: daemon unavailable");
+        return;
+      }
+      void client
+        .respondToPermission(agentId, requestId, response)
+        .catch((error) => {
+          console.error("[Session] Failed to respond to permission:", error);
+        });
     },
-    [ws]
+    [client]
   );
 
   const setVoiceDetectionFlags = useCallback(
@@ -2052,8 +2011,8 @@ export function SessionProvider({
 
   const requestGitDiff = useCallback(
     (agentId: string) => {
-      gitDiffRequest
-        .execute({ agentId })
+      gitDiffMutation
+        .mutateAsync({ agentId })
         .then((result) => {
           setGitDiffs(serverId, (prev) =>
             new Map(prev).set(result.agentId, result.diff)
@@ -2065,7 +2024,7 @@ export function SessionProvider({
           );
         });
     },
-    [serverId, gitDiffRequest, setGitDiffs]
+    [serverId, gitDiffMutation, setGitDiffs]
   );
 
   const requestDirectoryListing = useCallback(
@@ -2085,8 +2044,8 @@ export function SessionProvider({
         lastVisitedPath: normalizedPath,
       }));
 
-      directoryListingRequest
-        .execute({ agentId, path: normalizedPath })
+      directoryListingMutation
+        .mutateAsync({ agentId, path: normalizedPath })
         .then((payload) => {
           updateExplorerState(agentId, (state: any) => {
             const nextState: any = {
@@ -2116,7 +2075,7 @@ export function SessionProvider({
           }));
         });
     },
-    [directoryListingRequest, updateExplorerState]
+    [directoryListingMutation, updateExplorerState]
   );
 
   const requestFilePreview = useCallback(
@@ -2128,8 +2087,8 @@ export function SessionProvider({
         pendingRequest: { path: normalizedPath, mode: "file" },
       }));
 
-      filePreviewRequest
-        .execute({ agentId, path: normalizedPath })
+      filePreviewMutation
+        .mutateAsync({ agentId, path: normalizedPath })
         .then((payload) => {
           updateExplorerState(agentId, (state: any) => {
             const nextState: any = {
@@ -2157,14 +2116,14 @@ export function SessionProvider({
           }));
         });
     },
-    [filePreviewRequest, updateExplorerState]
+    [filePreviewMutation, updateExplorerState]
   );
 
   const requestFileDownloadToken = useCallback(
     (agentId: string, path: string) => {
-      return fileDownloadTokenRequest.execute({ agentId, path });
+      return fileDownloadTokenMutation.mutateAsync({ agentId, path });
     },
-    [fileDownloadTokenRequest]
+    [fileDownloadTokenMutation]
   );
 
   const navigateExplorerBack = useCallback(
@@ -2194,8 +2153,8 @@ export function SessionProvider({
         return null;
       }
 
-      directoryListingRequest
-        .execute({ agentId, path: targetPath })
+      directoryListingMutation
+        .mutateAsync({ agentId, path: targetPath })
         .then((payload) => {
           updateExplorerState(agentId, (state: any) => {
             const nextState: any = {
@@ -2226,19 +2185,21 @@ export function SessionProvider({
         });
       return targetPath;
     },
-    [directoryListingRequest, updateExplorerState]
+    [directoryListingMutation, updateExplorerState]
   );
 
   const refreshSession = useCallback(() => {
     console.log(`[Session] Manual refresh requested for ${serverId}`);
-    ws.send({
-      type: "session",
-      message: {
-        type: "load_conversation_request",
-        conversationId: ws.conversationId ?? "",
-      },
-    });
-  }, [ws, serverId]);
+    if (!client) {
+      console.warn("[Session] refreshSession skipped: daemon unavailable");
+      return;
+    }
+    void client
+      .loadConversation(client.currentConversationId ?? undefined)
+      .catch((error) => {
+        console.error("[Session] Failed to refresh session:", error);
+      });
+  }, [client, serverId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -2250,7 +2211,7 @@ export function SessionProvider({
   const value = useMemo<SessionContextValue>(
     () => ({
       serverId,
-      ws,
+      client,
       audioPlayer,
       setVoiceDetectionFlags,
       requestGitDiff,
@@ -2273,7 +2234,7 @@ export function SessionProvider({
     }),
     [
       serverId,
-      ws,
+      client,
       audioPlayer,
       setVoiceDetectionFlags,
       requestGitDiff,

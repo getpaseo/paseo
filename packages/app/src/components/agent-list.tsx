@@ -45,8 +45,8 @@ export function AgentList({
 
       // Clear attention flag when opening agent
       const session = useSessionStore.getState().sessions[serverId];
-      if (session?.ws) {
-        session.ws.clearAgentAttention(agentId);
+      if (session?.client) {
+        session.client.clearAgentAttention(agentId);
       }
 
       const navigationKey = buildAgentNavigationKey(serverId, agentId);

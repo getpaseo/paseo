@@ -23,8 +23,7 @@ import {
   AgentConfigRow,
 } from "@/components/agent-form/agent-form-dropdowns";
 import { FileDropZone } from "@/components/file-drop-zone";
-import { useDaemonRequest } from "@/hooks/use-daemon-request";
-import type { SessionOutboundMessage } from "@server/server/messages";
+import { useQuery } from "@tanstack/react-query";
 import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -207,29 +206,25 @@ export default function HomeScreen() {
     return Array.from(uniquePaths).sort();
   }, [selectedServerId, sessionAgents]);
 
-  const sessionWs = useSessionStore((state) =>
-    selectedServerId ? state.sessions[selectedServerId]?.ws : undefined
+  const sessionClient = useSessionStore((state) =>
+    selectedServerId ? state.sessions[selectedServerId]?.client ?? null : null
   );
-  const inertWebSocket = useMemo(
-    () => ({
-      isConnected: false,
-      isConnecting: false,
-      conversationId: null,
-      lastError: null,
-      send: () => {},
-      on: () => () => {},
-      sendPing: () => {},
-      sendUserMessage: () => {},
-      clearAgentAttention: () => {},
-      subscribeConnectionStatus: () => () => {},
-      getConnectionState: () => ({ isConnected: false, isConnecting: false }),
-    }),
-    []
+  const isConnected = useSessionStore((state) =>
+    selectedServerId
+      ? state.sessions[selectedServerId]?.connection.isConnected ?? false
+      : false
   );
-  const effectiveWs = sessionWs ?? inertWebSocket;
-  const isWsConnected = effectiveWs.getConnectionState
-    ? effectiveWs.getConnectionState().isConnected
-    : effectiveWs.isConnected;
+  const trimmedWorkingDir = workingDir.trim();
+  const shouldInspectRepo = trimmedWorkingDir.length > 0;
+  const daemonAvailabilityError =
+    !selectedServerId || hostEntry?.status !== "online"
+      ? "Host is offline"
+      : null;
+  const repoAvailabilityError =
+    shouldInspectRepo && (!hostEntry || hostEntry.status !== "online" || !isConnected)
+      ? daemonAvailabilityError ??
+        "Repository details will load automatically once the selected host is back online."
+      : null;
 
   type RepoInfoState = {
     cwd: string;
@@ -238,57 +233,46 @@ export default function HomeScreen() {
     currentBranch: string | null;
     isDirty: boolean;
   };
-  type GitRepoInfoResponseMessage = Extract<
-    SessionOutboundMessage,
-    { type: "git_repo_info_response" }
-  >;
-  const gitRepoInfoRequest = useDaemonRequest<
-    { cwd: string },
-    RepoInfoState,
-    GitRepoInfoResponseMessage
-  >({
-    ws: effectiveWs,
-    responseType: "git_repo_info_response",
-    buildRequest: ({ params, requestId }) => ({
-      type: "session",
-      message: {
-        type: "git_repo_info_request",
-        cwd: params?.cwd ?? ".",
-        requestId,
-      },
-    }),
-    getRequestKey: (params) => params?.cwd ?? "default",
-    selectData: (message) => ({
-      cwd: message.payload.cwd,
-      repoRoot: message.payload.repoRoot,
-      branches: message.payload.branches ?? [],
-      currentBranch: message.payload.currentBranch ?? null,
-      isDirty: Boolean(message.payload.isDirty),
-    }),
-    extractError: (message) =>
-      message.payload.error ? new Error(message.payload.error) : null,
-    keepPreviousData: false,
+  const repoInfoQuery = useQuery({
+    queryKey: ["gitRepoInfo", selectedServerId, trimmedWorkingDir],
+    queryFn: async () => {
+      const client = sessionClient;
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getGitRepoInfo({
+        cwd: trimmedWorkingDir || ".",
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return {
+        cwd: payload.cwd,
+        repoRoot: payload.repoRoot,
+        branches: payload.branches ?? [],
+        currentBranch: payload.currentBranch ?? null,
+        isDirty: Boolean(payload.isDirty),
+      };
+    },
+    enabled:
+      Boolean(trimmedWorkingDir) &&
+      !repoAvailabilityError &&
+      Boolean(sessionClient) &&
+      isConnected,
+    retry: false,
   });
-  const {
-    status: repoRequestStatus,
-    data: repoInfo,
-    error: repoRequestError,
-    execute: inspectRepoInfo,
-    reset: resetRepoInfo,
-    cancel: cancelRepoInfo,
-  } = gitRepoInfoRequest;
-
-  const trimmedWorkingDir = workingDir.trim();
-  const shouldInspectRepo = trimmedWorkingDir.length > 0;
-  const daemonAvailabilityError =
-    !selectedServerId || hostEntry?.status !== "online"
-      ? "Host is offline"
-      : null;
-  const repoAvailabilityError =
-    shouldInspectRepo && (!hostEntry || hostEntry.status !== "online" || !isWsConnected)
-      ? daemonAvailabilityError ??
-        "Repository details will load automatically once the selected host is back online."
-      : null;
+  const repoInfo = repoInfoQuery.data ?? null;
+  const repoRequestError = repoInfoQuery.error as Error | null;
+  const repoRequestStatus: "idle" | "loading" | "success" | "error" =
+    !shouldInspectRepo || repoAvailabilityError
+      ? "idle"
+      : repoInfoQuery.isPending || repoInfoQuery.isFetching
+      ? "loading"
+      : repoInfoQuery.isError
+      ? "error"
+      : repoInfoQuery.isSuccess
+      ? "success"
+      : "idle";
   const isNonGitDirectory =
     repoRequestStatus === "error" &&
     /not in a git repository/i.test(repoRequestError?.message ?? "");
@@ -388,29 +372,6 @@ export default function HomeScreen() {
   const handleBaseBranchChange = useCallback((value: string) => {
     setBaseBranch(value);
   }, []);
-
-  useEffect(() => {
-    if (!shouldInspectRepo) {
-      cancelRepoInfo();
-      resetRepoInfo();
-      return;
-    }
-    if (repoAvailabilityError) {
-      cancelRepoInfo();
-      return;
-    }
-    inspectRepoInfo({ cwd: trimmedWorkingDir }).catch(() => {});
-    return () => {
-      cancelRepoInfo();
-    };
-  }, [
-    cancelRepoInfo,
-    inspectRepoInfo,
-    repoAvailabilityError,
-    resetRepoInfo,
-    shouldInspectRepo,
-    trimmedWorkingDir,
-  ]);
 
   useEffect(() => {
     if (isNonGitDirectory && useWorktree) {
@@ -519,10 +480,10 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
-    if (!sessionWs) {
+    if (!sessionClient) {
       return;
     }
-    const unsubscribe = sessionWs.on("status", (message) => {
+    const unsubscribe = sessionClient.on("status", (message) => {
       if (message.type !== "status") {
         return;
       }
@@ -564,7 +525,7 @@ export default function HomeScreen() {
     return () => {
       unsubscribe();
     };
-  }, [router, selectedServerId, sessionWs]);
+  }, [router, selectedServerId, sessionClient]);
 
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>

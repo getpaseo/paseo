@@ -568,6 +568,8 @@ export async function executeCommand({
   let isDead = false;
   let exitCode: number | null = null;
 
+  const emptyOutputGraceMs = Math.min(maxWait, 2000);
+
   while (Date.now() - startTime < maxWait) {
     // Check if pane is dead (command exited)
     const deadStatus = await executeTmux([
@@ -600,6 +602,10 @@ export async function executeCommand({
       await new Promise((resolve) => setTimeout(resolve, 500));
       const confirmedOutput = await capturePaneContent(pane.id, 1000, false);
       if (confirmedOutput === currentOutput) {
+        const elapsed = Date.now() - startTime;
+        if (!confirmedOutput && elapsed < emptyOutputGraceMs) {
+          continue;
+        }
         // Stable - command is likely waiting for input or running steadily
         output = confirmedOutput;
         break;

@@ -12,7 +12,7 @@ import readline from "node:readline";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type {
@@ -48,17 +48,23 @@ type TurnState = {
   failed: boolean;
 };
 
-type PendingPermission = {
-  request: AgentPermissionRequest;
-  resolve: (value: ElicitResponse) => void;
-  reject: (error: Error) => void;
+type CodexExecApprovalDecision =
+  | "approved"
+  | "approved_for_session"
+  | "denied"
+  | "abort";
+
+type CodexExecApprovalResponse = {
+  decision: CodexExecApprovalDecision;
+  reason?: string;
 };
 
-type ElicitDecision = "approved" | "approved_for_session" | "denied" | "abort";
+type CodexElicitationResponse = ElicitResult | CodexExecApprovalResponse;
 
-type ElicitResponse = {
-  decision: ElicitDecision;
-  reason?: string;
+type PendingPermission = {
+  request: AgentPermissionRequest;
+  resolve: (value: CodexElicitationResponse) => void;
+  reject: (error: Error) => void;
 };
 
 type ToolCallTimelineItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
@@ -3124,20 +3130,55 @@ class CodexMcpAgentSession implements AgentSession {
       resolution: response,
     });
 
-    const decision: ElicitDecision =
-      response.behavior === "allow"
-        ? "approved"
-        : response.interrupt
-          ? "abort"
-          : "denied";
-    const reason = response.behavior === "deny" ? response.message : undefined;
-    pending.resolve({ decision, reason });
+    const rawMetadata = pending.request.metadata?.raw;
+    const codexElicitation =
+      rawMetadata && typeof rawMetadata === "object"
+        ? (rawMetadata as Record<string, unknown>).codex_elicitation
+        : undefined;
+
+    let action: ElicitResult["action"];
+    let content: Record<string, unknown> | undefined;
+    let decision: CodexExecApprovalDecision | undefined;
+    let reason: string | undefined;
+
+    if (codexElicitation === "exec-approval") {
+      decision =
+        response.behavior === "allow"
+          ? "approved"
+          : response.interrupt
+            ? "abort"
+            : "denied";
+      reason = response.behavior === "deny" ? response.message : undefined;
+      const responsePayload: CodexExecApprovalResponse = {
+        decision,
+        ...(reason ? { reason } : {}),
+      };
+      pending.resolve(responsePayload);
+      return;
+    } else {
+      action =
+        response.behavior === "allow"
+          ? "accept"
+          : response.interrupt
+            ? "cancel"
+            : "decline";
+      content =
+        response.behavior === "allow" && response.updatedInput
+          ? response.updatedInput
+          : undefined;
+    }
+
+    const responsePayload: ElicitResult = {
+      action,
+      ...(content ? { content } : {}),
+    };
+    pending.resolve(responsePayload);
   }
 
   private async handlePermissionRequest(
     permission: AgentPermissionRequest
-  ): Promise<ElicitResponse> {
-    const response = await new Promise<ElicitResponse>((resolve, reject) => {
+  ): Promise<CodexElicitationResponse> {
+    const response = await new Promise<CodexElicitationResponse>((resolve, reject) => {
       const hasPending =
         this.pendingPermissions.has(permission.id) ||
         this.pendingPermissionHandlers.has(permission.id);
@@ -3616,6 +3657,7 @@ class CodexMcpAgentSession implements AgentSession {
             }),
           });
         } else {
+          const commandText = normalizeCommand(parsedEvent.command);
           this.emitEvent({
             type: "timeline",
             provider: CODEX_PROVIDER,
@@ -3623,7 +3665,7 @@ class CodexMcpAgentSession implements AgentSession {
               name: "shell",
               status: "running",
               callId,
-              input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+              input: { command: commandText, cwd: parsedEvent.cwd },
             }),
           });
         }
@@ -3738,7 +3780,7 @@ class CodexMcpAgentSession implements AgentSession {
               name: "shell",
               status: failed ? "failed" : "completed",
               callId,
-              input: { command: parsedEvent.command, cwd: parsedEvent.cwd },
+              input: { command: commandText, cwd: parsedEvent.cwd },
               output: structuredOutput,
             }),
           });

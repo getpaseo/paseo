@@ -1,7 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
 import { useSessionStore } from "@/stores/session-store";
-import { sendRpcRequest } from "@/lib/send-rpc-request";
 import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
 
 const GIT_DIFF_STALE_TIME = 30_000;
@@ -17,22 +16,24 @@ interface UseGitDiffQueryOptions {
 
 export function useGitDiffQuery({ serverId, agentId }: UseGitDiffQueryOptions) {
   const queryClient = useQueryClient();
-  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+  const isConnected = useSessionStore(
+    (state) => state.sessions[serverId]?.connection.isConnected ?? false
+  );
   const { isOpen, activeTab } = useExplorerSidebarStore();
 
   const query = useQuery({
     queryKey: gitDiffQueryKey(serverId, agentId),
     queryFn: async () => {
-      if (!ws) {
-        throw new Error("WebSocket not available");
+      if (!client) {
+        throw new Error("Daemon client not available");
       }
-      const response = await sendRpcRequest(ws, {
-        type: "git_diff_request",
-        agentId,
-      });
+      const response = await client.getGitDiff(agentId);
       return response.diff;
     },
-    enabled: !!ws && ws.isConnected && !!agentId,
+    enabled: !!client && isConnected && !!agentId,
     staleTime: GIT_DIFF_STALE_TIME,
     refetchInterval: 10_000,
   });

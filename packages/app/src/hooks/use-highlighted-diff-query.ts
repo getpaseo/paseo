@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
 import { useSessionStore } from "@/stores/session-store";
-import { sendRpcRequest } from "@/lib/send-rpc-request";
 import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
-import type { HighlightedDiffResponse } from "@server/server/messages";
+import type { HighlightedDiffResponse } from "@server/shared/messages";
+import { getNowMs, isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 const HIGHLIGHTED_DIFF_STALE_TIME = 30_000;
+const HIGHLIGHTED_DIFF_LOG_TAG = "[HighlightedDiff]";
 
 function highlightedDiffQueryKey(serverId: string, agentId: string) {
   return ["highlightedDiff", serverId, agentId] as const;
@@ -23,22 +24,56 @@ export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];
 
 export function useHighlightedDiffQuery({ serverId, agentId }: UseHighlightedDiffQueryOptions) {
   const queryClient = useQueryClient();
-  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+  const isConnected = useSessionStore(
+    (state) => state.sessions[serverId]?.connection.isConnected ?? false
+  );
   const { isOpen, activeTab } = useExplorerSidebarStore();
 
   const query = useQuery({
     queryKey: highlightedDiffQueryKey(serverId, agentId),
     queryFn: async () => {
-      if (!ws) {
-        throw new Error("WebSocket not available");
+      if (!client) {
+        throw new Error("Daemon client not available");
       }
-      const response = await sendRpcRequest(ws, {
-        type: "highlighted_diff_request",
-        agentId,
-      });
+      const shouldLog = isPerfLoggingEnabled();
+      const startMs = shouldLog ? getNowMs() : 0;
+      const response = await client.getHighlightedDiff(agentId);
+      if (shouldLog) {
+        let hunkCount = 0;
+        let lineCount = 0;
+        let tokenCount = 0;
+        for (const file of response.files) {
+          hunkCount += file.hunks.length;
+          for (const hunk of file.hunks) {
+            lineCount += hunk.lines.length;
+            for (const line of hunk.lines) {
+              if (line.tokens) {
+                tokenCount += line.tokens.length;
+              }
+            }
+          }
+        }
+        const durationMs = getNowMs() - startMs;
+        const metrics = measurePayload(response);
+        perfLog(HIGHLIGHTED_DIFF_LOG_TAG, {
+          event: "fetch",
+          serverId,
+          agentId,
+          durationMs: Math.round(durationMs),
+          fileCount: response.files.length,
+          hunkCount,
+          lineCount,
+          tokenCount,
+          payloadApproxBytes: metrics.approxBytes,
+          payloadFieldCount: metrics.fieldCount,
+        });
+      }
       return response.files;
     },
-    enabled: !!ws && ws.isConnected && !!agentId,
+    enabled: !!client && isConnected && !!agentId,
     staleTime: HIGHLIGHTED_DIFF_STALE_TIME,
     refetchInterval: 10_000,
   });

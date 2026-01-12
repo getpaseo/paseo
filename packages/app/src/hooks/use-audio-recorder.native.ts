@@ -90,7 +90,7 @@ async function getActualRecordingUri(createdAt: Date): Promise<string | null> {
 }
 
 /**
- * Convert audio file URI to Blob for WebSocket transmission
+ * Convert audio file URI to Blob for daemon transport
  * Returns a Blob-like object that works in React Native
  */
 async function uriToBlob(uri: string): Promise<Blob> {

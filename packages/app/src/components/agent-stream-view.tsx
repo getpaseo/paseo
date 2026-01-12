@@ -15,6 +15,7 @@ import {
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useMutation } from "@tanstack/react-query";
 import { Fonts } from "@/constants/theme";
 import Animated, {
   FadeIn,
@@ -45,9 +46,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSessionStore } from "@/stores/session-store";
-import { useDaemonRequest } from "@/hooks/use-daemon-request";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
-import type { SessionOutboundMessage } from "@server/server/messages";
+import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import {
   extractCommandDetails,
   extractEditEntries,
@@ -56,14 +55,14 @@ import {
 import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
   item?.kind === "tool_call" || item?.kind === "thought";
-type PermissionResolvedMessage = Extract<
-  SessionOutboundMessage,
-  { type: "agent_permission_resolved" }
->;
+const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
+const STREAM_ITEM_LOG_MIN_COUNT = 200;
+const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
 export interface AgentStreamViewProps {
   agentId: string;
   serverId?: string;
@@ -88,14 +87,16 @@ export function AgentStreamView({
   const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
+  const streamItemCountRef = useRef(0);
   const { open: openExplorer, setActiveTab: setExplorerTab } =
     useExplorerSidebarStore();
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
 
-  // Get ws for connection status
-  const ws = useSessionStore((state) => state.sessions[resolvedServerId]?.ws);
+  const client = useSessionStore(
+    (state) => state.sessions[resolvedServerId]?.client ?? null
+  );
   const streamHead = useSessionStore((state) =>
     state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId)
   );
@@ -107,22 +108,6 @@ export function AgentStreamView({
   const requestDirectoryListing = methods?.requestDirectoryListing;
   const requestFilePreview = methods?.requestFilePreview;
 
-  // Create inert websocket fallback if ws is null
-  const inertWebSocket = useMemo<UseWebSocketReturn>(
-    () => ({
-      isConnected: false,
-      isConnecting: false,
-      conversationId: null,
-      lastError: null,
-      send: () => {},
-      on: () => () => {},
-      sendPing: () => {},
-      sendUserMessage: () => {},
-      clearAgentAttention: () => {},
-    }),
-    []
-  );
-  const wsOrInert = ws ?? inertWebSocket;
   const requestDirectoryListingOrInert = requestDirectoryListing ?? (() => {});
   const requestFilePreviewOrInert = requestFilePreview ?? (() => {});
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
@@ -428,6 +413,68 @@ export function AgentStreamView({
     [pendingPermissions, agentId]
   );
 
+  useEffect(() => {
+    if (!isPerfLoggingEnabled()) {
+      return;
+    }
+    const totalCount = streamItems.length;
+    const prevCount = streamItemCountRef.current;
+    if (totalCount === prevCount) {
+      return;
+    }
+    const delta = Math.abs(totalCount - prevCount);
+    streamItemCountRef.current = totalCount;
+    if (totalCount < STREAM_ITEM_LOG_MIN_COUNT && delta < STREAM_ITEM_LOG_DELTA_THRESHOLD) {
+      return;
+    }
+    let userCount = 0;
+    let assistantCount = 0;
+    let toolCallCount = 0;
+    let thoughtCount = 0;
+    let activityCount = 0;
+    let todoCount = 0;
+    for (const item of streamItems) {
+      switch (item.kind) {
+        case "user_message":
+          userCount += 1;
+          break;
+        case "assistant_message":
+          assistantCount += 1;
+          break;
+        case "tool_call":
+          toolCallCount += 1;
+          break;
+        case "thought":
+          thoughtCount += 1;
+          break;
+        case "activity_log":
+          activityCount += 1;
+          break;
+        case "todo_list":
+          todoCount += 1;
+          break;
+        default:
+          break;
+      }
+    }
+    const metrics = totalCount >= STREAM_ITEM_LOG_MIN_COUNT ? measurePayload(streamItems) : null;
+    perfLog(AGENT_STREAM_LOG_TAG, {
+      event: "stream_items",
+      agentId,
+      totalCount,
+      userCount,
+      assistantCount,
+      toolCallCount,
+      thoughtCount,
+      activityCount,
+      todoCount,
+      pendingPermissionCount: pendingPermissionItems.length,
+      streamHeadCount: streamHead?.length ?? 0,
+      payloadApproxBytes: metrics?.approxBytes ?? 0,
+      payloadFieldCount: metrics?.fieldCount ?? 0,
+    });
+  }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
+
   const showWorkingIndicator = agent.status === "running";
 
   const listHeaderComponent = useMemo(() => {
@@ -447,7 +494,7 @@ export function AgentStreamView({
                 <PermissionRequestCard
                   key={permission.key}
                   permission={permission}
-                  ws={wsOrInert}
+                  client={client}
                 />
               ))}
             </View>
@@ -475,7 +522,7 @@ export function AgentStreamView({
   }, [
     pendingPermissionItems,
     showWorkingIndicator,
-    wsOrInert,
+    client,
     streamHead,
     renderStreamItemContent,
   ]);
@@ -709,10 +756,10 @@ function WorkingIndicator() {
 // Permission Request Card Component
 function PermissionRequestCard({
   permission,
-  ws,
+  client,
 }: {
   permission: PendingPermission;
-  ws: UseWebSocketReturn;
+  client: DaemonClientV2 | null;
 }) {
   const { theme } = useUnistyles();
 
@@ -878,51 +925,47 @@ function PermissionRequestCard({
     };
   }, []);
 
-  const permissionResponse = useDaemonRequest<
-    { agentId: string; requestId: string; response: AgentPermissionResponse },
-    { agentId: string; requestId: string },
-    PermissionResolvedMessage
-  >({
-    ws,
-    responseType: "agent_permission_resolved",
-    buildRequest: ({ params }) => ({
-      type: "session",
-      message: {
-        type: "agent_permission_response",
-        agentId: params?.agentId ?? "",
-        requestId: params?.requestId ?? "",
-        response: params?.response ?? { behavior: "deny" },
-      },
-    }),
-    matchResponse: (message, context) =>
-      message.payload.agentId === context.params?.agentId &&
-      message.payload.requestId === context.params?.requestId,
-    getRequestKey: (params) =>
-      params ? `${params.agentId}:${params.requestId}` : "default",
-    selectData: (message) => ({
-      agentId: message.payload.agentId,
-      requestId: message.payload.requestId,
-    }),
-    timeoutMs: 15000,
-    keepPreviousData: false,
+  const permissionMutation = useMutation({
+    mutationFn: async (input: {
+      agentId: string;
+      requestId: string;
+      response: AgentPermissionResponse;
+    }) => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      return client.respondToPermissionAndWait(
+        input.agentId,
+        input.requestId,
+        input.response,
+        15000
+      );
+    },
   });
-  const isResponding = permissionResponse.isLoading;
+  const {
+    reset: resetPermissionMutation,
+    mutateAsync: respondToPermission,
+    isPending: isResponding,
+  } = permissionMutation;
+
+  useEffect(() => {
+    resetPermissionMutation();
+  }, [permission.request.id, resetPermissionMutation]);
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
-      permissionResponse
-        .execute({
+      respondToPermission({
           agentId: permission.agentId,
           requestId: permission.request.id,
           response,
         })
         .catch((error) => {
-          console.error(
-            "[PermissionRequestCard] Failed to respond to permission:",
-            error
-          );
-        });
+        console.error(
+          "[PermissionRequestCard] Failed to respond to permission:",
+          error
+        );
+      });
     },
-    [permission.agentId, permission.request.id, permissionResponse]
+    [permission.agentId, permission.request.id, respondToPermission]
   );
 
   return (

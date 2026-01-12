@@ -485,7 +485,13 @@ class ClaudeAgentSession implements AgentSession {
       if (event.type === "timeline") {
         timeline.push(event.item);
         if (event.item.type === "assistant_message") {
-          finalText = event.item.text;
+          if (!finalText) {
+            finalText = event.item.text;
+          } else if (event.item.text.startsWith(finalText)) {
+            finalText = event.item.text;
+          } else {
+            finalText += event.item.text;
+          }
         }
       } else if (event.type === "turn_completed") {
         usage = event.usage;

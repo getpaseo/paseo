@@ -1,5 +1,5 @@
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import type { AgentStreamEventPayload } from "@server/server/messages";
+import type { AgentStreamEventPayload } from "@server/shared/messages";
 import {
   extractCommandDetails,
   extractEditEntries,

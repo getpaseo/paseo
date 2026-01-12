@@ -28,7 +28,6 @@ import {
   type ImageAttachment,
   type MessageInputRef,
 } from "./message-input";
-import type { UseWebSocketReturn } from "@/hooks/use-websocket";
 import { Theme } from "@/styles/theme";
 import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
@@ -78,7 +77,10 @@ export function AgentInputArea({
   const insets = useSafeAreaInsets();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
-  const ws = useSessionStore((state) => state.sessions[serverId]?.ws);
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+  const isConnected = client?.isConnected ?? false;
 
   const agent = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.get(agentId)
@@ -102,25 +104,6 @@ export function AgentInputArea({
   const noopSendAgentAudio = useCallback(async () => {}, []);
   const sendAgentAudio = methods?.sendAgentAudio ?? noopSendAgentAudio;
 
-  // Inert WebSocket fallback for when ws is undefined
-  const inertWebSocket = useMemo<UseWebSocketReturn>(
-    () => ({
-      isConnected: false,
-      isConnecting: false,
-      conversationId: null,
-      lastError: null,
-      send: () => {},
-      on: () => () => {},
-      sendPing: () => {},
-      sendUserMessage: () => {},
-      clearAgentAttention: () => {},
-      subscribeConnectionStatus: () => () => {},
-      getConnectionState: () => ({ isConnected: false, isConnecting: false }),
-    }),
-    []
-  );
-
-  const wsOrInert = ws ?? inertWebSocket;
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
 
   const [internalInput, setInternalInput] = useState("");
@@ -236,9 +219,7 @@ export function AgentInputArea({
     imageAttachments?: ImageAttachment[],
     forceSend?: boolean
   ) {
-    const socketConnected = wsOrInert.getConnectionState
-      ? wsOrInert.getConnectionState().isConnected
-      : wsOrInert.isConnected;
+    const socketConnected = isConnected;
     if (!message.trim() || !socketConnected) return;
     if (!sendAgentMessage && !onSubmitMessageRef.current) return;
 
@@ -297,10 +278,10 @@ export function AgentInputArea({
   }
 
   useEffect(() => {
-    if (!isAgentRunning || !wsOrInert.isConnected) {
+    if (!isAgentRunning || !isConnected) {
       setIsCancellingAgent(false);
     }
-  }, [isAgentRunning, wsOrInert.isConnected]);
+  }, [isAgentRunning, isConnected]);
 
   // Hydrate draft only when switching agents
   useEffect(() => {
@@ -351,7 +332,7 @@ export function AgentInputArea({
       if (isRealtimeMode) {
         await stopRealtime();
       } else {
-        if (!wsOrInert.isConnected || !serverId) {
+        if (!isConnected || !serverId) {
           return;
         }
         await startRealtime(serverId);
@@ -365,7 +346,7 @@ export function AgentInputArea({
     if (!agent || agent.status !== "running" || isCancellingAgent) {
       return;
     }
-    if (!wsOrInert.isConnected || !cancelAgentRun) {
+    if (!isConnected || !cancelAgentRun) {
       return;
     }
     setIsCancellingAgent(true);
@@ -384,7 +365,7 @@ export function AgentInputArea({
 
   async function handleSendQueuedNow(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
-    if (!item || !wsOrInert.isConnected) return;
+    if (!item || !isConnected) return;
     if (!sendAgentMessage && !onSubmitMessageRef.current) return;
 
     updateQueue((current) => current.filter((q) => q.id !== id));
@@ -460,11 +441,11 @@ export function AgentInputArea({
     <>
       <Pressable
         onPress={handleRealtimePress}
-        disabled={!wsOrInert.isConnected && !isRealtimeMode}
+        disabled={!isConnected && !isRealtimeMode}
         style={[
           styles.realtimeButton as any,
           (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
-          (!wsOrInert.isConnected && !isRealtimeMode
+          (!isConnected && !isRealtimeMode
             ? styles.buttonDisabled
             : undefined) as any,
         ]}
@@ -482,14 +463,14 @@ export function AgentInputArea({
       {isAgentRunning && (
         <Pressable
           onPress={handleCancelAgent}
-          disabled={!wsOrInert.isConnected || isCancellingAgent}
+          disabled={!isConnected || isCancellingAgent}
           accessibilityLabel={
             isCancellingAgent ? "Canceling agent" : "Stop agent"
           }
           accessibilityRole="button"
           style={[
             styles.cancelButton as any,
-            (!wsOrInert.isConnected || isCancellingAgent
+            (!isConnected || isCancellingAgent
               ? styles.buttonDisabled
               : undefined) as any,
           ]}
@@ -581,7 +562,7 @@ export function AgentInputArea({
             images={selectedImages}
             onPickImages={handlePickImage}
             onRemoveImage={handleRemoveImage}
-            ws={wsOrInert}
+            client={client}
             sendAgentAudio={sendAgentAudio}
             placeholder="Message agent..."
             autoFocus={autoFocus}

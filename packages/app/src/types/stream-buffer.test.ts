@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@server/server/messages";
+import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { StreamItem, ThoughtItem } from "@/types/stream";
 import {
   applyStreamEvent,
