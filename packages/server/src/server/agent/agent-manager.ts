@@ -45,12 +45,19 @@ export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
   provider?: AgentProvider;
 };
 
+export type AgentAttentionCallback = (params: {
+  agentId: string;
+  provider: AgentProvider;
+  reason: "finished" | "error" | "permission";
+}) => void;
+
 export type AgentManagerOptions = {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
   maxTimelineItems?: number;
   idFactory?: () => string;
   registry?: AgentRegistry;
   agentControlMcp?: AgentControlMcpConfig;
+  onAgentAttention?: AgentAttentionCallback;
 };
 
 export type WaitForAgentOptions = {
@@ -176,6 +183,7 @@ export class AgentManager {
   private readonly registry?: AgentRegistry;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly agentControlMcp?: AgentControlMcpConfig;
+  private onAgentAttention?: AgentAttentionCallback;
 
   constructor(options?: AgentManagerOptions) {
     this.maxTimelineItems =
@@ -183,6 +191,7 @@ export class AgentManager {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.agentControlMcp = options?.agentControlMcp;
+    this.onAgentAttention = options?.onAgentAttention;
     if (options?.clients) {
       for (const [provider, client] of Object.entries(options.clients)) {
         if (client) {
@@ -194,6 +203,10 @@ export class AgentManager {
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.clients.set(provider, client);
+  }
+
+  setAgentAttentionCallback(callback: AgentAttentionCallback): void {
+    this.onAgentAttention = callback;
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -985,11 +998,10 @@ export class AgentManager {
     agent: ManagedAgent,
     reason: "finished" | "error" | "permission"
   ): void {
-    this.dispatchStream(agent.id, {
-      type: "attention_required",
+    this.onAgentAttention?.({
+      agentId: agent.id,
       provider: agent.provider,
       reason,
-      timestamp: new Date().toISOString(),
     });
   }
 

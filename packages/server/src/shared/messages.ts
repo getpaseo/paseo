@@ -202,6 +202,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       provider: AgentProviderSchema,
       reason: z.enum(["finished", "error", "permission"]),
       timestamp: z.string(),
+      shouldNotify: z.boolean(),
     }),
 ]);
 
@@ -511,6 +512,12 @@ export const ClearAgentAttentionMessageSchema = z.object({
   agentId: z.union([z.string(), z.array(z.string())]),
 });
 
+export const ClientHeartbeatMessageSchema = z.object({
+  type: z.literal("client_heartbeat"),
+  focusedAgentId: z.string().nullable(),
+  lastActivityAt: z.string(),
+});
+
 export const ListCommandsRequestSchema = z.object({
   type: z.literal("list_commands_request"),
   agentId: z.string(),
@@ -544,6 +551,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileDownloadTokenRequestSchema,
   GitRepoInfoRequestMessageSchema,
   ClearAgentAttentionMessageSchema,
+  ClientHeartbeatMessageSchema,
   ListCommandsRequestSchema,
 ]);
 
@@ -956,6 +964,7 @@ export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponse
 export type GitRepoInfoResponse = z.infer<typeof GitRepoInfoResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
+export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
 

@@ -447,6 +447,17 @@ export class DaemonClientV2 {
     this.sendSessionMessage({ type: "clear_agent_attention", agentId });
   }
 
+  sendHeartbeat(params: {
+    focusedAgentId: string | null;
+    lastActivityAt: string;
+  }): void {
+    this.sendSessionMessage({
+      type: "client_heartbeat",
+      focusedAgentId: params.focusedAgentId,
+      lastActivityAt: params.lastActivityAt,
+    });
+  }
+
   // ============================================================================
   // Conversation / Session RPC
   // ============================================================================

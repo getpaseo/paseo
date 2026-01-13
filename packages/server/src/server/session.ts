@@ -232,6 +232,10 @@ export class Session {
   private readonly downloadTokenStore: DownloadTokenStore;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private clientActivity: {
+    focusedAgentId: string | null;
+    lastActivityAt: Date;
+  } | null = null;
 
   constructor(
     clientId: string,
@@ -280,6 +284,16 @@ export class Session {
    */
   public getConversationId(): string {
     return this.conversationId;
+  }
+
+  /**
+   * Get the client's current activity state
+   */
+  public getClientActivity(): {
+    focusedAgentId: string | null;
+    lastActivityAt: Date;
+  } | null {
+    return this.clientActivity;
   }
 
   /**
@@ -793,6 +807,10 @@ export class Session {
 
         case "clear_agent_attention":
           await this.handleClearAgentAttention(msg.agentId);
+          break;
+
+        case "client_heartbeat":
+          this.handleClientHeartbeat(msg);
           break;
 
         case "list_commands_request":
@@ -1841,6 +1859,19 @@ export class Session {
       );
       // Don't throw - this is not critical
     }
+  }
+
+  /**
+   * Handle client heartbeat for activity tracking
+   */
+  private handleClientHeartbeat(msg: {
+    focusedAgentId: string | null;
+    lastActivityAt: string;
+  }): void {
+    this.clientActivity = {
+      focusedAgentId: msg.focusedAgentId,
+      lastActivityAt: new Date(msg.lastActivityAt),
+    };
   }
 
   /**

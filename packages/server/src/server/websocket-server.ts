@@ -12,6 +12,7 @@ import { Session } from "./session.js";
 import { loadConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
+import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 
 type AgentMcpClientConfig = {
@@ -48,6 +49,10 @@ export class VoiceAssistantWebSocketServer {
 
     this.wss.on("connection", (ws, request) => {
       this.handleConnection(ws, request);
+    });
+
+    this.agentManager.setAgentAttentionCallback((params) => {
+      this.broadcastAgentAttention(params);
     });
 
     console.log("✓ WebSocket server initialized on /ws");
@@ -308,5 +313,55 @@ export class VoiceAssistantWebSocketServer {
     });
     await Promise.all(cleanupPromises);
     this.wss.close();
+  }
+
+  /**
+   * Check if any connected client is actively viewing the specified agent
+   */
+  private isAnyClientActiveOnAgent(agentId: string): boolean {
+    const now = Date.now();
+    const activityThresholdMs = 60_000;
+
+    for (const [, session] of this.sessions) {
+      const activity = session.getClientActivity();
+      if (
+        activity !== null &&
+        activity.focusedAgentId === agentId &&
+        now - activity.lastActivityAt.getTime() < activityThresholdMs
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Broadcast an attention_required event to all clients with shouldNotify computed
+   */
+  private broadcastAgentAttention(params: {
+    agentId: string;
+    provider: AgentProvider;
+    reason: "finished" | "error" | "permission";
+  }): void {
+    const shouldNotify = !this.isAnyClientActiveOnAgent(params.agentId);
+
+    const message = wrapSessionMessage({
+      type: "agent_stream",
+      payload: {
+        agentId: params.agentId,
+        event: {
+          type: "attention_required",
+          provider: params.provider,
+          reason: params.reason,
+          timestamp: new Date().toISOString(),
+          shouldNotify,
+        },
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    for (const [ws] of this.sessions) {
+      this.sendToClient(ws, message);
+    }
   }
 }
