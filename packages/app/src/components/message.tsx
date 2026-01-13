@@ -30,6 +30,7 @@ import {
   SquareTerminal,
   Search,
   Brain,
+  Copy,
 } from "lucide-react-native";
 import {
   StyleSheet,
@@ -253,6 +254,78 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: 13,
   },
 }));
+
+const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
+  container: {
+    alignSelf: "flex-start",
+    padding: theme.spacing[2],
+    marginLeft: theme.spacing[4],
+  },
+  iconColor: {
+    color: theme.colors.mutedForeground,
+  },
+  iconHoveredColor: {
+    color: theme.colors.foreground,
+  },
+}));
+
+interface TurnCopyButtonProps {
+  getContent: () => string;
+}
+
+export const TurnCopyButton = memo(function TurnCopyButton({
+  getContent,
+}: TurnCopyButtonProps) {
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(async () => {
+    const content = getContent();
+    if (!content) {
+      return;
+    }
+
+    await Clipboard.setStringAsync(content);
+    setCopied(true);
+
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimeoutRef.current = null;
+    }, 1500);
+  }, [getContent]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <Pressable
+      onPress={handleCopy}
+      style={turnCopyButtonStylesheet.container}
+      accessibilityRole="button"
+      accessibilityLabel={copied ? "Copied" : "Copy turn"}
+    >
+      {({ hovered }) => {
+        const iconColor = hovered
+          ? turnCopyButtonStylesheet.iconHoveredColor.color
+          : turnCopyButtonStylesheet.iconColor.color;
+        return copied ? (
+          <Check size={18} color={iconColor} />
+        ) : (
+          <Copy size={18} color={iconColor} />
+        );
+      }}
+    </Pressable>
+  );
+});
 
 const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   container: {

@@ -37,6 +37,7 @@ import {
   ToolCall,
   AgentThoughtMessage,
   TodoListCard,
+  TurnCopyButton,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "./message";
@@ -382,6 +383,26 @@ export function AgentStreamView({
     [handleInlinePathPress, agent.cwd, flatListData]
   );
 
+  const collectTurnContent = useCallback(
+    (index: number) => {
+      const messages: string[] = [];
+      // Walk backwards (older items) from current index
+      // In inverted list: index+1 is the item above (older in time)
+      for (let i = index; i < flatListData.length; i++) {
+        const currentItem = flatListData[i];
+        if (currentItem.kind === "user_message") {
+          break;
+        }
+        if (currentItem.kind === "assistant_message") {
+          messages.push(currentItem.text);
+        }
+      }
+      // Messages are collected newest-first, reverse for chronological order
+      return messages.reverse().join("\n\n");
+    },
+    [flatListData]
+  );
+
   const renderStreamItem = useCallback(
     ({ item, index }: ListRenderItemInfo<StreamItem>) => {
       const content = renderStreamItemContent(item, index);
@@ -391,6 +412,16 @@ export function AgentStreamView({
 
       const gap = getGapAbove(item, index);
 
+      // Check if this is the end of a turn (before a user message or end of stream when not running)
+      // In inverted list: index-1 is the next item (newer in time)
+      const nextItem = flatListData[index - 1];
+      const isEndOfTurn =
+        item.kind !== "user_message" &&
+        (nextItem?.kind === "user_message" ||
+          (nextItem === undefined && agent.status !== "running"));
+
+      const getContent = () => collectTurnContent(index);
+
       return (
         <View
           style={[
@@ -399,10 +430,11 @@ export function AgentStreamView({
           ]}
         >
           {content}
+          {isEndOfTurn ? <TurnCopyButton getContent={getContent} /> : null}
         </View>
       );
     },
-    [getGapAbove, renderStreamItemContent]
+    [getGapAbove, renderStreamItemContent, flatListData, agent.status, collectTurnContent]
   );
 
   const pendingPermissionItems = useMemo(
