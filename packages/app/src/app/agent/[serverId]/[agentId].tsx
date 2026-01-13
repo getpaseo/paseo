@@ -353,7 +353,6 @@ function AgentScreenContent({
 
   // Get methods
   const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
-  const initializeAgent = methods?.initializeAgent;
   const refreshAgent = methods?.refreshAgent;
   const setFocusedAgentId = useCallback(
     (agentId: string | null) => {
@@ -436,11 +435,11 @@ function AgentScreenContent({
     ? isInitializingFromMap !== false
     : false;
 
-  // Track which agent we've already triggered initialization for
-  const initializedAgentRef = useRef<string | null>(null);
+  // Get ensureAgentIsInitialized from methods
+  const ensureAgentIsInitialized = methods?.ensureAgentIsInitialized;
 
   useEffect(() => {
-    if (!resolvedAgentId || !initializeAgent) {
+    if (!resolvedAgentId || !ensureAgentIsInitialized) {
       return;
     }
 
@@ -449,28 +448,15 @@ function AgentScreenContent({
       return;
     }
 
-    // Skip if already initializing
-    if (isInitializingFromMap === true) {
-      return;
-    }
-
-    // Skip if we already triggered initialization for this agent
-    if (initializedAgentRef.current === resolvedAgentId) {
-      return;
-    }
-
-    // Mark this agent as initialized
-    initializedAgentRef.current = resolvedAgentId;
-
-    // Always fetch timeline when opening agent screen
-    // Server returns full snapshot, client replaces cache
-    // This ensures we always have complete history, even after reconnection
-    console.log("[AgentScreen] Fetching agent timeline", {
-      agentId: resolvedAgentId,
+    // ensureAgentIsInitialized handles deduplication via module-level promises map
+    // If already initialized or in-flight, returns resolved/pending promise immediately
+    ensureAgentIsInitialized(resolvedAgentId).catch((error) => {
+      console.warn("[AgentScreen] Agent initialization failed", {
+        agentId: resolvedAgentId,
+        error,
+      });
     });
-
-    initializeAgent({ agentId: resolvedAgentId });
-  }, [resolvedAgentId, initializeAgent, isInitializingFromMap, isConnected]);
+  }, [resolvedAgentId, ensureAgentIsInitialized, isConnected]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {

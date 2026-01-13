@@ -43,7 +43,11 @@ export async function generateAgentTitle(
       schema: z.object({
         title: z.string().describe("A concise 3-5 word title describing what the agent is working on"),
       }),
-      prompt: `Generate a concise title for this agent session based on the activity. The title should describe what the agent is working on. Be specific but brief. Examples: "Fix Authentication Bug", "Build Dashboard Component", "Refactor API Routes".
+      prompt: `Generate a concise title for this agent session. The title should describe what the user asked the agent to do.
+
+IMPORTANT: Focus primarily on [User] messages to understand the task. User messages contain the actual request - use their words and intent to name the chat. Tool calls and assistant messages are just implementation details and should NOT drive the title.
+
+Be specific but brief (3-5 words). Examples: "Fix Authentication Bug", "Build Dashboard Component", "Refactor API Routes".
 
 Working directory: ${cwd}
 

@@ -14,6 +14,8 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
+import { PushTokenStore } from "./push/token-store.js";
+import { PushService } from "./push/push-service.js";
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -32,6 +34,8 @@ export class VoiceAssistantWebSocketServer {
   private agentManager: AgentManager;
   private agentRegistry: AgentRegistry;
   private downloadTokenStore: DownloadTokenStore;
+  private pushTokenStore: PushTokenStore;
+  private pushService: PushService;
   private readonly agentMcpConfig: AgentMcpClientConfig;
 
   constructor(
@@ -44,6 +48,8 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
     this.downloadTokenStore = downloadTokenStore;
+    this.pushTokenStore = new PushTokenStore();
+    this.pushService = new PushService(this.pushTokenStore);
     this.agentMcpConfig = agentMcpConfig;
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
@@ -95,6 +101,7 @@ export class VoiceAssistantWebSocketServer {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
       this.downloadTokenStore,
+      this.pushTokenStore,
       this.agentManager,
       this.agentRegistry,
       this.agentMcpConfig,
@@ -315,52 +322,189 @@ export class VoiceAssistantWebSocketServer {
     this.wss.close();
   }
 
-  /**
-   * Check if any connected client is actively viewing the specified agent
-   */
-  private isAnyClientActiveOnAgent(agentId: string): boolean {
-    const now = Date.now();
-    const activityThresholdMs = 60_000;
+  private readonly ACTIVITY_THRESHOLD_MS = 120_000; // 2 minutes
 
-    for (const [, session] of this.sessions) {
-      const activity = session.getClientActivity();
-      if (
-        activity !== null &&
-        activity.focusedAgentId === agentId &&
-        now - activity.lastActivityAt.getTime() < activityThresholdMs
-      ) {
-        return true;
-      }
+  /**
+   * Get client activity state with computed staleness
+   */
+  private getClientActivityState(session: Session): {
+    deviceType: "web" | "mobile" | null;
+    focusedAgentId: string | null;
+    isStale: boolean;
+    appVisible: boolean;
+  } {
+    const activity = session.getClientActivity();
+    if (!activity) {
+      console.log("[WS] getClientActivityState: no activity for session");
+      return { deviceType: null, focusedAgentId: null, isStale: true, appVisible: false };
     }
-    return false;
+    const now = Date.now();
+    const ageMs = now - activity.lastActivityAt.getTime();
+    const isStale = ageMs >= this.ACTIVITY_THRESHOLD_MS;
+    console.log("[WS] getClientActivityState", {
+      deviceType: activity.deviceType,
+      focusedAgentId: activity.focusedAgentId,
+      lastActivityAt: activity.lastActivityAt.toISOString(),
+      ageMs,
+      isStale,
+      appVisible: activity.appVisible,
+    });
+    return {
+      deviceType: activity.deviceType,
+      focusedAgentId: activity.focusedAgentId,
+      isStale,
+      appVisible: activity.appVisible,
+    };
   }
 
   /**
-   * Broadcast an attention_required event to all clients with shouldNotify computed
+   * Compute shouldNotify for a specific client given all clients' states
+   *
+   * UX Rules:
+   * 1. If ANY client is actively watching the agent (focused + visible + not stale) → no notifications
+   * 2. If THIS client is not stale and focused elsewhere → notify THIS client (user is at computer)
+   * 3. If THIS client is stale → only notify if mobile, or if no mobile available
+   * 4. Don't notify non-stale clients that aren't focused on anything (just switched tabs)
+   */
+  private computeShouldNotifyForClient(
+    clientState: {
+      deviceType: "web" | "mobile" | null;
+      focusedAgentId: string | null;
+      isStale: boolean;
+      appVisible: boolean;
+    },
+    allClientStates: Array<{
+      deviceType: "web" | "mobile" | null;
+      focusedAgentId: string | null;
+      isStale: boolean;
+      appVisible: boolean;
+    }>,
+    agentId: string
+  ): boolean {
+    // Rule 1: If any client is actively watching the agent, no one needs notification
+    const isAnyoneActiveOnAgent = allClientStates.some(
+      (state) =>
+        state.focusedAgentId === agentId &&
+        state.appVisible &&
+        !state.isStale
+    );
+    if (isAnyoneActiveOnAgent) {
+      return false;
+    }
+
+    // No heartbeat (legacy client or just connected) → notify
+    if (clientState.deviceType === null) {
+      return true;
+    }
+
+    // Rule 2: If THIS client is not stale and actively looking at a different agent → notify them
+    if (!clientState.isStale && clientState.appVisible && clientState.focusedAgentId !== null) {
+      return true;
+    }
+
+    // Rule 3: If THIS client is not stale but just switched tabs (not focused on anything) → no notification
+    // User is present at the computer, they'll come back
+    if (!clientState.isStale) {
+      return false;
+    }
+
+    // Rule 4: THIS client is stale - check if another client will handle it
+    const hasActiveWebClient = allClientStates.some(
+      (state) => state.deviceType === "web" && !state.isStale
+    );
+
+    if (clientState.deviceType === "mobile") {
+      // Mobile only notifies if web is also stale (user truly away)
+      // If web is active, they'll see it there
+      return !hasActiveWebClient;
+    }
+
+    if (clientState.deviceType === "web") {
+      // Stale web: notify only if no other client can handle it
+      // Other client = mobile or unknown (no heartbeat)
+      const hasOtherClient = allClientStates.some(
+        (state) => state !== clientState && (state.deviceType === "mobile" || state.deviceType === null)
+      );
+      return !hasOtherClient;
+    }
+
+    // Fallback: notify
+    return true;
+  }
+
+  /**
+   * Broadcast an attention_required event to all clients with per-client shouldNotify
    */
   private broadcastAgentAttention(params: {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
   }): void {
-    const shouldNotify = !this.isAnyClientActiveOnAgent(params.agentId);
+    // Collect all client states first
+    const clientEntries: Array<{
+      ws: WebSocket;
+      state: {
+        deviceType: "web" | "mobile" | null;
+        focusedAgentId: string | null;
+        isStale: boolean;
+        appVisible: boolean;
+      };
+    }> = [];
 
-    const message = wrapSessionMessage({
-      type: "agent_stream",
-      payload: {
-        agentId: params.agentId,
-        event: {
-          type: "attention_required",
-          provider: params.provider,
-          reason: params.reason,
-          timestamp: new Date().toISOString(),
-          shouldNotify,
-        },
-        timestamp: new Date().toISOString(),
-      },
+    for (const [ws, session] of this.sessions) {
+      clientEntries.push({
+        ws,
+        state: this.getClientActivityState(session),
+      });
+    }
+
+    const allStates = clientEntries.map((e) => e.state);
+
+    console.log("[WS] broadcastAgentAttention", {
+      agentId: params.agentId,
+      reason: params.reason,
+      clientCount: clientEntries.length,
+      allStates,
     });
 
-    for (const [ws] of this.sessions) {
+    // Check if all clients are stale - if so, send push notification
+    const allClientsStale = allStates.every((state) => state.isStale);
+    console.log("[WS] allClientsStale:", allClientsStale);
+    if (allClientsStale) {
+      const tokens = this.pushTokenStore.getAllTokens();
+      console.log("[WS] Sending push notification, tokens:", tokens.length);
+      if (tokens.length > 0) {
+        void this.pushService.sendPush(tokens, {
+          title: "Agent needs attention",
+          body: `Reason: ${params.reason}`,
+          data: { agentId: params.agentId },
+        });
+      }
+    }
+
+    // Send to each client with their specific shouldNotify value
+    for (const { ws, state } of clientEntries) {
+      const shouldNotify = this.computeShouldNotifyForClient(
+        state,
+        allStates,
+        params.agentId
+      );
+
+      const message = wrapSessionMessage({
+        type: "agent_stream",
+        payload: {
+          agentId: params.agentId,
+          event: {
+            type: "attention_required",
+            provider: params.provider,
+            reason: params.reason,
+            timestamp: new Date().toISOString(),
+            shouldNotify,
+          },
+          timestamp: new Date().toISOString(),
+        },
+      });
+
       this.sendToClient(ws, message);
     }
   }
