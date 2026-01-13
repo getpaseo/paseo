@@ -294,7 +294,17 @@ export class VoiceAssistantWebSocketServer {
     const cleanupPromises: Promise<void>[] = [];
     this.sessions.forEach((session, ws) => {
       cleanupPromises.push(session.cleanup());
-      ws.close();
+      // Wait for WebSocket to actually close before resolving
+      cleanupPromises.push(
+        new Promise<void>((resolve) => {
+          if (ws.readyState === WebSocket.CLOSED) {
+            resolve();
+            return;
+          }
+          ws.once("close", () => resolve());
+          ws.close();
+        })
+      );
     });
     await Promise.all(cleanupPromises);
     this.wss.close();

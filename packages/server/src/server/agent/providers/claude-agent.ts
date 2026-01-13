@@ -719,6 +719,7 @@ class ClaudeAgentSession implements AgentSession {
   async close(): Promise<void> {
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     this.input?.end();
+    await this.query?.interrupt?.();
     await this.query?.return?.();
     this.query = null;
     this.input = null;

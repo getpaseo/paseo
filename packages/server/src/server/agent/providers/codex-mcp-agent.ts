@@ -3136,41 +3136,38 @@ class CodexMcpAgentSession implements AgentSession {
         ? (rawMetadata as Record<string, unknown>).codex_elicitation
         : undefined;
 
-    let action: ElicitResult["action"];
-    let content: Record<string, unknown> | undefined;
-    let decision: CodexExecApprovalDecision | undefined;
-    let reason: string | undefined;
-
-    if (codexElicitation === "exec-approval") {
-      decision =
-        response.behavior === "allow"
-          ? "approved"
-          : response.interrupt
-            ? "abort"
-            : "denied";
-      reason = response.behavior === "deny" ? response.message : undefined;
-      const responsePayload: CodexExecApprovalResponse = {
-        decision,
-        ...(reason ? { reason } : {}),
-      };
-      pending.resolve(responsePayload);
-      return;
-    } else {
-      action =
+    // Use MCP ElicitResult format only if explicitly tagged as non-exec-approval
+    // Default to Codex exec-approval format (what Codex SDK actually sends)
+    if (codexElicitation && codexElicitation !== "exec-approval") {
+      const action: ElicitResult["action"] =
         response.behavior === "allow"
           ? "accept"
           : response.interrupt
             ? "cancel"
             : "decline";
-      content =
+      const content =
         response.behavior === "allow" && response.updatedInput
           ? response.updatedInput
           : undefined;
+      const responsePayload: ElicitResult = {
+        action,
+        ...(content ? { content } : {}),
+      };
+      pending.resolve(responsePayload);
+      return;
     }
 
-    const responsePayload: ElicitResult = {
-      action,
-      ...(content ? { content } : {}),
+    // Default: Codex exec-approval format
+    const decision: CodexExecApprovalDecision =
+      response.behavior === "allow"
+        ? "approved"
+        : response.interrupt
+          ? "abort"
+          : "denied";
+    const reason = response.behavior === "deny" ? response.message : undefined;
+    const responsePayload: CodexExecApprovalResponse = {
+      decision,
+      ...(reason ? { reason } : {}),
     };
     pending.resolve(responsePayload);
   }

@@ -41,6 +41,7 @@
     "expo-build-properties": "^1.0.9",
     "expo-clipboard": "~8.0.7",
     "expo-constants": "~18.0.9",
+    "expo-crypto": "^15.0.8",
     "expo-dev-client": "^6.0.15",
     "expo-file-system": "~19.0.17",
     "expo-font": "~14.0.9",

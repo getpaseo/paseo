@@ -1,4 +1,3 @@
-import { nanoid } from "nanoid";
 import type { z } from "zod";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -754,7 +753,7 @@ export class DaemonClientV2 {
     text: string,
     options?: SendMessageOptions
   ): Promise<void> {
-    const messageId = options?.messageId ?? nanoid();
+    const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
       type: "send_agent_message",
       agentId,
@@ -1354,7 +1353,7 @@ export class DaemonClientV2 {
   // ============================================================================
 
   private createRequestId(requestId?: string): string {
-    return requestId ?? nanoid();
+    return requestId ?? crypto.randomUUID();
   }
 
   private cleanupTransport(): void {

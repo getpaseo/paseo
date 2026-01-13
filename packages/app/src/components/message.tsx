@@ -103,11 +103,14 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
+    minWidth: 0,
+    flexShrink: 1,
   },
   text: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+    overflowWrap: "anywhere",
   },
   bubblePressed: {
     opacity: 0.85,

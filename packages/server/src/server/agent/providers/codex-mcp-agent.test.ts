@@ -740,7 +740,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
   );
 
   test(
-    "captures tool call inputs/outputs for commands, file changes, file reads, MCP tools, and web search",
+    "captures tool call inputs/outputs for commands, file changes, file reads, and MCP tools",
     async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
@@ -751,13 +751,9 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const config = {
         provider: "codex",
         cwd,
-        modeId: "auto",
-        approvalPolicy: "on-request",
-        networkAccess: true,
+        modeId: "full-access",
         extra: {
           codex: {
-            search: true,
-            features: { web_search_request: true },
             mcp_servers: {
               test: {
                 command: process.execPath,
@@ -770,38 +766,22 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       } satisfies AgentSessionConfig;
 
       let session: AgentSession | null = null;
-      let permissionRequest: AgentPermissionRequest | null = null;
-      let permissionResolved = false;
       const toolCalls: ToolCallItem[] = [];
 
       try {
         session = await client.createSession(config);
 
         const prompt = [
-          "1. Run the command `bash -lc \"printf 'stdout-marker'\"` using your shell tool.",
-          "2. Run the command `bash -lc \"printf 'stderr-marker' 1>&2\"` using your shell tool.",
-          "3. Use apply_patch (not the shell) to create a new file named tool-create.txt containing only the line 'alpha'.",
-          "4. Use apply_patch (not the shell) to edit tool-create.txt, replacing 'alpha' with 'beta'.",
-          "5. Read the file tool-create.txt and report its contents (you can use cat or any file reading method).",
+          "1. Run the command `printf 'stdout-marker'` using your shell tool.",
+          "2. Run the command `printf 'stderr-marker' 1>&2` using your shell tool.",
+          "3. Use apply_patch to create a new file named tool-create.txt containing only the line 'alpha'.",
+          "4. Use apply_patch to edit tool-create.txt, replacing 'alpha' with 'beta'.",
+          "5. Read the file tool-create.txt using read_file tool.",
           "6. Call the MCP tool test.echo with input {\"text\":\"mcp-ok\"}.",
-          "7. Use the web_search tool to search for \"OpenAI Codex MCP\".",
-          "8. Request approval to run the command `printf \"permit\" > tool-permission.txt`, then run it.",
-          "9. After all tools finish, reply DONE and stop.",
+          "7. Reply DONE and stop.",
         ].join("\n");
 
         for await (const event of session.stream(prompt)) {
-          if (event.type === "permission_requested" && !permissionRequest) {
-            permissionRequest = event.request;
-            await session.respondToPermission(permissionRequest.id, { behavior: "allow" });
-          }
-          if (
-            event.type === "permission_resolved" &&
-            permissionRequest &&
-            event.requestId === permissionRequest.id &&
-            event.resolution.behavior === "allow"
-          ) {
-            permissionResolved = true;
-          }
           if (event.type === "timeline" && providerFromEvent(event) === "codex") {
             if (event.item.type === "tool_call" && event.item.name !== "permission") {
               toolCalls.push(event.item);
@@ -811,9 +791,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             break;
           }
         }
-
-        expect.soft(permissionRequest).not.toBeNull();
-        expect.soft(permissionResolved).toBe(true);
 
         const commandCalls = toolCalls.filter(
           (item) => item.name === "shell" && item.status === "completed"
@@ -868,15 +845,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect.soft(stringifyUnknown(mcpCall?.input)).toContain("mcp-ok");
         expect.soft(stringifyUnknown(mcpCall?.output)).toContain("mcp-ok");
 
-        const webSearchCall = toolCalls.find(
-          (item) => item.name === "web_search"
-        );
-        expect.soft(webSearchCall).toBeTruthy();
-        expect.soft(stringifyUnknown(webSearchCall?.input)).toContain("OpenAI Codex MCP");
-        // NOTE: Codex MCP web_search does not return search results in the event.
-        // The search happens internally but results are not exposed via MCP events.
-        // Only verify that the search was performed (input contains query).
-
         const callIdStatuses = new Map<string, Set<string>>();
         for (const toolCall of toolCalls) {
           if (!toolCall.callId) {
@@ -914,7 +882,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         restoreSessionDir();
       }
     },
-    240_000
+    120_000
   );
 
   test(

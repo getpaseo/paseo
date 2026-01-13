@@ -13,10 +13,11 @@ export default defineConfig({
     globals: true,
     environment: "node",
     setupFiles: [path.resolve(__dirname, "./src/test-utils/vitest-setup.ts")],
-    pool: "threads",
+    pool: "forks",
     poolOptions: {
-      threads: {
-        singleThread: true,
+      forks: {
+        singleFork: false,
+        maxForks: 4,
       },
     },
   },
