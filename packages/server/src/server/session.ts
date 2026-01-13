@@ -57,6 +57,7 @@ import {
   getDownloadableFileInfo,
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
+import { PushTokenStore } from "./push/token-store.js";
 import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
@@ -230,17 +231,21 @@ export class Session {
   private readonly agentRegistry: AgentRegistry;
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private readonly downloadTokenStore: DownloadTokenStore;
+  private readonly pushTokenStore: PushTokenStore;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private clientActivity: {
+    deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     lastActivityAt: Date;
+    appVisible: boolean;
   } | null = null;
 
   constructor(
     clientId: string,
     onMessage: (msg: SessionOutboundMessage) => void,
     downloadTokenStore: DownloadTokenStore,
+    pushTokenStore: PushTokenStore,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     agentMcpConfig: AgentMcpClientConfig,
@@ -253,6 +258,7 @@ export class Session {
     this.conversationId = options?.conversationId || uuidv4();
     this.onMessage = onMessage;
     this.downloadTokenStore = downloadTokenStore;
+    this.pushTokenStore = pushTokenStore;
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
@@ -290,8 +296,10 @@ export class Session {
    * Get the client's current activity state
    */
   public getClientActivity(): {
+    deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     lastActivityAt: Date;
+    appVisible: boolean;
   } | null {
     return this.clientActivity;
   }
@@ -815,6 +823,10 @@ export class Session {
 
         case "list_commands_request":
           await this.handleListCommandsRequest(msg.agentId, msg.requestId);
+          break;
+
+        case "register_push_token":
+          this.handleRegisterPushToken(msg.token);
           break;
       }
     } catch (error: any) {
@@ -1865,13 +1877,26 @@ export class Session {
    * Handle client heartbeat for activity tracking
    */
   private handleClientHeartbeat(msg: {
+    deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     lastActivityAt: string;
+    appVisible: boolean;
   }): void {
+    console.log(`[Session ${this.clientId}] handleClientHeartbeat`, msg);
     this.clientActivity = {
+      deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
       lastActivityAt: new Date(msg.lastActivityAt),
+      appVisible: msg.appVisible,
     };
+  }
+
+  /**
+   * Handle push token registration
+   */
+  private handleRegisterPushToken(token: string): void {
+    this.pushTokenStore.addToken(token);
+    console.log(`[Session ${this.clientId}] Registered push token`);
   }
 
   /**

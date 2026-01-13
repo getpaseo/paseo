@@ -204,6 +204,7 @@ export interface SessionState {
     }) => Promise<void>;
     setAgentMode: (agentId: string, modeId: string) => void;
     respondToPermission: (agentId: string, requestId: string, response: any) => void;
+    ensureAgentIsInitialized: (agentId: string) => Promise<void>;
   } | null;
 
   // Hydration status
@@ -223,7 +224,7 @@ export interface SessionState {
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
 
-  // Initializing agents
+  // Initializing agents (used for UI loading state)
   initializingAgents: Map<string, boolean>;
 
   // Agents

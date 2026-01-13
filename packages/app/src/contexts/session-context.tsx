@@ -12,6 +12,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMutation } from "@tanstack/react-query";
 import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { useClientActivity } from "@/hooks/use-client-activity";
 import {
   applyStreamEvent,
   generateMessageId,
@@ -194,6 +195,20 @@ type FileDownloadTokenPayload = Extract<
 
 const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
 
+// Module-level map for agent initialization promises
+// Key: `${serverId}:${agentId}`, Value: { promise, resolve, reject }
+// This survives Fast Refresh because it's outside React component tree
+interface DeferredInit {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+const agentInitializationPromises = new Map<string, DeferredInit>();
+
+function getInitKey(serverId: string, agentId: string): string {
+  return `${serverId}:${agentId}`;
+}
+
 type PersistedSessionSnapshot = {
   agents: AgentSnapshotPayload[];
   savedAt: string;
@@ -356,6 +371,7 @@ export interface SessionContextValue {
     requestId: string,
     response: any
   ) => void;
+  ensureAgentIsInitialized: (agentId: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -420,6 +436,14 @@ export function SessionProvider({
   const updateSessionConnection = useSessionStore(
     (state) => state.updateSessionConnection
   );
+
+  // Track focused agent for heartbeat
+  const focusedAgentId = useSessionStore(
+    (state) => state.sessions[serverId]?.focusedAgentId ?? null
+  );
+
+  // Client activity tracking (heartbeat, push token registration)
+  useClientActivity({ client, focusedAgentId });
 
   // State for voice detection flags (will be set by RealtimeContext)
   const isDetectingRef = useRef(false);
@@ -1009,11 +1033,14 @@ export function SessionProvider({
       console.log("[Session] agent_stream", { agentId, event, timestamp });
 
       if (event.type === "attention_required") {
-        notifyAgentAttention({
-          agentId,
-          reason: event.reason,
-          timestamp: event.timestamp,
-        });
+        console.log("[Session] attention_required", { agentId, shouldNotify: event.shouldNotify, reason: event.reason });
+        if (event.shouldNotify) {
+          notifyAgentAttention({
+            agentId,
+            reason: event.reason,
+            timestamp: event.timestamp,
+          });
+        }
       }
 
       const session = useSessionStore.getState().sessions[serverId];
@@ -1094,6 +1121,14 @@ export function SessionProvider({
           next.set(agentId, false);
           return next;
         });
+
+        // Resolve the initialization promise (even for empty history)
+        const initKey = getInitKey(serverId, agentId);
+        const deferred = agentInitializationPromises.get(initKey);
+        if (deferred) {
+          deferred.resolve();
+          // Keep the promise in the map so subsequent calls return immediately
+        }
       }
     );
 
@@ -1563,7 +1598,6 @@ export function SessionProvider({
 
   const initializeAgent = useCallback(
     ({ agentId, requestId }: { agentId: string; requestId?: string }) => {
-      console.log("[Session] initializeAgent called", { agentId, requestId });
       setInitializingAgents(serverId, (prev) => {
         const next = new Map(prev);
         next.set(agentId, true);
@@ -1633,6 +1667,94 @@ export function SessionProvider({
       setInitializingAgents,
       clearAgentStreamHead,
     ]
+  );
+
+  const INIT_TIMEOUT_MS = 10000;
+
+  const ensureAgentIsInitialized = useCallback(
+    (agentId: string): Promise<void> => {
+      const key = getInitKey(serverId, agentId);
+
+      // If we already have a promise (resolved or in-flight), return it
+      const existing = agentInitializationPromises.get(key);
+      if (existing) {
+        return existing.promise;
+      }
+
+      // Create a deferred promise
+      let resolve: () => void;
+      let reject: (error: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+
+      const deferred: DeferredInit = {
+        promise,
+        resolve: resolve!,
+        reject: reject!,
+      };
+      agentInitializationPromises.set(key, deferred);
+
+      // Set up timeout
+      const timeoutId = setTimeout(() => {
+        const entry = agentInitializationPromises.get(key);
+        if (entry === deferred) {
+          agentInitializationPromises.delete(key);
+          deferred.reject(new Error(`Agent initialization timed out after ${INIT_TIMEOUT_MS}ms`));
+        }
+      }, INIT_TIMEOUT_MS);
+
+      // Set UI loading state
+      setInitializingAgents(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, true);
+        return next;
+      });
+
+      // Clear existing stream state
+      setAgentStreamTail(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, []);
+        return next;
+      });
+      clearAgentStreamHead(serverId, agentId);
+
+      if (!client) {
+        console.warn("[Session] ensureAgentIsInitialized skipped: daemon unavailable");
+        clearTimeout(timeoutId);
+        agentInitializationPromises.delete(key);
+        setInitializingAgents(serverId, (prev) => {
+          const next = new Map(prev);
+          next.set(agentId, false);
+          return next;
+        });
+        deferred.reject(new Error("Daemon unavailable"));
+        return promise;
+      }
+
+      client
+        .initializeAgent(agentId)
+        .then(() => {
+          // Note: We don't resolve here - we wait for agent_stream_snapshot
+          // The snapshot handler will call deferred.resolve()
+          clearTimeout(timeoutId);
+        })
+        .catch((error) => {
+          console.warn("[Session] ensureAgentIsInitialized failed", { agentId, error });
+          clearTimeout(timeoutId);
+          agentInitializationPromises.delete(key);
+          setInitializingAgents(serverId, (prev) => {
+            const next = new Map(prev);
+            next.set(agentId, false);
+            return next;
+          });
+          deferred.reject(error instanceof Error ? error : new Error(String(error)));
+        });
+
+      return promise;
+    },
+    [serverId, client, setAgentStreamTail, setInitializingAgents, clearAgentStreamHead]
   );
 
   const requestProviderModels = useCallback(
@@ -2231,6 +2353,7 @@ export function SessionProvider({
       createAgent,
       setAgentMode,
       respondToPermission,
+      ensureAgentIsInitialized,
     }),
     [
       serverId,
@@ -2254,6 +2377,7 @@ export function SessionProvider({
       createAgent,
       setAgentMode,
       respondToPermission,
+      ensureAgentIsInitialized,
     ]
   );
 
@@ -2280,6 +2404,7 @@ export function SessionProvider({
       createAgent,
       setAgentMode,
       respondToPermission,
+      ensureAgentIsInitialized,
     }),
     [
       setVoiceDetectionFlags,
@@ -2300,6 +2425,7 @@ export function SessionProvider({
       createAgent,
       setAgentMode,
       respondToPermission,
+      ensureAgentIsInitialized,
     ]
   );
 

@@ -514,14 +514,21 @@ export const ClearAgentAttentionMessageSchema = z.object({
 
 export const ClientHeartbeatMessageSchema = z.object({
   type: z.literal("client_heartbeat"),
+  deviceType: z.enum(["web", "mobile"]),
   focusedAgentId: z.string().nullable(),
   lastActivityAt: z.string(),
+  appVisible: z.boolean(),
 });
 
 export const ListCommandsRequestSchema = z.object({
   type: z.literal("list_commands_request"),
   agentId: z.string(),
   requestId: z.string(),
+});
+
+export const RegisterPushTokenMessageSchema = z.object({
+  type: z.literal("register_push_token"),
+  token: z.string(),
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
@@ -553,6 +560,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionMessageSchema,
   ClientHeartbeatMessageSchema,
   ListCommandsRequestSchema,
+  RegisterPushTokenMessageSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -967,6 +975,7 @@ export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessa
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
+export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

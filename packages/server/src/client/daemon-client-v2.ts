@@ -448,13 +448,24 @@ export class DaemonClientV2 {
   }
 
   sendHeartbeat(params: {
+    deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     lastActivityAt: string;
+    appVisible: boolean;
   }): void {
     this.sendSessionMessage({
       type: "client_heartbeat",
+      deviceType: params.deviceType,
       focusedAgentId: params.focusedAgentId,
       lastActivityAt: params.lastActivityAt,
+      appVisible: params.appVisible,
+    });
+  }
+
+  registerPushToken(token: string): void {
+    this.sendSessionMessage({
+      type: "register_push_token",
+      token,
     });
   }
 
