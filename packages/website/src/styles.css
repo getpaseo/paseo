@@ -1,0 +1,111 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-serif: 'Playfair Display', serif;
+
+  --color-background: #0a0a0a;
+  --color-foreground: #fafafa;
+  --color-muted: #262626;
+  --color-muted-foreground: #a1a1aa;
+  --color-card: #171717;
+  --color-border: #27272a;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #27272a;
+  --color-secondary-foreground: #fafafa;
+
+  --animate-flutter-left: flutter-left 0.6s ease-in-out infinite;
+  --animate-flutter-right: flutter-right 0.6s ease-in-out infinite;
+  --animate-float: float 8s ease-in-out infinite;
+  --animate-flutter-body: flutter-body 0.5s ease-in-out infinite;
+}
+
+@keyframes flutter-left {
+  0%,
+  100% {
+    transform: rotateY(0deg) rotateZ(0deg);
+  }
+  50% {
+    transform: rotateY(50deg) rotateZ(-5deg);
+  }
+}
+
+@keyframes flutter-right {
+  0%,
+  100% {
+    transform: rotateY(0deg) rotateZ(0deg);
+  }
+  50% {
+    transform: rotateY(-50deg) rotateZ(5deg);
+  }
+}
+
+@keyframes flutter-body {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(-3deg);
+  }
+}
+
+@keyframes float-1 {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  20% {
+    transform: translate(12px, -18px) rotate(5deg);
+  }
+  40% {
+    transform: translate(-8px, -30px) rotate(-3deg);
+  }
+  60% {
+    transform: translate(-15px, -12px) rotate(2deg);
+  }
+  80% {
+    transform: translate(5px, 8px) rotate(-4deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+@keyframes float-2 {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  15% {
+    transform: translate(-10px, -12px) rotate(-4deg);
+  }
+  35% {
+    transform: translate(8px, -25px) rotate(3deg);
+  }
+  55% {
+    transform: translate(15px, -8px) rotate(-2deg);
+  }
+  75% {
+    transform: translate(-5px, 10px) rotate(5deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+@keyframes float-3 {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  25% {
+    transform: translate(18px, -10px) rotate(3deg);
+  }
+  50% {
+    transform: translate(5px, -35px) rotate(-5deg);
+  }
+  75% {
+    transform: translate(-12px, -15px) rotate(4deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}

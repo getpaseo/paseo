@@ -1,0 +1,13 @@
+name = "paseo-website"
+account_id = "10ed39a1dbf316e30abd0c409bed40d6"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+main = "@tanstack/react-start/server-entry"
+
+routes = [
+  { pattern = "paseo.sh", custom_domain = true },
+  { pattern = "www.paseo.sh", custom_domain = true }
+]
+
+[observability]
+enabled = true
