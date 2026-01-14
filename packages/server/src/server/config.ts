@@ -79,10 +79,14 @@ export function loadConfig(
       ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
       : undefined;
 
+  const envCorsOrigins = env.PASEO_CORS_ORIGINS
+    ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
+    : [];
+
   return {
     listen,
     paseoHome,
-    corsAllowedOrigins: persisted.cors.allowedOrigins,
+    corsAllowedOrigins: [...persisted.cors.allowedOrigins, ...envCorsOrigins],
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
     agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],
     auth: {

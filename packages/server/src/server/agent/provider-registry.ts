@@ -7,7 +7,7 @@ import type {
 
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
 import { CodexMcpAgentClient } from "./providers/codex-mcp-agent.js";
-import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -77,4 +77,8 @@ export async function fetchProviderModels(
 ): Promise<AgentModelDefinition[]> {
   const definition = getProviderDefinition(provider);
   return definition.fetchModels(options);
+}
+
+export async function shutdownProviders(): Promise<void> {
+  await OpenCodeServerManager.getInstance().shutdown();
 }

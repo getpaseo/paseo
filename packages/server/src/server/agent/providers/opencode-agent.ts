@@ -62,6 +62,7 @@ async function findAvailablePort(): Promise<number> {
 
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
+  private static exitHandlerRegistered = false;
   private server: ChildProcess | null = null;
   private port: number | null = null;
   private startPromise: Promise<{ port: number; url: string }> | null = null;
@@ -69,8 +70,27 @@ export class OpenCodeServerManager {
   static getInstance(): OpenCodeServerManager {
     if (!OpenCodeServerManager.instance) {
       OpenCodeServerManager.instance = new OpenCodeServerManager();
+      OpenCodeServerManager.registerExitHandler();
     }
     return OpenCodeServerManager.instance;
+  }
+
+  private static registerExitHandler(): void {
+    if (OpenCodeServerManager.exitHandlerRegistered) {
+      return;
+    }
+    OpenCodeServerManager.exitHandlerRegistered = true;
+
+    const cleanup = () => {
+      const instance = OpenCodeServerManager.instance;
+      if (instance?.server && !instance.server.killed) {
+        instance.server.kill("SIGTERM");
+      }
+    };
+
+    process.on("exit", cleanup);
+    process.on("SIGTERM", cleanup);
+    process.on("SIGINT", cleanup);
   }
 
   async ensureRunning(): Promise<{ port: number; url: string }> {

@@ -47,7 +47,7 @@ import { AgentRegistry } from "./agent/agent-registry.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import { createAllClients } from "./agent/provider-registry.js";
+import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import type {
   AgentClient,
   AgentControlMcpConfig,
@@ -444,6 +444,7 @@ export async function createPaseoDaemon(
 
   const stop = async () => {
     await closeAllAgents(agentManager);
+    await shutdownProviders();
     await wsServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());

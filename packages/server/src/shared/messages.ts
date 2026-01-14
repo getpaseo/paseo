@@ -461,6 +461,7 @@ const ParsedDiffFileSchema = z.object({
   additions: z.number(),
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
+  status: z.enum(["ok", "too_large", "binary"]).optional(),
 });
 
 export const HighlightedDiffRequestSchema = z.object({
