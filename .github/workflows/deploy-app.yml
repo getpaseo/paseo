@@ -20,9 +20,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@boudra'
 
       - name: Install dependencies
         run: npm install --workspace=@paseo/app --include-workspace-root
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 
       - name: Typecheck
         run: npm run typecheck --workspace=@paseo/app
