@@ -56,8 +56,8 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
   const queueRef = useRef<QueuedAudio[]>([]);
   const suppressedQueueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
-  const playbackTimeoutRef = useRef<number | null>(null);
-  const checkIntervalRef = useRef<number | null>(null);
+  const playbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function play(audioData: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
