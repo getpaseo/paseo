@@ -72,7 +72,10 @@ async function collectTurnEvents(
   return result;
 }
 
-describe("OpenCodeAgentClient", () => {
+// Skip integration tests in CI - requires real OpenCode server
+const shouldSkip = process.env.CI === "true";
+
+describe.skipIf(shouldSkip)("OpenCodeAgentClient", () => {
   const buildConfig = (cwd: string): AgentSessionConfig => ({
     provider: "opencode",
     cwd,
