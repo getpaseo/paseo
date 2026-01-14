@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: npm install --workspace=@paseo/app --include-workspace-root
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Typecheck
         run: npm run typecheck --workspace=@paseo/app
