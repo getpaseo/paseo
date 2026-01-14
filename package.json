@@ -5,11 +5,13 @@
   "workspaces": [
     "packages/server",
     "packages/app",
-    "packages/relay"
+    "packages/relay",
+    "packages/website"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=@paseo/server",
     "dev:app": "npm run start --workspace=@paseo/app",
+    "dev:website": "npm run dev --workspace=@paseo/website",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
