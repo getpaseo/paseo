@@ -22,12 +22,13 @@ export default defineConfig({
         maxForks: 4,
       },
     },
-    // Skip e2e and integration tests in CI - they require real agent binaries
+    // Skip e2e and integration tests in CI - they require real agent binaries or cross-package imports
     exclude: isCI
       ? [
           "**/*.e2e.test.ts",
           "**/opencode-agent.test.ts",
           "**/codex-mcp-agent.test.ts",
+          "**/claude-agent.test.ts",
           "**/claude-agent-commands.test.ts",
           "**/worktree.test.ts",
           "**/terminal-manager.test.ts",
