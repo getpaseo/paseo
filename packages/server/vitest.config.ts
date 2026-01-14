@@ -24,7 +24,15 @@ export default defineConfig({
     },
     // Skip e2e and integration tests in CI - they require real agent binaries
     exclude: isCI
-      ? ["**/*.e2e.test.ts", "**/opencode-agent.test.ts", "**/node_modules/**"]
+      ? [
+          "**/*.e2e.test.ts",
+          "**/opencode-agent.test.ts",
+          "**/codex-mcp-agent.test.ts",
+          "**/claude-agent-commands.test.ts",
+          "**/worktree.test.ts",
+          "**/terminal-manager.test.ts",
+          "**/node_modules/**",
+        ]
       : ["**/node_modules/**"],
   },
 });
