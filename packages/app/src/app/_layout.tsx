@@ -1,3 +1,4 @@
+import "@/styles/unistyles";
 import { Stack, usePathname } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -5,6 +6,7 @@ import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-g
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { View, ActivityIndicator, Text } from "react-native";
 import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { darkTheme } from "@/styles/theme";
@@ -194,6 +196,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
 
 function AppWithSidebar({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  useFaviconStatus();
 
   // Parse selectedAgentKey directly from pathname
   // useLocalSearchParams doesn't update when navigating between same-pattern routes
