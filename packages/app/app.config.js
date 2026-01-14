@@ -47,7 +47,7 @@ export default {
       package: "com.moboudra.paseo",
     },
     web: {
-      output: "static",
+      output: "single",
       favicon: "./assets/images/favicon.png",
     },
     plugins: [
@@ -62,6 +62,13 @@ export default {
           dark: {
             backgroundColor: "#000000",
           },
+        },
+      ],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/images/notification-icon.png",
+          color: "#20744A",
         },
       ],
       "expo-audio",

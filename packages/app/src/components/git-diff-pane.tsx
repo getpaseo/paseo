@@ -292,7 +292,13 @@ const DiffFileSection = memo(function DiffFileSection({
           <Text style={styles.deletions}>-{file.deletions}</Text>
         </View>
       </Pressable>
-      {isExpanded && (
+      {isExpanded && (file.status === "too_large" || file.status === "binary") ? (
+        <View style={styles.statusMessageContainer}>
+          <Text style={styles.statusMessageText}>
+            {file.status === "binary" ? "Binary file" : "Diff too large to display"}
+          </Text>
+        </View>
+      ) : isExpanded ? (
         <ScrollView
           ref={scrollViewRef}
           horizontal
@@ -318,7 +324,7 @@ const DiffFileSection = memo(function DiffFileSection({
             )}
           </View>
         </ScrollView>
-      )}
+      ) : null}
     </View>
   );
 });
@@ -628,5 +634,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   contextLineText: {
     color: theme.colors.foregroundMuted,
+  },
+  statusMessageContainer: {
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
+  },
+  statusMessageText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    fontStyle: "italic",
   },
 }));

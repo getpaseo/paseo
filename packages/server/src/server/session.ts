@@ -20,7 +20,7 @@ import {
   type FileDownloadTokenRequest,
   type GitSetupOptions,
 } from "./messages.js";
-import { parseAndHighlightDiff } from "./utils/diff-highlighter.js";
+import { parseAndHighlightDiff, type ParsedDiffFile } from "./utils/diff-highlighter.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
@@ -2102,6 +2102,9 @@ export class Session {
       `[Session ${this.clientId}] Handling highlighted diff request for agent ${agentId}`
     );
 
+    // Maximum lines changed before we skip showing the diff content
+    const MAX_DIFF_LINES = 5000;
+
     try {
       const agents = this.agentManager.listAgents();
       const agent = agents.find((a) => a.id === agentId);
@@ -2119,57 +2122,161 @@ export class Session {
         return;
       }
 
-      // Get diff for tracked files
-      const { stdout: trackedDiff } = await execAsync("git diff HEAD", {
-        cwd: agent.cwd,
-      });
+      // Step 1: Get the list of changed files with their stats (numstat gives additions/deletions per file)
+      const { stdout: numstatOutput } = await execAsync(
+        "git diff --numstat HEAD",
+        { cwd: agent.cwd }
+      );
 
-      // Get diff for untracked files (new files not yet added to git)
-      let untrackedDiff = "";
+      // Parse numstat output: "additions\tdeletions\tfilepath" or "-\t-\tfilepath" for binary
+      interface FileStats {
+        path: string;
+        additions: number;
+        deletions: number;
+        isBinary: boolean;
+        isTracked: boolean;
+      }
+      const fileStats: FileStats[] = [];
+
+      for (const line of numstatOutput.trim().split("\n").filter(Boolean)) {
+        const parts = line.split("\t");
+        if (parts.length >= 3) {
+          const [addStr, delStr, ...pathParts] = parts;
+          const path = pathParts.join("\t"); // Handle paths with tabs
+          const isBinary = addStr === "-" && delStr === "-";
+          fileStats.push({
+            path,
+            additions: isBinary ? 0 : parseInt(addStr, 10),
+            deletions: isBinary ? 0 : parseInt(delStr, 10),
+            isBinary,
+            isTracked: true,
+          });
+        }
+      }
+
+      // Step 2: Get untracked files
       try {
         const { stdout: untrackedFiles } = await execAsync(
           "git ls-files --others --exclude-standard",
           { cwd: agent.cwd }
         );
-        const newFiles = untrackedFiles.trim().split("\n").filter(Boolean);
-
-        for (const file of newFiles) {
+        for (const filePath of untrackedFiles.trim().split("\n").filter(Boolean)) {
+          // Use git's numstat with --no-index to detect binary files (cross-platform)
+          // Binary files show as "-\t-\tfilepath", text files show line counts
           try {
-            const { stdout: fileDiff } = await execAsync(
-              `git diff --no-index /dev/null "${file}" || true`,
+            const { stdout: numstatLine } = await execAsync(
+              `git diff --numstat --no-index /dev/null "${filePath}" || true`,
               { cwd: agent.cwd }
             );
-            if (fileDiff) {
-              untrackedDiff += fileDiff;
-            }
+            const parts = numstatLine.trim().split("\t");
+            const isBinary = parts[0] === "-" && parts[1] === "-";
+            const additions = isBinary ? 0 : (parseInt(parts[0], 10) || 0);
+
+            fileStats.push({
+              path: filePath,
+              additions,
+              deletions: 0,
+              isBinary,
+              isTracked: false,
+            });
           } catch {
-            // Ignore errors for individual files
+            // If we can't determine, assume text and try to get it
+            fileStats.push({
+              path: filePath,
+              additions: 0,
+              deletions: 0,
+              isBinary: false,
+              isTracked: false,
+            });
           }
         }
       } catch {
         // Ignore errors getting untracked files
       }
 
-      const combinedDiff = trackedDiff + untrackedDiff;
+      // Step 3: Fetch diffs per-file, respecting limits
+      const allFiles: ParsedDiffFile[] = [];
 
-      // Parse and highlight the diff
-      const highlightedFiles = await parseAndHighlightDiff(
-        combinedDiff,
-        agent.cwd
-      );
+      for (const stats of fileStats) {
+        const totalLines = stats.additions + stats.deletions;
+
+        // Handle binary files
+        if (stats.isBinary) {
+          allFiles.push({
+            path: stats.path,
+            isNew: !stats.isTracked,
+            isDeleted: false,
+            additions: 0,
+            deletions: 0,
+            hunks: [],
+            status: "binary",
+          });
+          continue;
+        }
+
+        // Handle files that are too large
+        if (totalLines > MAX_DIFF_LINES) {
+          allFiles.push({
+            path: stats.path,
+            isNew: !stats.isTracked,
+            isDeleted: false,
+            additions: stats.additions,
+            deletions: stats.deletions,
+            hunks: [],
+            status: "too_large",
+          });
+          continue;
+        }
+
+        // Fetch the actual diff for this file
+        try {
+          let fileDiff: string;
+          if (stats.isTracked) {
+            const { stdout } = await execAsync(
+              `git diff HEAD -- "${stats.path}"`,
+              { cwd: agent.cwd }
+            );
+            fileDiff = stdout;
+          } else {
+            const { stdout } = await execAsync(
+              `git diff --no-index /dev/null "${stats.path}" || true`,
+              { cwd: agent.cwd }
+            );
+            fileDiff = stdout;
+          }
+
+          if (fileDiff) {
+            const parsedFiles = await parseAndHighlightDiff(fileDiff, agent.cwd);
+            for (const file of parsedFiles) {
+              allFiles.push({ ...file, status: "ok" });
+            }
+          }
+        } catch {
+          // If diff fails for this file, add it with empty hunks
+          allFiles.push({
+            path: stats.path,
+            isNew: !stats.isTracked,
+            isDeleted: false,
+            additions: stats.additions,
+            deletions: stats.deletions,
+            hunks: [],
+            status: "ok",
+          });
+        }
+      }
 
       this.emit({
         type: "highlighted_diff_response",
         payload: {
           agentId,
-          files: highlightedFiles,
+          files: allFiles,
           error: null,
           requestId,
         },
       });
 
       console.log(
-        `[Session ${this.clientId}] Highlighted diff for agent ${agentId} completed (${highlightedFiles.length} files)`
+        `[Session ${this.clientId}] Highlighted diff for agent ${agentId} completed (${allFiles.length} files)`
       );
     } catch (error: any) {
       console.error(

@@ -94,7 +94,7 @@ export function AgentList({
       const isRunning = agent.status === "running";
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
-      const statusColor = isRunning ? theme.colors.accent : agent.requiresAttention ? theme.colors.success : null;
+      const statusColor = isRunning ? theme.colors.palette.blue[500] : agent.requiresAttention ? theme.colors.success : null;
 
       return (
         <Pressable

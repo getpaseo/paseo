@@ -27,6 +27,7 @@ export interface ParsedDiffFile {
   additions: number;
   deletions: number;
   hunks: DiffHunk[];
+  status?: "ok" | "too_large" | "binary";
 }
 
 /**

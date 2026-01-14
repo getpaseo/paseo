@@ -4,15 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Voice-controlled terminal assistant using OpenAI's Realtime API (via Whisper STT, GPT-4, and TTS). Backend server with Expo app for all platforms (iOS, Android, and Web).
+Paseo is a mobile app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket.
+
+**Key features:**
+- Real-time streaming of agent output
+- Voice commands for hands-free interaction
+- Push notifications when tasks complete
+- Multi-agent orchestration across projects
+
+**Not a cloud sandbox** - Paseo connects directly to your actual development environment. Your code stays on your machine.
+
+**Supported agents:** Claude Code, Codex, and OpenCode.
 
 ## Monorepo Structure
 
 This is an npm workspace monorepo:
 
-- **Root**: Workspace configuration and shared TypeScript config
-- **packages/server**: Backend server (Express + WebSocket API)
-- **packages/app**: Cross-platform app (Expo - iOS, Android, Web)
+- **packages/server**: The Paseo daemon that runs on your machine. Manages agent processes, provides WebSocket API for real-time streaming, and exposes an MCP server for agent control.
+- **packages/app**: Cross-platform client (Expo). Connects to one or more servers, displays agent output, handles voice input, and sends push notifications.
+- **packages/website**: Marketing site at paseo.dev (TanStack Router + Cloudflare Workers).
 
 ## Environment overrides
 
