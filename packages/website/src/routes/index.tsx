@@ -24,7 +24,7 @@ function Home() {
         className="relative min-h-[80vh] bg-cover bg-center bg-no-repeat overflow-hidden"
         style={{ backgroundImage: 'url(/hero-bg.jpg)' }}
       >
-        <div className="absolute inset-0 bg-background/70" />
+        <div className="absolute inset-0 bg-background/80" />
         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black to-transparent" />
 
         {/* Left side butterflies - facing right */}
@@ -127,8 +127,8 @@ function Hero() {
         in your pocket
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
-        Step away from your desk. Go for a walk. The best ideas come when
-        you're not staring at a screen. Now you can act on them.
+        The best ideas come when you're away from your desk. Paseo lets you
+        talk to your coding agents from anywhere.
       </p>
     </div>
   )
@@ -149,22 +149,33 @@ function Differentiator({
   )
 }
 
+function HowItWorks() {
+  return (
+    <div className="space-y-6">
+      <p className="text-white/60 leading-relaxed">
+        Paseo connects to your actual development environment. Leverage your
+        existing setup without moving your code to the cloud.
+      </p>
+    </div>
+  )
+}
+
 function Features() {
   return (
     <div className="pt-12 space-y-6">
       <h2 className="text-2xl font-medium font-serif">What you get</h2>
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <Feature
-          title="Real-time streaming"
-          description="Watch your terminal output live as agents work."
+          title="First-class voice"
+          description="Dictation for prompts. Real-time voice to talk to agents hands-free."
         />
         <Feature
-          title="Voice commands"
-          description="Talk to your agents. Dictate prompts hands-free."
+          title="Multi-host"
+          description="Manage agents across multiple servers, like your laptop and a cloud VM."
         />
         <Feature
-          title="Push notifications"
-          description="Get notified when tasks complete."
+          title="Full dev tools"
+          description="Browse files, view syntax-highlighted git diffs, run terminals."
         />
         <Feature
           title="Agent-first"
@@ -212,34 +223,6 @@ function GetStarted() {
       <p className="text-sm text-white/70 pt-2">
         Free and open source. Works on iOS, Android, and web.
       </p>
-    </div>
-  )
-}
-
-function HowItWorks() {
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-medium font-serif">
-        Not another cloud sandbox
-      </h2>
-      <p className="text-white/60 leading-relaxed">
-        Paseo connects to your actual development environment. Leverage your
-        existing setup without moving your code to the cloud.
-      </p>
-      <div className="grid gap-4 pt-2">
-        <Differentiator
-          title="Your local machine"
-          description="Real files, real terminal, real tools. Not an ephemeral sandbox."
-        />
-        <Differentiator
-          title="Your existing agents"
-          description="Works with Claude Code, Codex, and OpenCode."
-        />
-        <Differentiator
-          title="Your freedom"
-          description="Go for a walk. Dictate ideas on the move. Let thoughts breathe."
-        />
-      </div>
     </div>
   )
 }
@@ -294,9 +277,8 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What's the business model?">
           There isn't one. The app and server are free and open source, and
-          that's not changing. I built this for myself and I'm happy to share
-          it. If an obvious opportunity comes up I'll consider it, but it's not
-          the goal.
+          that's not changing. I built this for myself. If I find a way to
+          sustain it that benefits everyone, I'll consider it.
         </FAQItem>
         <FAQItem question="Why did you build this?">
           <p>
@@ -315,9 +297,10 @@ function FAQ() {
             meant starting over constantly.
           </p>
           <p>
-            Anthropic and OpenAI now have mobile apps, but they force you into
-            cloud sandboxes where you lose your whole setup. Other apps exist
-            but I wasn't happy with their UX, security, or business model.
+            Anthropic and OpenAI added coding agents to their mobile apps, but
+            they force you into cloud sandboxes where you lose your whole setup.
+            Other apps exist but I wasn't happy with their UX, security, or
+            business model.
           </p>
           <p>
             So I built my own. It became good enough that it felt obvious it
@@ -325,18 +308,10 @@ function FAQ() {
           </p>
         </FAQItem>
         <FAQItem question="Isn't this just more screen time?">
-          <p>
-            The opposite. I built this to spend less time at my desk, not more.
-            Ideas fade. By the time you're back at your desk, the spark is gone.
-            And sometimes you just want to check on a running task or unblock it
-            with a quick reply, without cutting your walk short.
-          </p>
-          <p>
-            My quality of life has improved. I get more done than ever, but I'm
-            also more present when I'm not working. This isn't about being
-            available 24/7. It's about not being chained to a desk when
-            inspiration strikes.
-          </p>
+          I won't pretend this can't be misused. But for me it means less time
+          at my desk, not more. I brainstorm whole features with voice. I kick
+          off work at my desk, then check in from my phone during a walk. I see
+          what an agent needs, send a voice reply, and put my phone away.
         </FAQItem>
       </div>
     </div>
@@ -351,10 +326,18 @@ function FAQItem({
   children: React.ReactNode
 }) {
   return (
-    <div className="space-y-2">
-      <p className="font-medium text-sm">{question}</p>
-      <div className="text-sm text-white/60 space-y-2">{children}</div>
-    </div>
+    <details className="group">
+      <summary className="font-medium text-sm cursor-pointer list-none flex items-start gap-2">
+        <span className="font-mono text-white/40 group-open:hidden">+</span>
+        <span className="font-mono text-white/40 hidden group-open:inline">
+          -
+        </span>
+        {question}
+      </summary>
+      <div className="text-sm text-white/60 space-y-2 mt-2 ml-4">
+        {children}
+      </div>
+    </details>
   )
 }
 
