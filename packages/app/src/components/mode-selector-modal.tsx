@@ -75,7 +75,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
   },
   modeSelectorContent: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[4],
     minWidth: 280,
@@ -85,7 +85,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   modeItemActive: {
     backgroundColor: theme.colors.primary,
@@ -100,7 +100,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.primaryForeground,
   },
   modeDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   modeDescriptionActive: {

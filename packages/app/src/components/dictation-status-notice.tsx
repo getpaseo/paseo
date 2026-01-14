@@ -48,12 +48,12 @@ export function DictationStatusNotice({
       case "error":
         return theme.colors.palette.red[500];
       default:
-        return theme.colors.background;
+        return theme.colors.surface0;
     }
   })();
 
   const foregroundColor = variant === "info" ? theme.colors.foreground : theme.colors.palette.white;
-  const secondaryColor = variant === "info" ? theme.colors.mutedForeground : theme.colors.palette.white;
+  const secondaryColor = variant === "info" ? theme.colors.foregroundMuted : theme.colors.palette.white;
 
   return (
     <View

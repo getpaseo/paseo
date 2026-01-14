@@ -1,11 +1,41 @@
-import express, { type Express } from "express";
+import express from "express";
 import basicAuth from "express-basic-auth";
-import { createServer as createHTTPServer, type Server as HTTPServer } from "http";
-import { createReadStream } from "fs";
+import { createServer as createHTTPServer } from "http";
+import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+
+type ListenTarget =
+  | { type: "tcp"; host: string; port: number }
+  | { type: "socket"; path: string };
+
+function parseListenString(listen: string): ListenTarget {
+  // Unix socket: starts with / or ~ or contains .sock
+  if (listen.startsWith("/") || listen.startsWith("~") || listen.includes(".sock")) {
+    return { type: "socket", path: listen };
+  }
+  // Explicit unix:// prefix
+  if (listen.startsWith("unix://")) {
+    return { type: "socket", path: listen.slice(7) };
+  }
+  // TCP: host:port or just port
+  if (listen.includes(":")) {
+    const [host, portStr] = listen.split(":");
+    const port = parseInt(portStr, 10);
+    if (!Number.isFinite(port)) {
+      throw new Error(`Invalid port in listen string: ${listen}`);
+    }
+    return { type: "tcp", host: host || "127.0.0.1", port };
+  }
+  // Just a port number
+  const port = parseInt(listen, 10);
+  if (Number.isFinite(port)) {
+    return { type: "tcp", host: "127.0.0.1", port };
+  }
+  throw new Error(`Invalid listen string: ${listen}`);
+}
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -40,8 +70,9 @@ export type PaseoOpenAIConfig = {
 };
 
 export type PaseoDaemonConfig = {
-  port: number;
+  listen: string;
   paseoHome: string;
+  corsAllowedOrigins: string[];
   agentMcpRoute: string;
   agentMcpAllowedHosts: string[];
   auth: PaseoAuthConfig;
@@ -54,18 +85,17 @@ export type PaseoDaemonConfig = {
   downloadTokenTtlMs?: number;
 };
 
-export type PaseoDaemonHandles = {
-  httpServer: HTTPServer;
-  app: Express;
-  wsServer: VoiceAssistantWebSocketServer;
+export interface PaseoDaemon {
+  config: PaseoDaemonConfig;
   agentManager: AgentManager;
   agentRegistry: AgentRegistry;
-  close: () => Promise<void>;
-};
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
 
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig
-): Promise<PaseoDaemonHandles> {
+): Promise<PaseoDaemon> {
   const agentMcpRoute = config.agentMcpRoute;
   const basicAuthUsers = config.auth.basicUsers;
   const staticDir = config.staticDir;
@@ -76,7 +106,37 @@ export async function createPaseoDaemon(
 
   const downloadTokenStore = new DownloadTokenStore({ ttlMs: downloadTokenTtlMs });
 
+  const listenTarget = parseListenString(config.listen);
+
   const app = express();
+
+  // CORS - allow same-origin + configured origins
+  const allowedOrigins = new Set([
+    ...config.corsAllowedOrigins,
+    // For TCP, add localhost variants
+    ...(listenTarget.type === "tcp"
+      ? [
+          `http://${listenTarget.host}:${listenTarget.port}`,
+          `http://localhost:${listenTarget.port}`,
+          `http://127.0.0.1:${listenTarget.port}`,
+        ]
+      : []),
+  ]);
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   // Serve static files from public directory (no auth required for APK downloads)
   app.use("/public", express.static(staticDir));
@@ -314,7 +374,8 @@ export async function createPaseoDaemon(
     {
       agentMcpUrl: config.agentControlMcp.url,
       agentMcpHeaders: config.agentControlMcp.headers,
-    }
+    },
+    { allowedOrigins }
   );
 
   const openaiApiKey = config.openai?.apiKey;
@@ -349,21 +410,56 @@ export async function createPaseoDaemon(
     );
   }
 
-  const close = async () => {
+  const start = async () => {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => {
+        httpServer.off("listening", onListening);
+        reject(err);
+      };
+      const onListening = () => {
+        httpServer.off("error", onError);
+        if (listenTarget.type === "tcp") {
+          console.log(
+            `✓ Server listening on http://${listenTarget.host}:${listenTarget.port}`
+          );
+        } else {
+          console.log(`✓ Server listening on ${listenTarget.path}`);
+        }
+        resolve();
+      };
+      httpServer.once("error", onError);
+      httpServer.once("listening", onListening);
+
+      if (listenTarget.type === "tcp") {
+        httpServer.listen(listenTarget.port, listenTarget.host);
+      } else {
+        // Remove stale socket file if it exists
+        if (existsSync(listenTarget.path)) {
+          unlinkSync(listenTarget.path);
+        }
+        httpServer.listen(listenTarget.path);
+      }
+    });
+  };
+
+  const stop = async () => {
     await closeAllAgents(agentManager);
     await wsServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
+    // Clean up socket file
+    if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+      unlinkSync(listenTarget.path);
+    }
   };
 
   return {
-    httpServer,
-    app,
-    wsServer,
+    config,
     agentManager,
     agentRegistry,
-    close,
+    start,
+    stop,
   };
 }
 

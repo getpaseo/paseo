@@ -11,7 +11,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.white,
   },
   scrollViewDark: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   container: {
     padding: theme.spacing[6],
@@ -31,7 +31,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[8],
   },
   subtitleDark: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   section: {
     marginBottom: theme.spacing[8],
@@ -83,7 +83,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   statusCardDark: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   statusLabel: {
     fontSize: theme.fontSize.sm,
@@ -92,7 +92,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   statusLabelDark: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   statusValue: {
     fontSize: theme.fontSize.base,
@@ -146,7 +146,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.gray[300],
   },
   buttonDisabledDark: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   buttonText: {
     fontSize: theme.fontSize.base,
@@ -157,7 +157,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.palette.gray[500],
   },
   buttonTextDisabledDark: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   fullWidthButton: {
     padding: theme.spacing[4],
@@ -202,7 +202,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
   },
   configCardDark: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   configTitle: {
     fontSize: theme.fontSize.sm,
@@ -211,7 +211,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   configTitleDark: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   configText: {
     fontSize: theme.fontSize.sm,
@@ -219,7 +219,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   configTextDark: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   gap3: {
     gap: theme.spacing[3],

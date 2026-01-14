@@ -91,7 +91,7 @@ export function createMarkdownStyles(theme: Theme) {
     heading6: {
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.semibold,
-      color: theme.colors.mutedForeground,
+      color: theme.colors.foregroundMuted,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
       lineHeight: 20,
@@ -104,7 +104,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     strong: {
-      fontWeight: theme.fontWeight.bold,
+      fontWeight: theme.fontWeight.medium,
     },
 
     em: {
@@ -113,7 +113,7 @@ export function createMarkdownStyles(theme: Theme) {
 
     s: {
       textDecorationLine: "line-through" as const,
-      color: theme.colors.mutedForeground,
+      color: theme.colors.foregroundMuted,
     },
 
     link: {
@@ -131,8 +131,8 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     code_inline: {
-      backgroundColor: theme.colors.secondary,
-      color: theme.colors.secondaryForeground,
+      backgroundColor: theme.colors.surface2,
+      color: theme.colors.foreground,
       paddingHorizontal: theme.spacing[1],
       paddingVertical: 2,
       borderRadius: theme.borderRadius.sm,
@@ -141,8 +141,8 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     code_block: {
-      backgroundColor: theme.colors.secondary,
-      color: theme.colors.secondaryForeground,
+      backgroundColor: theme.colors.surface2,
+      color: theme.colors.foreground,
       padding: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
       fontFamily: Fonts.mono,
@@ -151,8 +151,8 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     fence: {
-      backgroundColor: theme.colors.secondary,
-      color: theme.colors.secondaryForeground,
+      backgroundColor: theme.colors.surface2,
+      color: theme.colors.foreground,
       padding: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
       borderWidth: 1,
@@ -178,7 +178,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     thead: {
-      backgroundColor: theme.colors.secondary,
+      backgroundColor: theme.colors.surface2,
     },
 
     tbody: {},
@@ -188,7 +188,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderBottomWidth: 1,
       borderRightWidth: 1,
       borderColor: theme.colors.border,
-      backgroundColor: theme.colors.secondary,
+      backgroundColor: theme.colors.surface2,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
       fontSize: theme.fontSize.sm,
@@ -244,14 +244,14 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     bullet_list_icon: {
-      color: theme.colors.mutedForeground,
+      color: theme.colors.foregroundMuted,
       marginRight: 4,
       fontSize: theme.fontSize.base,
       lineHeight: 22,
     },
 
     ordered_list_icon: {
-      color: theme.colors.mutedForeground,
+      color: theme.colors.foregroundMuted,
       marginRight: 4,
       fontSize: theme.fontSize.base,
       fontWeight: theme.fontWeight.semibold,
@@ -264,7 +264,7 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     blockquote: {
-      backgroundColor: theme.colors.muted,
+      backgroundColor: theme.colors.surface2,
       borderLeftWidth: 4,
       borderLeftColor: theme.colors.primary,
       paddingHorizontal: theme.spacing[4],

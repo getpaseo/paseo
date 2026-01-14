@@ -59,8 +59,9 @@ export async function createTestPaseoDaemon(
     const port = await getAvailablePort();
 
     const config: PaseoDaemonConfig = {
-      port,
+      listen: `127.0.0.1:${port}`,
       paseoHome,
+      corsAllowedOrigins: [],
       agentMcpRoute: "/mcp/agents",
       agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
       auth: {
@@ -85,11 +86,10 @@ export async function createTestPaseoDaemon(
 
     const daemon = await createPaseoDaemon(config);
     try {
-      await listenOnPort(daemon.httpServer, port);
+      await daemon.start();
 
       const close = async (): Promise<void> => {
-        await daemon.close().catch(() => undefined);
-        // Wait a bit for file handles to release
+        await daemon.stop().catch(() => undefined);
         await new Promise((r) => setTimeout(r, 200));
         await rm(paseoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -107,7 +107,7 @@ export async function createTestPaseoDaemon(
       };
     } catch (error) {
       lastError = error;
-      await daemon.close().catch(() => undefined);
+      await daemon.stop().catch(() => undefined);
       await rm(paseoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 
@@ -118,30 +118,6 @@ export async function createTestPaseoDaemon(
   }
 
   throw lastError ?? new Error("Failed to start test daemon");
-}
-
-async function listenOnPort(server: net.Server, port: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.off("listening", onListening);
-      reject(error);
-    };
-    const onListening = () => {
-      server.off("error", onError);
-      resolve();
-    };
-
-    server.once("error", onError);
-    server.once("listening", onListening);
-
-    try {
-      server.listen(port);
-    } catch (error) {
-      server.off("error", onError);
-      server.off("listening", onListening);
-      reject(error instanceof Error ? error : new Error("Failed to listen"));
-    }
-  });
 }
 
 function isAddressInUseError(error: unknown): boolean {

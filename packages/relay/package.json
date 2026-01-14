@@ -1,0 +1,26 @@
+{
+  "name": "@paseo/relay",
+  "version": "0.1.0",
+  "description": "Paseo relay for bridging daemon and client connections",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node-adapter.ts",
+    "./cloudflare": "./src/cloudflare-adapter.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "@types/node": "^20.9.0",
+    "@types/ws": "^8.5.8",
+    "typescript": "^5.2.2",
+    "vitest": "^3.2.4"
+  }
+}

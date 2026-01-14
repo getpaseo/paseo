@@ -538,7 +538,7 @@ export default function HomeScreen() {
                 style={styles.hostBadge}
                 onPress={() => openDropdownSheet("host")}
               >
-                <Monitor size={14} color={theme.colors.mutedForeground} />
+                <Monitor size={14} color={theme.colors.foregroundMuted} />
                 <Text style={styles.hostBadgeLabel}>{hostLabel}</Text>
                 <View
                   style={[
@@ -671,7 +671,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   agentPanel: {
     flex: 1,
@@ -684,7 +684,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   inputAreaWrapper: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   configScrollContent: {
     flexGrow: 1,
@@ -701,7 +701,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   dropdownHelper: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   dropdownSheetList: {
     marginTop: theme.spacing[3],
@@ -712,7 +712,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     marginBottom: theme.spacing[2],
   },
   dropdownSheetOptionSelected: {
@@ -724,7 +724,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   dropdownSheetOptionDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
@@ -757,11 +757,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.full,
   },
   hostBadgeLabel: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
@@ -769,7 +769,7 @@ const styles = StyleSheet.create((theme) => ({
     width: 6,
     height: 6,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.mutedForeground,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   hostStatusDotOnline: {
     backgroundColor: theme.colors.palette.green[500],

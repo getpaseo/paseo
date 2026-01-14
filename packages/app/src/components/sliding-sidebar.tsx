@@ -226,7 +226,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                   style={styles.settingsButton}
                   onPress={handleSettingsMobile}
                 >
-                  <Settings size={20} color={theme.colors.mutedForeground} />
+                  <Settings size={20} color={theme.colors.foregroundMuted} />
                   <Text style={styles.settingsButtonText}>Settings</Text>
                 </Pressable>
               </View>
@@ -273,7 +273,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           style={styles.settingsButton}
           onPress={handleSettingsDesktop}
         >
-          <Settings size={20} color={theme.colors.mutedForeground} />
+          <Settings size={20} color={theme.colors.foregroundMuted} />
           <Text style={styles.settingsButtonText}>Settings</Text>
         </Pressable>
       </View>
@@ -294,7 +294,7 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     left: 0,
     bottom: 0,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     overflow: "hidden",
   },
   sidebarContent: {
@@ -305,7 +305,7 @@ const styles = StyleSheet.create((theme) => ({
   desktopSidebar: {
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   sidebarHeader: {
     paddingHorizontal: theme.spacing[4],
@@ -326,7 +326,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   newAgentButtonHovered: {
     borderColor: theme.colors.palette.zinc[500],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
@@ -361,6 +361,6 @@ const styles = StyleSheet.create((theme) => ({
   settingsButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
 }));

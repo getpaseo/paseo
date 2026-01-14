@@ -108,22 +108,22 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   headerLine: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   headerText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   addLine: {
     backgroundColor: "rgba(46, 160, 67, 0.15)",
   },
   addText: {
-    color: theme.colors.foreground,
+    color: theme.colors.palette.green[800],
   },
   removeLine: {
     backgroundColor: "rgba(248, 81, 73, 0.1)",
   },
   removeText: {
-    color: theme.colors.foreground,
+    color: theme.colors.palette.red[800],
   },
   addHighlight: {
     backgroundColor: "rgba(46, 160, 67, 0.4)",
@@ -132,10 +132,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(248, 81, 73, 0.35)",
   },
   contextLine: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   contextText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   emptyState: {
     padding: theme.spacing[4],
@@ -144,6 +144,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
 }));

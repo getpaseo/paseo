@@ -357,7 +357,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   sectionTitle: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     textTransform: "uppercase",
@@ -370,7 +370,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   fileBadgeText: {
     color: theme.colors.foreground,
@@ -378,7 +378,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   rangeText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   diffContainer: {
@@ -386,13 +386,13 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.base,
     overflow: "hidden",
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   scrollArea: {
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.base,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   scrollContent: {
     padding: theme.spacing[2],
@@ -407,7 +407,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.base,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   jsonScrollError: {
     borderColor: theme.colors.destructive,
@@ -419,7 +419,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
   },
   emptyStateText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontStyle: "italic",
   },

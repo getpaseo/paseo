@@ -46,7 +46,7 @@ function getModeColor(modeId?: string): string {
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
@@ -57,7 +57,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
   },
   backButton: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
@@ -87,7 +87,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.primary,
   },
   processItemInactive: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   agentIcon: {
     width: 12,

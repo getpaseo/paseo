@@ -100,16 +100,16 @@ export function AudioDebugNotice({ info, onDismiss, title = "Dictation Debug" }:
       style={[
         styles.container,
         {
-          backgroundColor: theme.colors.secondary,
+          backgroundColor: theme.colors.surface2,
           borderColor: theme.colors.border,
         },
       ]}
     >
       <View style={styles.headerRow}>
-        <Text style={[styles.title, { color: theme.colors.mutedForeground }]}>{title}</Text>
+        <Text style={[styles.title, { color: theme.colors.foregroundMuted }]}>{title}</Text>
         {onDismiss ? (
           <Pressable accessibilityLabel="Dismiss audio debug" onPress={onDismiss} hitSlop={8}>
-            <X size={14} color={theme.colors.mutedForeground} />
+            <X size={14} color={theme.colors.foregroundMuted} />
           </Pressable>
         ) : null}
       </View>
@@ -131,13 +131,13 @@ export function AudioDebugNotice({ info, onDismiss, title = "Dictation Debug" }:
           </View>
         </Pressable>
       ) : (
-        <Text style={[styles.hint, { color: theme.colors.mutedForeground }]}>
+        <Text style={[styles.hint, { color: theme.colors.foregroundMuted }]}>
           Raw audio path unavailable. Set STT_DEBUG_AUDIO_DIR on the server to persist recordings.
         </Text>
       )}
 
       {stats ? (
-        <Text style={[styles.stats, { color: theme.colors.mutedForeground }]}>
+        <Text style={[styles.stats, { color: theme.colors.foregroundMuted }]}>
           {stats}
         </Text>
       ) : null}

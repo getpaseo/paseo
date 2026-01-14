@@ -94,7 +94,7 @@ export function AgentList({
       const isRunning = agent.status === "running";
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
-      const statusColor = isRunning ? "#3b82f6" : agent.requiresAttention ? "#22c55e" : null;
+      const statusColor = isRunning ? theme.colors.accent : agent.requiresAttention ? theme.colors.success : null;
 
       return (
         <Pressable
@@ -162,8 +162,8 @@ export function AgentList({
             <RefreshControl
               refreshing={isRefreshing}
               onRefresh={onRefresh}
-              tintColor={theme.colors.mutedForeground}
-              colors={[theme.colors.mutedForeground]}
+              tintColor={theme.colors.foregroundMuted}
+              colors={[theme.colors.foregroundMuted]}
             />
           ) : undefined
         }
@@ -225,19 +225,19 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[4],
   },
   agentItem: {
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing[2],
+    marginBottom: theme.spacing[1],
   },
   agentItemSelected: {
-    backgroundColor: theme.colors.palette.zinc[800],
+    backgroundColor: theme.colors.surface2,
   },
   agentItemHovered: {
-    backgroundColor: theme.colors.palette.zinc[850],
+    backgroundColor: theme.colors.surface1,
   },
   agentItemPressed: {
-    backgroundColor: theme.colors.palette.zinc[800],
+    backgroundColor: theme.colors.surface2,
   },
   agentContent: {
     flex: 1,
@@ -255,7 +255,7 @@ const styles = StyleSheet.create((theme) => ({
       xs: "400",
       md: "300",
     },
-    color: theme.colors.palette.zinc[200],
+    color: theme.colors.foregroundMuted,
   },
   agentTitleHighlighted: {
     color: theme.colors.foreground,
@@ -263,7 +263,7 @@ const styles = StyleSheet.create((theme) => ({
   secondaryRow: {
     fontSize: theme.fontSize.sm,
     fontWeight: "300",
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   statusDot: {
     width: 8,
@@ -283,7 +283,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(0,0,0,0.35)",
   },
   sheetContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderTopLeftRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius["2xl"],
     paddingHorizontal: theme.spacing[6],
@@ -296,7 +296,7 @@ const styles = StyleSheet.create((theme) => ({
     width: 40,
     height: 4,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   sheetTitle: {
     fontSize: theme.fontSize.lg,
@@ -305,7 +305,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   sheetSubtitle: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   sheetButton: {
     borderRadius: theme.borderRadius.lg,
@@ -324,7 +324,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   sheetCancelButton: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   sheetCancelText: {
     color: theme.colors.foreground,

@@ -75,7 +75,7 @@ export default function OrchestratorScreen() {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   content: {
     flex: 1,

@@ -102,7 +102,7 @@ export function DictationControls({
             accessibilityLabel="Retry dictation"
             style={[styles.actionButton, styles.actionButtonConfirm]}
           >
-            <RefreshCcw size={14} color={theme.colors.background} />
+            <RefreshCcw size={14} color={theme.colors.surface0} />
           </Pressable>
         ) : (
           <>
@@ -118,7 +118,7 @@ export function DictationControls({
               accessibilityLabel="Insert transcription and send"
               style={[styles.actionButton, styles.actionButtonConfirm]}
             >
-              <ArrowUp size={14} color={theme.colors.background} />
+              <ArrowUp size={14} color={theme.colors.surface0} />
             </Pressable>
           </>
         )}
@@ -165,7 +165,7 @@ export function DictationOverlay({
     <View
       style={[
         overlayStyles.container,
-        { backgroundColor: theme.colors.palette.blue[600] },
+        { backgroundColor: theme.colors.accent },
       ]}
     >
       <Pressable
@@ -215,7 +215,7 @@ export function DictationOverlay({
           >
             <RefreshCcw
               size={20}
-              color={theme.colors.palette.blue[600]}
+              color={theme.colors.accent}
               strokeWidth={2.5}
             />
           </Pressable>
@@ -243,7 +243,7 @@ export function DictationOverlay({
             >
               <ArrowUp
                 size={20}
-                color={theme.colors.palette.blue[600]}
+                color={theme.colors.accent}
                 strokeWidth={2.5}
               />
             </Pressable>
@@ -265,7 +265,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   activeContainer: {
     flexDirection: "row",
@@ -296,11 +296,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   actionButtonCancel: {
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   actionButtonSecondary: {
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   actionButtonConfirm: {
     borderColor: theme.colors.foreground,

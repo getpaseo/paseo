@@ -80,7 +80,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     opacity: 0.7,
   },
   overlayContent: {

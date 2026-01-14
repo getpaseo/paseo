@@ -37,41 +37,63 @@ interface HighlightedTextProps {
   lineType: "add" | "remove" | "context" | "header";
 }
 
+// GitHub syntax highlight colors for dark/light modes
+const darkHighlightColors: Record<HighlightStyle, string> = {
+  keyword: "#ff7b72",
+  comment: "#8b949e",
+  string: "#a5d6ff",
+  number: "#79c0ff",
+  literal: "#79c0ff",
+  function: "#d2a8ff",
+  definition: "#d2a8ff",
+  class: "#ffa657",
+  type: "#ff7b72",
+  tag: "#7ee787",
+  attribute: "#79c0ff",
+  property: "#79c0ff",
+  variable: "#c9d1d9",
+  operator: "#79c0ff",
+  punctuation: "#c9d1d9",
+  regexp: "#a5d6ff",
+  escape: "#79c0ff",
+  meta: "#8b949e",
+  heading: "#79c0ff",
+  link: "#a5d6ff",
+};
+
+const lightHighlightColors: Record<HighlightStyle, string> = {
+  keyword: "#cf222e",
+  comment: "#6e7781",
+  string: "#0a3069",
+  number: "#0550ae",
+  literal: "#0550ae",
+  function: "#8250df",
+  definition: "#8250df",
+  class: "#953800",
+  type: "#cf222e",
+  tag: "#116329",
+  attribute: "#0550ae",
+  property: "#0550ae",
+  variable: "#24292f",
+  operator: "#0550ae",
+  punctuation: "#24292f",
+  regexp: "#0a3069",
+  escape: "#0550ae",
+  meta: "#6e7781",
+  heading: "#0550ae",
+  link: "#0a3069",
+};
+
 function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
   const { theme } = useUnistyles();
+  const isDark = theme.colors.surface0 === "#18181c";
 
-  // Get color for a highlight style using GitHub Dark theme
-  // Text colors are the same regardless of line type - only background changes
+  // Get color for a highlight style
   const getTokenColor = (style: HighlightStyle | null): string => {
-    const baseColor = "#c9d1d9"; // GitHub foreground
-
+    const baseColor = isDark ? "#c9d1d9" : "#24292f";
     if (!style) return baseColor;
-
-    // GitHub Dark theme colors
-    const highlightColors: Record<HighlightStyle, string> = {
-      keyword: "#ff7b72", // red
-      comment: "#8b949e", // gray
-      string: "#a5d6ff", // light blue
-      number: "#79c0ff", // blue
-      literal: "#79c0ff", // blue
-      function: "#d2a8ff", // purple
-      definition: "#d2a8ff", // purple
-      class: "#ffa657", // orange
-      type: "#ff7b72", // red (same as keyword in GitHub)
-      tag: "#7ee787", // green
-      attribute: "#79c0ff", // blue
-      property: "#79c0ff", // blue
-      variable: baseColor,
-      operator: "#79c0ff", // blue
-      punctuation: "#c9d1d9", // foreground
-      regexp: "#a5d6ff", // light blue
-      escape: "#79c0ff", // blue
-      meta: "#8b949e", // gray
-      heading: "#79c0ff", // blue
-      link: "#a5d6ff", // light blue
-    };
-
-    return highlightColors[style] ?? baseColor;
+    const colors = isDark ? darkHighlightColors : lightHighlightColors;
+    return colors[style] ?? baseColor;
   };
 
   return (
@@ -253,7 +275,7 @@ const DiffFileSection = memo(function DiffFileSection({
           >
             <ChevronRight
               size={16}
-              color={theme.colors.mutedForeground}
+              color={theme.colors.foregroundMuted}
             />
           </View>
           <Text style={styles.filePath} numberOfLines={1} ellipsizeMode="middle">
@@ -470,7 +492,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   loadingText: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   errorContainer: {
     flex: 1,
@@ -492,14 +514,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     fontSize: theme.fontSize.lg,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   fileSection: {
     borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.accentBorder,
+    borderColor: theme.colors.borderAccent,
     marginBottom: theme.spacing[2],
   },
   fileHeader: {
@@ -566,13 +588,13 @@ const styles = StyleSheet.create((theme) => ({
   diffContent: {
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-    backgroundColor: "#0d1117",
+    backgroundColor: theme.colors.surface1,
   },
   diffContentInner: {
     flexDirection: "column",
   },
   linesContainer: {
-    backgroundColor: "#0d1117",
+    backgroundColor: theme.colors.surface1,
   },
   diffLineContainer: {
     paddingHorizontal: theme.spacing[3],
@@ -587,24 +609,24 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(46, 160, 67, 0.15)", // GitHub green
   },
   addLineText: {
-    color: "#c9d1d9", // Same text color as all code
+    color: theme.colors.foreground,
   },
   removeLineContainer: {
     backgroundColor: "rgba(248, 81, 73, 0.1)", // GitHub red
   },
   removeLineText: {
-    color: "#c9d1d9", // Same text color as all code
+    color: theme.colors.foreground,
   },
   headerLineContainer: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   headerLineText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   contextLineContainer: {
-    backgroundColor: "#0d1117",
+    backgroundColor: theme.colors.surface1,
   },
   contextLineText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
 }));

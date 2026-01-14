@@ -108,7 +108,7 @@ export function useCommandAutocomplete(commands: AgentSlashCommand[], filter: st
 
 const styles = StyleSheet.create(((theme: Theme) => ({
   container: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -136,12 +136,12 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     fontFamily: Fonts.mono,
   },
   commandArgs: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontFamily: Fonts.mono,
   },
   commandDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,
   },
@@ -150,7 +150,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     paddingVertical: theme.spacing[3],
   },
   loadingText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   emptyItem: {
@@ -158,7 +158,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     paddingVertical: theme.spacing[3],
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
 })) as any) as Record<string, any>;

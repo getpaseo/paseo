@@ -149,7 +149,7 @@ export default function LegacyAgentRedirectScreen() {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   content: {
     flex: 1,
@@ -170,7 +170,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   subtitle: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textAlign: "center",
   },
   primaryButton: {
@@ -194,7 +194,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   matchLabel: {
     fontSize: theme.fontSize.base,
@@ -204,6 +204,6 @@ const styles = StyleSheet.create((theme) => ({
   matchMeta: {
     marginTop: theme.spacing[1],
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
 }));

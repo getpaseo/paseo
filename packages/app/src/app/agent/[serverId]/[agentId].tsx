@@ -644,7 +644,7 @@ function AgentScreenContent({
                     color={
                       isExplorerOpen
                         ? theme.colors.foreground
-                        : theme.colors.mutedForeground
+                        : theme.colors.foregroundMuted
                     }
                   />
                 ) : (
@@ -653,14 +653,14 @@ function AgentScreenContent({
                     color={
                       isExplorerOpen
                         ? theme.colors.foreground
-                        : theme.colors.mutedForeground
+                        : theme.colors.foregroundMuted
                     }
                   />
                 )}
               </Pressable>
               <View ref={menuButtonRef} collapsable={false}>
                 <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
-                  <MoreVertical size={16} color={theme.colors.mutedForeground} />
+                  <MoreVertical size={16} color={theme.colors.foregroundMuted} />
                 </Pressable>
               </View>
             </View>
@@ -748,7 +748,7 @@ function AgentScreenContent({
                       <>
                         <ActivityIndicator
                           size="small"
-                          color={theme.colors.mutedForeground}
+                          color={theme.colors.foregroundMuted}
                         />
                         <Text style={styles.menuMetaPendingText}>
                           Fetching…
@@ -777,7 +777,7 @@ function AgentScreenContent({
               {/* Sub-Agents Section */}
               <View style={styles.menuSubAgentsSection}>
                 <View style={styles.menuSubAgentsHeader}>
-                  <Users size={16} color={theme.colors.mutedForeground} />
+                  <Users size={16} color={theme.colors.foregroundMuted} />
                   <Text style={styles.menuSubAgentsLabel}>Sub-Agents</Text>
                 </View>
                 {childAgents.length === 0 ? (
@@ -807,7 +807,7 @@ function AgentScreenContent({
                           ) : null}
                           <ChevronRight
                             size={16}
-                            color={theme.colors.mutedForeground}
+                            color={theme.colors.foregroundMuted}
                           />
                         </View>
                       </Pressable>
@@ -953,11 +953,11 @@ const styles = StyleSheet.create((theme) => ({
   outerContainer: {
     flex: 1,
     flexDirection: "row",
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   headerRightContent: {
     flexDirection: "row",
@@ -978,7 +978,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   loadingText: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   centerState: {
     flex: 1,
@@ -994,20 +994,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     fontSize: theme.fontSize.lg,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textAlign: "center",
   },
   statusText: {
     marginTop: theme.spacing[2],
     textAlign: "center",
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   errorDetails: {
     marginTop: theme.spacing[1],
     textAlign: "center",
     fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   offlineTitle: {
     fontSize: theme.fontSize.base,
@@ -1017,12 +1017,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   offlineDescription: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textAlign: "center",
   },
   offlineDetails: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textAlign: "center",
   },
   menuButton: {
@@ -1036,7 +1036,7 @@ const styles = StyleSheet.create((theme) => ({
     ...StyleSheet.absoluteFillObject,
   },
   dropdownMenu: {
-    backgroundColor: theme.colors.popover,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[2],
     shadowColor: "#000",
@@ -1054,7 +1054,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   menuMetaLabel: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     letterSpacing: 0.5,
     textTransform: "uppercase",
   },
@@ -1069,7 +1069,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   menuMetaPendingText: {
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   menuMetaValueError: {
     color: theme.colors.destructive,
@@ -1110,13 +1110,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   menuSubAgentsLabel: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     letterSpacing: 0.5,
     textTransform: "uppercase",
   },
   menuSubAgentsEmpty: {
     fontSize: theme.fontSize.base,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
   },

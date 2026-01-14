@@ -12,9 +12,10 @@ import {
   Platform,
 } from "react-native";
 import { router } from "expo-router";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { Sun, Moon, Monitor } from "lucide-react-native";
 import { Fonts } from "@/constants/theme";
-import { useAppSettings } from "@/hooks/use-settings";
+import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import { useDaemonRegistry, type DaemonProfile } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
@@ -34,7 +35,7 @@ const delay = (ms: number) =>
 const styles = StyleSheet.create((theme) => ({
   loadingContainer: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -44,7 +45,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   scrollView: {
     flex: 1,
@@ -57,7 +58,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[6],
   },
   sectionTitle: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0.6,
@@ -66,7 +67,7 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: theme.spacing[1],
   },
   label: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0.4,
@@ -74,7 +75,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   input: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     color: theme.colors.foreground,
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
@@ -87,7 +88,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Host card styles
   hostCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -109,7 +110,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   hostUrl: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontFamily: Fonts.mono,
   },
@@ -151,7 +152,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   hostActionText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
   },
@@ -189,13 +190,13 @@ const styles = StyleSheet.create((theme) => ({
     borderStyle: "dashed",
   },
   addButtonText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
   // Add/Edit form
   formCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -237,7 +238,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Audio settings card
   audioCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -263,7 +264,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   audioRowDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     marginTop: 2,
   },
@@ -281,11 +282,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   footerText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   footerVersion: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   resetButton: {
@@ -298,7 +299,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Empty state
   emptyCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -306,9 +307,38 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[3],
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
+  },
+  // Theme toggle
+  themeToggleContainer: {
+    flexDirection: "row",
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    padding: 4,
+    gap: 4,
+  },
+  themeToggleButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+  },
+  themeToggleButtonActive: {
+    backgroundColor: theme.colors.surface3,
+  },
+  themeToggleText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
+  },
+  themeToggleTextActive: {
+    color: theme.colors.foreground,
   },
 }));
 
@@ -502,6 +532,19 @@ export default function SettingsScreen() {
     [settings, updateSettings]
   );
 
+  const handleThemeChange = useCallback(
+    (newTheme: AppSettings["theme"]) => {
+      void updateSettings({ theme: newTheme });
+      if (newTheme === "auto") {
+        UnistylesRuntime.setAdaptiveThemes(true);
+      } else {
+        UnistylesRuntime.setAdaptiveThemes(false);
+        UnistylesRuntime.setTheme(newTheme);
+      }
+    },
+    [updateSettings]
+  );
+
   function validateServerUrl(url: string): boolean {
     try {
       const urlObj = new URL(url);
@@ -637,6 +680,49 @@ export default function SettingsScreen() {
             )}
           </View>
 
+          {/* Appearance */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Appearance</Text>
+            <View style={styles.themeToggleContainer}>
+              <Pressable
+                style={[
+                  styles.themeToggleButton,
+                  settings.theme === "light" && styles.themeToggleButtonActive,
+                ]}
+                onPress={() => handleThemeChange("light")}
+              >
+                <Sun size={16} color={settings.theme === "light" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                <Text style={[styles.themeToggleText, settings.theme === "light" && styles.themeToggleTextActive]}>
+                  Light
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.themeToggleButton,
+                  settings.theme === "dark" && styles.themeToggleButtonActive,
+                ]}
+                onPress={() => handleThemeChange("dark")}
+              >
+                <Moon size={16} color={settings.theme === "dark" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                <Text style={[styles.themeToggleText, settings.theme === "dark" && styles.themeToggleTextActive]}>
+                  Dark
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.themeToggleButton,
+                  settings.theme === "auto" && styles.themeToggleButtonActive,
+                ]}
+                onPress={() => handleThemeChange("auto")}
+              >
+                <Monitor size={16} color={settings.theme === "auto" ? defaultTheme.colors.foreground : defaultTheme.colors.mutedForeground} />
+                <Text style={[styles.themeToggleText, settings.theme === "auto" && styles.themeToggleTextActive]}>
+                  System
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
           {/* Audio Settings */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Audio</Text>
@@ -727,7 +813,7 @@ function DaemonCard({
         ? theme.colors.palette.amber[500]
         : statusTone === "error"
           ? theme.colors.destructive
-          : theme.colors.mutedForeground;
+          : theme.colors.foregroundMuted;
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
   const daemonConnection = useSessionStore(
@@ -870,7 +956,7 @@ function DaemonCard({
       ? theme.colors.palette.green[400]
       : testState?.status === "error"
         ? theme.colors.palette.red[300]
-        : theme.colors.mutedForeground;
+        : theme.colors.foregroundMuted;
 
   return (
     <View style={styles.hostCard}>
@@ -911,7 +997,7 @@ function DaemonCard({
           disabled={isRestarting}
         >
           {isRestarting ? (
-            <ActivityIndicator size="small" color={theme.colors.mutedForeground} />
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           ) : (
             <Text style={styles.hostActionText}>Restart</Text>
           )}

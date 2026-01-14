@@ -7,6 +7,7 @@ import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { View, ActivityIndicator, Text } from "react-native";
 import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { darkTheme } from "@/styles/theme";
 import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
@@ -144,7 +145,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   );
 
   const content = (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
         {!isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
         <View style={{ flex: 1 }}>{children}</View>
@@ -165,9 +166,20 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
 }
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
-  const { isLoading: settingsLoading } = useAppSettings();
+  const { settings, isLoading: settingsLoading } = useAppSettings();
   const { daemons, isLoading: registryLoading } = useDaemonRegistry();
   const isLoading = settingsLoading || registryLoading;
+
+  // Apply theme setting on mount and when it changes
+  useEffect(() => {
+    if (isLoading) return;
+    if (settings.theme === "auto") {
+      UnistylesRuntime.setAdaptiveThemes(true);
+    } else {
+      UnistylesRuntime.setAdaptiveThemes(false);
+      UnistylesRuntime.setTheme(settings.theme);
+    }
+  }, [isLoading, settings.theme]);
 
   if (isLoading) {
     return <LoadingView />;
@@ -207,10 +219,10 @@ function LoadingView() {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: "#09090b",
+        backgroundColor: darkTheme.colors.surface0,
       }}
     >
-      <ActivityIndicator size="large" color="#fafafa" />
+      <ActivityIndicator size="large" color={darkTheme.colors.foreground} />
     </View>
   );
 }
@@ -223,13 +235,13 @@ function MissingDaemonView() {
         justifyContent: "center",
         alignItems: "center",
         padding: 24,
-        backgroundColor: "#09090b",
+        backgroundColor: darkTheme.colors.surface0,
       }}
     >
-      <ActivityIndicator size="small" color="#fafafa" />
+      <ActivityIndicator size="small" color={darkTheme.colors.foreground} />
       <Text
         style={{
-          color: "#fafafa",
+          color: darkTheme.colors.foreground,
           marginTop: 16,
           textAlign: "center",
         }}

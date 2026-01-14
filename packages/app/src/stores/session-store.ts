@@ -60,11 +60,6 @@ export type MessageEntry =
       status: "executing" | "completed" | "failed";
     };
 
-export type DraftInput = {
-  text: string;
-  images: Array<{ uri: string; mimeType: string }>;
-};
-
 export type ProviderModelState = {
   models: AgentModelDefinition[] | null;
   fetchedAt: Date | null;
@@ -250,12 +245,6 @@ export interface SessionState {
 interface SessionStoreState {
   sessions: Record<string, SessionState>;
 
-  // Top-level drafts (keyed by agentId, not serverId:agentId since agent IDs are globally unique)
-  drafts: Map<string, DraftInput>;
-
-  // Single draft for the create agent modal
-  createModalDraft: DraftInput | null;
-
   // Agent activity timestamps (top-level, keyed by agentId to prevent cascade rerenders)
   agentLastActivity: Map<string, Date>;
 }
@@ -304,14 +293,6 @@ interface SessionStoreActions {
 
   // Provider models
   setProviderModels: (serverId: string, models: Map<AgentProvider, ProviderModelState> | ((prev: Map<AgentProvider, ProviderModelState>) => Map<AgentProvider, ProviderModelState>)) => void;
-
-  // Draft inputs (top-level, not in sessions)
-  getDraftInput: (agentId: string) => DraftInput | undefined;
-  saveDraftInput: (agentId: string, draft: DraftInput) => void;
-
-  // Create modal draft
-  getCreateModalDraft: () => DraftInput | null;
-  saveCreateModalDraft: (draft: DraftInput | null) => void;
 
   // Queued messages
   setQueuedMessages: (serverId: string, value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
@@ -392,8 +373,6 @@ function createInitialSessionState(serverId: string, client: DaemonClientV2, aud
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => ({
     sessions: {},
-    drafts: new Map(),
-    createModalDraft: null,
     agentLastActivity: new Map(),
 
     // Session management
@@ -777,34 +756,6 @@ export const useSessionStore = create<SessionStore>()(
           },
         };
       });
-    },
-
-    // Draft inputs (top-level, keyed by agentId only)
-    getDraftInput: (agentId) => {
-      return get().drafts.get(agentId);
-    },
-
-    saveDraftInput: (agentId, draft) => {
-      set((prev) => {
-        const nextDrafts = new Map(prev.drafts);
-        nextDrafts.set(agentId, draft);
-        return {
-          ...prev,
-          drafts: nextDrafts,
-        };
-      });
-    },
-
-    // Create modal draft
-    getCreateModalDraft: () => {
-      return get().createModalDraft;
-    },
-
-    saveCreateModalDraft: (draft) => {
-      set((prev) => ({
-        ...prev,
-        createModalDraft: draft,
-      }));
     },
 
     // Queued messages

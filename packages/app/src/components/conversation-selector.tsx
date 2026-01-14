@@ -317,7 +317,7 @@ export function ConversationSelector({
 
 const styles = StyleSheet.create((theme) => ({
   triggerButton: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
@@ -329,7 +329,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   modalContent: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderTopLeftRadius: theme.spacing[6],
     borderTopRightRadius: theme.spacing[6],
     height: "80%",
@@ -360,7 +360,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[2],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
@@ -379,14 +379,14 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
   },
   loadingText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   emptyContainer: {
     padding: theme.spacing[8],
     alignItems: "center",
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   conversationItem: {
     flexDirection: "row",
@@ -398,7 +398,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "transparent",
   },
   conversationItemActive: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   conversationContent: {
     flex: 1,
@@ -409,7 +409,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   conversationDate: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },

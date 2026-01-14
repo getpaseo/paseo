@@ -52,7 +52,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
               agent.currentModeId ||
               "default"}
           </Text>
-          <ChevronDown size={14} color={theme.colors.mutedForeground} />
+          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
         </Pressable>
       )}
 
@@ -76,17 +76,17 @@ const styles = StyleSheet.create((theme) => ({
   modeBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: theme.colors.popover,
+    backgroundColor: theme.colors.surface2,
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
   },
   modeBadgePressed: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   modeBadgeText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     textTransform: "capitalize",

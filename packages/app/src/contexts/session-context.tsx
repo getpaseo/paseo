@@ -35,13 +35,14 @@ import {
   type SessionState,
   type DaemonConnectionSnapshot,
 } from "@/stores/session-store";
+import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
 
-// Re-export types from session-store for backward compatibility
+// Re-export types from session-store and draft-store for backward compatibility
+export type { DraftInput } from "@/stores/draft-store";
 export type {
   MessageEntry,
-  DraftInput,
   ProviderModelState,
   Agent,
   ExplorerEntry,
@@ -428,8 +429,7 @@ export function SessionProvider({
   const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
   const setProviderModels = useSessionStore((state) => state.setProviderModels);
-  const getDraftInput = useSessionStore((state) => state.getDraftInput);
-  const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
+  const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const getSession = useSessionStore((state) => state.getSession);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
@@ -1515,7 +1515,7 @@ export function SessionProvider({
       clearAgentStreamHead(serverId, agentId);
 
       // Remove draft input
-      saveDraftInput(agentId, { text: "", images: [] });
+      clearDraftInput(agentId);
 
       setPendingPermissions(serverId, (prev) => {
         let changed = false;
@@ -1592,7 +1592,7 @@ export function SessionProvider({
     setHasHydratedAgents,
     updateConnectionStatus,
     getSession,
-    saveDraftInput,
+    clearDraftInput,
     notifyAgentAttention,
   ]);
 

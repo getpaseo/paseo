@@ -22,6 +22,7 @@ import { AgentStatusBar } from "./agent-status-bar";
 import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
+import { useDraftStore } from "@/stores/draft-store";
 import {
   MessageInput,
   type MessagePayload,
@@ -86,8 +87,8 @@ export function AgentInputArea({
     state.sessions[serverId]?.agents?.get(agentId)
   );
 
-  const getDraftInput = useSessionStore((state) => state.getDraftInput);
-  const saveDraftInput = useSessionStore((state) => state.saveDraftInput);
+  const getDraftInput = useDraftStore((state) => state.getDraftInput);
+  const saveDraftInput = useDraftStore((state) => state.saveDraftInput);
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId)
@@ -639,7 +640,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -661,7 +662,7 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   queueSendButton: {
     backgroundColor: theme.colors.palette.blue[600],

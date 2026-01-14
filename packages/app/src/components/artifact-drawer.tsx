@@ -26,7 +26,7 @@ interface ArtifactDrawerProps {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     flexDirection: "column",
   },
   header: {
@@ -77,7 +77,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   closeButton: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -91,7 +91,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentScroll: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   contentScrollContainer: {
     padding: theme.spacing[4],
@@ -103,16 +103,16 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   imagePlaceholderText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   imagePlaceholderSubtext: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[2],
   },
   codeContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[4],
     borderWidth: theme.borderWidth[1],
@@ -124,14 +124,14 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: Fonts.mono,
   },
   metadataContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     padding: theme.spacing[3],
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
     marginTop: theme.spacing[2],
   },
   metadataTitle: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing[2],
@@ -141,12 +141,12 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   metadataLabel: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     width: 80,
   },
   metadataValue: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     flex: 1,
     fontFamily: Fonts.mono,

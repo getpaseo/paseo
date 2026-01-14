@@ -251,7 +251,7 @@ function SidebarContent({
               color={
                 activeTab === "changes"
                   ? theme.colors.foreground
-                  : theme.colors.mutedForeground
+                  : theme.colors.foregroundMuted
               }
             />
             <Text
@@ -272,7 +272,7 @@ function SidebarContent({
               color={
                 activeTab === "files"
                   ? theme.colors.foreground
-                  : theme.colors.mutedForeground
+                  : theme.colors.foregroundMuted
               }
             />
             <Text
@@ -291,7 +291,7 @@ function SidebarContent({
           )}
           {isMobile && (
             <Pressable onPress={onClose} style={styles.closeButton}>
-              <X size={18} color={theme.colors.mutedForeground} />
+              <X size={18} color={theme.colors.foregroundMuted} />
             </Pressable>
           )}
         </View>
@@ -352,14 +352,14 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     overflow: "hidden",
   },
   desktopSidebar: {
     position: "relative",
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   resizeHandle: {
     position: "absolute",
@@ -396,12 +396,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   tabActive: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   tabText: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   tabTextActive: {
     color: theme.colors.foreground,
@@ -430,6 +430,6 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[2],
   },
   viewToggleActive: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
 }));

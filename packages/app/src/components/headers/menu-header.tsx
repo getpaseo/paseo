@@ -19,7 +19,7 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
   const MenuIcon = isMobile ? Menu : PanelLeft;
   const menuIconColor = !isMobile && isOpen
     ? theme.colors.foreground
-    : theme.colors.mutedForeground;
+    : theme.colors.foregroundMuted;
 
   return (
     <ScreenHeader

@@ -85,9 +85,7 @@ export function AgentStreamView({
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
-  const isProgrammaticScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
-  const isUserScrollingRef = useRef(false);
   const streamItemCountRef = useRef(0);
   const { open: openExplorer, setActiveTab: setExplorerTab } =
     useExplorerSidebarStore();
@@ -160,41 +158,16 @@ export function AgentStreamView({
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset } = event.nativeEvent;
       const threshold = Math.max(insets.bottom, 32);
+      // In inverted list: scrollTop 0 = bottom, higher values = scrolled up
       const nearBottom = contentOffset.y <= threshold;
 
-      if (isProgrammaticScrollRef.current) {
-        if (nearBottom && !isNearBottomRef.current) {
-          isNearBottomRef.current = true;
-          setIsNearBottom(true);
-        }
-        return;
+      if (isNearBottomRef.current !== nearBottom) {
+        isNearBottomRef.current = nearBottom;
+        setIsNearBottom(nearBottom);
       }
-
-      if (!nearBottom && !isUserScrollingRef.current) {
-        return;
-      }
-
-      if (isNearBottomRef.current === nearBottom) {
-        return;
-      }
-
-      isNearBottomRef.current = nearBottom;
-      setIsNearBottom(nearBottom);
     },
     [insets.bottom]
   );
-
-  const handleScrollBeginDrag = useCallback(() => {
-    isUserScrollingRef.current = true;
-  }, []);
-
-  const handleMomentumScrollBegin = useCallback(() => {
-    isUserScrollingRef.current = true;
-  }, []);
-
-  const handleScrollEnd = useCallback(() => {
-    isUserScrollingRef.current = false;
-  }, []);
 
   const scrollToBottomInternal = useCallback(
     ({ animated }: { animated: boolean }) => {
@@ -203,19 +176,9 @@ export function AgentStreamView({
         return;
       }
 
-      isProgrammaticScrollRef.current = true;
       list.scrollToOffset({ offset: 0, animated });
-      if (!animated) {
-        isProgrammaticScrollRef.current = false;
-        isNearBottomRef.current = true;
-        setIsNearBottom(true);
-      } else {
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-          isNearBottomRef.current = true;
-          setIsNearBottom(true);
-        }, 300);
-      }
+      isNearBottomRef.current = true;
+      setIsNearBottom(true);
     },
     []
   );
@@ -582,10 +545,6 @@ export function AgentStreamView({
             }}
             style={stylesheet.list}
             onScroll={handleScroll}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            onScrollEndDrag={handleScrollEnd}
-            onMomentumScrollBegin={handleMomentumScrollBegin}
-            onMomentumScrollEnd={handleScrollEnd}
             scrollEventThrottle={16}
             ListEmptyComponent={
               <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
@@ -1005,7 +964,7 @@ function PermissionRequestCard({
       style={[
         permissionStyles.container,
         {
-          backgroundColor: theme.colors.secondary,
+          backgroundColor: theme.colors.surface2,
           borderColor: theme.colors.border,
         },
       ]}
@@ -1020,7 +979,7 @@ function PermissionRequestCard({
         <Text
           style={[
             permissionStyles.description,
-            { color: theme.colors.mutedForeground },
+            { color: theme.colors.foregroundMuted },
           ]}
         >
           {description}
@@ -1032,7 +991,7 @@ function PermissionRequestCard({
           <Text
             style={[
               permissionStyles.sectionTitle,
-              { color: theme.colors.mutedForeground },
+              { color: theme.colors.foregroundMuted },
             ]}
           >
             Proposed Plan
@@ -1041,7 +1000,7 @@ function PermissionRequestCard({
             style={[
               permissionStyles.contentCard,
               {
-                backgroundColor: theme.colors.background,
+                backgroundColor: theme.colors.surface0,
                 borderColor: theme.colors.border,
               },
             ]}
@@ -1058,7 +1017,7 @@ function PermissionRequestCard({
           <Text
             style={[
               permissionStyles.sectionTitle,
-              { color: theme.colors.mutedForeground },
+              { color: theme.colors.foregroundMuted },
             ]}
           >
             Command
@@ -1068,7 +1027,7 @@ function PermissionRequestCard({
               <Text
                 style={[
                   permissionStyles.metadataLabel,
-                  { color: theme.colors.mutedForeground },
+                  { color: theme.colors.foregroundMuted },
                 ]}
               >
                 Command
@@ -1088,7 +1047,7 @@ function PermissionRequestCard({
               <Text
                 style={[
                   permissionStyles.metadataLabel,
-                  { color: theme.colors.mutedForeground },
+                  { color: theme.colors.foregroundMuted },
                 ]}
               >
                 Directory
@@ -1111,7 +1070,7 @@ function PermissionRequestCard({
           <Text
             style={[
               permissionStyles.sectionTitle,
-              { color: theme.colors.mutedForeground },
+              { color: theme.colors.foregroundMuted },
             ]}
           >
             Proposed Changes
@@ -1127,7 +1086,7 @@ function PermissionRequestCard({
                     permissionStyles.fileBadge,
                     {
                       borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.card,
+                      backgroundColor: theme.colors.surface2,
                     },
                   ]}
                 >
@@ -1146,7 +1105,7 @@ function PermissionRequestCard({
                   permissionStyles.diffWrapper,
                   {
                     borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.card,
+                    backgroundColor: theme.colors.surface2,
                   },
                 ]}
               >
@@ -1162,7 +1121,7 @@ function PermissionRequestCard({
           <Text
             style={[
               permissionStyles.sectionTitle,
-              { color: theme.colors.mutedForeground },
+              { color: theme.colors.foregroundMuted },
             ]}
           >
             File Content
@@ -1173,7 +1132,7 @@ function PermissionRequestCard({
               style={[
                 permissionStyles.contentCard,
                 {
-                  backgroundColor: theme.colors.background,
+                  backgroundColor: theme.colors.surface0,
                   borderColor: theme.colors.border,
                 },
               ]}
@@ -1183,7 +1142,7 @@ function PermissionRequestCard({
                   style={[
                     permissionStyles.metadataLabel,
                     {
-                      color: theme.colors.mutedForeground,
+                      color: theme.colors.foregroundMuted,
                       marginBottom: theme.spacing[1],
                     },
                   ]}
@@ -1209,7 +1168,7 @@ function PermissionRequestCard({
           <Text
             style={[
               permissionStyles.sectionTitle,
-              { color: theme.colors.mutedForeground },
+              { color: theme.colors.foregroundMuted },
             ]}
           >
             Raw Request
@@ -1218,7 +1177,7 @@ function PermissionRequestCard({
             style={[
               permissionStyles.contentCard,
               {
-                backgroundColor: theme.colors.background,
+                backgroundColor: theme.colors.surface0,
                 borderColor: theme.colors.border,
               },
             ]}
@@ -1306,7 +1265,7 @@ function PermissionRequestCard({
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   contentWrapper: {
     width: "100%",
@@ -1361,14 +1320,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: theme.colors.mutedForeground,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   invertedWrapper: {
     transform: [{ scaleY: -1 }],
     width: "100%",
   },
   emptyStateText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
   },
@@ -1390,7 +1349,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",

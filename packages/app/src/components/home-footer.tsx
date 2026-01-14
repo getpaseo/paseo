@@ -212,7 +212,7 @@ export function HomeFooter() {
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
@@ -264,7 +264,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   hostPickerContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     padding: theme.spacing[4],
     borderTopLeftRadius: theme.borderRadius.xl,
     borderTopRightRadius: theme.borderRadius.xl,
@@ -279,7 +279,7 @@ const styles = StyleSheet.create((theme) => ({
   hostPickerButton: {
     paddingVertical: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   hostPickerButtonText: {
     color: theme.colors.foreground,
@@ -290,7 +290,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
   },
   hostPickerCancelText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
   },

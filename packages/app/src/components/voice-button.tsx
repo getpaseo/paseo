@@ -32,7 +32,7 @@ const styles = StyleSheet.create((theme) => ({
     elevation: 8,
   },
   buttonIdle: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   buttonRecording: {
     backgroundColor: theme.colors.destructive,
@@ -44,7 +44,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.palette.green[500],
   },
   label: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   // Recording icon

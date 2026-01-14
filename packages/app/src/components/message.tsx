@@ -99,7 +99,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[4],
   },
   bubble: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
@@ -120,13 +120,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[1],
     marginRight: theme.spacing[4],
     alignSelf: "flex-end",
-    backgroundColor: theme.colors.secondary,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.base,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 4,
   },
   copiedTagText: {
-    color: theme.colors.secondaryForeground,
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
   },
 }));
@@ -231,8 +231,8 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   // Used in custom markdownRules for inline code styling
   markdownCodeInline: {
-    backgroundColor: theme.colors.secondary,
-    color: theme.colors.secondaryForeground,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 2,
     borderRadius: theme.borderRadius.sm,
@@ -241,7 +241,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   // Used in custom markdownRules for path chip styling
   pathChip: {
-    backgroundColor: theme.colors.secondary,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.full,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 2,
@@ -249,7 +249,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     marginVertical: 2,
   },
   pathChipText: {
-    color: theme.colors.secondaryForeground,
+    color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: 13,
   },
@@ -262,7 +262,7 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
     marginLeft: theme.spacing[4],
   },
   iconColor: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   iconHoveredColor: {
     color: theme.colors.foreground,
@@ -340,8 +340,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   pressable: {
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.accentBorder,
-    backgroundColor: theme.colors.secondary,
+    borderColor: theme.colors.borderAccent,
+    backgroundColor: theme.colors.surface2,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
   },
@@ -369,7 +369,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   secondaryLabel: {
     flex: 1,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     marginLeft: theme.spacing[2],
@@ -386,7 +386,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     padding: theme.spacing[2],
     gap: theme.spacing[2],
     flexShrink: 1,
@@ -721,7 +721,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[1],
   },
   detailsText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginRight: theme.spacing[1],
   },
@@ -875,7 +875,7 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   card: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -899,7 +899,7 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
     letterSpacing: 0.6,
   },
   timestamp: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   providerBadge: {
@@ -914,7 +914,7 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   progressText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginBottom: theme.spacing[2],
   },
@@ -946,11 +946,11 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   itemTextCompleted: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textDecorationLine: "line-through",
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontStyle: "italic",
   },
@@ -979,7 +979,7 @@ export const TodoListCard = memo(function TodoListCard({
     [timestamp]
   );
 
-  const iconColor = theme.colors.background;
+  const iconColor = theme.colors.surface0;
 
   return (
     <View
@@ -1174,7 +1174,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
           {hasDetails ? (
             <ChevronRight
               size={14}
-              color={theme.colors.mutedForeground}
+              color={theme.colors.foregroundMuted}
               style={[
                 expandableBadgeStylesheet.chevron,
                 { transform: [{ rotate: isExpanded ? "90deg" : "0deg" }] },
@@ -1194,7 +1194,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
 const agentThoughtStylesheet = StyleSheet.create((theme) => ({
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontStyle: "italic" as const,
   },

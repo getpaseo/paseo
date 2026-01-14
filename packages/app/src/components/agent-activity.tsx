@@ -252,19 +252,19 @@ export function AgentActivityItem({ item }: AgentActivityItemProps) {
 
 const stylesheet = StyleSheet.create((theme) => ({
   card: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[3],
     marginBottom: theme.spacing[2],
   },
   thoughtCard: {
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderLeftWidth: 3,
     borderLeftColor: theme.colors.palette.purple[500],
     paddingVertical: theme.spacing[2],
   },
   timestamp: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginBottom: theme.spacing[1],
   },
@@ -283,11 +283,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     lineHeight: 20,
   },
   thoughtText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontStyle: 'italic',
   },
   toolCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     overflow: 'hidden',
@@ -327,7 +327,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   expandIcon: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   toolContent: {
@@ -345,20 +345,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   code: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontFamily: Fonts.mono,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     padding: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontStyle: 'italic',
   },
   planCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     overflow: 'hidden',
@@ -399,11 +399,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
   },
   infoText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   unknownCard: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[2],
     overflow: 'hidden',
@@ -428,6 +428,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
     padding: theme.spacing[3],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
 }));

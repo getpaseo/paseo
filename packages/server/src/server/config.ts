@@ -1,46 +1,17 @@
-import os from "node:os";
 import path from "node:path";
-import { mkdirSync } from "node:fs";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
 import type { STTConfig } from "./agent/stt-openai.js";
 import type { TTSConfig } from "./agent/tts-openai.js";
+import { loadPersistedConfig } from "./persisted-config.js";
 
-function expandHomeDir(input: string): string {
-  if (input.startsWith("~/")) {
-    return path.join(os.homedir(), input.slice(2));
-  }
-  if (input === "~") {
-    return os.homedir();
-  }
-  return input;
-}
-
-export function readPaseoHomeFromEnv(
-  env: NodeJS.ProcessEnv = process.env
-): string {
-  const raw = env.PASEO_HOME ?? env.PASEO_HOME_DIR ?? "~/.paseo";
-  const expanded = path.resolve(expandHomeDir(raw));
-  mkdirSync(expanded, { recursive: true });
-  return expanded;
-}
-
-export function readPaseoPortFromEnv(
-  env: NodeJS.ProcessEnv = process.env
-): number {
-  const raw = env.PASEO_PORT ?? env.PORT ?? "6767";
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : 6767;
-}
-
+const DEFAULT_LISTEN = "127.0.0.1:6767";
 const DEFAULT_BASIC_AUTH_USERS = { mo: "bo" } as const;
 const DEFAULT_AGENT_MCP_ROUTE = "/mcp/agents";
 
-function readOpenAIConfigFromEnv(env: NodeJS.ProcessEnv = process.env) {
+function parseOpenAIConfig(env: NodeJS.ProcessEnv) {
   const apiKey = env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return undefined;
-  }
+  if (!apiKey) return undefined;
 
   const sttConfidenceThreshold = env.STT_CONFIDENCE_THRESHOLD
     ? parseFloat(env.STT_CONFIDENCE_THRESHOLD)
@@ -71,15 +42,34 @@ function readOpenAIConfigFromEnv(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-export function buildPaseoDaemonConfigFromEnv(
+function getListenForMcp(listen: string): string {
+  // For Unix sockets, MCP still needs HTTP - use localhost
+  if (listen.startsWith("/") || listen.startsWith("~") || listen.includes(".sock")) {
+    return "127.0.0.1:6767";
+  }
+  if (listen.startsWith("unix://")) {
+    return "127.0.0.1:6767";
+  }
+  // TCP: extract host:port
+  if (listen.includes(":")) {
+    const [host, port] = listen.split(":");
+    return `${host || "127.0.0.1"}:${port}`;
+  }
+  // Just port
+  return `127.0.0.1:${listen}`;
+}
+
+export function loadConfig(
+  paseoHome: string,
   env: NodeJS.ProcessEnv = process.env
 ): PaseoDaemonConfig {
-  const paseoHome = readPaseoHomeFromEnv(env);
-  const port = readPaseoPortFromEnv(env);
+  const persisted = loadPersistedConfig(paseoHome);
+
+  const listen = env.PASEO_LISTEN ?? persisted.listen ?? DEFAULT_LISTEN;
+  const mcpListen = getListenForMcp(listen);
 
   const basicUsers = DEFAULT_BASIC_AUTH_USERS;
-  const [agentMcpUser, agentMcpPassword] =
-    Object.entries(basicUsers)[0] ?? [];
+  const [agentMcpUser, agentMcpPassword] = Object.entries(basicUsers)[0] ?? [];
   const agentMcpAuthHeader =
     agentMcpUser && agentMcpPassword
       ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
@@ -89,13 +79,12 @@ export function buildPaseoDaemonConfigFromEnv(
       ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
       : undefined;
 
-  const openai = readOpenAIConfigFromEnv(env);
-
   return {
-    port,
+    listen,
     paseoHome,
+    corsAllowedOrigins: persisted.cors.allowedOrigins,
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
-    agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+    agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],
     auth: {
       basicUsers,
       agentMcpAuthHeader,
@@ -104,7 +93,7 @@ export function buildPaseoDaemonConfigFromEnv(
     },
     mcpDebug: env.MCP_DEBUG === "1",
     agentControlMcp: {
-      url: `http://127.0.0.1:${port}${DEFAULT_AGENT_MCP_ROUTE}`,
+      url: `http://${mcpListen}${DEFAULT_AGENT_MCP_ROUTE}`,
       ...(agentMcpAuthHeader
         ? { headers: { Authorization: agentMcpAuthHeader } }
         : {}),
@@ -112,6 +101,6 @@ export function buildPaseoDaemonConfigFromEnv(
     agentRegistryPath: path.join(paseoHome, "agents.json"),
     staticDir: "public",
     agentClients: {},
-    openai,
+    openai: parseOpenAIConfig(env),
   };
 }

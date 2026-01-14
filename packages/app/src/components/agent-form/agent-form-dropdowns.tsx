@@ -87,7 +87,7 @@ export function DropdownField({
         >
           {value || placeholder}
         </Text>
-        <ChevronDown size={16} color={defaultTheme.colors.mutedForeground} />
+        <ChevronDown size={16} color={defaultTheme.colors.foregroundMuted} />
       </Pressable>
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {warningMessage ? <Text style={styles.warningText}>{warningMessage}</Text> : null}
@@ -138,7 +138,7 @@ export function SelectField({
             {value || placeholder || "Select..."}
           </Text>
         </View>
-        <ChevronRight size={20} color={defaultTheme.colors.mutedForeground} />
+        <ChevronRight size={20} color={defaultTheme.colors.foregroundMuted} />
       </Pressable>
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {warningMessage ? <Text style={styles.warningText}>{warningMessage}</Text> : null}
@@ -404,7 +404,7 @@ export function ComboSelect({
           ref={inputRef}
           style={styles.dropdownSearchInput}
           placeholder={`Search ${label.toLowerCase()}...`}
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          placeholderTextColor={defaultTheme.colors.foregroundMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
           autoCapitalize="none"
@@ -486,7 +486,7 @@ function CompactSelectField({
     >
       <Text style={styles.compactSelectLabel}>{label}</Text>
       {isLoading ? (
-        <ActivityIndicator size="small" color={defaultTheme.colors.mutedForeground} />
+        <ActivityIndicator size="small" color={defaultTheme.colors.foregroundMuted} />
       ) : (
         <Text
           style={value ? styles.compactSelectValue : styles.compactSelectPlaceholder}
@@ -933,7 +933,7 @@ export function WorkingDirectoryDropdown({
           ref={inputRef}
           style={styles.dropdownSearchInput}
           placeholder="/path/to/project"
-          placeholderTextColor={defaultTheme.colors.mutedForeground}
+          placeholderTextColor={defaultTheme.colors.foregroundMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
           autoCapitalize="none"
@@ -1132,20 +1132,20 @@ export function GitOptionsSection({
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder="branch name"
-                placeholderTextColor={defaultTheme.colors.mutedForeground}
+                placeholderTextColor={defaultTheme.colors.foregroundMuted}
                 onSubmitEditing={handleConfirmEdit}
               />
               <Pressable onPress={handleConfirmEdit} hitSlop={8} style={styles.baseBranchIconButton}>
                 <Check size={16} color={defaultTheme.colors.palette.green[500]} />
               </Pressable>
               <Pressable onPress={handleCancelEdit} hitSlop={8} style={styles.baseBranchIconButton}>
-                <X size={16} color={defaultTheme.colors.mutedForeground} />
+                <X size={16} color={defaultTheme.colors.foregroundMuted} />
               </Pressable>
             </View>
           ) : (
             <Pressable onPress={handleStartEdit} style={styles.baseBranchValueRow}>
               <Text style={styles.baseBranchValue}>{displayBranch}</Text>
-              <Pencil size={14} color={defaultTheme.colors.mutedForeground} />
+              <Pencil size={14} color={defaultTheme.colors.foregroundMuted} />
             </Pressable>
           )}
         </View>
@@ -1179,7 +1179,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -1196,14 +1196,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   dropdownPlaceholder: {
     flex: 1,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
   dropdownSearchInput: {
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     color: theme.colors.foreground,
@@ -1222,7 +1222,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.45,
   },
   dropdownSheetContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderTopLeftRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius["2xl"],
     paddingTop: theme.spacing[4],
@@ -1259,7 +1259,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     marginBottom: theme.spacing[2],
   },
   dropdownSheetOptionSelected: {
@@ -1271,7 +1271,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   dropdownSheetOptionDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
@@ -1288,7 +1288,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   helperText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   selectorColumn: {
@@ -1339,7 +1339,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   input: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -1359,7 +1359,7 @@ const styles = StyleSheet.create((theme) => ({
   selectFieldControl: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -1374,7 +1374,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   selectFieldLabel: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.medium,
     textTransform: "uppercase",
@@ -1385,7 +1385,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   selectFieldPlaceholder: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
   gitOptionsContainer: {
@@ -1395,7 +1395,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -1415,7 +1415,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   worktreeToggleDescription: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   baseBranchRow: {
@@ -1425,7 +1425,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
   },
   baseBranchLabel: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   baseBranchValueRow: {
@@ -1446,7 +1446,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   baseBranchInput: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
@@ -1469,7 +1469,7 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
   },
   desktopDropdownContainer: {
-    backgroundColor: theme.colors.popover,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -1494,7 +1494,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   compactSelectControl: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
@@ -1506,7 +1506,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: theme.opacity[50],
   },
   compactSelectLabel: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.medium,
     textTransform: "uppercase",
@@ -1517,7 +1517,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   compactSelectPlaceholder: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
 }));

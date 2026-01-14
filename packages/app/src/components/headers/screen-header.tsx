@@ -35,7 +35,7 @@ export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeade
 
 const styles = StyleSheet.create((theme) => ({
   header: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   inner: {},
   row: {

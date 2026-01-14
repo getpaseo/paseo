@@ -22,6 +22,10 @@ type AgentMcpClientConfig = {
   agentMcpHeaders?: Record<string, string>;
 };
 
+type WebSocketServerConfig = {
+  allowedOrigins: Set<string>;
+};
+
 /**
  * WebSocket server that routes messages between clients and their sessions.
  * This is a thin transport layer with no business logic.
@@ -43,7 +47,8 @@ export class VoiceAssistantWebSocketServer {
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     downloadTokenStore: DownloadTokenStore,
-    agentMcpConfig: AgentMcpClientConfig
+    agentMcpConfig: AgentMcpClientConfig,
+    wsConfig: WebSocketServerConfig
   ) {
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
@@ -51,7 +56,23 @@ export class VoiceAssistantWebSocketServer {
     this.pushTokenStore = new PushTokenStore();
     this.pushService = new PushService(this.pushTokenStore);
     this.agentMcpConfig = agentMcpConfig;
-    this.wss = new WebSocketServer({ server, path: "/ws" });
+
+    const { allowedOrigins } = wsConfig;
+    this.wss = new WebSocketServer({
+      server,
+      path: "/ws",
+      verifyClient: ({ req }, callback) => {
+        const origin = req.headers.origin;
+        // Allow connections with no origin (native apps, curl, etc.)
+        // or from allowed origins (browsers)
+        if (!origin || allowedOrigins.has(origin)) {
+          callback(true);
+        } else {
+          console.warn(`[WebSocket] Rejected connection from origin: ${origin}`);
+          callback(false, 403, "Origin not allowed");
+        }
+      },
+    });
 
     this.wss.on("connection", (ws, request) => {
       this.handleConnection(ws, request);

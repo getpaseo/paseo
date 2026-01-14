@@ -616,9 +616,9 @@ const styles = StyleSheet.create(((theme: any) => ({
   inputWrapper: {
     flexDirection: "column",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.accentBorder,
+    borderColor: theme.colors.borderAccent,
     borderRadius: theme.borderRadius["2xl"],
     paddingVertical: {
       xs: theme.spacing[2],
@@ -645,7 +645,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     position: "relative",
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.accentBorder,
+    borderColor: theme.colors.borderAccent,
     overflow: "hidden",
     ...(IS_WEB
       ? {
@@ -726,7 +726,7 @@ const styles = StyleSheet.create(((theme: any) => ({
     width: 34,
     height: 34,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.blue[600],
+    backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },

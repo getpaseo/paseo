@@ -22,7 +22,7 @@ export function BackHeader({ title, rightContent, onBack }: BackHeaderProps) {
             onPress={onBack ?? (() => router.back())}
             style={styles.backButton}
           >
-            <ArrowLeft size={20} color={theme.colors.mutedForeground} />
+            <ArrowLeft size={20} color={theme.colors.foregroundMuted} />
           </Pressable>
           {title && (
             <Text style={styles.title} numberOfLines={1}>

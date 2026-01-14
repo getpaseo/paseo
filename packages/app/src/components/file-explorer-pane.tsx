@@ -756,7 +756,7 @@ export function FileExplorerPane({
           </View>
           <Pressable style={styles.sortButton} onPress={handleSortCycle}>
             <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
-            <ChevronDown size={14} color={theme.colors.mutedForeground} />
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
         {showListLoadingBanner && (
@@ -947,7 +947,7 @@ export function FileExplorerPane({
             {selectedEntryPath?.split("/").pop() ?? "Preview"}
           </Text>
           <Pressable onPress={handleClosePreviewSheet} style={styles.sheetCloseButton}>
-            <X size={20} color={theme.colors.mutedForeground} />
+            <X size={20} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
         {isPreviewLoading && !preview ? (
@@ -1030,7 +1030,7 @@ export function FileExplorerPane({
                 hitSlop={8}
                 style={styles.downloadToastDismiss}
               >
-                <X size={16} color={theme.colors.mutedForeground} />
+                <X size={16} color={theme.colors.foregroundMuted} />
               </Pressable>
             )}
           </View>
@@ -1291,7 +1291,7 @@ function splitFileName(fileName: string): { base: string; ext: string } {
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   content: {
     flex: 1,
@@ -1325,7 +1325,7 @@ const styles = StyleSheet.create((theme) => ({
   pathText: {
     flex: 1,
     fontSize: theme.fontSize.sm,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontFamily: Fonts.mono,
   },
   backButton: {
@@ -1343,7 +1343,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
   },
   loadingBannerText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   sortButton: {
@@ -1355,10 +1355,10 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   sortButtonText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   centerState: {
@@ -1369,7 +1369,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
   loadingText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   errorText: {
@@ -1401,12 +1401,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
   },
   goToWorkspaceButtonText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
   emptyText: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
@@ -1422,7 +1422,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   entryRowBackground: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   entryInfo: {
     flex: 1,
@@ -1443,7 +1443,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   entryMeta: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
@@ -1465,7 +1465,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     padding: theme.spacing[1],
   },
   entryMenuItem: {
@@ -1499,7 +1499,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     padding: theme.spacing[2],
     gap: theme.spacing[2],
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     marginHorizontal: theme.spacing[1],
     marginBottom: theme.spacing[1],
     minWidth: 0,
@@ -1511,10 +1511,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   gridImageBackground: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface0,
   },
   gridImage: {
     width: "100%",
@@ -1525,11 +1525,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   gridMeta: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   sheetBackground: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   handleIndicator: {
     backgroundColor: theme.colors.palette.zinc[600],
@@ -1586,7 +1586,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[3],
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -1608,12 +1608,12 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
   },
   downloadToastStatus: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
   downloadProgressBar: {
     height: 3,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.full,
     marginTop: theme.spacing[1],
     overflow: "hidden",

@@ -7,11 +7,13 @@ import React, {
   ReactNode,
 } from "react";
 import { View, Text, Pressable } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import Animated from "react-native-reanimated";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
+  BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { Pencil, Eye, SquareTerminal, Search, Wrench, X } from "lucide-react-native";
 import { ToolCallDetailsContent, useToolCallDetails } from "./tool-call-details";
@@ -52,6 +54,17 @@ const toolKindIcons: Record<string, React.ComponentType<{ size?: number; color?:
   execute: SquareTerminal,
   search: Search,
 };
+
+// ----- Custom Background Component -----
+
+function CustomSheetBackground({ style }: BottomSheetBackgroundProps) {
+  const { theme } = useUnistyles();
+  const containerStyle = useMemo(
+    () => [style, { backgroundColor: theme.colors.surface2, borderRadius: 16 }],
+    [style, theme.colors.surface2]
+  );
+  return <Animated.View pointerEvents="none" style={containerStyle} />;
+}
 
 // ----- Provider Component -----
 
@@ -163,14 +176,14 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
 
 const styles = StyleSheet.create((theme) => ({
   sheetBackground: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   handleIndicator: {
     backgroundColor: theme.colors.palette.zinc[600],
   },
   container: {
     flex: 1,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   header: {
     flexDirection: "row",
@@ -200,11 +213,11 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[2],
   },
   closeIcon: {
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
   },
   content: {
     flex: 1,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.surface2,
   },
   contentContainer: {
     paddingHorizontal: theme.spacing[4],

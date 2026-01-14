@@ -48,7 +48,7 @@ export function RealtimeControls() {
             size={20}
             color={
               isMuted
-                ? theme.colors.background
+                ? theme.colors.surface0
                 : theme.colors.foreground
             }
           />
@@ -91,7 +91,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[2],
     borderColor: theme.colors.border,
   },

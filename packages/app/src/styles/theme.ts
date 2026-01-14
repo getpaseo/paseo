@@ -103,10 +103,34 @@ export const baseColors = {
   },
 } as const;
 
-// Semantic color tokens (shadcn-style)
+// Semantic color tokens - Layer-based system
 const lightSemanticColors = {
-  background: "#ffffff",
+  // Surfaces (layers) - shifted one step lighter
+  surface0: "#ffffff",       // App background
+  surface1: "#fafafa",       // Subtle hover (was zinc-100, now zinc-50)
+  surface2: "#f4f4f5",       // Elevated: badges, inputs, sheets (was zinc-200, now zinc-100)
+  surface3: "#e4e4e7",       // Highest elevation (was zinc-300, now zinc-200)
+
+  // Text
   foreground: "#09090b",
+  foregroundMuted: "#71717a",
+
+  // Borders - shifted one step lighter
+  border: "#e4e4e7",         // (was zinc-200, now zinc-200 - keep for contrast)
+  borderAccent: "#e4e4e7",   // (was zinc-300, now zinc-200)
+
+  // Brand
+  accent: "#20744A",
+  accentForeground: "#ffffff",
+
+  // Semantic
+  destructive: "#dc2626",
+  destructiveForeground: "#ffffff",
+  success: "#20744A",
+  successForeground: "#ffffff",
+
+  // Legacy aliases (for gradual migration)
+  background: "#ffffff",
   card: "#ffffff",
   cardForeground: "#09090b",
   popover: "#ffffff",
@@ -114,25 +138,44 @@ const lightSemanticColors = {
   primary: "#18181b",
   primaryForeground: "#fafafa",
   secondary: "#f4f4f5",
-  secondaryForeground: "#18181b",
+  secondaryForeground: "#09090b",
   muted: "#f4f4f5",
   mutedForeground: "#71717a",
-  accent: "#f4f4f5",
-  accentForeground: "#18181b",
-  destructive: "#ef4444",
-  destructiveForeground: "#fafafa",
-  border: "#e4e4e7",
-  accentBorder: "#3f3f46",
-  input: "#e4e4e7",
+  accentBorder: "#e4e4e7",
+  input: "#f4f4f5",
   ring: "#18181b",
 } as const;
 
 const darkSemanticColors = {
-  background: "#09090b",
+  // Surfaces (layers)
+  surface0: "#18181c",       // App background
+  surface1: "#1f1f23",       // Subtle hover
+  surface2: "#27272a",       // Elevated: badges, inputs, sheets
+  surface3: "#3f3f46",       // Highest elevation
+
+  // Text
   foreground: "#fafafa",
-  card: "#09090b",
+  foregroundMuted: "#a1a1aa",
+
+  // Borders
+  border: "#27272a",
+  borderAccent: "#3f3f46",
+
+  // Brand
+  accent: "#20744A",
+  accentForeground: "#ffffff",
+
+  // Semantic
+  destructive: "#ef4444",
+  destructiveForeground: "#ffffff",
+  success: "#20744A",
+  successForeground: "#ffffff",
+
+  // Legacy aliases (for gradual migration)
+  background: "#18181c",
+  card: "#27272a",
   cardForeground: "#fafafa",
-  popover: "#18181b",
+  popover: "#27272a",
   popoverForeground: "#fafafa",
   primary: "#fafafa",
   primaryForeground: "#18181b",
@@ -140,12 +183,7 @@ const darkSemanticColors = {
   secondaryForeground: "#fafafa",
   muted: "#27272a",
   mutedForeground: "#a1a1aa",
-  accent: "#27272a",
-  accentForeground: "#fafafa",
-  destructive: "#7f1d1d",
-  destructiveForeground: "#fafafa",
-  border: "#27272e",
-  accentBorder: "#414146",
+  accentBorder: "#3f3f46",
   input: "#27272a",
   ring: "#d4d4d8",
 } as const;

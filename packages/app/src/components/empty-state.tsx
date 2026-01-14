@@ -49,7 +49,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   subtitle: {
     fontSize: theme.fontSize.lg,
-    color: theme.colors.mutedForeground,
+    color: theme.colors.foregroundMuted,
     textAlign: "center",
     marginBottom: theme.spacing[8],
   },
@@ -77,7 +77,7 @@ const styles = StyleSheet.create((theme) => ({
   secondaryButton: {
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.muted,
+    backgroundColor: theme.colors.surface2,
   },
   secondaryButtonText: {
     fontSize: theme.fontSize.base,

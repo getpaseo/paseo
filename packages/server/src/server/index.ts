@@ -1,16 +1,15 @@
 import "dotenv/config";
 import { createPaseoDaemon } from "./bootstrap.js";
-import { buildPaseoDaemonConfigFromEnv } from "./config.js";
+import { loadConfig } from "./config.js";
+import { resolvePaseoHome } from "./paseo-home.js";
 
 async function main() {
-  const daemonConfig = buildPaseoDaemonConfigFromEnv();
-  const daemon = await createPaseoDaemon(daemonConfig);
+  const paseoHome = resolvePaseoHome();
+  const config = loadConfig(paseoHome);
+  const daemon = await createPaseoDaemon(config);
 
-  daemon.httpServer.listen(daemonConfig.port, () => {
-    console.log(
-      `\n✓ Voice Assistant server running on http://localhost:${daemonConfig.port}`
-    );
-  });
+  await daemon.start();
+
   const handleShutdown = async (signal: string) => {
     console.log(`\n${signal} received, shutting down gracefully...`);
 
@@ -20,7 +19,7 @@ async function main() {
     }, 10000);
 
     try {
-      await daemon.close();
+      await daemon.stop();
       clearTimeout(forceExit);
       console.log("Server closed");
       process.exit(0);
