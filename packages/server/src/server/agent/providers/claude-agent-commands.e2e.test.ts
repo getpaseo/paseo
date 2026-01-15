@@ -48,7 +48,6 @@ describe("claude agent commands E2E", () => {
     const commandNames = result.commands.map((c) => c.name);
     // These are skills that come from CLAUDE.md configurations
     // At minimum we should have some commands available
-    console.log("Available commands:", commandNames);
     expect(commandNames.length).toBeGreaterThan(0);
   }, 120000);
 

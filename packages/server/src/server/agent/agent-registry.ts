@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "agent-registry" });
 
 import { AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
@@ -96,7 +99,7 @@ export class AgentRegistry {
         this.cache.clear();
         return [];
       }
-      console.error("[AgentRegistry] Failed to load agents:", error);
+      logger.error({ err: error }, "Failed to load agents");
       this.loaded = true;
       this.cache.clear();
       return [];
@@ -182,7 +185,7 @@ export class AgentRegistry {
         records.push(record);
         this.cache.set(record.id, record);
       } catch (error) {
-        console.error("[AgentRegistry] Skipping invalid record:", error);
+        logger.error({ err: error }, "Skipping invalid record");
       }
     }
     return records;
@@ -200,9 +203,7 @@ export class AgentRegistry {
     try {
       this.cache.clear();
       const records = this.parseRecords(candidate);
-      console.warn(
-        "[AgentRegistry] Recovered corrupted agents.json payload; rewrote sanitized copy"
-      );
+      logger.warn("Recovered corrupted agents.json payload; rewrote sanitized copy");
       const sanitizedPayload = JSON.stringify(records, null, 2);
       await writeFileAtomically(this.filePath, sanitizedPayload);
       return records;

@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
+import { getRootLogger } from "../../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", provider: "opencode" });
 
 import type {
   AgentCapabilityFlags,
@@ -138,7 +141,7 @@ export class OpenCodeServerManager {
       });
 
       this.server.stderr?.on("data", (data: Buffer) => {
-        console.error("[OpenCode Server]", data.toString().trim());
+        logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
       });
 
       this.server.on("error", (error) => {

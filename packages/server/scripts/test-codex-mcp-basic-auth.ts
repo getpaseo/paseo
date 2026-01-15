@@ -27,7 +27,7 @@ async function main() {
     (data) => {
       const event = (data.params as { msg: unknown }).msg as { type?: string };
       if (event.type === "mcp_startup_update" || event.type === "mcp_startup_complete") {
-        console.log("MCP Event:", JSON.stringify(event, null, 2));
+        process.stdout.write("MCP Event: " + JSON.stringify(event, null, 2) + "\n");
       }
     }
   );
@@ -35,7 +35,7 @@ async function main() {
   await client.connect(transport);
 
   // Try passing MCP server config via the config parameter with headers
-  console.log("\n=== Testing HTTP MCP server with basic auth in config ===\n");
+  process.stdout.write("\n=== Testing HTTP MCP server with basic auth in config ===\n\n");
 
   try {
     // Create base64 encoded credentials
@@ -61,18 +61,21 @@ async function main() {
       }
     }, undefined, { timeout: 60000 });
 
-    console.log("\n=== RESULT ===");
+    process.stdout.write("\n=== RESULT ===\n");
     const content = (result as { content: { text?: string }[] }).content;
     for (const item of content) {
       if (item.text) {
-        console.log(item.text);
+        process.stdout.write(item.text + "\n");
       }
     }
   } catch (error) {
-    console.error("Error:", error);
+    process.stderr.write("Error: " + String(error) + "\n");
   }
 
   await client.close();
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  process.stderr.write(String(error) + "\n");
+  process.exitCode = 1;
+});

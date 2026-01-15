@@ -28,18 +28,18 @@ async function main() {
         item?: { type?: string };
       };
       if (event.type === "turn.started") {
-        console.log("\n=== TURN STARTED ===");
+        process.stdout.write("\n=== TURN STARTED ===\n");
       } else if (event.type === "agent_message") {
-        console.log("Agent:", event.data?.text || event.text);
+        process.stdout.write("Agent: " + (event.data?.text || event.text) + "\n");
       } else if (event.type === "mcp_tool_call") {
-        console.log("MCP Tool Call:", JSON.stringify(event.data));
+        process.stdout.write("MCP Tool Call: " + JSON.stringify(event.data) + "\n");
       } else if (event.type === "thread.item") {
         const item = event.data?.item || event.item;
         if (item?.type === "mcp_tool_call") {
-          console.log("MCP Tool from thread:", JSON.stringify(item));
+          process.stdout.write("MCP Tool from thread: " + JSON.stringify(item) + "\n");
         }
       } else {
-        console.log("Event:", event.type);
+        process.stdout.write("Event: " + event.type + "\n");
       }
     }
   );
@@ -47,7 +47,7 @@ async function main() {
   await client.connect(transport);
 
   // Try passing MCP server config via the config parameter
-  console.log("\n=== Testing dynamic MCP server config ===\n");
+  process.stdout.write("\n=== Testing dynamic MCP server config ===\n\n");
 
   try {
     const result = await client.callTool({
@@ -67,18 +67,21 @@ async function main() {
       }
     }, undefined, { timeout: 60000 });
 
-    console.log("\n=== RESULT ===");
+    process.stdout.write("\n=== RESULT ===\n");
     const content = (result as { content: { text?: string }[] }).content;
     for (const item of content) {
       if (item.text) {
-        console.log(item.text);
+        process.stdout.write(item.text + "\n");
       }
     }
   } catch (error) {
-    console.error("Error:", error);
+    process.stderr.write("Error: " + String(error) + "\n");
   }
 
   await client.close();
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  process.stderr.write(String(error) + "\n");
+  process.exitCode = 1;
+});

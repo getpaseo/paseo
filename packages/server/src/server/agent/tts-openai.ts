@@ -1,5 +1,8 @@
 import OpenAI from "openai";
 import { Readable } from "stream";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", provider: "openai", component: "tts" });
 
 export interface TTSConfig {
   apiKey: string;
@@ -26,8 +29,9 @@ export function initializeTTS(ttsConfig: TTSConfig): void {
   openaiClient = new OpenAI({
     apiKey: ttsConfig.apiKey,
   });
-  console.log(
-    `✓ TTS (OpenAI) initialized with voice: ${config.voice}, model: ${config.model}, format: ${config.responseFormat}`
+  logger.info(
+    { voice: config.voice, model: config.model, format: config.responseFormat },
+    "TTS (OpenAI) initialized"
   );
 }
 
@@ -45,10 +49,9 @@ export async function synthesizeSpeech(
   const startTime = Date.now();
 
   try {
-    console.log(
-      `[TTS] Synthesizing speech: "${text.substring(0, 50)}${
-        text.length > 50 ? "..." : ""
-      }"`
+    logger.debug(
+      { textLength: text.length, preview: text.substring(0, 50) },
+      "Synthesizing speech"
     );
 
     // Call OpenAI TTS API with streaming
@@ -63,14 +66,14 @@ export async function synthesizeSpeech(
     const audioStream = response.body as unknown as Readable;
 
     const duration = Date.now() - startTime;
-    console.log(`[TTS] Speech synthesis stream ready in ${duration}ms`);
+    logger.debug({ duration }, "Speech synthesis stream ready");
 
     return {
       stream: audioStream,
       format: config.responseFormat || "mp3",
     };
   } catch (error: any) {
-    console.error("[TTS] Speech synthesis error:", error);
+    logger.error({ err: error }, "Speech synthesis error");
     throw new Error(`TTS synthesis failed: ${error.message}`);
   }
 }

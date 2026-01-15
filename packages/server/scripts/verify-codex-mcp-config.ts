@@ -4,8 +4,8 @@ import { buildPaseoDaemonConfigFromEnv } from "../src/server/config.js";
 
 const config = buildPaseoDaemonConfigFromEnv();
 
-console.log("=== agentControlMcp config ===");
-console.log(JSON.stringify(config.agentControlMcp, null, 2));
+process.stdout.write("=== agentControlMcp config ===\n");
+process.stdout.write(JSON.stringify(config.agentControlMcp, null, 2) + "\n");
 
 // Simulate what buildCodexMcpConfig does
 const mcpServers: Record<string, unknown> = {};
@@ -23,5 +23,5 @@ mcpServers["playwright"] = {
   args: ["@playwright/mcp", "--headless", "--isolated"],
 };
 
-console.log("\n=== Built MCP servers config ===");
-console.log(JSON.stringify(mcpServers, null, 2));
+process.stdout.write("\n=== Built MCP servers config ===\n");
+process.stdout.write(JSON.stringify(mcpServers, null, 2) + "\n");

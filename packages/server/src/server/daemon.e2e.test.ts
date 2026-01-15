@@ -2177,10 +2177,8 @@ describe("daemon E2E", () => {
         // Concatenate all chunks to form the complete response
         const fullResponse = assistantChunks.join("");
 
-        console.log("[STREAMING TEXT INTEGRITY TEST]");
-        console.log("Number of chunks:", assistantChunks.length);
-        console.log("Full response:", JSON.stringify(fullResponse));
-        console.log("Individual chunks:", assistantChunks.map((c, i) => `[${i}]: ${JSON.stringify(c)}`).join("\n"));
+
+
 
         // CRITICAL ASSERTION 1: Response should not be empty
         expect(fullResponse.length).toBeGreaterThan(0);
@@ -2218,7 +2216,7 @@ describe("daemon E2E", () => {
         for (const pattern of garbledPatterns) {
           const match = fullResponse.match(pattern);
           if (match) {
-            console.log("Found potential garbled text:", match[0]);
+
           }
           // Note: We log but don't fail on these patterns as they might occur in valid text
           // The real test is whether the response is semantically coherent
@@ -2266,7 +2264,7 @@ describe("daemon E2E", () => {
         expect(agent.provider).toBe("claude");
 
         // === MESSAGE 1: Establish conversation context ===
-        console.log("[LONG-RUNNING TEST] Sending message 1...");
+
         await ctx.client.sendMessage(
           agent.id,
           "Remember the number 42. Just confirm you remember it."
@@ -2275,11 +2273,10 @@ describe("daemon E2E", () => {
         let state = await ctx.client.waitForAgentIdle(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
-        console.log("[LONG-RUNNING TEST] Message 1 complete");
 
         // === MESSAGE 2: Build on conversation ===
         ctx.client.clearMessageQueue(); // Clear queue to isolate message 2
-        console.log("[LONG-RUNNING TEST] Sending message 2...");
+
         await ctx.client.sendMessage(
           agent.id,
           "Now remember the word 'elephant'. Just confirm you remember both the number and the word."
@@ -2288,12 +2285,11 @@ describe("daemon E2E", () => {
         state = await ctx.client.waitForAgentIdle(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
-        console.log("[LONG-RUNNING TEST] Message 2 complete");
 
         // === MESSAGE 3: This is where the bug was reported to manifest ===
         // Clear queue so we can capture streaming chunks for message 3 only
         ctx.client.clearMessageQueue();
-        console.log("[LONG-RUNNING TEST] Sending message 3 (testing streaming integrity)...");
+
         await ctx.client.sendMessage(
           agent.id,
           "Write a complete sentence using both the number (42) and the word (elephant) you remembered. The sentence should be grammatically correct English."
@@ -2302,7 +2298,6 @@ describe("daemon E2E", () => {
         state = await ctx.client.waitForAgentIdle(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
-        console.log("[LONG-RUNNING TEST] Message 3 complete");
 
         // Collect all assistant_message timeline events from message 3
         const queue = ctx.client.getMessageQueue();
@@ -2321,18 +2316,15 @@ describe("daemon E2E", () => {
           }
         }
 
-        console.log("[LONG-RUNNING TEST] Collected", assistantChunks.length, "chunks");
-
         // Should have received at least one assistant message chunk
         expect(assistantChunks.length).toBeGreaterThan(0);
 
         // Concatenate all chunks to form the complete response
         const fullResponse = assistantChunks.join("");
 
-        console.log("[LONG-RUNNING TEST] Full response:", JSON.stringify(fullResponse));
-        console.log("[LONG-RUNNING TEST] Chunks:");
+
         for (let i = 0; i < assistantChunks.length; i++) {
-          console.log(`  [${i}]: ${JSON.stringify(assistantChunks[i])}`);
+
         }
 
         // CRITICAL ASSERTION 1: Response should contain expected content
@@ -2340,8 +2332,6 @@ describe("daemon E2E", () => {
         const containsNumber = lowerResponse.includes("42");
         const containsWord = lowerResponse.includes("elephant");
 
-        console.log("[LONG-RUNNING TEST] Contains '42':", containsNumber);
-        console.log("[LONG-RUNNING TEST] Contains 'elephant':", containsWord);
 
         expect(containsNumber).toBe(true);
         expect(containsWord).toBe(true);
@@ -2363,7 +2353,7 @@ describe("daemon E2E", () => {
           if (currentEndsWithLetter && nextStartsWithLetter) {
             // This could be legitimate (word continues) or a split issue
             // Log for debugging
-            console.log(`[LONG-RUNNING TEST] Adjacent letter chunks: "${current.slice(-10)}" + "${next.slice(0, 10)}"`);
+
           }
         }
 
@@ -2382,7 +2372,7 @@ describe("daemon E2E", () => {
         // Check for improperly concatenated words (very long "words" that shouldn't exist)
         const suspiciouslyLongWords = words.filter(w => w.length > 20);
         if (suspiciouslyLongWords.length > 0) {
-          console.log("[LONG-RUNNING TEST] Suspiciously long words:", suspiciouslyLongWords);
+
         }
         // Allow some technical words but flag excessive length
         expect(suspiciouslyLongWords.filter(w => w.length > 30).length).toBe(0);
@@ -2415,7 +2405,6 @@ describe("daemon E2E", () => {
 
         // === STEP 1: Run external codex exec with a memorable number ===
         // We use spawn so we can send input and capture output
-        console.log("[EXTERNAL SESSION TEST] Spawning external codex exec...");
 
         // Use a memorable number that we'll ask about later
         const magicNumber = 69;
@@ -2445,32 +2434,30 @@ describe("daemon E2E", () => {
           codexProcess.stdout.on("data", (data: Buffer) => {
             const text = data.toString();
             codexOutput += text;
-            console.log("[EXTERNAL SESSION TEST] stdout:", text);
 
             // Look for session ID in output
             // Format: "session id: 019b5ea3-25d5-7202-bd06-6b1db405e505"
             const match = text.match(/session id:\s*([0-9a-f-]+)/i);
             if (match) {
               sessionId = match[1];
-              console.log("[EXTERNAL SESSION TEST] Captured session ID:", sessionId);
+
             }
           });
 
           codexProcess.stderr.on("data", (data: Buffer) => {
             const text = data.toString();
-            console.log("[EXTERNAL SESSION TEST] stderr:", text);
 
             // Session ID might also appear in stderr
             const match = text.match(/session id:\s*([0-9a-f-]+)/i);
             if (match && !sessionId) {
               sessionId = match[1];
-              console.log("[EXTERNAL SESSION TEST] Captured session ID from stderr:", sessionId);
+
             }
           });
 
           codexProcess.on("close", (code) => {
             clearTimeout(timeout);
-            console.log("[EXTERNAL SESSION TEST] codex exec exited with code:", code);
+
             if (code === 0 || sessionId) {
               resolve();
             } else {
@@ -2484,20 +2471,15 @@ describe("daemon E2E", () => {
           });
         });
 
-        console.log("[EXTERNAL SESSION TEST] Full output:", codexOutput);
-
         // Verify we captured the session ID
         expect(sessionId).not.toBeNull();
         expect(sessionId).toMatch(/^[0-9a-f-]+$/);
-        console.log("[EXTERNAL SESSION TEST] Session ID:", sessionId);
 
         // === STEP 2: Find the transcript file for this session ===
         // Codex stores transcripts at ~/.codex/sessions/**/*-{sessionId}.jsonl
         const codexHome = process.env.CODEX_HOME || path.join(tmpdir(), "..", "..", "home", process.env.USER || "", ".codex");
         const actualCodexHome = path.join(process.env.HOME || "", ".codex");
         const sessionsDir = path.join(actualCodexHome, "sessions");
-
-        console.log("[EXTERNAL SESSION TEST] Looking for transcript in:", sessionsDir);
 
         // Find the transcript file
         function findTranscriptFile(dir: string, targetSessionId: string): string | null {
@@ -2519,7 +2501,6 @@ describe("daemon E2E", () => {
         }
 
         const transcriptFile = findTranscriptFile(sessionsDir, sessionId!);
-        console.log("[EXTERNAL SESSION TEST] Found transcript file:", transcriptFile);
 
         // Verify transcript file exists
         expect(transcriptFile).not.toBeNull();
@@ -2527,11 +2508,10 @@ describe("daemon E2E", () => {
 
         // Read and verify transcript has content
         const transcriptContent = readFileSync(transcriptFile!, "utf-8");
-        console.log("[EXTERNAL SESSION TEST] Transcript size:", transcriptContent.length, "bytes");
+
         expect(transcriptContent.length).toBeGreaterThan(0);
 
         // === STEP 3: Import this session into the daemon ===
-        console.log("[EXTERNAL SESSION TEST] Creating daemon agent with experimental_resume...");
 
         const agent = await ctx.client.createAgent({
           provider: "codex",
@@ -2547,10 +2527,9 @@ describe("daemon E2E", () => {
 
         expect(agent.id).toBeTruthy();
         expect(agent.status).toBe("idle");
-        console.log("[EXTERNAL SESSION TEST] Created agent:", agent.id);
 
         // === STEP 4: Ask the daemon agent about the number ===
-        console.log("[EXTERNAL SESSION TEST] Asking about the remembered number...");
+
         ctx.client.clearMessageQueue();
 
         await ctx.client.sendMessage(
@@ -2581,7 +2560,6 @@ describe("daemon E2E", () => {
         }
 
         const fullResponse = assistantMessages.join("");
-        console.log("[EXTERNAL SESSION TEST] Agent response:", JSON.stringify(fullResponse));
 
         // CRITICAL ASSERTION: The response should contain the magic number
         // This proves the daemon agent successfully loaded the external session's context
@@ -2793,7 +2771,7 @@ describe("daemon E2E", () => {
         const magicNumber = 69;
 
         // === STEP 1: Create Claude agent and have it remember a number ===
-        console.log("[CLAUDE PERSISTENCE TEST] Creating Claude agent...");
+
         const agent = await ctx.client.createAgent({
           provider: "claude",
           cwd,
@@ -2804,10 +2782,9 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
         expect(agent.status).toBe("idle");
         expect(agent.provider).toBe("claude");
-        console.log("[CLAUDE PERSISTENCE TEST] Created agent:", agent.id);
 
         // === STEP 2: Ask it to remember the number ===
-        console.log("[CLAUDE PERSISTENCE TEST] Asking to remember number...");
+
         await ctx.client.sendMessage(
           agent.id,
           `Remember this number: ${magicNumber}. Just confirm you've remembered it and reply with a single short sentence.`
@@ -2833,7 +2810,7 @@ describe("daemon E2E", () => {
           }
         }
         const confirmationResponse = confirmationMessages.join("");
-        console.log("[CLAUDE PERSISTENCE TEST] Confirmation response:", JSON.stringify(confirmationResponse));
+
         expect(confirmationResponse.length).toBeGreaterThan(0);
 
         // === STEP 3: Get persistence handle and delete agent ===
@@ -2841,24 +2818,21 @@ describe("daemon E2E", () => {
         const persistence = afterRemember.persistence;
         expect(persistence?.provider).toBe("claude");
         expect(persistence?.sessionId).toBeTruthy();
-        console.log("[CLAUDE PERSISTENCE TEST] Got persistence handle:", persistence?.sessionId);
 
         // Delete the agent
         await ctx.client.deleteAgent(agent.id);
-        console.log("[CLAUDE PERSISTENCE TEST] Deleted agent");
 
         // === STEP 4: Resume the agent using persistence handle ===
-        console.log("[CLAUDE PERSISTENCE TEST] Resuming agent...");
+
         ctx.client.clearMessageQueue();
         const resumedAgent = await ctx.client.resumeAgent(persistence!);
 
         expect(resumedAgent.id).toBeTruthy();
         expect(resumedAgent.status).toBe("idle");
         expect(resumedAgent.provider).toBe("claude");
-        console.log("[CLAUDE PERSISTENCE TEST] Resumed agent:", resumedAgent.id);
 
         // === STEP 5: Ask about the remembered number ===
-        console.log("[CLAUDE PERSISTENCE TEST] Asking about remembered number...");
+
         ctx.client.clearMessageQueue();
         await ctx.client.sendMessage(
           resumedAgent.id,
@@ -2885,7 +2859,6 @@ describe("daemon E2E", () => {
           }
         }
         const fullResponse = recallMessages.join("");
-        console.log("[CLAUDE PERSISTENCE TEST] Recall response:", JSON.stringify(fullResponse));
 
         // CRITICAL ASSERTION: The response should contain the magic number
         // This proves the Claude agent successfully preserved conversation context
@@ -2917,7 +2890,6 @@ describe("daemon E2E", () => {
         expect(agent.provider).toBe("claude");
 
         // === MESSAGE 1: Start a long-running prompt that will be interrupted ===
-        console.log("[RACE CONDITION TEST] Sending message 1 (will be interrupted)...");
 
         // Record queue position BEFORE message 1 to find the cutoff point later
         const msg1StartPosition = ctx.client.getMessageQueue().length;
@@ -2935,11 +2907,9 @@ describe("daemon E2E", () => {
         // === MESSAGE 2: Immediately send another message to interrupt ===
         // This triggers the race condition where Turn 2's forwardPromptEvents
         // resets streamedAssistantTextThisTurn while Turn 1 is still reading it
-        console.log("[RACE CONDITION TEST] Sending message 2 (interrupting turn 1)...");
 
         // Record queue position BEFORE message 2 to find message 2 chunks
         const msg2StartPosition = ctx.client.getMessageQueue().length;
-        console.log("[RACE CONDITION TEST] Queue position before msg2:", msg2StartPosition);
 
         await ctx.client.sendMessage(
           agent.id,
@@ -2948,7 +2918,7 @@ describe("daemon E2E", () => {
 
         // Wait for Turn 2 to complete - use a manual polling approach
         // We need to wait for: running -> idle (after msg2's user_message)
-        console.log("[RACE CONDITION TEST] Waiting for agent to become idle after msg2...");
+
         const maxWaitMs = 120000;
         const pollIntervalMs = 500;
         const startTime = Date.now();
@@ -2987,7 +2957,7 @@ describe("daemon E2E", () => {
           }
 
           if (sawIdleAfterRunning) {
-            console.log("[RACE CONDITION TEST] Agent became idle/error after msg2:", lastState?.status);
+
             break;
           }
           await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -2996,26 +2966,25 @@ describe("daemon E2E", () => {
         expect(lastState).not.toBeNull();
         expect(lastState!.status).toBe("idle");
         expect(lastState!.lastError).toBeUndefined();
-        console.log("[RACE CONDITION TEST] Message 2 complete");
 
         // Collect assistant_message chunks from message 2 only (after msg2StartPosition)
         const queue = ctx.client.getMessageQueue();
         const assistantChunks: string[] = [];
 
         // Debug: dump all events from queue
-        console.log("[RACE CONDITION TEST] Full queue dump (all events):");
+
         for (let i = 0; i < queue.length; i++) {
           const m = queue[i];
           if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
             const event = m.payload.event;
             if (event.type === "timeline") {
               const item = event.item;
-              console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): timeline/${item.type}`, item.type === "assistant_message" || item.type === "user_message" ? JSON.stringify((item as any).text?.substring(0, 50)) : "");
+
             } else {
-              console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): ${event.type}`, (event as any).error || "");
+
             }
           } else if (m.type === "agent_state" && m.payload.id === agent.id) {
-            console.log(`  [${i}] (${i >= msg2StartPosition ? "msg2" : "msg1"}): agent_state -> ${m.payload.status}`, m.payload.lastError || "");
+
           }
         }
 
@@ -3034,7 +3003,7 @@ describe("daemon E2E", () => {
             const item = m.payload.event.item;
             if (item.type === "user_message" && (item.text as string)?.includes("Hello world")) {
               foundMsg2UserMessage = true;
-              console.log("[RACE CONDITION TEST] Found message 2 user prompt");
+
             }
             // Collect assistant messages after we found the user message
             if (foundMsg2UserMessage && item.type === "assistant_message" && item.text) {
@@ -3043,10 +3012,9 @@ describe("daemon E2E", () => {
           }
         }
 
-        console.log("[RACE CONDITION TEST] Collected", assistantChunks.length, "chunks");
-        console.log("[RACE CONDITION TEST] Chunks:");
+
         for (let i = 0; i < assistantChunks.length; i++) {
-          console.log(`  [${i}]: ${JSON.stringify(assistantChunks[i])}`);
+
         }
 
         // Should have received at least one assistant message chunk
@@ -3054,7 +3022,6 @@ describe("daemon E2E", () => {
 
         // Concatenate all chunks
         const fullResponse = assistantChunks.join("");
-        console.log("[RACE CONDITION TEST] Full response:", JSON.stringify(fullResponse));
 
         // CRITICAL ASSERTION: Response should contain coherent text
         // If there's a race condition with flag corruption, we might get:
@@ -3065,7 +3032,7 @@ describe("daemon E2E", () => {
         // Check for basic coherence - should have recognizable words
         const wordPattern = /\b[a-zA-Z]+\b/g;
         const words = fullResponse.match(wordPattern) || [];
-        console.log("[RACE CONDITION TEST] Words found:", words.length);
+
         expect(words.length).toBeGreaterThan(0);
 
         // Check for UTF-8 corruption
@@ -3077,7 +3044,7 @@ describe("daemon E2E", () => {
         // Check for suspiciously long "words" that indicate missing spaces/garbling
         const suspiciouslyLongWords = words.filter(w => w.length > 30);
         if (suspiciouslyLongWords.length > 0) {
-          console.log("[RACE CONDITION TEST] Suspiciously long words:", suspiciouslyLongWords);
+
         }
         expect(suspiciouslyLongWords.length).toBe(0);
 
@@ -3093,8 +3060,8 @@ describe("daemon E2E", () => {
           lowerResponse.includes("babbage");
 
         if (containsComputingContent) {
-          console.log("[RACE CONDITION TEST] ERROR: Response contains content from message 1!");
-          console.log("[RACE CONDITION TEST] This indicates the race condition: message 2 was sent but message 1's response was returned");
+
+
         }
         // This MUST fail if we got message 1's response instead of message 2's
         expect(containsComputingContent).toBe(false);
@@ -3121,7 +3088,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         // Start a long-running tool call (sleep command)
-        console.log("[TOOL INTERRUPT TEST] Sending message 1 with long sleep command...");
+
         const msg1StartPosition = ctx.client.getMessageQueue().length;
 
         await ctx.client.sendMessage(
@@ -3130,7 +3097,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for the tool call to start (agent should be running and we should see the bash tool)
-        console.log("[TOOL INTERRUPT TEST] Waiting for tool call to start...");
+
         let sawToolCall = false;
         const toolWaitStart = Date.now();
         while (Date.now() - toolWaitStart < 30000) {
@@ -3146,7 +3113,7 @@ describe("daemon E2E", () => {
               const tc = m.payload.event.item;
               if (tc.name?.toLowerCase().includes("bash") || tc.name?.toLowerCase().includes("shell")) {
                 sawToolCall = true;
-                console.log("[TOOL INTERRUPT TEST] Tool call started:", tc.name);
+
                 break;
               }
             }
@@ -3158,7 +3125,7 @@ describe("daemon E2E", () => {
         expect(sawToolCall).toBe(true);
 
         // Now send an interrupting message while the tool is running
-        console.log("[TOOL INTERRUPT TEST] Sending message 2 to interrupt...");
+
         const msg2StartPosition = ctx.client.getMessageQueue().length;
 
         await ctx.client.sendMessage(
@@ -3167,7 +3134,7 @@ describe("daemon E2E", () => {
         );
 
         // Track state transitions
-        console.log("[TOOL INTERRUPT TEST] Monitoring state transitions...");
+
         const stateTransitions: Array<{ status: string; timestamp: number; lastError?: string }> = [];
         const monitorStart = Date.now();
 
@@ -3183,7 +3150,7 @@ describe("daemon E2E", () => {
                   timestamp: Date.now() - monitorStart,
                   lastError: m.payload.lastError,
                 });
-                console.log(`[TOOL INTERRUPT TEST] State: ${m.payload.status} at ${Date.now() - monitorStart}ms`, m.payload.lastError || "");
+
               }
             }
           }
@@ -3198,14 +3165,11 @@ describe("daemon E2E", () => {
           await new Promise(r => setTimeout(r, 200));
         }
 
-        console.log("[TOOL INTERRUPT TEST] State transitions:", JSON.stringify(stateTransitions, null, 2));
-
         // Verify we got proper state transitions
         expect(stateTransitions.length).toBeGreaterThan(0);
 
         // Check if we ended in idle (success) or error
         const finalState = stateTransitions[stateTransitions.length - 1];
-        console.log("[TOOL INTERRUPT TEST] Final state:", finalState);
 
         // Look for the response to message 2
         const queue = ctx.client.getMessageQueue();
@@ -3229,8 +3193,6 @@ describe("daemon E2E", () => {
           }
         }
 
-        console.log("[TOOL INTERRUPT TEST] Found user message 2:", foundMsg2User);
-        console.log("[TOOL INTERRUPT TEST] Assistant messages after msg2:", assistantMessages);
 
         // The key assertion: agent should have responded to message 2
         if (finalState.status === "idle") {
@@ -3258,7 +3220,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         // Send 3 messages in rapid succession without waiting
-        console.log("[RAPID MSG TEST] Sending 3 messages rapidly...");
+
         const startPosition = ctx.client.getMessageQueue().length;
 
         const msg1 = "Say: MESSAGE_ONE";
@@ -3285,32 +3247,30 @@ describe("daemon E2E", () => {
 
         // Send all 3 messages
         await ctx.client.sendMessage(agent.id, msg1);
-        console.log("[RAPID MSG TEST] MSG1 sent, waiting briefly...");
+
         await new Promise(r => setTimeout(r, 100));
 
         await ctx.client.sendMessage(agent.id, msg2);
-        console.log("[RAPID MSG TEST] MSG2 sent, waiting briefly...");
+
         await new Promise(r => setTimeout(r, 100));
 
         await ctx.client.sendMessage(agent.id, msg3);
-        console.log("[RAPID MSG TEST] MSG3 sent");
 
         // First, wait until all 3 user messages are recorded
-        console.log("[RAPID MSG TEST] Waiting for all 3 user messages to be recorded...");
+
         const userMsgWaitStart = Date.now();
         while (Date.now() - userMsgWaitStart < 30000) {
           const count = countUserMessages();
-          console.log(`[RAPID MSG TEST] User message count: ${count}`);
+
           if (count >= 3) break;
           await new Promise(r => setTimeout(r, 200));
         }
 
         const finalUserMsgCount = countUserMessages();
-        console.log(`[RAPID MSG TEST] Final user message count: ${finalUserMsgCount}`);
 
         // Now wait for agent to become idle after processing all 3 messages
         // We need to see at least 3 running transitions to know all messages were processed
-        console.log("[RAPID MSG TEST] Waiting for agent to finish processing all messages...");
+
         const waitStart = Date.now();
         let runningCount = 0;
         let finalState: AgentSnapshotPayload | null = null;
@@ -3338,8 +3298,6 @@ describe("daemon E2E", () => {
           await new Promise(r => setTimeout(r, 500));
         }
 
-        console.log("[RAPID MSG TEST] Final state:", finalState?.status, finalState?.lastError);
-        console.log("[RAPID MSG TEST] Total running transitions:", runningCount);
 
         // Analyze what happened
         const queue = ctx.client.getMessageQueue();
@@ -3367,10 +3325,8 @@ describe("daemon E2E", () => {
           }
         }
 
-        console.log("[RAPID MSG TEST] User messages recorded:", userMessages.length, userMessages);
-        console.log("[RAPID MSG TEST] Assistant messages:", assistantMessages.length, JSON.stringify(assistantMessages));
-        console.log("[RAPID MSG TEST] State changes:", stateChanges.join(" -> "));
-        console.log("[RAPID MSG TEST] Total queue items since start:", queue.length - startPosition);
+
+
 
         // All 3 user messages should have been recorded
         expect(userMessages.length).toBe(3);
@@ -3380,7 +3336,6 @@ describe("daemon E2E", () => {
 
         // The last turn should have completed successfully (not failed due to race condition)
         const lastResponse = assistantMessages[assistantMessages.length - 1]?.toLowerCase() || "";
-        console.log("[RAPID MSG TEST] Last response:", lastResponse);
 
         // Verify we got a proper turn_completed event (not turn_failed from race condition)
         const turnCompletedEvents = queue.filter((m, i) =>
@@ -3395,8 +3350,7 @@ describe("daemon E2E", () => {
           m.payload.agentId === agent.id &&
           m.payload.event.type === "turn_failed"
         );
-        console.log("[RAPID MSG TEST] Turn completed events:", turnCompletedEvents.length);
-        console.log("[RAPID MSG TEST] Turn failed events:", turnFailedEvents.length);
+
 
         // The final turn should complete successfully, not fail
         expect(turnCompletedEvents.length).toBeGreaterThan(0);
@@ -3405,7 +3359,7 @@ describe("daemon E2E", () => {
 
         // The response should mention "three" since that was the last message sent
         const combinedResponse = assistantMessages.join(" ").toLowerCase();
-        console.log("[RAPID MSG TEST] Combined response:", combinedResponse);
+
         expect(combinedResponse).toContain("three");
 
         await ctx.client.deleteAgent(agent.id);
@@ -3446,16 +3400,7 @@ describe("daemon E2E", () => {
     // Helper to log tool call structure in a consistent format
     function logToolCall(prefix: string, tc: AgentTimelineItem): void {
       if (tc.type !== "tool_call") return;
-      console.log(
-        `[${prefix}]`,
-        JSON.stringify({
-          name: tc.name,
-          callId: tc.callId,
-          status: tc.status,
-          hasInput: tc.input !== undefined,
-          hasOutput: tc.output !== undefined,
-        })
-      );
+
     }
 
     test(

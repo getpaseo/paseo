@@ -7,6 +7,9 @@ import type {
   AgentRegistry,
   StoredAgentRecord,
 } from "./agent/agent-registry.js";
+import { getRootLogger } from "./logger.js";
+
+const logger = getRootLogger().child({ module: "persistence" });
 
 type AgentRegistryPersistence = Pick<AgentRegistry, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
@@ -28,7 +31,7 @@ export function attachAgentRegistryPersistence(
       return;
     }
     void registry.applySnapshot(event.agent).catch((error) => {
-      console.error("[AgentRegistry] Failed to persist agent snapshot:", error);
+      logger.error({ err: error, agentId: event.agent.id }, "Failed to persist agent snapshot");
     });
   });
 

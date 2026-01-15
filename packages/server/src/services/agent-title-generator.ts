@@ -3,12 +3,15 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { AgentTimelineItem } from "../server/agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../server/agent/activity-curator.js";
+import { getRootLogger } from "../server/logger.js";
+
+const logger = getRootLogger().child({ module: "agent-title-generator" });
 
 let openai: ReturnType<typeof createOpenAI> | null = null;
 
 export function initializeTitleGenerator(apiKey: string): void {
   openai = createOpenAI({ apiKey });
-  console.log("✓ Agent title generator initialized");
+  logger.info("Agent title generator initialized");
 }
 
 export function isTitleGeneratorInitialized(): boolean {
@@ -56,11 +59,11 @@ ${activityContext}`,
       temperature: 0.7,
     });
 
-    console.log(`[TitleGenerator] Generated title: "${object.title}"`);
+    logger.debug({ title: object.title }, "Generated agent title");
 
     return object.title;
-  } catch (error: any) {
-    console.error("[TitleGenerator] Failed to generate title:", error);
+  } catch (err) {
+    logger.error({ err }, "Failed to generate agent title");
     return "New Agent";
   }
 }

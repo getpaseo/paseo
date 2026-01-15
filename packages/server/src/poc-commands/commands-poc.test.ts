@@ -53,15 +53,6 @@ describe("Claude Agent SDK Commands POC", () => {
         // Should be an array
         expect(Array.isArray(commands)).toBe(true);
 
-        // Log what we found
-        console.log(`[Test] Found ${commands.length} commands:`);
-        commands.slice(0, 10).forEach((cmd) => {
-          console.log(`  - /${cmd.name}: ${cmd.description} [${cmd.argumentHint}]`);
-        });
-        if (commands.length > 10) {
-          console.log(`  ... and ${commands.length - 10} more`);
-        }
-
         // Verify structure
         if (commands.length > 0) {
           const firstCommand = commands[0];

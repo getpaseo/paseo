@@ -7,24 +7,24 @@ async function processConversation() {
     const conversationPath =
       ".debug.conversations/ce44c79a-0689-4210-8e00-72c0a627406d-2.json";
 
-    console.log("Loading conversation from:", conversationPath);
+    process.stdout.write(`Loading conversation from: ${conversationPath}\n`);
 
     const conversationData: any = JSON.parse(
       readFileSync(conversationPath, "utf-8")
     );
 
-    console.log(
-      `\nLoaded conversation ${conversationData.conversationId} with ${conversationData.messages.length} messages\n`
+    process.stdout.write(
+      `\nLoaded conversation ${conversationData.conversationId} with ${conversationData.messages.length} messages\n\n`
     );
 
     const result = await standardizePrompt({
       prompt: conversationData.messages,
     });
 
-    console.log("Standardized prompt result:");
-    console.log(inspect(result, { depth: null, colors: true }));
+    process.stdout.write("Standardized prompt result:\n");
+    process.stdout.write(inspect(result, { depth: null, colors: true }) + "\n");
   } catch (error) {
-    console.error("Error processing conversation:", error);
+    process.stderr.write(`Error processing conversation: ${error}\n`);
     process.exit(1);
   }
 }

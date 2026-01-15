@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { getRootLogger } from "./logger.js";
 
 const PersistedConfigSchema = z.object({
   listen: z.string().optional(),
@@ -9,6 +10,14 @@ const PersistedConfigSchema = z.object({
       allowedOrigins: z.array(z.string()).default([]),
     })
     .default({}),
+  log: z
+    .object({
+      level: z
+        .enum(["trace", "debug", "info", "warn", "error", "fatal"])
+        .optional(),
+      format: z.enum(["pretty", "json"]).optional(),
+    })
+    .optional(),
 });
 
 export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;
@@ -19,11 +28,21 @@ function getConfigPath(paseoHome: string): string {
   return path.join(paseoHome, CONFIG_FILENAME);
 }
 
+function getLogger() {
+  try {
+    return getRootLogger().child({ module: "config" });
+  } catch {
+    // Root logger not initialized yet, return null
+    return null;
+  }
+}
+
 export function loadPersistedConfig(paseoHome: string): PersistedConfig {
+  const logger = getLogger();
   const configPath = getConfigPath(paseoHome);
 
   if (!existsSync(configPath)) {
-    console.log(`[Config] No config file at ${configPath}, using defaults`);
+    logger?.info(`No config file at ${configPath}, using defaults`);
     return PersistedConfigSchema.parse({});
   }
 
@@ -51,7 +70,7 @@ export function loadPersistedConfig(paseoHome: string): PersistedConfig {
     throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
   }
 
-  console.log(`[Config] Loaded from ${configPath}`);
+  logger?.info(`Loaded from ${configPath}`);
   return result.data;
 }
 
@@ -59,6 +78,7 @@ export function savePersistedConfig(
   paseoHome: string,
   config: PersistedConfig
 ): void {
+  const logger = getLogger();
   const configPath = getConfigPath(paseoHome);
 
   const result = PersistedConfigSchema.safeParse(config);
@@ -71,7 +91,7 @@ export function savePersistedConfig(
 
   try {
     writeFileSync(configPath, JSON.stringify(result.data, null, 2) + "\n");
-    console.log(`[Config] Saved to ${configPath}`);
+    logger?.info(`Saved to ${configPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`[Config] Failed to write ${configPath}: ${message}`);

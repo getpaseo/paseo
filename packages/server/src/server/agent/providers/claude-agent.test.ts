@@ -145,8 +145,8 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         agentMcpTransports.delete(transport.sessionId);
       }
     };
-    transport.onerror = (error) => {
-      console.error("[Agent MCP] Transport error:", error);
+    transport.onerror = () => {
+      // Ignore errors in test
     };
 
     await agentMcpServer.connect(transport);
@@ -187,7 +187,6 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
 
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error("[Agent MCP] Failed to handle request:", error);
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",

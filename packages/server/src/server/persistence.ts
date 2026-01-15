@@ -2,6 +2,9 @@ import { readFile, writeFile, readdir, unlink, mkdir, stat } from "fs/promises";
 import { join } from "path";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { standardizePrompt } from "ai/internal";
+import { getRootLogger } from "./logger.js";
+
+const logger = getRootLogger().child({ module: "persistence" });
 
 const CONVERSATIONS_DIR = join(process.cwd(), "conversations");
 
@@ -44,13 +47,14 @@ export async function saveConversation(
     };
 
     await writeFile(filepath, JSON.stringify(data, null, 2), "utf-8");
-    console.log(
-      `[Persistence] Saved conversation ${conversationId} (${messages.length} messages)`
+    logger.info(
+      { conversationId, messageCount: messages.length },
+      "Saved conversation"
     );
   } catch (error) {
-    console.error(
-      `[Persistence] Failed to save conversation ${conversationId}:`,
-      error
+    logger.error(
+      { err: error, conversationId },
+      "Failed to save conversation"
     );
     throw error;
   }
@@ -70,7 +74,7 @@ export async function loadConversation(
     try {
       await stat(filepath);
     } catch {
-      console.log(`[Persistence] Conversation ${conversationId} not found`);
+      logger.debug({ conversationId }, "Conversation not found");
       return null;
     }
 
@@ -83,15 +87,16 @@ export async function loadConversation(
       prompt: data.messages,
     });
 
-    console.log(
-      `[Persistence] Loaded conversation ${conversationId} (${data.messageCount} messages)`
+    logger.info(
+      { conversationId, messageCount: data.messageCount },
+      "Loaded conversation"
     );
 
     return result.messages as ModelMessage[];
   } catch (error) {
-    console.error(
-      `[Persistence] Failed to load conversation ${conversationId}:`,
-      error
+    logger.error(
+      { err: error, conversationId },
+      "Failed to load conversation"
     );
     return null;
   }
@@ -121,7 +126,7 @@ export async function listConversations(): Promise<ConversationMetadata[]> {
           messageCount: data.messageCount,
         });
       } catch (error) {
-        console.error(`[Persistence] Failed to read conversation ${file}:`, error);
+        logger.error({ err: error, file }, "Failed to read conversation");
         // Skip invalid files
       }
     }
@@ -131,7 +136,7 @@ export async function listConversations(): Promise<ConversationMetadata[]> {
 
     return conversations;
   } catch (error) {
-    console.error("[Persistence] Failed to list conversations:", error);
+    logger.error({ err: error }, "Failed to list conversations");
     return [];
   }
 }
@@ -143,11 +148,11 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   try {
     const filepath = join(CONVERSATIONS_DIR, `${conversationId}.json`);
     await unlink(filepath);
-    console.log(`[Persistence] Deleted conversation ${conversationId}`);
+    logger.info({ conversationId }, "Deleted conversation");
   } catch (error) {
-    console.error(
-      `[Persistence] Failed to delete conversation ${conversationId}:`,
-      error
+    logger.error(
+      { err: error, conversationId },
+      "Failed to delete conversation"
     );
     throw error;
   }

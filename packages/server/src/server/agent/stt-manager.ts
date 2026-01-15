@@ -1,5 +1,6 @@
 import { transcribeAudio, type TranscriptionResult } from "./stt-openai.js";
 import { maybePersistDebugAudio } from "./stt-debug.js";
+import { getRootLogger } from "../logger.js";
 
 interface TranscriptionMetadata {
   agentId?: string;
@@ -19,9 +20,11 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
  */
 export class STTManager {
   private readonly sessionId: string;
+  private readonly logger;
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
+    this.logger = getRootLogger().child({ module: "agent", component: "stt-manager", sessionId });
   }
 
   /**
@@ -32,9 +35,9 @@ export class STTManager {
     format: string,
     metadata?: TranscriptionMetadata
   ): Promise<SessionTranscriptionResult> {
-    const context = metadata?.label ? ` (${metadata.label})` : "";
-    console.log(
-      `[STT-Manager ${this.sessionId}] Transcribing ${audio.length} bytes of ${format} audio${context}`
+    this.logger.debug(
+      { bytes: audio.length, format, label: metadata?.label },
+      "Transcribing audio"
     );
 
     let debugRecordingPath: string | null = null;
@@ -47,18 +50,16 @@ export class STTManager {
         format,
       });
     } catch (error) {
-      console.warn(
-        `[STT-Manager ${this.sessionId}] Failed to persist debug audio:`,
-        error
-      );
+      this.logger.warn({ err: error }, "Failed to persist debug audio");
     }
 
     const result = await transcribeAudio(audio, format);
 
     // Filter out low-confidence transcriptions (non-speech sounds)
     if (result.isLowConfidence) {
-      console.log(
-        `[STT-Manager ${this.sessionId}] Filtered low-confidence transcription (likely non-speech): "${result.text}" (avg logprob: ${result.avgLogprob?.toFixed(2)})`
+      this.logger.debug(
+        { text: result.text, avgLogprob: result.avgLogprob },
+        "Filtered low-confidence transcription (likely non-speech)"
       );
 
       // Return empty text to ignore this transcription
@@ -71,10 +72,9 @@ export class STTManager {
       };
     }
 
-    console.log(
-      `[STT-Manager ${this.sessionId}] Transcription complete: "${result.text}"${
-        result.avgLogprob !== undefined ? ` (avg logprob: ${result.avgLogprob.toFixed(2)})` : ""
-      }`
+    this.logger.debug(
+      { text: result.text, avgLogprob: result.avgLogprob },
+      "Transcription complete"
     );
 
     return {

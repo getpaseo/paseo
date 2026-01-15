@@ -8,6 +8,7 @@ import {
   SessionInboundMessageSchema,
   WSOutboundMessageSchema,
 } from "../shared/messages.js";
+import { getRootLogger } from "../server/logger.js";
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
@@ -38,6 +39,8 @@ import type {
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
+
+const logger = getRootLogger().child({ module: "daemon-client" });
 
 export type DaemonTransport = {
   send: (data: string) => void;
@@ -1409,7 +1412,7 @@ export class DaemonClientV2 {
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
       const msgType = (parsedJson as { message?: { type?: string } })?.message?.type ?? "unknown";
-      console.warn(`[DaemonClientV2] Message validation failed for "${msgType}":`, parsed.error.message);
+      logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
       return;
     }
 
