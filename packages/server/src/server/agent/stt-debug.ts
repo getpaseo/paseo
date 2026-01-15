@@ -1,6 +1,9 @@
 import { mkdir, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import { inferAudioExtension, sanitizeForFilename } from "./audio-utils.js";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "stt-debug" });
 
 const debugDir = process.env.STT_DEBUG_AUDIO_DIR
   ? resolve(process.env.STT_DEBUG_AUDIO_DIR)
@@ -24,7 +27,7 @@ export async function maybePersistDebugAudio(
   }
 
   if (!announced) {
-    console.log(`[STT][Debug] Raw audio capture enabled at ${debugDir}`);
+    logger.info({ debugDir }, "Raw audio capture enabled");
     announced = true;
   }
 

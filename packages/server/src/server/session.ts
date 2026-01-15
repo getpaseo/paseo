@@ -69,6 +69,9 @@ import {
   validateBranchSlug,
 } from "../utils/worktree.js";
 import { expandTilde } from "../utils/path.js";
+import { getRootLogger } from "./logger.js";
+
+const logger = getRootLogger().child({ module: "session" });
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -159,8 +162,9 @@ function coerceAgentProvider(value: string, agentId?: string): AgentProvider {
   if (isValidAgentProvider(value)) {
     return value;
   }
-  console.warn(
-    `[Session] Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to '${DEFAULT_AGENT_PROVIDER}'`
+  logger.warn(
+    { value, agentId, defaultProvider: DEFAULT_AGENT_PROVIDER },
+    `Unknown provider '${value}' for agent ${agentId ?? "unknown"}; defaulting to '${DEFAULT_AGENT_PROVIDER}'`
   );
   return DEFAULT_AGENT_PROVIDER;
 }
@@ -173,13 +177,14 @@ function toAgentPersistenceHandle(
   }
   const provider = handle.provider;
   if (!isValidAgentProvider(provider)) {
-    console.warn(
-      `[Session] Ignoring persistence handle with unknown provider '${provider}'`
+    logger.warn(
+      { provider },
+      `Ignoring persistence handle with unknown provider '${provider}'`
     );
     return null;
   }
   if (!handle.sessionId) {
-    console.warn("[Session] Ignoring persistence handle missing sessionId");
+    logger.warn("Ignoring persistence handle missing sessionId");
     return null;
   }
   return {
@@ -199,6 +204,7 @@ export class Session {
   private readonly clientId: string;
   private readonly conversationId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
+  private readonly sessionLogger: ReturnType<typeof logger.child>;
 
   // State machine
   private abortController: AbortController;
@@ -263,12 +269,14 @@ export class Session {
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
     this.abortController = new AbortController();
+    this.sessionLogger = logger.child({ clientId: this.clientId, conversationId: this.conversationId });
 
     // Initialize conversation history
     if (options?.initialMessages) {
       this.messages = options.initialMessages;
-      console.log(
-        `[Session ${this.clientId}] Restored conversation ${this.conversationId} with ${this.messages.length} messages`
+      this.sessionLogger.info(
+        { messageCount: this.messages.length },
+        `Restored conversation with ${this.messages.length} messages`
       );
     }
 
@@ -280,9 +288,7 @@ export class Session {
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
-    console.log(
-      `[Session ${this.clientId}] Created with conversation ${this.conversationId}`
-    );
+    this.sessionLogger.info("Session created");
   }
 
   /**
@@ -347,15 +353,17 @@ export class Session {
       return;
     }
 
-    console.log(
-      `[Session ${this.clientId}] Interrupting active run for agent ${agentId}`
+    this.sessionLogger.info(
+      { agentId },
+      `Interrupting active run for agent ${agentId}`
     );
 
     try {
       const cancelled = await this.agentManager.cancelAgentRun(agentId);
       if (!cancelled) {
-        console.warn(
-          `[Session ${this.clientId}] Agent ${agentId} reported running but no active run was cancelled`
+        this.sessionLogger.warn(
+          { agentId },
+          `Agent ${agentId} reported running but no active run was cancelled`
         );
       }
 
@@ -375,9 +383,9 @@ export class Session {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       }
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to interrupt agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to interrupt agent ${agentId}`
       );
       throw error;
     }
@@ -387,8 +395,9 @@ export class Session {
    * Start streaming an agent run and forward results via the websocket broadcast
    */
   private startAgentStream(agentId: string, prompt: AgentPromptInput): void {
-    console.log(
-      `[Session ${this.clientId}] Starting agent stream for ${agentId}`
+    this.sessionLogger.info(
+      { agentId },
+      `Starting agent stream for ${agentId}`
     );
 
     let iterator: AsyncGenerator<AgentStreamEvent>;
@@ -417,9 +426,9 @@ export class Session {
   ): void {
     const message =
       error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
-    console.error(
-      `[Session ${this.clientId}] ${context} for agent ${agentId}:`,
-      error
+    this.sessionLogger.error(
+      { err: error, agentId, context },
+      `${context} for agent ${agentId}`
     );
     this.emit({
       type: "activity_log",
@@ -454,13 +463,14 @@ export class Session {
 
       this.agentTools = (await this.agentMcpClient.tools()) as ToolSet;
       const agentToolCount = Object.keys(this.agentTools ?? {}).length;
-      console.log(
-        `[Session ${this.clientId}] Agent MCP initialized with ${agentToolCount} tools`
+      this.sessionLogger.info(
+        { agentToolCount },
+        `Agent MCP initialized with ${agentToolCount} tools`
       );
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to initialize Agent MCP:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to initialize Agent MCP"
       );
     }
   }
@@ -487,10 +497,10 @@ export class Session {
         } as const;
 
         const itemType = event.event.type === "timeline" ? event.event.item.type : undefined;
-        const logMessage = itemType
-          ? `[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type} itemType=${itemType}`
-          : `[SERVER AGENT_STREAM] timestamp=${Date.now()} agentId=${event.agentId} eventType=${event.event.type}`;
-        console.log(logMessage);
+        this.sessionLogger.debug(
+          { timestamp: Date.now(), agentId: event.agentId, eventType: event.event.type, itemType },
+          "Agent stream event"
+        );
         this.emit({
           type: "agent_stream",
           payload,
@@ -624,9 +634,9 @@ export class Session {
         payload,
       });
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to emit agent state:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to emit agent state"
       );
     }
   }
@@ -642,9 +652,9 @@ export class Session {
       this.agentTitleCache.set(agentId, title);
       return title;
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to load registry record for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to load registry record for agent ${agentId}`
       );
       return null;
     }
@@ -680,8 +690,9 @@ export class Session {
 
     ACTIVE_TITLE_GENERATIONS.add(agentId);
     try {
-      console.log(
-        `[Session ${this.clientId}] Generating title for agent ${agentId}`
+      this.sessionLogger.debug(
+        { agentId },
+        `Generating title for agent ${agentId}`
       );
       const title = await generateAgentTitle(timeline, snapshot.cwd);
       await this.agentRegistry.setTitle(agentId, title);
@@ -689,9 +700,9 @@ export class Session {
       const latest = this.agentManager.getAgent(agentId) ?? snapshot;
       await this.forwardAgentState(latest);
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to generate title for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to generate title for agent ${agentId}`
       );
     } finally {
       ACTIVE_TITLE_GENERATIONS.delete(agentId);
@@ -830,9 +841,9 @@ export class Session {
           break;
       }
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Error handling message:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Error handling message"
       );
       this.emit({
         type: "activity_log",
@@ -882,9 +893,9 @@ export class Session {
         },
       });
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to list conversations:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to list conversations"
       );
       this.emit({
         type: "activity_log",
@@ -915,13 +926,14 @@ export class Session {
           requestId,
         },
       });
-      console.log(
-        `[Session ${this.clientId}] Deleted conversation ${conversationId}`
+      this.sessionLogger.info(
+        { conversationId },
+        `Deleted conversation ${conversationId}`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to delete conversation ${conversationId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, conversationId },
+        `Failed to delete conversation ${conversationId}`
       );
       this.emit({
         type: "delete_conversation_response",
@@ -940,9 +952,7 @@ export class Session {
     reason?: string
   ): Promise<void> {
     if (restartRequested) {
-      console.log(
-        `[Session ${this.clientId}] Restart already requested, ignoring duplicate`
-      );
+      this.sessionLogger.debug("Restart already requested, ignoring duplicate");
       return;
     }
 
@@ -956,7 +966,7 @@ export class Session {
     }
     payload.requestId = requestId;
 
-    console.warn(`[Session ${this.clientId}] Restart requested via websocket`);
+    this.sessionLogger.warn({ reason }, "Restart requested via websocket");
     this.emit({
       type: "status",
       payload,
@@ -979,25 +989,26 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Deleting agent ${agentId} from registry`
+    this.sessionLogger.info(
+      { agentId },
+      `Deleting agent ${agentId} from registry`
     );
 
     try {
       await this.agentManager.closeAgent(agentId);
     } catch (error: any) {
-      console.warn(
-        `[Session ${this.clientId}] Failed to close agent ${agentId} during delete:`,
-        error
+      this.sessionLogger.warn(
+        { err: error, agentId },
+        `Failed to close agent ${agentId} during delete`
       );
     }
 
     try {
       await this.agentRegistry.remove(agentId);
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to remove agent ${agentId} from registry:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to remove agent ${agentId} from registry`
       );
     }
 
@@ -1016,10 +1027,9 @@ export class Session {
    */
   private handleSetRealtimeMode(enabled: boolean): void {
     this.isRealtimeMode = enabled;
-    console.log(
-      `[Session ${this.clientId}] Realtime mode ${
-        enabled ? "enabled" : "disabled"
-      }`
+    this.sessionLogger.info(
+      { enabled },
+      `Realtime mode ${enabled ? "enabled" : "disabled"}`
     );
   }
 
@@ -1032,10 +1042,9 @@ export class Session {
     messageId?: string,
     images?: Array<{ data: string; mimeType: string }>
   ): Promise<void> {
-    console.log(
-      `[Session ${
-        this.clientId
-      }] Sending text to agent ${agentId}: ${text.substring(0, 50)}...${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
+    this.sessionLogger.info(
+      { agentId, textPreview: text.substring(0, 50), imageCount: images?.length ?? 0 },
+      `Sending text to agent ${agentId}${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
     );
 
     try {
@@ -1065,9 +1074,9 @@ export class Session {
     try {
       this.agentManager.recordUserMessage(agentId, text, { messageId });
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to record user message for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to record user message for agent ${agentId}`
       );
     }
 
@@ -1085,9 +1094,7 @@ export class Session {
 
     // agentId is required for auto_run mode
     if (shouldAutoRun && !agentId) {
-      console.error(
-        `[Session ${this.clientId}] agentId is required for auto_run mode`
-      );
+      this.sessionLogger.error("agentId is required for auto_run mode");
       return;
     }
 
@@ -1100,15 +1107,17 @@ export class Session {
     // For now, we'll process each audio segment immediately
     // In the future, we might want to buffer chunks similar to realtime audio
     if (!isLast) {
-      console.log(
-        `[Session ${this.clientId}] Buffering agent audio chunk for agent ${logAgentId}`
+      this.sessionLogger.debug(
+        { agentId: logAgentId },
+        `Buffering agent audio chunk for agent ${logAgentId}`
       );
       // TODO: Implement buffering if needed
       return;
     }
 
-    console.log(
-      `[Session ${this.clientId}] Transcribing audio for agent ${logAgentId}`
+    this.sessionLogger.debug(
+      { agentId: logAgentId },
+      `Transcribing audio for agent ${logAgentId}`
     );
 
     try {
@@ -1121,14 +1130,16 @@ export class Session {
 
       const transcriptText = result.text.trim();
       if (!transcriptText) {
-        console.log(
-          `[Session ${this.clientId}] Empty transcription for agent ${logAgentId}, ignoring`
+        this.sessionLogger.debug(
+          { agentId: logAgentId },
+          `Empty transcription for agent ${logAgentId}, ignoring`
         );
         return;
       }
 
-      console.log(
-        `[Session ${this.clientId}] Transcribed audio for agent ${logAgentId}: ${transcriptText}`
+      this.sessionLogger.info(
+        { agentId: logAgentId, transcriptText },
+        `Transcribed audio for agent ${logAgentId}`
       );
 
       // Emit transcription result to client with requestId
@@ -1148,8 +1159,9 @@ export class Session {
       });
 
       if (!shouldAutoRun) {
-        console.log(
-        `[Session ${this.clientId}] Completed transcription for agent ${logAgentId} (requestId: ${requestId})`
+        this.sessionLogger.info(
+          { agentId: logAgentId, requestId },
+          `Completed transcription for agent ${logAgentId} (requestId: ${requestId})`
         );
         return;
       }
@@ -1182,21 +1194,22 @@ export class Session {
       try {
         this.agentManager.recordUserMessage(validAgentId, transcriptText);
       } catch (recordError) {
-        console.error(
-          `[Session ${this.clientId}] Failed to record transcribed user message for agent ${validAgentId}:`,
-          recordError
+        this.sessionLogger.error(
+          { err: recordError, agentId: validAgentId },
+          `Failed to record transcribed user message for agent ${validAgentId}`
         );
       }
 
       // Send transcribed text to agent
       this.startAgentStream(validAgentId, transcriptText);
-      console.log(
-        `[Session ${this.clientId}] Sent transcribed text to agent ${validAgentId}`
+      this.sessionLogger.info(
+        { agentId: validAgentId },
+        `Sent transcribed text to agent ${validAgentId}`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to process audio for agent ${logAgentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId: logAgentId },
+        `Failed to process audio for agent ${logAgentId}`
       );
       this.emit({
         type: "activity_log",
@@ -1218,8 +1231,9 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Initializing agent ${agentId} on demand`
+    this.sessionLogger.info(
+      { agentId },
+      `Initializing agent ${agentId} on demand`
     );
 
     try {
@@ -1239,13 +1253,14 @@ export class Session {
         },
       });
 
-      console.log(
-        `[Session ${this.clientId}] Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.lifecycle}`
+      this.sessionLogger.info(
+        { agentId, timelineSize, status: snapshot.lifecycle },
+        `Agent ${agentId} initialized with ${timelineSize} timeline item(s); status=${snapshot.lifecycle}`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to initialize agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to initialize agent ${agentId}`
       );
       this.emit({
         type: "initialize_agent_request",
@@ -1265,8 +1280,9 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "create_agent_request" }>
   ): Promise<void> {
     const { config, worktreeName, requestId, initialPrompt, git, images } = msg;
-    console.log(
-      `[Session ${this.clientId}] Creating agent in ${config.cwd} (${config.provider})${
+    this.sessionLogger.info(
+      { cwd: config.cwd, provider: config.provider, worktreeName },
+      `Creating agent in ${config.cwd} (${config.provider})${
         worktreeName ? ` with worktree ${worktreeName}` : ""
       }`
     );
@@ -1309,9 +1325,9 @@ export class Session {
             images
           );
         } catch (promptError) {
-          console.error(
-            `[Session ${this.clientId}] Failed to run initial prompt for agent ${snapshot.id}:`,
-            promptError
+          this.sessionLogger.error(
+            { err: promptError, agentId: snapshot.id },
+            `Failed to run initial prompt for agent ${snapshot.id}`
           );
           this.emit({
             type: "activity_log",
@@ -1336,13 +1352,14 @@ export class Session {
         });
       }
 
-      console.log(
-        `[Session ${this.clientId}] Created agent ${snapshot.id} (${snapshot.provider})`
+      this.sessionLogger.info(
+        { agentId: snapshot.id, provider: snapshot.provider },
+        `Created agent ${snapshot.id} (${snapshot.provider})`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to create agent:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to create agent"
       );
       if (requestId) {
         this.emit({
@@ -1371,9 +1388,7 @@ export class Session {
   ): Promise<void> {
     const { handle, overrides, requestId } = msg;
     if (!handle) {
-      console.warn(
-        `[Session ${this.clientId}] Resume request missing persistence handle`
-      );
+      this.sessionLogger.warn("Resume request missing persistence handle");
       this.emit({
         type: "activity_log",
         payload: {
@@ -1385,8 +1400,9 @@ export class Session {
       });
       return;
     }
-    console.log(
-      `[Session ${this.clientId}] Resuming agent ${handle.sessionId} (${handle.provider})`
+    this.sessionLogger.info(
+      { sessionId: handle.sessionId, provider: handle.provider },
+      `Resuming agent ${handle.sessionId} (${handle.provider})`
     );
     try {
       const snapshot = await this.agentManager.resumeAgent(
@@ -1409,9 +1425,9 @@ export class Session {
         });
       }
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to resume agent:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to resume agent"
       );
       this.emit({
         type: "activity_log",
@@ -1429,8 +1445,9 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "refresh_agent_request" }>
   ): Promise<void> {
     const { agentId, requestId } = msg;
-    console.log(
-      `[Session ${this.clientId}] Refreshing agent ${agentId} from persistence`
+    this.sessionLogger.info(
+      { agentId },
+      `Refreshing agent ${agentId} from persistence`
     );
 
     try {
@@ -1478,9 +1495,9 @@ export class Session {
         });
       }
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to refresh agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to refresh agent ${agentId}`
       );
       this.emit({
         type: "activity_log",
@@ -1495,8 +1512,9 @@ export class Session {
   }
 
   private async handleCancelAgentRequest(agentId: string): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Cancel request received for agent ${agentId}`
+    this.sessionLogger.info(
+      { agentId },
+      `Cancel request received for agent ${agentId}`
     );
 
     try {
@@ -1545,8 +1563,9 @@ export class Session {
         );
       }
 
-      console.log(
-        `[Session ${this.clientId}] Creating worktree '${
+      this.sessionLogger.info(
+        { worktreeSlug: normalized.worktreeSlug ?? targetBranch, branch: targetBranch },
+        `Creating worktree '${
           normalized.worktreeSlug ?? targetBranch
         }' for branch ${targetBranch}`
       );
@@ -1648,9 +1667,9 @@ export class Session {
         },
       });
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to list models for ${msg.provider}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, provider: msg.provider },
+        `Failed to list models for ${msg.provider}`
       );
       this.emit({
         type: "list_provider_models_response",
@@ -1824,19 +1843,21 @@ export class Session {
     agentId: string,
     modeId: string
   ): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Setting agent ${agentId} mode to ${modeId}`
+    this.sessionLogger.info(
+      { agentId, modeId },
+      `Setting agent ${agentId} mode to ${modeId}`
     );
 
     try {
       await this.agentManager.setAgentMode(agentId, modeId);
-      console.log(
-        `[Session ${this.clientId}] Agent ${agentId} mode set to ${modeId}`
+      this.sessionLogger.info(
+        { agentId, modeId },
+        `Agent ${agentId} mode set to ${modeId}`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to set agent mode:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId, modeId },
+        "Failed to set agent mode"
       );
       this.emit({
         type: "activity_log",
@@ -1856,8 +1877,9 @@ export class Session {
    */
   private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
-    console.log(
-      `[Session ${this.clientId}] Clearing attention for ${agentIds.length} agent(s): ${agentIds.join(", ")}`
+    this.sessionLogger.debug(
+      { agentIds },
+      `Clearing attention for ${agentIds.length} agent(s): ${agentIds.join(", ")}`
     );
 
     try {
@@ -1865,9 +1887,9 @@ export class Session {
         agentIds.map((id) => this.agentManager.clearAgentAttention(id))
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to clear agent attention:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentIds },
+        "Failed to clear agent attention"
       );
       // Don't throw - this is not critical
     }
@@ -1882,7 +1904,7 @@ export class Session {
     lastActivityAt: string;
     appVisible: boolean;
   }): void {
-    console.log(`[Session ${this.clientId}] handleClientHeartbeat`, msg);
+    this.sessionLogger.debug({ heartbeat: msg }, "Client heartbeat");
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
@@ -1896,15 +1918,16 @@ export class Session {
    */
   private handleRegisterPushToken(token: string): void {
     this.pushTokenStore.addToken(token);
-    console.log(`[Session ${this.clientId}] Registered push token`);
+    this.sessionLogger.info("Registered push token");
   }
 
   /**
    * Handle list commands request for an agent
    */
   private async handleListCommandsRequest(agentId: string, requestId: string): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Handling list commands request for agent ${agentId}`
+    this.sessionLogger.debug(
+      { agentId },
+      `Handling list commands request for agent ${agentId}`
     );
 
     try {
@@ -1950,9 +1973,9 @@ export class Session {
         },
       });
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to list commands:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        "Failed to list commands"
       );
       this.emit({
         type: "list_commands_response",
@@ -1974,19 +1997,21 @@ export class Session {
     requestId: string,
     response: AgentPermissionResponse
   ): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Handling permission response for agent ${agentId}, request ${requestId}`
+    this.sessionLogger.debug(
+      { agentId, requestId },
+      `Handling permission response for agent ${agentId}, request ${requestId}`
     );
 
     try {
       await this.agentManager.respondToPermission(agentId, requestId, response);
-      console.log(
-        `[Session ${this.clientId}] Permission response forwarded to agent ${agentId}`
+      this.sessionLogger.debug(
+        { agentId },
+        `Permission response forwarded to agent ${agentId}`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to respond to permission:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId, requestId },
+        "Failed to respond to permission"
       );
       this.emit({
         type: "activity_log",
@@ -2005,8 +2030,9 @@ export class Session {
    * Handle git diff request for an agent
    */
   private async handleGitDiffRequest(agentId: string, requestId: string): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Handling git diff request for agent ${agentId}`
+    this.sessionLogger.debug(
+      { agentId },
+      `Handling git diff request for agent ${agentId}`
     );
 
     try {
@@ -2071,13 +2097,14 @@ export class Session {
         },
       });
 
-      console.log(
-        `[Session ${this.clientId}] Git diff for agent ${agentId} completed (${combinedDiff.length} bytes)`
+      this.sessionLogger.debug(
+        { agentId, diffBytes: combinedDiff.length },
+        `Git diff for agent ${agentId} completed (${combinedDiff.length} bytes)`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to get git diff for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to get git diff for agent ${agentId}`
       );
       this.emit({
         type: "git_diff_response",
@@ -2098,8 +2125,9 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Handling highlighted diff request for agent ${agentId}`
+    this.sessionLogger.debug(
+      { agentId },
+      `Handling highlighted diff request for agent ${agentId}`
     );
 
     // Maximum lines changed before we skip showing the diff content
@@ -2275,13 +2303,14 @@ export class Session {
         },
       });
 
-      console.log(
-        `[Session ${this.clientId}] Highlighted diff for agent ${agentId} completed (${allFiles.length} files)`
+      this.sessionLogger.debug(
+        { agentId, fileCount: allFiles.length },
+        `Highlighted diff for agent ${agentId} completed (${allFiles.length} files)`
       );
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to get highlighted diff for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId },
+        `Failed to get highlighted diff for agent ${agentId}`
       );
       this.emit({
         type: "highlighted_diff_response",
@@ -2303,8 +2332,9 @@ export class Session {
   ): Promise<void> {
     const { agentId, path: requestedPath = ".", mode, requestId } = request;
 
-    console.log(
-      `[Session ${this.clientId}] Handling file explorer request for agent ${agentId} (${mode} ${requestedPath})`
+    this.sessionLogger.debug(
+      { agentId, mode, path: requestedPath },
+      `Handling file explorer request for agent ${agentId} (${mode} ${requestedPath})`
     );
 
     try {
@@ -2365,9 +2395,9 @@ export class Session {
         });
       }
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to fulfill file explorer request for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId, path: requestedPath },
+        `Failed to fulfill file explorer request for agent ${agentId}`
       );
       this.emit({
         type: "file_explorer_response",
@@ -2392,8 +2422,9 @@ export class Session {
   ): Promise<void> {
     const { agentId, path: requestedPath, requestId } = request;
 
-    console.log(
-      `[Session ${this.clientId}] Handling file download token request for agent ${agentId} (${requestedPath})`
+    this.sessionLogger.debug(
+      { agentId, path: requestedPath },
+      `Handling file download token request for agent ${agentId} (${requestedPath})`
     );
 
     try {
@@ -2445,9 +2476,9 @@ export class Session {
         },
       });
     } catch (error: any) {
-      console.error(
-        `[Session ${this.clientId}] Failed to issue download token for agent ${agentId}:`,
-        error
+      this.sessionLogger.error(
+        { err: error, agentId, path: requestedPath },
+        `Failed to issue download token for agent ${agentId}`
       );
       this.emit({
         type: "file_download_token_response",
@@ -2493,13 +2524,14 @@ export class Session {
         },
       });
 
-      console.log(
-        `[Session ${this.clientId}] Sent session state: ${agents.length} agents`
+      this.sessionLogger.debug(
+        { agentCount: agents.length },
+        `Sent session state: ${agents.length} agents`
       );
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to send session state:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to send session state"
       );
     }
   }
@@ -2532,11 +2564,9 @@ export class Session {
 
     // Wait for aborted stream to finish cleanup (save partial response)
     if (this.currentStreamPromise) {
-      console.log(
-        `[Session ${this.clientId}] Waiting for aborted stream to finish cleanup`
-      );
+      this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
       await this.currentStreamPromise;
-      console.log(`[Session ${this.clientId}] Aborted stream finished cleanup`);
+      this.sessionLogger.debug("Aborted stream finished cleanup");
     }
 
     // Emit user message activity log
@@ -2581,8 +2611,9 @@ export class Session {
 
     // If the format changes mid-stream, flush what we have first
     if (this.audioBuffer.isPCM !== isPCMChunk) {
-      console.log(
-        `[Session ${this.clientId}] Audio format changed mid-stream (${this.audioBuffer.isPCM ? "pcm" : this.audioBuffer.format} → ${chunkFormat}), flushing current buffer`
+      this.sessionLogger.debug(
+        { oldFormat: this.audioBuffer.isPCM ? "pcm" : this.audioBuffer.format, newFormat: chunkFormat },
+        `Audio format changed mid-stream, flushing current buffer`
       );
       const finalized = this.finalizeBufferedAudio();
       if (finalized) {
@@ -2604,22 +2635,19 @@ export class Session {
       this.audioBuffer.totalPCMBytes += chunkBuffer.length;
     }
 
-    console.log(
-      `[Session ${this.clientId}] Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
+    this.sessionLogger.debug(
+      { bytes: chunkBuffer.length, chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
+      `Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
     );
 
     // In realtime mode, only process audio when the user has finished speaking (isLast = true)
     // This prevents partial transcriptions from being sent to the LLM
     if (this.isRealtimeMode) {
       if (!msg.isLast) {
-        console.log(
-          `[Session ${this.clientId}] Realtime mode: buffering audio, waiting for speech end`
-        );
+        this.sessionLogger.debug("Realtime mode: buffering audio, waiting for speech end");
         return;
       }
-      console.log(
-        `[Session ${this.clientId}] Realtime mode: speech ended, processing complete audio`
-      );
+      this.sessionLogger.debug("Realtime mode: speech ended, processing complete audio");
     }
 
     // In non-realtime mode, use streaming threshold to process chunks
@@ -2628,7 +2656,7 @@ export class Session {
       this.audioBuffer.isPCM &&
       this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
 
-    if (!msg.isLast && !reachedStreamingThreshold) {
+    if (!msg.isLast && reachedStreamingThreshold) {
       return;
     }
 
@@ -2639,14 +2667,16 @@ export class Session {
     }
 
     if (!msg.isLast && reachedStreamingThreshold) {
-      console.log(
-        `[Session ${this.clientId}] Minimum chunk duration reached (~${MIN_STREAMING_SEGMENT_DURATION_MS}ms, ${
+      this.sessionLogger.debug(
+        { minDuration: MIN_STREAMING_SEGMENT_DURATION_MS, pcmBytes: bufferedState?.totalPCMBytes ?? 0 },
+        `Minimum chunk duration reached (~${MIN_STREAMING_SEGMENT_DURATION_MS}ms, ${
           bufferedState?.totalPCMBytes ?? 0
         } PCM bytes) – triggering STT`
       );
     } else {
-      console.log(
-        `[Session ${this.clientId}] Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`
+      this.sessionLogger.debug(
+        { audioBytes: finalized.audio.length, chunks: bufferedState?.chunks.length ?? 0 },
+        `Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`
       );
     }
 
@@ -2692,8 +2722,9 @@ export class Session {
       this.pendingAudioSegments.length === 0;
 
     if (shouldBuffer) {
-      console.log(
-        `[Session ${this.clientId}] Buffering audio segment (phase: ${this.processingPhase})`
+      this.sessionLogger.debug(
+        { phase: this.processingPhase },
+        `Buffering audio segment (phase: ${this.processingPhase})`
       );
       this.pendingAudioSegments.push({
         audio,
@@ -2708,8 +2739,9 @@ export class Session {
         audio,
         format,
       });
-      console.log(
-        `[Session ${this.clientId}] Processing ${this.pendingAudioSegments.length} buffered segments together`
+      this.sessionLogger.debug(
+        { segmentCount: this.pendingAudioSegments.length },
+        `Processing ${this.pendingAudioSegments.length} buffered segments together`
       );
 
       const pendingSegments = [...this.pendingAudioSegments];
@@ -2752,9 +2784,7 @@ export class Session {
 
       const transcriptText = result.text.trim();
       if (!transcriptText) {
-        console.log(
-          `[Session ${this.clientId}] Empty transcription (false positive), not aborting`
-        );
+        this.sessionLogger.debug("Empty transcription (false positive), not aborting");
         this.setPhase("idle");
         this.clearSpeechInProgress("empty transcription");
         return;
@@ -2765,9 +2795,7 @@ export class Session {
 
       // Wait for aborted stream to finish cleanup (save partial response)
       if (this.currentStreamPromise) {
-        console.log(
-          `[Session ${this.clientId}] Waiting for aborted stream to finish cleanup`
-        );
+        this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
         await this.currentStreamPromise;
       }
 
@@ -2848,9 +2876,7 @@ export class Session {
             modeAtGeneration
           );
         } else if (enableTTS && this.speechInProgress) {
-          console.log(
-            `[Session ${this.clientId}] Skipping TTS chunk while speech in progress`
-          );
+          this.sessionLogger.debug("Skipping TTS chunk while speech in progress");
         }
 
         // Emit activity log
@@ -2882,17 +2908,13 @@ export class Session {
 
       // Wait for agent MCP to initialize if needed
       if (!this.agentTools) {
-        console.log(
-          `[Session ${this.clientId}] Waiting for agent MCP initialization...`
-        );
+        this.sessionLogger.debug("Waiting for agent MCP initialization...");
         const startTime = Date.now();
         while (!this.agentTools && Date.now() - startTime < 5000) {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         if (!this.agentTools) {
-          console.log(
-            `[Session ${this.clientId}] Agent MCP tools unavailable; continuing with default tool set`
-          );
+          this.sessionLogger.info("Agent MCP tools unavailable; continuing with default tool set");
         }
       }
 
@@ -2913,8 +2935,9 @@ export class Session {
           const newMessages = event.response.messages;
           if (newMessages.length > 0) {
             this.messages.push(...newMessages);
-            console.log(
-              `[Session ${this.clientId}] onFinish - saved message with ${newMessages.length} steps`
+            this.sessionLogger.debug(
+              { messageCount: newMessages.length },
+              `onFinish - saved message with ${newMessages.length} steps`
             );
           }
 
@@ -2922,9 +2945,9 @@ export class Session {
           try {
             await saveConversation(this.conversationId, this.messages);
           } catch (error) {
-            console.error(
-              `[Session ${this.clientId}] Failed to persist conversation:`,
-              error
+            this.sessionLogger.error(
+              { err: error },
+              "Failed to persist conversation"
             );
             // Don't break conversation flow on persistence errors
           }
@@ -2947,8 +2970,9 @@ export class Session {
 
             // Wait for pending TTS before executing tool
             if (pendingTTS) {
-              console.log(
-                `[Session ${this.clientId}] Waiting for TTS before executing ${chunk.toolName}`
+              this.sessionLogger.debug(
+                { toolName: chunk.toolName },
+                `Waiting for TTS before executing ${chunk.toolName}`
               );
               await pendingTTS;
             }
@@ -3010,7 +3034,7 @@ export class Session {
           }
         },
         onError: async (error) => {
-          console.error(error);
+          this.sessionLogger.error({ err: error }, "Stream error");
 
           this.emit({
             type: "activity_log",
@@ -3078,9 +3102,9 @@ export class Session {
         try {
           await pendingTTS;
         } catch (ttsError) {
-          console.error(
-            `[Session ${this.clientId}] TTS playback failed (message already saved):`,
-            ttsError
+          this.sessionLogger.error(
+            { err: ttsError },
+            "TTS playback failed (message already saved)"
           );
         }
       }
@@ -3108,9 +3132,7 @@ export class Session {
 
       // Don't re-throw abort errors (they're expected during interruptions)
       if (isAbortError) {
-        console.log(
-          `[Session ${this.clientId}] Stream aborted (partial response saved)`
-        );
+        this.sessionLogger.debug("Stream aborted (partial response saved)");
         return;
       }
 
@@ -3154,9 +3176,9 @@ export class Session {
         isBase64 = false;
       }
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to resolve artifact source:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to resolve artifact source"
       );
       content = `[Error: ${
         error instanceof Error ? error.message : String(error)
@@ -3193,20 +3215,19 @@ export class Session {
    * Handle abort request from client
    */
   private async handleAbort(): Promise<void> {
-    console.log(
-      `[Session ${this.clientId}] Abort request, phase: ${this.processingPhase}`
+    this.sessionLogger.info(
+      { phase: this.processingPhase },
+      `Abort request, phase: ${this.processingPhase}`
     );
 
     if (this.processingPhase === "llm") {
       // Already in LLM phase - abort and wait for cleanup
       this.abortController.abort();
-      console.log(`[Session ${this.clientId}] Aborted LLM processing`);
+      this.sessionLogger.debug("Aborted LLM processing");
 
       // Wait for stream to finish saving partial response
       if (this.currentStreamPromise) {
-        console.log(
-          `[Session ${this.clientId}] Waiting for stream cleanup after abort`
-        );
+        this.sessionLogger.debug("Waiting for stream cleanup after abort");
         await this.currentStreamPromise;
       }
 
@@ -3218,9 +3239,7 @@ export class Session {
       this.clearBufferTimeout();
     } else if (this.processingPhase === "transcribing") {
       // Still in STT phase - we'll buffer the next audio
-      console.log(
-        `[Session ${this.clientId}] Will buffer next audio (currently transcribing)`
-      );
+      this.sessionLogger.debug("Will buffer next audio (currently transcribing)");
       // Phase stays as 'transcribing', handleAudioChunk will handle buffering
     }
     // If idle, nothing to do
@@ -3246,21 +3265,21 @@ export class Session {
     const hadActiveStream = Boolean(this.currentStreamPromise);
 
     this.speechInProgress = true;
-    console.log(
-      `[Session ${this.clientId}] Realtime speech chunk detected – aborting playback and LLM`
-    );
+    this.sessionLogger.debug("Realtime speech chunk detected – aborting playback and LLM");
     this.ttsManager.cancelPendingPlaybacks("realtime speech detected");
 
     if (this.pendingAudioSegments.length > 0) {
-      console.log(
-        `[Session ${this.clientId}] Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to realtime speech`
+      this.sessionLogger.debug(
+        { segmentCount: this.pendingAudioSegments.length },
+        `Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to realtime speech`
       );
       this.pendingAudioSegments = [];
     }
 
     if (this.audioBuffer) {
-      console.log(
-        `[Session ${this.clientId}] Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
+      this.sessionLogger.debug(
+        { chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
+        `Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
           this.audioBuffer.isPCM
             ? `, ${this.audioBuffer.totalPCMBytes} PCM bytes`
             : ""
@@ -3275,13 +3294,10 @@ export class Session {
     await this.handleAbort();
 
     const latencyMs = Date.now() - chunkReceivedAt;
-    console.log("[Telemetry] barge_in.llm_abort_latency", {
-      latencyMs,
-      conversationId: this.conversationId,
-      phaseBeforeAbort,
-      hadActiveStream,
-      timestamp: new Date().toISOString(),
-    });
+    this.sessionLogger.debug(
+      { latencyMs, phaseBeforeAbort, hadActiveStream },
+      "[Telemetry] barge_in.llm_abort_latency"
+    );
   }
 
   /**
@@ -3293,8 +3309,9 @@ export class Session {
     }
 
     this.speechInProgress = false;
-    console.log(
-      `[Session ${this.clientId}] Speech turn complete (${reason}) – resuming TTS`
+    this.sessionLogger.debug(
+      { reason },
+      `Speech turn complete (${reason}) – resuming TTS`
     );
   }
 
@@ -3312,7 +3329,7 @@ export class Session {
    */
   private setPhase(phase: ProcessingPhase): void {
     this.processingPhase = phase;
-    console.log(`[Session ${this.clientId}] Phase: ${phase}`);
+    this.sessionLogger.debug({ phase }, `Phase: ${phase}`);
   }
 
   /**
@@ -3322,9 +3339,7 @@ export class Session {
     this.clearBufferTimeout();
 
     this.bufferTimeout = setTimeout(async () => {
-      console.log(
-        `[Session ${this.clientId}] Buffer timeout reached, processing pending segments`
-      );
+      this.sessionLogger.debug("Buffer timeout reached, processing pending segments");
 
       if (this.pendingAudioSegments.length > 0) {
         const segments = [...this.pendingAudioSegments];
@@ -3373,13 +3388,14 @@ export class Session {
       };
 
       await writeFile(filepath, inspect(dump, { depth: null }), "utf-8");
-      console.log(
-        `[Session ${this.clientId}] Dumped conversation to ${filepath}`
+      this.sessionLogger.debug(
+        { filepath },
+        `Dumped conversation to ${filepath}`
       );
     } catch (error) {
-      console.error(
-        `[Session ${this.clientId}] Failed to dump conversation:`,
-        error
+      this.sessionLogger.error(
+        { err: error },
+        "Failed to dump conversation"
       );
     }
   }
@@ -3388,7 +3404,7 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
-    console.log(`[Session ${this.clientId}] Cleaning up`);
+    this.sessionLogger.info("Cleaning up");
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
@@ -3413,11 +3429,11 @@ export class Session {
     if (this.agentMcpClient) {
       try {
         await this.agentMcpClient.close();
-        console.log(`[Session ${this.clientId}] Agent MCP client closed`);
+        this.sessionLogger.debug("Agent MCP client closed");
       } catch (error) {
-        console.error(
-          `[Session ${this.clientId}] Failed to close Agent MCP client:`,
-          error
+        this.sessionLogger.error(
+          { err: error },
+          "Failed to close Agent MCP client"
         );
       }
       this.agentMcpClient = null;

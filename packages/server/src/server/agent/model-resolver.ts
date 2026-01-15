@@ -1,6 +1,9 @@
 import { fetchProviderModels } from "./provider-registry.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { expandTilde } from "../../utils/path.js";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "model-resolver" });
 
 type ResolveAgentModelOptions = {
   provider: AgentProvider;
@@ -23,9 +26,9 @@ export async function resolveAgentModel(
     const preferred = models.find((model) => model.isDefault) ?? models[0];
     return preferred?.id;
   } catch (error) {
-    console.warn(
-      `[AgentModelResolver] Failed to resolve default model for ${options.provider}:`,
-      error
+    logger.warn(
+      { err: error, provider: options.provider },
+      "Failed to resolve default model"
     );
     return undefined;
   }

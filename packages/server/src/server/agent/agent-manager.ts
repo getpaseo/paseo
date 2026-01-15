@@ -4,6 +4,9 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "agent-manager" });
 
 import type {
   AgentCapabilityFlags,
@@ -268,9 +271,9 @@ export class AgentManager {
         });
         descriptors.push(...entries);
       } catch (error) {
-        console.warn(
-          `[AgentManager] Failed to list persisted agents for provider '${provider}':`,
-          error
+        logger.warn(
+          { err: error, provider },
+          "Failed to list persisted agents for provider"
         );
       }
     }
@@ -355,9 +358,9 @@ export class AgentManager {
     try {
       await existing.session.close();
     } catch (error) {
-      console.warn(
-        `[AgentManager] Failed to close previous session for agent ${agentId} during refresh:`,
-        error
+      logger.warn(
+        { err: error, agentId },
+        "Failed to close previous session during refresh"
       );
     }
 
@@ -546,9 +549,9 @@ export class AgentManager {
     try {
       await agent.session.interrupt();
     } catch (error) {
-      console.error(
-        `[AgentManager] Failed to interrupt session for agent ${agentId}:`,
-        error
+      logger.error(
+        { err: error, agentId },
+        "Failed to interrupt session"
       );
     }
 
@@ -558,9 +561,9 @@ export class AgentManager {
       await pendingRun.return(undefined as unknown as AgentStreamEvent);
       return true;
     } catch (error) {
-      console.error(
-        `[AgentManager] Failed to cancel run for agent ${agentId}:`,
-        error
+      logger.error(
+        { err: error, agentId },
+        "Failed to cancel run"
       );
       throw error;
     }

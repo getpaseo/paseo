@@ -6,6 +6,7 @@ import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { getRootLogger } from "./logger.js";
 
 type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -96,6 +97,8 @@ export interface PaseoDaemon {
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig
 ): Promise<PaseoDaemon> {
+  const logger = getRootLogger().child({ module: "bootstrap" });
+
   const agentMcpRoute = config.agentMcpRoute;
   const basicAuthUsers = config.auth.basicUsers;
   const staticDir = config.staticDir;
@@ -176,8 +179,8 @@ export async function createPaseoDaemon(
     try {
       const conversations = await listConversations();
       res.json(conversations);
-    } catch (error) {
-      console.error("[API] Failed to list conversations:", error);
+    } catch (err) {
+      logger.error({ err }, "Failed to list conversations");
       res.status(500).json({ error: "Failed to list conversations" });
     }
   });
@@ -187,8 +190,8 @@ export async function createPaseoDaemon(
       const { id } = req.params;
       await deleteConversation(id);
       res.json({ success: true });
-    } catch (error) {
-      console.error("[API] Failed to delete conversation:", error);
+    } catch (err) {
+      logger.error({ err }, "Failed to delete conversation");
       res.status(500).json({ error: "Failed to delete conversation" });
     }
   });
@@ -226,8 +229,8 @@ export async function createPaseoDaemon(
       res.setHeader("Content-Length", entry.size.toString());
 
       const stream = createReadStream(entry.absolutePath);
-      stream.on("error", (error) => {
-        console.error("[API] Failed to stream download:", error);
+      stream.on("error", (err) => {
+        logger.error({ err }, "Failed to stream download");
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to read file" });
         } else {
@@ -235,8 +238,8 @@ export async function createPaseoDaemon(
         }
       });
       stream.pipe(res);
-    } catch (error) {
-      console.error("[API] Failed to download file:", error);
+    } catch (err) {
+      logger.error({ err }, "Failed to download file");
       if (!res.headersSent) {
         res.status(404).json({ error: "File not found" });
       }
@@ -257,8 +260,8 @@ export async function createPaseoDaemon(
 
   attachAgentRegistryPersistence(agentManager, agentRegistry);
   const persistedRecords = await agentRegistry.list();
-  console.log(
-    `✓ Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
+  logger.info(
+    `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
 
   const agentMcpTransports: AgentMcpTransportMap = new Map();
@@ -275,11 +278,11 @@ export async function createPaseoDaemon(
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sessionId) => {
         agentMcpTransports.set(sessionId, transport);
-        console.log(`[Agent MCP] Session initialized: ${sessionId}`);
+        logger.debug({ sessionId }, "Agent MCP session initialized");
       },
       onsessionclosed: (sessionId) => {
         agentMcpTransports.delete(sessionId);
-        console.log(`[Agent MCP] Session closed: ${sessionId}`);
+        logger.debug({ sessionId }, "Agent MCP session closed");
       },
       enableDnsRebindingProtection: true,
       allowedHosts,
@@ -289,8 +292,8 @@ export async function createPaseoDaemon(
         agentMcpTransports.delete(transport.sessionId);
       }
     };
-    transport.onerror = (error) => {
-      console.error("[Agent MCP] Transport error:", error);
+    transport.onerror = (err) => {
+      logger.error({ err }, "Agent MCP transport error");
     };
 
     await agentMcpServer.connect(transport);
@@ -300,13 +303,16 @@ export async function createPaseoDaemon(
 
   const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
     if (config.mcpDebug) {
-      console.log("[Agent MCP] request", {
-        method: req.method,
-        url: req.originalUrl,
-        sessionId: req.header("mcp-session-id"),
-        authorization: req.header("authorization"),
-        body: req.body,
-      });
+      logger.debug(
+        {
+          method: req.method,
+          url: req.originalUrl,
+          sessionId: req.header("mcp-session-id"),
+          authorization: req.header("authorization"),
+          body: req.body,
+        },
+        "Agent MCP request"
+      );
     }
     try {
       const sessionId = req.header("mcp-session-id");
@@ -346,8 +352,8 @@ export async function createPaseoDaemon(
       }
 
       await transport.handleRequest(req as any, res as any, req.body);
-    } catch (error) {
-      console.error("[Agent MCP] Failed to handle request:", error);
+    } catch (err) {
+      logger.error({ err }, "Failed to handle Agent MCP request");
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",
@@ -364,7 +370,7 @@ export async function createPaseoDaemon(
   app.post(agentMcpRoute, handleAgentMcpRequest);
   app.get(agentMcpRoute, handleAgentMcpRequest);
   app.delete(agentMcpRoute, handleAgentMcpRequest);
-  console.log(`✓ Agent MCP server mounted at ${agentMcpRoute}`);
+  logger.info({ route: agentMcpRoute }, "Agent MCP server mounted");
 
   const wsServer = new VoiceAssistantWebSocketServer(
     httpServer,
@@ -380,7 +386,7 @@ export async function createPaseoDaemon(
 
   const openaiApiKey = config.openai?.apiKey;
   if (openaiApiKey) {
-    console.log("✓ OpenAI client initialized");
+    logger.info("OpenAI client initialized");
 
     const sttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
     if (sttApiKey) {
@@ -405,9 +411,7 @@ export async function createPaseoDaemon(
 
     initializeTitleGenerator(openaiApiKey);
   } else {
-    console.warn(
-      "⚠ OPENAI_API_KEY not set - LLM, STT, and TTS features will not work"
-    );
+    logger.warn("OPENAI_API_KEY not set - LLM, STT, and TTS features will not work");
   }
 
   const start = async () => {
@@ -419,11 +423,12 @@ export async function createPaseoDaemon(
       const onListening = () => {
         httpServer.off("error", onError);
         if (listenTarget.type === "tcp") {
-          console.log(
-            `✓ Server listening on http://${listenTarget.host}:${listenTarget.port}`
+          logger.info(
+            { host: listenTarget.host, port: listenTarget.port },
+            `Server listening on http://${listenTarget.host}:${listenTarget.port}`
           );
         } else {
-          console.log(`✓ Server listening on ${listenTarget.path}`);
+          logger.info({ path: listenTarget.path }, `Server listening on ${listenTarget.path}`);
         }
         resolve();
       };
@@ -465,12 +470,13 @@ export async function createPaseoDaemon(
 }
 
 async function closeAllAgents(agentManager: AgentManager): Promise<void> {
+  const logger = getRootLogger().child({ module: "bootstrap" });
   const agents = agentManager.listAgents();
   for (const agent of agents) {
     try {
       await agentManager.closeAgent(agent.id);
-    } catch (error) {
-      console.error(`[Agents] Failed to close agent ${agent.id}:`, error);
+    } catch (err) {
+      logger.error({ err, agentId: agent.id }, "Failed to close agent");
     }
   }
 }

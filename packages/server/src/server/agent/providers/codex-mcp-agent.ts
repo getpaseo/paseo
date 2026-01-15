@@ -14,6 +14,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { getRootLogger } from "../../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", provider: "codex" });
 
 import type {
   AgentCapabilityFlags,
@@ -2377,8 +2380,9 @@ async function replaceInlineImageData(promptText: string): Promise<string> {
   if (matches.length === 0) {
     return promptText;
   }
-  console.info(
-    `[CodexAgentSession] Replacing ${matches.length} inline image data URL(s) with temp files.`
+  logger.debug(
+    { count: matches.length },
+    "Replacing inline image data URLs with temp files"
   );
   let output = "";
   let lastIndex = 0;
@@ -2393,9 +2397,7 @@ async function replaceInlineImageData(promptText: string): Promise<string> {
       output += filePath;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `[CodexAgentSession] Failed to replace inline image data URL: ${message}`
-      );
+      logger.warn({ message }, "Failed to replace inline image data URL");
       output += fullMatch;
     }
     lastIndex = matchIndex + fullMatch.length;
@@ -4845,9 +4847,9 @@ async function loadCodexPersistedTimeline(
     const timeline = await parseRolloutFile(rolloutFile);
     return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
   } catch (error) {
-    console.warn(
-      `[CodexMcpAgentSession] Failed to load persisted timeline for ${sessionId}:`,
-      error
+    logger.warn(
+      { err: error, sessionId },
+      "Failed to load persisted timeline"
     );
     return [];
   }

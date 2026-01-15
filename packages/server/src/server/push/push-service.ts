@@ -1,4 +1,7 @@
+import { getRootLogger } from "../logger.js";
 import type { PushTokenStore } from "./token-store.js";
+
+const logger = getRootLogger().child({ module: "push", component: "push-service" });
 
 interface PushPayload {
   title: string;
@@ -71,8 +74,9 @@ export class PushService {
       });
 
       if (!response.ok) {
-        console.error(
-          `[PushService] Expo push API error: ${response.status} ${response.statusText}`
+        logger.error(
+          { status: response.status, statusText: response.statusText },
+          "Expo push API error"
         );
         return;
       }
@@ -80,7 +84,7 @@ export class PushService {
       const result = (await response.json()) as { data: ExpoPushTicket[] };
       this.handleTickets(messages, result.data);
     } catch (error) {
-      console.error("[PushService] Failed to send push notifications:", error);
+      logger.error({ err: error }, "Failed to send push notifications");
     }
   }
 
@@ -93,9 +97,9 @@ export class PushService {
       const message = messages[i];
 
       if (ticket.status === "error") {
-        console.error(
-          `[PushService] Push failed for token: ${ticket.message}`,
-          ticket.details
+        logger.error(
+          { token: message.to, message: ticket.message, details: ticket.details },
+          "Push failed for token"
         );
 
         // Remove invalid tokens

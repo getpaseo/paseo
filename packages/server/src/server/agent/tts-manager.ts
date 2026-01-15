@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { synthesizeSpeech } from "./tts-openai.js";
 import type { SessionOutboundMessage } from "../messages.js";
+import { getRootLogger } from "../logger.js";
 
 interface PendingPlayback {
   resolve: () => void;
@@ -15,10 +16,10 @@ interface PendingPlayback {
  */
 export class TTSManager {
   private pendingPlaybacks: Map<string, PendingPlayback> = new Map();
-  private readonly sessionId: string;
+  private readonly logger;
 
   constructor(sessionId: string) {
-    this.sessionId = sessionId;
+    this.logger = getRootLogger().child({ module: "agent", component: "tts-manager", sessionId });
   }
 
   /**
@@ -32,9 +33,7 @@ export class TTSManager {
     isRealtimeMode: boolean
   ): Promise<void> {
     if (abortSignal.aborted) {
-      console.log(
-        `[TTS-Manager ${this.sessionId}] Aborted before generating audio`
-      );
+      this.logger.debug("Aborted before generating audio");
       return;
     }
 
@@ -42,9 +41,7 @@ export class TTSManager {
     const { stream, format } = await synthesizeSpeech(text);
 
     if (abortSignal.aborted) {
-      console.log(
-        `[TTS-Manager ${this.sessionId}] Aborted after generating audio`
-      );
+      this.logger.debug("Aborted after generating audio");
       return;
     }
 
@@ -74,9 +71,7 @@ export class TTSManager {
     };
 
     onAbort = () => {
-      console.log(
-        `[TTS-Manager ${this.sessionId}] Aborted while waiting for playback`
-      );
+      this.logger.debug("Aborted while waiting for playback");
       pendingPlayback.streamEnded = true;
       pendingPlayback.pendingChunks = 0;
       this.pendingPlaybacks.delete(audioId);
@@ -96,9 +91,7 @@ export class TTSManager {
 
         while (true) {
           if (abortSignal.aborted) {
-            console.log(
-              `[TTS-Manager ${this.sessionId}] Aborted during stream emission`
-            );
+            this.logger.debug("Aborted during stream emission");
             break;
           }
 
@@ -122,10 +115,9 @@ export class TTSManager {
             },
           });
 
-          console.log(
-            `[TTS-Manager ${this.sessionId}] ${new Date().toISOString()} Sent audio chunk ${chunkId}${
-              next.done ? " (last)" : ""
-            }`
+          this.logger.debug(
+            { chunkId, isLastChunk: next.done },
+            "Sent audio chunk"
           );
 
           chunkIndex += 1;
@@ -149,14 +141,9 @@ export class TTSManager {
       await playbackPromise;
     } catch (error) {
       if (abortSignal.aborted) {
-        console.log(
-          `[TTS-Manager ${this.sessionId}] Audio stream closed after abort`
-        );
+        this.logger.debug("Audio stream closed after abort");
       } else {
-        console.error(
-          `[TTS-Manager ${this.sessionId}] Error streaming audio`,
-          error
-        );
+        this.logger.error({ err: error }, "Error streaming audio");
         this.pendingPlaybacks.delete(audioId);
         pendingPlayback.reject(error as Error);
         throw error;
@@ -172,11 +159,7 @@ export class TTSManager {
       return;
     }
 
-    console.log(
-      `[TTS-Manager ${
-        this.sessionId
-      }] ${new Date().toISOString()} Audio ${audioId} playback confirmed`
-    );
+    this.logger.debug({ audioId }, "Audio playback confirmed");
   }
 
   /**
@@ -190,9 +173,7 @@ export class TTSManager {
     const pending = this.pendingPlaybacks.get(audioId);
 
     if (!pending) {
-      console.warn(
-        `[TTS-Manager ${this.sessionId}] Received confirmation for unknown audio ID: ${chunkId}`
-      );
+      this.logger.warn({ chunkId }, "Received confirmation for unknown audio ID");
       return;
     }
 
@@ -212,16 +193,15 @@ export class TTSManager {
       return;
     }
 
-    console.log(
-      `[TTS-Manager ${this.sessionId}] Cancelling ${this.pendingPlaybacks.size} pending playback(s): ${reason}`
+    this.logger.debug(
+      { count: this.pendingPlaybacks.size, reason },
+      "Cancelling pending playbacks"
     );
 
     for (const [audioId, pending] of this.pendingPlaybacks.entries()) {
       pending.resolve();
       this.pendingPlaybacks.delete(audioId);
-      console.log(
-        `[TTS-Manager ${this.sessionId}] Cleared pending playback ${audioId}`
-      );
+      this.logger.debug({ audioId }, "Cleared pending playback");
     }
   }
 

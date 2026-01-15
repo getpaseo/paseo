@@ -73,15 +73,11 @@ describe("Claude SDK direct behavior", () => {
           preset: "claude_code",
         },
         settingSources: ["user", "project"],
-        stderr: (data: string) => {
-          console.error("[SDK stderr]", data.trim());
-        },
       },
     });
 
     try {
       // Send first message
-      console.log("[SDK] Sending MSG1");
       input.push({
         type: "user",
         message: { role: "user", content: "Say exactly: MESSAGE_ONE" },
@@ -93,54 +89,32 @@ describe("Claude SDK direct behavior", () => {
       const msg1Events: SDKMessage[] = [];
       for await (const event of q) {
         msg1Events.push(event);
-        console.log("[SDK] MSG1 event:", event.type);
 
         if (event.type === "assistant") {
           // Push MSG2 BEFORE interrupt (like our wrapper does when a new message comes in)
-          console.log("[SDK] Pushing MSG2 before interrupt...");
           input.push({
             type: "user",
             message: { role: "user", content: "Say exactly: MESSAGE_TWO" },
             parent_tool_use_id: null,
             session_id: "",
           });
-          console.log("[SDK] Calling interrupt()...");
           await q.interrupt();
-          console.log("[SDK] interrupt() returned");
           break;
         }
         if (event.type === "result") {
-          console.log("[SDK] MSG1 completed before interrupt");
           break;
         }
       }
 
-      console.log("[SDK] MSG1 events:", msg1Events.length);
-
       // MSG2 was already pushed before interrupt
-      console.log("[SDK] About to call q.next() for MSG2...");
       const msg2Events: SDKMessage[] = [];
       for await (const event of q) {
         msg2Events.push(event);
 
-        let detail = "";
-        if (event.type === "assistant" && "message" in event && event.message?.content) {
-          const content = event.message.content;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block.type === "text" && block.text) {
-                detail = `"${block.text.substring(0, 50)}"`;
-              }
-            }
-          }
-        }
-        console.log("[SDK] MSG2 event:", event.type, detail);
-
         if (event.type === "result") {
           break;
         }
       }
-      console.log("[SDK] MSG2 loop finished");
 
       // Analyze response
       let responseText = "";
@@ -156,10 +130,6 @@ describe("Claude SDK direct behavior", () => {
           }
         }
       }
-
-      console.log("[SDK] MSG2 response:", responseText);
-      console.log("[SDK] Mentions 'one':", responseText.toLowerCase().includes("one"));
-      console.log("[SDK] Mentions 'two':", responseText.toLowerCase().includes("two"));
 
       const sawResult = msg2Events.some((event) => event.type === "result");
       // The SDK may short-circuit after interrupt without a result event.

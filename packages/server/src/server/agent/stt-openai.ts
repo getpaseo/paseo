@@ -4,6 +4,9 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { v4 } from "uuid";
 import { inferAudioExtension } from "./audio-utils.js";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", provider: "openai", component: "stt" });
 
 export interface STTConfig {
   apiKey: string;
@@ -58,7 +61,7 @@ export function initializeSTT(sttConfig: STTConfig): void {
   openaiClient = new OpenAI({
     apiKey: sttConfig.apiKey,
   });
-  console.log("✓ STT (OpenAI Whisper) initialized");
+  logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI Whisper) initialized");
 }
 
 export async function transcribeAudio(
@@ -81,8 +84,9 @@ export async function transcribeAudio(
     tempFilePath = join(tmpdir(), `audio-${v4()}.${ext}`);
     await writeFile(tempFilePath, audioBuffer);
 
-    console.log(
-      `[STT] Transcribing audio file: ${tempFilePath} (${audioBuffer.length} bytes)`
+    logger.debug(
+      { tempFilePath, bytes: audioBuffer.length },
+      "Transcribing audio file"
     );
 
     // Call OpenAI Whisper API
@@ -126,24 +130,21 @@ export async function transcribeAudio(
       isLowConfidence = avgLogprob < confidenceThreshold;
 
       if (isLowConfidence) {
-        console.log(
-          `[STT] Low confidence transcription detected (avg: ${avgLogprob.toFixed(
-            2
-          )}, threshold: ${confidenceThreshold}): "${response.text}"`
-        );
-        console.log(
-          `[STT] Token logprobs:`,
-          logprobs.map((t) => `${t.token}:${t.logprob.toFixed(2)}`).join(", ")
+        logger.debug(
+          {
+            avgLogprob,
+            threshold: confidenceThreshold,
+            text: response.text,
+            tokenLogprobs: logprobs.map((t) => `${t.token}:${t.logprob.toFixed(2)}`).join(", ")
+          },
+          "Low confidence transcription detected"
         );
       }
     }
 
-    console.log(
-      `[STT] Transcription complete in ${duration}ms: "${response.text}"${
-        avgLogprob !== undefined
-          ? ` (avg logprob: ${avgLogprob.toFixed(2)})`
-          : ""
-      }`
+    logger.debug(
+      { duration, text: response.text, avgLogprob },
+      "Transcription complete"
     );
 
     return {
@@ -158,7 +159,7 @@ export async function transcribeAudio(
           : undefined,
     };
   } catch (error: any) {
-    console.error("[STT] Transcription error:", error);
+    logger.error({ err: error }, "Transcription error");
     throw new Error(`STT transcription failed: ${error.message}`);
   } finally {
     // Clean up temporary file
@@ -166,7 +167,7 @@ export async function transcribeAudio(
       try {
         await unlink(tempFilePath);
       } catch (cleanupError) {
-        console.warn(`[STT] Failed to clean up temp file: ${tempFilePath}`);
+        logger.warn({ tempFilePath }, "Failed to clean up temp file");
       }
     }
   }

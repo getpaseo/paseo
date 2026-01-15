@@ -52,11 +52,6 @@ describe("ClaudeAgentSession Commands", () => {
       // Should have at least some built-in commands
       expect(commands.length).toBeGreaterThan(0);
 
-      console.log(`[Test] Found ${commands.length} commands:`);
-      commands.slice(0, 5).forEach((cmd) => {
-        console.log(`  - /${cmd.name}: ${cmd.description}`);
-      });
-
       await session.close();
     }, 30000);
 
@@ -91,9 +86,6 @@ describe("ClaudeAgentSession Commands", () => {
       // The exact commands depend on what skills are configured
       expect(commands.length).toBeGreaterThan(0);
 
-      // Log all available commands for debugging
-      console.log(`[Test] Available commands: ${commandNames.join(", ")}`);
-
       await session.close();
     }, 30000);
   });
@@ -111,15 +103,12 @@ describe("ClaudeAgentSession Commands", () => {
 
       // Execute one of the available commands
       const firstCommand = commands[0];
-      console.log(`[Test] Executing command: /${firstCommand.name}`);
       const result = await session.executeCommand!(firstCommand.name);
 
       // Should return a result object
       expect(result).toBeDefined();
       expect(typeof result.text).toBe("string");
       // Note: Some commands may return empty text (e.g., plugin descriptions)
-
-      console.log(`[Test] Command /${firstCommand.name} result (first 200 chars): ${result.text.slice(0, 200)}...`);
 
       await session.close();
     }, 60000);
@@ -137,8 +126,6 @@ describe("ClaudeAgentSession Commands", () => {
       // If this fails, user messages from SDK are not being captured
       expect(result.text.length).toBeGreaterThan(0);
       expect(result.text).toContain("Context");
-
-      console.log(`[Test] Command /context result: ${result.text.slice(0, 300)}...`);
 
       await session.close();
     }, 60000);
@@ -158,7 +145,6 @@ describe("ClaudeAgentSession Commands", () => {
 
       // Timeline may or may not have items depending on command execution
       // Just verify the structure is correct
-      console.log(`[Test] Timeline has ${result.timeline.length} items`);
 
       await session.close();
     }, 60000);

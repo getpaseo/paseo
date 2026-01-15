@@ -3,6 +3,10 @@ import { z } from "zod";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ensureValidJson } from "../json-utils.js";
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "mcp-server" });
+
 import type {
   AgentPromptInput,
   AgentProvider,
@@ -184,9 +188,9 @@ function startAgentRun(
         // Events are broadcast via AgentManager subscribers.
       }
     } catch (error) {
-      console.error(
-        `[Agent MCP] Agent stream failed for ${agentId}:`,
-        error
+      logger.error(
+        { err: error, agentId },
+        "Agent stream failed"
       );
     }
   })();
@@ -225,9 +229,9 @@ async function resolveAgentTitle(
     const record = await agentRegistry.get(agentId);
     return record?.title ?? null;
   } catch (error) {
-    console.error(
-      `[Agent MCP] Failed to load agent title for ${agentId}:`,
-      error
+    logger.error(
+      { err: error, agentId },
+      "Failed to load agent title"
     );
     return null;
   }
@@ -435,9 +439,9 @@ export async function createAgentMcpServer(
         try {
           agentManager.recordUserMessage(snapshot.id, initialPrompt);
         } catch (error) {
-          console.error(
-            `[Agent MCP] Failed to record initial prompt for ${snapshot.id}:`,
-            error
+          logger.error(
+            { err: error, agentId: snapshot.id },
+            "Failed to record initial prompt"
           );
         }
 
@@ -471,9 +475,9 @@ export async function createAgentMcpServer(
             return response;
           }
         } catch (error) {
-          console.error(
-            `[Agent MCP] Failed to run initial prompt for ${snapshot.id}:`,
-            error
+          logger.error(
+            { err: error, agentId: snapshot.id },
+            "Failed to run initial prompt"
           );
         }
       } else {
@@ -616,14 +620,16 @@ export async function createAgentMcpServer(
       }
 
       if (snapshot.lifecycle === "running" || snapshot.pendingRun) {
-        console.log(
-          `[Agent MCP] Interrupting active run for ${agentId} before sending new prompt`
+        logger.debug(
+          { agentId },
+          "Interrupting active run before sending new prompt"
         );
         try {
           const cancelled = await agentManager.cancelAgentRun(agentId);
           if (!cancelled) {
-            console.warn(
-              `[Agent MCP] Agent ${agentId} reported running but no active run was cancelled`
+            logger.warn(
+              { agentId },
+              "Agent reported running but no active run was cancelled"
             );
           }
           // Also cancel any pending wait_for_agent calls for this agent
@@ -647,9 +653,9 @@ export async function createAgentMcpServer(
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
           }
         } catch (error) {
-          console.error(
-            `[Agent MCP] Failed to interrupt agent ${agentId}:`,
-            error
+          logger.error(
+            { err: error, agentId },
+            "Failed to interrupt agent"
           );
           throw error;
         }
@@ -662,9 +668,9 @@ export async function createAgentMcpServer(
       try {
         agentManager.recordUserMessage(agentId, prompt);
       } catch (error) {
-        console.error(
-          `[Agent MCP] Failed to record user message for ${agentId}:`,
-          error
+        logger.error(
+          { err: error, agentId },
+          "Failed to record user message"
         );
       }
 

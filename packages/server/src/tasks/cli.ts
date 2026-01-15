@@ -106,7 +106,7 @@ program
       acceptanceCriteria: opts.accept,
     });
 
-    console.log(task.id);
+    process.stdout.write(`${task.id}\n`);
   });
 
 program
@@ -129,7 +129,7 @@ program
       const deps = t.deps.length ? ` <- [${t.deps.join(", ")}]` : "";
       const assignee = t.assignee ? ` @${t.assignee}` : "";
       const parent = t.parentId ? ` ^${t.parentId}` : "";
-      console.log(`${t.id}  [${t.status}]  ${t.title}${assignee}${parent}${deps}`);
+      process.stdout.write(`${t.id}  [${t.status}]  ${t.title}${assignee}${parent}${deps}\n`);
     }
   });
 
@@ -139,7 +139,7 @@ program
   .action(async (id) => {
     const task = await store.get(id);
     if (!task) {
-      console.error(`Task not found: ${id}`);
+      process.stderr.write(`Task not found: ${id}\n`);
       process.exit(1);
     }
 
@@ -148,44 +148,44 @@ program
 
     // Print ancestors first (root to immediate parent)
     if (ancestors.length > 0) {
-      console.log("# Parent Context\n");
+      process.stdout.write("# Parent Context\n\n");
       for (const ancestor of ancestors.reverse()) {
-        console.log(`## ${ancestor.title} (${ancestor.id}) [${ancestor.status}]`);
+        process.stdout.write(`## ${ancestor.title} (${ancestor.id}) [${ancestor.status}]\n`);
         if (ancestor.body) {
-          console.log(`\n${ancestor.body}`);
+          process.stdout.write(`\n${ancestor.body}\n`);
         }
-        console.log("");
+        process.stdout.write("\n");
       }
-      console.log("---\n");
+      process.stdout.write("---\n\n");
     }
 
     // Print current task
-    console.log(`# ${task.title}\n`);
-    console.log(`id: ${task.id}`);
-    console.log(`status: ${task.status}`);
-    console.log(`created: ${task.created}`);
+    process.stdout.write(`# ${task.title}\n\n`);
+    process.stdout.write(`id: ${task.id}\n`);
+    process.stdout.write(`status: ${task.status}\n`);
+    process.stdout.write(`created: ${task.created}\n`);
     if (task.assignee) {
-      console.log(`assignee: ${task.assignee}`);
+      process.stdout.write(`assignee: ${task.assignee}\n`);
     }
     if (task.parentId) {
-      console.log(`parent: ${task.parentId}`);
+      process.stdout.write(`parent: ${task.parentId}\n`);
     }
     if (task.deps.length) {
-      console.log(`deps: [${task.deps.join(", ")}]`);
+      process.stdout.write(`deps: [${task.deps.join(", ")}]\n`);
     }
     if (task.body) {
-      console.log(`\n${task.body}`);
+      process.stdout.write(`\n${task.body}\n`);
     }
     if (task.acceptanceCriteria.length) {
-      console.log("\n## Acceptance Criteria\n");
+      process.stdout.write("\n## Acceptance Criteria\n\n");
       for (const criterion of task.acceptanceCriteria) {
-        console.log(`- [ ] ${criterion}`);
+        process.stdout.write(`- [ ] ${criterion}\n`);
       }
     }
     if (task.notes.length) {
-      console.log("\n## Notes");
+      process.stdout.write("\n## Notes\n");
       for (const note of task.notes) {
-        console.log(`\n**${note.timestamp}**\n${note.content}`);
+        process.stdout.write(`\n**${note.timestamp}**\n${note.content}\n`);
       }
     }
   });
@@ -198,7 +198,7 @@ program
     const tasks = await store.getReady(opts.scope);
     for (const t of tasks) {
       const assignee = t.assignee ? ` @${t.assignee}` : "";
-      console.log(`${t.id}  ${t.title}${assignee}`);
+      process.stdout.write(`${t.id}  ${t.title}${assignee}\n`);
     }
   });
 
@@ -209,7 +209,7 @@ program
   .action(async (opts) => {
     const tasks = await store.getBlocked(opts.scope);
     for (const t of tasks) {
-      console.log(`${t.id}  ${t.title}  <- [${t.deps.join(", ")}]`);
+      process.stdout.write(`${t.id}  ${t.title}  <- [${t.deps.join(", ")}]\n`);
     }
   });
 
@@ -220,7 +220,7 @@ program
   .action(async (opts) => {
     const tasks = await store.getClosed(opts.scope);
     for (const t of tasks) {
-      console.log(`${t.id}  ${t.title}`);
+      process.stdout.write(`${t.id}  ${t.title}\n`);
     }
   });
 
@@ -230,7 +230,7 @@ program
   .action(async (id) => {
     const root = await store.get(id);
     if (!root) {
-      console.error(`Task not found: ${id}`);
+      process.stderr.write(`Task not found: ${id}\n`);
       process.exit(1);
     }
 
@@ -241,8 +241,8 @@ program
     // Print a task line with optional dependency info
     const printTask = (task: Task, prefix: string, connector: string) => {
       const assignee = task.assignee ? ` @${task.assignee}` : "";
-      console.log(
-        `${prefix}${connector}${task.id} [${task.status}] ${task.title}${assignee}`
+      process.stdout.write(
+        `${prefix}${connector}${task.id} [${task.status}] ${task.title}${assignee}\n`
       );
       // Print dependencies on next line with arrow
       if (task.deps.length > 0) {
@@ -253,13 +253,13 @@ program
           })
           .join(", ");
         const depPrefix = prefix + (connector === "└── " ? "    " : "│   ");
-        console.log(`${depPrefix}→ depends on: ${depNames}`);
+        process.stdout.write(`${depPrefix}→ depends on: ${depNames}\n`);
       }
     };
 
     // Print root task
     const rootAssignee = root.assignee ? ` @${root.assignee}` : "";
-    console.log(`${root.id} [${root.status}] ${root.title}${rootAssignee}`);
+    process.stdout.write(`${root.id} [${root.status}] ${root.title}${rootAssignee}\n`);
     if (root.deps.length > 0) {
       const depNames = root.deps
         .map((depId) => {
@@ -267,7 +267,7 @@ program
           return dep ? `${dep.title} (${depId})` : depId;
         })
         .join(", ");
-      console.log(`→ depends on: ${depNames}`);
+      process.stdout.write(`→ depends on: ${depNames}\n`);
     }
 
     // Recursively print children (hierarchy)
@@ -292,7 +292,7 @@ program
   .description("Add dependency (id depends on dep-id)")
   .action(async (id, depId) => {
     await store.addDep(id, depId);
-    console.log(`Added: ${id} -> ${depId}`);
+    process.stdout.write(`Added: ${id} -> ${depId}\n`);
   });
 
 program
@@ -300,7 +300,7 @@ program
   .description("Remove dependency")
   .action(async (id, depId) => {
     await store.removeDep(id, depId);
-    console.log(`Removed: ${id} -> ${depId}`);
+    process.stdout.write(`Removed: ${id} -> ${depId}\n`);
   });
 
 program
@@ -313,7 +313,7 @@ program
   .action(async (id, opts) => {
     const task = await store.get(id);
     if (!task) {
-      console.error(`Task not found: ${id}`);
+      process.stderr.write(`Task not found: ${id}\n`);
       process.exit(1);
     }
 
@@ -337,14 +337,14 @@ program
     }
 
     if (Object.keys(changes).length === 0 && opts.accept.length === 0) {
-      console.error("No changes specified");
+      process.stderr.write("No changes specified\n");
       process.exit(1);
     }
 
     if (Object.keys(changes).length > 0) {
       await store.update(id, changes);
     }
-    console.log(`Updated: ${id}`);
+    process.stdout.write(`Updated: ${id}\n`);
   });
 
 program
@@ -354,20 +354,20 @@ program
   .option("--root", "Make this a root task (remove parent)")
   .action(async (id, opts) => {
     if (!opts.parent && !opts.root) {
-      console.error("Must specify --parent <id> or --root");
+      process.stderr.write("Must specify --parent <id> or --root\n");
       process.exit(1);
     }
 
     if (opts.parent && opts.root) {
-      console.error("Cannot specify both --parent and --root");
+      process.stderr.write("Cannot specify both --parent and --root\n");
       process.exit(1);
     }
 
     await store.setParent(id, opts.root ? null : opts.parent);
     if (opts.root) {
-      console.log(`${id} is now a root task`);
+      process.stdout.write(`${id} is now a root task\n`);
     } else {
-      console.log(`${id} moved to parent ${opts.parent}`);
+      process.stdout.write(`${id} moved to parent ${opts.parent}\n`);
     }
   });
 
@@ -377,19 +377,19 @@ program
   .action(async (id) => {
     const task = await store.get(id);
     if (!task) {
-      console.error(`Task not found: ${id}`);
+      process.stderr.write(`Task not found: ${id}\n`);
       process.exit(1);
     }
 
     const children = await store.getChildren(id);
     if (children.length === 0) {
-      console.log("No children");
+      process.stdout.write("No children\n");
       return;
     }
 
     for (const child of children) {
       const assignee = child.assignee ? ` @${child.assignee}` : "";
-      console.log(`${child.id}  [${child.status}]  ${child.title}${assignee}`);
+      process.stdout.write(`${child.id}  [${child.status}]  ${child.title}${assignee}\n`);
     }
   });
 
@@ -398,7 +398,7 @@ program
   .description("Add a timestamped note")
   .action(async (id, content) => {
     await store.addNote(id, content);
-    console.log("Note added");
+    process.stdout.write("Note added\n");
   });
 
 program
@@ -406,7 +406,7 @@ program
   .description("Mark draft as open (actionable)")
   .action(async (id) => {
     await store.open(id);
-    console.log(`${id} -> open`);
+    process.stdout.write(`${id} -> open\n`);
   });
 
 program
@@ -414,7 +414,7 @@ program
   .description("Mark as in progress")
   .action(async (id) => {
     await store.start(id);
-    console.log(`${id} -> in_progress`);
+    process.stdout.write(`${id} -> in_progress\n`);
   });
 
 program
@@ -423,7 +423,7 @@ program
   .description("Mark as done")
   .action(async (id) => {
     await store.close(id);
-    console.log(`${id} -> done`);
+    process.stdout.write(`${id} -> done\n`);
   });
 
 program
@@ -431,7 +431,7 @@ program
   .description("Mark as failed (catastrophically stuck)")
   .action(async (id) => {
     await store.fail(id);
-    console.log(`${id} -> failed`);
+    process.stdout.write(`${id} -> failed\n`);
   });
 
 // Agent runner
@@ -741,7 +741,7 @@ function getLogFile(): string {
 function log(logFile: string, message: string): void {
   const timestamp = new Date().toISOString();
   appendFileSync(logFile, `[${timestamp}] ${message}\n`);
-  console.log(`[${timestamp}] ${message}`);
+  process.stdout.write(`[${timestamp}] ${message}\n`);
 }
 
 function parseJudgeVerdict(output: string): "DONE" | "NOT_DONE" | null {
@@ -767,13 +767,13 @@ program
     const watchMode = opts.watch;
     const logFile = getLogFile();
 
-    console.log("Task Runner started (planner/worker/judge loop)");
-    console.log(`Planner: ${enablePlanner ? `${plannerModel} (replan every ${replanInterval} tasks)` : "disabled"}`);
-    console.log(`Judge: ${judgeModel}`);
-    console.log(`Max iterations: ${maxIterations === 0 ? "unlimited" : maxIterations}`);
-    if (scopeId) console.log(`Scope: ${scopeId}`);
-    console.log(`Log: ${logFile}`);
-    console.log("");
+    process.stdout.write("Task Runner started (planner/worker/judge loop)\n");
+    process.stdout.write(`Planner: ${enablePlanner ? `${plannerModel} (replan every ${replanInterval} tasks)` : "disabled"}\n`);
+    process.stdout.write(`Judge: ${judgeModel}\n`);
+    process.stdout.write(`Max iterations: ${maxIterations === 0 ? "unlimited" : maxIterations}\n`);
+    if (scopeId) process.stdout.write(`Scope: ${scopeId}\n`);
+    process.stdout.write(`Log: ${logFile}\n`);
+    process.stdout.write("\n");
 
     log(logFile, `Started with planner=${enablePlanner ? plannerModel : "disabled"} replan=${replanInterval} judge=${judgeModel} maxIter=${maxIterations} scope=${scopeId || "all"}`);
 
@@ -928,19 +928,19 @@ program
     await runTaskLoop();
 
     if (watchMode) {
-      console.log("💤 Waiting for new tasks...");
+      process.stdout.write("💤 Waiting for new tasks...\n");
       while (true) {
         await new Promise((r) => setTimeout(r, 5000));
         const ready = await store.getReady(scopeId);
         if (ready.length > 0) {
           await runTaskLoop();
-          console.log("💤 Waiting for new tasks...");
+          process.stdout.write("💤 Waiting for new tasks...\n");
         }
       }
     }
 
-    console.log("");
-    console.log(`All tasks complete. (${new Date().toISOString()})`);
+    process.stdout.write("\n");
+    process.stdout.write(`All tasks complete. (${new Date().toISOString()})\n`);
     log(logFile, "All tasks complete");
   });
 

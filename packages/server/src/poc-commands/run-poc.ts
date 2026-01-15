@@ -104,7 +104,7 @@ async function listAvailableCommands(): Promise<SlashCommand[]> {
 }
 
 async function executeCommand(commandName: string): Promise<void> {
-  console.log(`\n=== Executing command: /${commandName} ===`);
+  process.stdout.write(`\n=== Executing command: /${commandName} ===\n`);
 
   // For command execution, we need a proper input stream
   const input = new Pushable<SDKUserMessage>();
@@ -136,12 +136,12 @@ async function executeCommand(commandName: string): Promise<void> {
     // Iterate the query to process the command
     let gotSystemInit = false;
     for await (const message of claudeQuery) {
-      console.log(`  [${message.type}]`, message.type === "system" ? message.subtype : "");
+      process.stdout.write(`  [${message.type}] ${message.type === "system" ? message.subtype : ""}\n`);
 
       if (message.type === "system" && message.subtype === "init") {
         gotSystemInit = true;
-        console.log("    Session:", message.session_id);
-        console.log("    Model:", message.model);
+        process.stdout.write(`    Session: ${message.session_id}\n`);
+        process.stdout.write(`    Model: ${message.model}\n`);
       }
 
       if (message.type === "assistant") {
@@ -149,14 +149,14 @@ async function executeCommand(commandName: string): Promise<void> {
         if (Array.isArray(content)) {
           for (const block of content) {
             if (block.type === "text") {
-              console.log("    Response:", block.text.slice(0, 200) + (block.text.length > 200 ? "..." : ""));
+              process.stdout.write(`    Response: ${block.text.slice(0, 200)}${block.text.length > 200 ? "..." : ""}\n`);
             }
           }
         }
       }
 
       if (message.type === "result") {
-        console.log("    Result:", message.subtype);
+        process.stdout.write(`    Result: ${message.subtype}\n`);
         break;
       }
     }
@@ -167,48 +167,48 @@ async function executeCommand(commandName: string): Promise<void> {
 }
 
 async function main() {
-  console.log("=== Claude Agent SDK Commands POC ===\n");
+  process.stdout.write("=== Claude Agent SDK Commands POC ===\n\n");
 
   // PART 1: List available commands using supportedCommands()
-  console.log("=== Part 1: List Available Commands ===\n");
+  process.stdout.write("=== Part 1: List Available Commands ===\n\n");
 
   try {
     const commands = await listAvailableCommands();
 
-    console.log(`Found ${commands.length} commands:\n`);
+    process.stdout.write(`Found ${commands.length} commands:\n\n`);
     commands.forEach((cmd, index) => {
-      console.log(`  ${index + 1}. /${cmd.name}`);
-      console.log(`     Description: ${cmd.description}`);
+      process.stdout.write(`  ${index + 1}. /${cmd.name}\n`);
+      process.stdout.write(`     Description: ${cmd.description}\n`);
       if (cmd.argumentHint) {
-        console.log(`     Arguments: ${cmd.argumentHint}`);
+        process.stdout.write(`     Arguments: ${cmd.argumentHint}\n`);
       }
-      console.log("");
+      process.stdout.write("\n");
     });
 
     // PART 2: Demonstrate command execution (optional - uncomment to test)
     // Commands are just prompts sent with / prefix
-    console.log("=== Part 2: Command Execution Explanation ===");
-    console.log("");
-    console.log("Commands are executed by sending them as prompts with / prefix.");
-    console.log("For example, to execute the 'help' command:");
-    console.log('  1. Create a user message with content: "/help"');
-    console.log("  2. Push it to the input stream");
-    console.log("  3. Iterate the query to receive responses");
-    console.log("");
+    process.stdout.write("=== Part 2: Command Execution Explanation ===\n");
+    process.stdout.write("\n");
+    process.stdout.write("Commands are executed by sending them as prompts with / prefix.\n");
+    process.stdout.write("For example, to execute the 'help' command:\n");
+    process.stdout.write('  1. Create a user message with content: "/help"\n');
+    process.stdout.write("  2. Push it to the input stream\n");
+    process.stdout.write("  3. Iterate the query to receive responses\n");
+    process.stdout.write("\n");
 
     // Actually execute a command to demonstrate it works:
     // Using "context" as it's fast and doesn't require arguments
     await executeCommand("context");
 
   } catch (error) {
-    console.error("ERROR:", error);
+    process.stderr.write(`ERROR: ${error}\n`);
     process.exit(1);
   }
 
-  console.log("=== POC Complete ===");
+  process.stdout.write("=== POC Complete ===\n");
 }
 
 main().catch((error) => {
-  console.error("Fatal error:", error);
+  process.stderr.write(`Fatal error: ${error}\n`);
   process.exit(1);
 });

@@ -1,3 +1,7 @@
+import { getRootLogger } from "../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", component: "wait-for-agent-tracker" });
+
 export type WaitForAgentCanceler = (agentId: string, reason?: string) => boolean;
 
 /**
@@ -37,9 +41,9 @@ export class WaitForAgentTracker {
       try {
         cancel(reason);
       } catch (error) {
-        console.warn(
-          `[WaitForAgentTracker] Cancel callback failed for ${agentId}:`,
-          error
+        logger.warn(
+          { err: error, agentId },
+          "Cancel callback failed"
         );
       }
     }

@@ -51,9 +51,7 @@ describe("OpenCode reasoning events (e2e)", () => {
 
       expect(agent.id).toBeTruthy();
 
-      console.log("\n=== GPT-5 NANO E2E REASONING DEBUG ===\n");
-      console.log(`Agent ID: ${agent.id}`);
-      console.log(`Agent status: ${agent.status}`);
+
 
       // Send a message that should trigger reasoning
       await ctx.client.sendMessage(agent.id, "What is 2+2? Think step by step.");
@@ -61,16 +59,14 @@ describe("OpenCode reasoning events (e2e)", () => {
       // Wait for agent to complete
       const finalState = await ctx.client.waitForAgentIdle(agent.id, 120_000);
 
-      console.log(`\nFinal status: ${finalState.status}`);
-      console.log(`Total events captured: ${allEvents.length}`);
 
       // Log all events
-      console.log("\n=== ALL EVENTS ===\n");
+
       for (let i = 0; i < allEvents.length; i++) {
         const { event, timestamp } = allEvents[i];
-        console.log(`[EVENT ${i + 1}] timestamp=${timestamp} type=${event.type}`);
-        console.log(JSON.stringify(event, null, 2));
-        console.log("---");
+
+
+
       }
 
       // Group by type
@@ -78,9 +74,9 @@ describe("OpenCode reasoning events (e2e)", () => {
       for (const { event } of allEvents) {
         byType.set(event.type, (byType.get(event.type) ?? 0) + 1);
       }
-      console.log("\n=== EVENTS BY TYPE ===");
+
       for (const [type, count] of byType) {
-        console.log(`  ${type}: ${count}`);
+
       }
 
       // Check timeline events breakdown
@@ -93,24 +89,24 @@ describe("OpenCode reasoning events (e2e)", () => {
           itemTypes.set(event.item.type, (itemTypes.get(event.item.type) ?? 0) + 1);
         }
       }
-      console.log("\n=== TIMELINE ITEM TYPES ===");
+
       for (const [type, count] of itemTypes) {
-        console.log(`  ${type}: ${count}`);
+
       }
 
       // Find reasoning events
       const reasoningEvents = timelineEvents.filter(
         ({ event }) => event.type === "timeline" && event.item.type === "reasoning"
       );
-      console.log(`\nReasoning events: ${reasoningEvents.length}`);
+
       for (const { event } of reasoningEvents.slice(0, 5)) {
         if (event.type === "timeline") {
-          console.log("Sample reasoning:", JSON.stringify(event.item, null, 2));
+
         }
       }
 
       // Check for duplicate consecutive events
-      console.log("\n=== DUPLICATE CHECK ===");
+
       let duplicateCount = 0;
       for (let i = 1; i < allEvents.length; i++) {
         const prev = allEvents[i - 1];
@@ -118,13 +114,10 @@ describe("OpenCode reasoning events (e2e)", () => {
         if (JSON.stringify(prev.event) === JSON.stringify(curr.event)) {
           duplicateCount++;
           if (duplicateCount <= 5) {
-            console.log(`Duplicate at index ${i}:`, JSON.stringify(curr.event, null, 2));
+
           }
         }
       }
-      console.log(`Total duplicates: ${duplicateCount}`);
-
-      console.log("\n=== END DEBUG ===\n");
 
       // HARD ASSERT: Agent completed
       expect(finalState.status).toBe("idle");

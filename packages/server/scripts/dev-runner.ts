@@ -29,12 +29,12 @@ function spawnServer() {
     // Restart on: explicit restart request, or any non-zero exit (crash)
     if (restarting || (code !== 0 && code !== null)) {
       restarting = false;
-      console.warn(`[DevRunner] Server exited (${exitDescriptor}). Restarting...`);
+      process.stderr.write(`[DevRunner] Server exited (${exitDescriptor}). Restarting...\n`);
       spawnServer();
       return;
     }
 
-    console.warn(`[DevRunner] Server exited (${exitDescriptor}). Shutting down.`);
+    process.stderr.write(`[DevRunner] Server exited (${exitDescriptor}). Shutting down.\n`);
     process.exit(0);
   });
 }
@@ -45,7 +45,7 @@ function restartServer() {
   }
 
   restarting = true;
-  console.warn("[DevRunner] Restart requested. Stopping current server...");
+  process.stderr.write("[DevRunner] Restart requested. Stopping current server...\n");
   child.kill("SIGTERM");
 }
 
@@ -59,5 +59,5 @@ function forwardSignal(signal: NodeJS.Signals) {
 process.on("SIGINT", () => forwardSignal("SIGINT"));
 process.on("SIGTERM", () => forwardSignal("SIGTERM"));
 
-console.log("[DevRunner] Starting server with tsx (explicit restarts only)");
+process.stdout.write("[DevRunner] Starting server with tsx (explicit restarts only)\n");
 spawnServer();

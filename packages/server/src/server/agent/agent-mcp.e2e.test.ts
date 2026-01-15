@@ -464,7 +464,7 @@ describe("agent MCP end-to-end", () => {
             throw new Error(`send_agent_prompt should interrupt running agent, but got: ${errorText}`);
           }
           // Other errors are OK - the main test is that we don't get "already has an active run"
-          console.log(`send_agent_prompt returned error (not "already has an active run"): ${errorText}`);
+
         } else {
           const secondPromptPayload = getStructuredContent(secondPromptResult);
           expect(secondPromptPayload).toBeTruthy();

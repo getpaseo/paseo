@@ -20,6 +20,9 @@ import {
   type SDKSystemMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { getRootLogger } from "../../logger.js";
+
+const logger = getRootLogger().child({ module: "agent", provider: "claude" });
 
 import type {
   AgentCapabilityFlags,
@@ -549,7 +552,7 @@ class ClaudeAgentSession implements AgentSession {
       this.turnCancelRequested = true;
       // Store the interrupt promise so processPrompt can await it before calling query.next()
       this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
-        console.warn("[ClaudeAgentSession] Failed to interrupt during cancel:", error);
+        logger.warn({ err: error }, "Failed to interrupt during cancel");
       });
       // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
       queue.push({
@@ -572,7 +575,7 @@ class ClaudeAgentSession implements AgentSession {
     const forwardPromise = this.forwardPromptEvents(sdkMessage, queue, turnId);
     this.activeTurnPromise = forwardPromise;
     forwardPromise.catch((error) => {
-      console.error("[ClaudeAgentSession] Unexpected error in forwardPromptEvents:", error);
+      logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
     });
 
     try {
@@ -807,7 +810,7 @@ class ClaudeAgentSession implements AgentSession {
       },
       settingSources: ["user", "project"],
       stderr: (data: string) => {
-        console.error("[ClaudeAgentSDK]", data.trim());
+        logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
       env: {
         ...process.env,
@@ -1019,7 +1022,7 @@ class ClaudeAgentSession implements AgentSession {
       this.query = null;
       this.input = null;
     } catch (error) {
-      console.warn("[ClaudeAgentSession] Failed to interrupt active turn:", error);
+      logger.warn({ err: error }, "Failed to interrupt active turn");
     }
   }
 
@@ -1097,7 +1100,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
     // Capture actual model from SDK init message (not just the configured model)
     if (message.model) {
-      console.log(`[ClaudeAgentSession] Captured model from SDK init: ${message.model}`);
+      logger.debug({ model: message.model }, "Captured model from SDK init");
       this.lastOptionsModel = message.model;
       // Invalidate cached runtime info so it picks up the new model
       this.cachedRuntimeInfo = null;
