@@ -430,14 +430,10 @@ export const GitDiffRequestSchema = z.object({
 });
 
 // Highlighted diff token schema
+// Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
   text: z.string(),
-  style: z.enum([
-    "keyword", "comment", "string", "number", "literal",
-    "function", "definition", "class", "type", "tag",
-    "attribute", "property", "variable", "operator",
-    "punctuation", "regexp", "escape", "meta", "heading", "link",
-  ]).nullable(),
+  style: z.string().nullable(),
 });
 
 const DiffLineSchema = z.object({

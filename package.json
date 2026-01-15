@@ -9,7 +9,7 @@
     "packages/website"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@paseo/server",
+    "dev": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
     "dev:app": "npm run start --workspace=@paseo/app",
     "dev:website": "npm run dev --workspace=@paseo/website",
     "build": "npm run build --workspaces --if-present",

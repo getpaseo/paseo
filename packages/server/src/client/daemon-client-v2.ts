@@ -1408,6 +1408,8 @@ export class DaemonClientV2 {
 
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
+      const msgType = (parsedJson as { message?: { type?: string } })?.message?.type ?? "unknown";
+      console.warn(`[DaemonClientV2] Message validation failed for "${msgType}":`, parsed.error.message);
       return;
     }
 

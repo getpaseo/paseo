@@ -67,7 +67,9 @@ function updateFavicon(status: FaviconStatus, colorScheme: ColorScheme) {
 }
 
 function getSystemColorScheme(): ColorScheme {
-  if (typeof window === "undefined") return "dark";
+  if (Platform.OS !== "web" || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "dark";
+  }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 

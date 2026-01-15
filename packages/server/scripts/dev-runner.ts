@@ -10,7 +10,7 @@ let child: ChildProcess | null = null;
 let restarting = false;
 
 function spawnServer() {
-  child = fork(serverEntry, {
+  child = fork(serverEntry, process.argv.slice(2), {
     stdio: "inherit",
     env: process.env,
     execArgv: ["--import", "tsx"],

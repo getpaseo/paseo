@@ -468,6 +468,8 @@ function runAgentWithModel(
       "exec",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
+      "-c",
+      "model_reasoning_effort=\"medium\"",
     ];
     if (config.model) {
       args.push("--model", config.model);
@@ -540,11 +542,28 @@ function makePlannerPrompt(task: Task, context: string, iteration: number): stri
 
 ---
 
-You are a PLANNER agent. Your job is to analyze the task tree and organize work to achieve the top-level goal.
+You are a PLANNER agent. You ORCHESTRATE work - you do NOT do the work yourself.
+
+Your job is to organize tasks so that WORKER agents can accomplish the top-level acceptance criteria.
 
 Current iteration: ${iteration}
 
-You have FULL ACCESS to the task CLI and can reorganize the ENTIRE task tree under the scope:
+## Planning vs Working
+
+As a planner you MAY:
+- Look at file structure and test patterns to write good acceptance criteria
+- Read the task tree to understand what's been done and what needs reorganizing
+- Check naming conventions to make specific, verifiable criteria
+
+As a planner you must NOT:
+- Investigate WHY bugs happen (workers will do this)
+- Debug or trace through code (workers will do this)
+- Try to understand root causes (workers will do this)
+- Fix or implement anything (workers will do this)
+
+Take the task descriptions AS GIVEN and create well-organized subtasks for workers to investigate and implement.
+
+## Task CLI Commands
 - \`task show ${task.id}\` - view task details with parent context
 - \`task list\` - see all tasks
 - \`task tree ${task.id}\` - see full task hierarchy
@@ -694,18 +713,17 @@ The ONLY question: Does the acceptance criterion pass when verified? Yes or No.
 
 If an agent left notes explaining why something couldn't be done, IGNORE THE EXPLANATION. Just check: is the criterion met?
 
-## Output Format
+## Output Format - CRITICAL
 
-After verification, output EXACTLY one of these XML tags:
+You MUST output one of these XML tags at the END of your response. This is REQUIRED for the system to parse your verdict:
 
-If ALL criteria pass verification:
+If ALL criteria pass:
 <VERDICT>DONE</VERDICT>
 
-If ANY criterion fails verification:
+If ANY criterion fails:
 <VERDICT>NOT_DONE</VERDICT>
-<FAILED_CRITERIA>
-- criterion that failed: what you checked and what you found
-</FAILED_CRITERIA>
+
+If you do not include this exact XML tag, your verdict will not be recorded and the task will retry.
 
 Then add a note to the task with your findings:
 \`task note ${task.id} "Judge verdict: [DONE/NOT_DONE]. Details: ..."\`
@@ -785,10 +803,42 @@ program
     };
 
     const runTaskLoop = async (): Promise<void> => {
+      // First check for in_progress tasks (resuming from crash)
+      const allTasks = await store.list();
+      let candidates = scopeId
+        ? [await store.get(scopeId), ...(await store.getDescendants(scopeId))].filter(Boolean) as Task[]
+        : allTasks;
+
+      const inProgress = candidates.filter((t) => t.status === "in_progress");
+      if (inProgress.length > 0) {
+        log(logFile, `Found ${inProgress.length} in_progress task(s) from previous run, resuming...`);
+        for (const t of inProgress) {
+          await store.update(t.id, { status: "open" });
+          log(logFile, `Reset ${t.id} to open`);
+        }
+      }
+
+      // Step 1: Initial planner run on scope root (if enabled)
+      if (enablePlanner && scopeId) {
+        const scopeTask = await store.get(scopeId);
+        if (scopeTask) {
+          log(logFile, `[PLANNER] Initial planning on scope root...`);
+          await runPlanner(scopeTask, "initial planning");
+          log(logFile, `[DEBUG] Planner finished, continuing to worker loop`);
+        }
+      }
+
+      log(logFile, `[DEBUG] Entering worker loop`);
+
+      // Step 2: Worker/Judge loop on ready tasks
       while (true) {
-        // Find ready tasks
+        log(logFile, `[DEBUG] Checking for ready tasks...`);
         const ready = await store.getReady(scopeId);
-        if (ready.length === 0) break;
+        log(logFile, `[DEBUG] Found ${ready.length} ready tasks`);
+        if (ready.length === 0) {
+          log(logFile, `[DEBUG] No ready tasks, exiting loop`);
+          break;
+        }
 
         const task = ready[0];
         const workerModel = (task.assignee === "codex" ? "gpt-5.2" : "sonnet") as ModelName;
@@ -796,20 +846,7 @@ program
         log(logFile, `\n=== Starting task: ${task.id} - ${task.title} ===`);
         await store.start(task.id);
 
-        // Step 1: Initial planner run (if enabled)
-        if (enablePlanner) {
-          const shouldRestart = await runPlanner(task, "initial planning");
-          if (shouldRestart) {
-            // Reset task to open so we process children first
-            const currentTask = await store.get(task.id);
-            if (currentTask && currentTask.status === "in_progress") {
-              await store.update(task.id, { status: "open" });
-            }
-            continue;
-          }
-        }
-
-        // Step 2: Worker/Judge loop
+        // Worker/Judge loop
         let iteration = 1;
         let taskDone = false;
 
@@ -852,6 +889,7 @@ program
                 const scopeTask = scopeId ? await store.get(scopeId) : nextReady[0];
                 if (scopeTask) {
                   await runPlanner(scopeTask, "periodic reassessment");
+                  log(logFile, `[DEBUG] Periodic replan finished, continuing loop`);
                 }
               }
             }

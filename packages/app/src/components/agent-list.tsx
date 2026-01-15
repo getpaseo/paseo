@@ -1,11 +1,22 @@
-import { View, Text, Pressable, Modal, RefreshControl, FlatList, type ListRenderItem } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  Modal,
+  RefreshControl,
+  FlatList,
+  type ListRenderItem,
+} from "react-native";
 import { useCallback, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
-import { buildAgentNavigationKey, startNavigationTiming } from "@/utils/navigation-timing";
+import {
+  buildAgentNavigationKey,
+  startNavigationTiming,
+} from "@/utils/navigation-timing";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -30,7 +41,9 @@ export function AgentList({
 
   // Get the methods for the specific server
   const methods = useSessionStore((state) =>
-    actionAgent?.serverId ? state.sessions[actionAgent.serverId]?.methods : undefined
+    actionAgent?.serverId
+      ? state.sessions[actionAgent.serverId]?.methods
+      : undefined
   );
   const deleteAgent = methods?.deleteAgent;
 
@@ -94,7 +107,11 @@ export function AgentList({
       const isRunning = agent.status === "running";
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
-      const statusColor = isRunning ? theme.colors.palette.blue[500] : agent.requiresAttention ? theme.colors.success : null;
+      const statusColor = isRunning
+        ? theme.colors.palette.blue[500]
+        : agent.requiresAttention
+          ? theme.colors.success
+          : null;
 
       return (
         <Pressable
@@ -108,26 +125,28 @@ export function AgentList({
           onLongPress={() => handleAgentLongPress(agent)}
         >
           {({ hovered }) => (
-          <View style={styles.agentContent}>
-            <View style={styles.row}>
-              {statusColor && (
-                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              )}
-              <Text
-                style={[
-                  styles.agentTitle,
-                  (isSelected || hovered) && styles.agentTitleHighlighted,
-                ]}
-                numberOfLines={1}
-              >
-                {agent.title || "New Agent"}
+            <View style={styles.agentContent}>
+              <View style={styles.row}>
+                {statusColor && (
+                  <View
+                    style={[styles.statusDot, { backgroundColor: statusColor }]}
+                  />
+                )}
+                <Text
+                  style={[
+                    styles.agentTitle,
+                    (isSelected || hovered) && styles.agentTitleHighlighted,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {agent.title || "New Agent"}
+                </Text>
+              </View>
+
+              <Text style={styles.secondaryRow} numberOfLines={1}>
+                {agent.cwd.replace(/^\/(?:Users|home)\/[^/]+/, "~")} · {timeAgo}
               </Text>
             </View>
-
-            <Text style={styles.secondaryRow} numberOfLines={1}>
-              {agent.cwd.replace(/^\/(?:Users|home)\/[^/]+/, "~")} · {timeAgo}
-            </Text>
-          </View>
           )}
         </Pressable>
       );
@@ -176,7 +195,10 @@ export function AgentList({
         onRequestClose={handleCloseActionSheet}
       >
         <View style={styles.sheetOverlay}>
-          <Pressable style={styles.sheetBackdrop} onPress={handleCloseActionSheet} />
+          <Pressable
+            style={styles.sheetBackdrop}
+            onPress={handleCloseActionSheet}
+          />
           <View style={styles.sheetContainer}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
@@ -195,7 +217,8 @@ export function AgentList({
               <Text
                 style={[
                   styles.sheetDeleteText,
-                  (!deleteAgent || isActionDaemonUnavailable) && styles.sheetDeleteTextDisabled,
+                  (!deleteAgent || isActionDaemonUnavailable) &&
+                    styles.sheetDeleteTextDisabled,
                 ]}
               >
                 {isActionDaemonUnavailable ? "Host offline" : "Delete agent"}
@@ -246,7 +269,7 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[0],
   },
   agentTitle: {
     flex: 1,
@@ -255,10 +278,12 @@ const styles = StyleSheet.create((theme) => ({
       xs: "400",
       md: "300",
     },
-    color: theme.colors.foregroundMuted,
+    color: theme.colors.foreground,
+    opacity: 0.8,
   },
   agentTitleHighlighted: {
     color: theme.colors.foreground,
+    opacity: 1,
   },
   secondaryRow: {
     fontSize: theme.fontSize.sm,

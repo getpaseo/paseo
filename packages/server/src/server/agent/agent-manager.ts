@@ -879,7 +879,10 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: { fromHistory?: boolean }
   ): void {
-    agent.updatedAt = new Date();
+    // Only update timestamp for live events, not history replay
+    if (!options?.fromHistory) {
+      agent.updatedAt = new Date();
+    }
 
     switch (event.type) {
       case "thread_started":

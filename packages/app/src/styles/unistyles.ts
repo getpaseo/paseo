@@ -18,7 +18,7 @@ StyleSheet.configure({
     xl: 1200,
   },
   settings: {
-    initialTheme: "dark",
+    adaptiveThemes: true,
   },
 });
 

@@ -373,8 +373,6 @@ export function AgentStreamView({
         return null;
       }
 
-      const gap = getGapAbove(item, index);
-
       // Check if this is the end of a turn (before a user message or end of stream when not running)
       // In inverted list: index-1 is the next item (newer in time)
       const nextItem = flatListData[index - 1];
@@ -386,18 +384,19 @@ export function AgentStreamView({
       const getContent = () => collectTurnContent(index);
 
       return (
-        <View
-          style={[
-            stylesheet.streamItemWrapper,
-            gap ? { marginBottom: gap } : null,
-          ]}
-        >
+        <View style={[stylesheet.streamItemWrapper]}>
           {content}
           {isEndOfTurn ? <TurnCopyButton getContent={getContent} /> : null}
         </View>
       );
     },
-    [getGapAbove, renderStreamItemContent, flatListData, agent.status, collectTurnContent]
+    [
+      getGapAbove,
+      renderStreamItemContent,
+      flatListData,
+      agent.status,
+      collectTurnContent,
+    ]
   );
 
   const pendingPermissionItems = useMemo(
@@ -419,7 +418,10 @@ export function AgentStreamView({
     }
     const delta = Math.abs(totalCount - prevCount);
     streamItemCountRef.current = totalCount;
-    if (totalCount < STREAM_ITEM_LOG_MIN_COUNT && delta < STREAM_ITEM_LOG_DELTA_THRESHOLD) {
+    if (
+      totalCount < STREAM_ITEM_LOG_MIN_COUNT &&
+      delta < STREAM_ITEM_LOG_DELTA_THRESHOLD
+    ) {
       return;
     }
     let userCount = 0;
@@ -452,7 +454,10 @@ export function AgentStreamView({
           break;
       }
     }
-    const metrics = totalCount >= STREAM_ITEM_LOG_MIN_COUNT ? measurePayload(streamItems) : null;
+    const metrics =
+      totalCount >= STREAM_ITEM_LOG_MIN_COUNT
+        ? measurePayload(streamItems)
+        : null;
     perfLog(AGENT_STREAM_LOG_TAG, {
       event: "stream_items",
       agentId,
@@ -945,11 +950,10 @@ function PermissionRequestCard({
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
       respondToPermission({
-          agentId: permission.agentId,
-          requestId: permission.request.id,
-          response,
-        })
-        .catch((error) => {
+        agentId: permission.agentId,
+        requestId: permission.request.id,
+        response,
+      }).catch((error) => {
         console.error(
           "[PermissionRequestCard] Failed to respond to permission:",
           error

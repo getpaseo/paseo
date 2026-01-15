@@ -1,4 +1,11 @@
-import { View, Text, Pressable, Animated } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  Animated,
+  StyleProp,
+  ViewStyle,
+} from "react-native";
 import {
   useState,
   useEffect,
@@ -31,6 +38,7 @@ import {
   Search,
   Brain,
   Copy,
+  TriangleAlertIcon,
 } from "lucide-react-native";
 import {
   StyleSheet,
@@ -173,14 +181,11 @@ export const UserMessage = memo(function UserMessage({
     <View
       style={[
         userMessageStylesheet.container,
-        !resolvedDisableOuterSpacing &&
-          userMessageStylesheet.containerSpacing,
-        !resolvedDisableOuterSpacing &&
-          isFirstInGroup &&
-          userMessageStylesheet.containerFirstInGroup,
-        !resolvedDisableOuterSpacing &&
-          isLastInGroup &&
-          userMessageStylesheet.containerLastInGroup,
+        isFirstInGroup && { marginTop: theme.spacing[4] },
+        isLastInGroup && { marginBottom: theme.spacing[4] },
+        !isFirstInGroup || !isLastInGroup
+          ? { marginBottom: theme.spacing[1] }
+          : undefined,
       ]}
     >
       <Pressable
@@ -364,7 +369,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   label: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
     flexShrink: 0,
   },
   secondaryLabel: {
@@ -804,8 +809,7 @@ export const ActivityLog = memo(function ActivityLog({
       disabled={!isInteractive}
       style={[
         activityLogStylesheet.pressable,
-        !resolvedDisableOuterSpacing &&
-          activityLogStylesheet.pressableSpacing,
+        !resolvedDisableOuterSpacing && activityLogStylesheet.pressableSpacing,
         config.bg,
         isInteractive && activityLogStylesheet.pressableActive,
       ]}
@@ -985,8 +989,7 @@ export const TodoListCard = memo(function TodoListCard({
     <View
       style={[
         todoListCardStylesheet.container,
-        !resolvedDisableOuterSpacing &&
-          todoListCardStylesheet.containerSpacing,
+        !resolvedDisableOuterSpacing && todoListCardStylesheet.containerSpacing,
       ]}
     >
       <View style={todoListCardStylesheet.card}>
@@ -1056,6 +1059,7 @@ interface ExpandableBadgeProps {
   secondaryLabel?: string;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
+  style?: StyleProp<ViewStyle>;
   onToggle?: () => void;
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
@@ -1066,6 +1070,7 @@ interface ExpandableBadgeProps {
 
 const ExpandableBadge = memo(function ExpandableBadge({
   label,
+  style,
   secondaryLabel,
   icon,
   isExpanded,
@@ -1118,7 +1123,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const IconComponent = icon;
   const iconColor = isError
     ? theme.colors.destructive
-    : theme.colors.foreground;
+    : theme.colors.mutedForeground;
 
   let iconNode: ReactNode = null;
   if (isLoading) {
@@ -1128,22 +1133,13 @@ const ExpandableBadge = memo(function ExpandableBadge({
       </Animated.View>
     );
   } else if (isError) {
-    iconNode = <X size={12} color={iconColor} />;
+    iconNode = <TriangleAlertIcon size={12} color={iconColor} opacity={0.8} />;
   } else if (IconComponent) {
     iconNode = <IconComponent size={12} color={iconColor} />;
   }
 
   return (
-    <View
-      style={[
-        expandableBadgeStylesheet.container,
-        !resolvedDisableOuterSpacing &&
-          expandableBadgeStylesheet.containerSpacing,
-        !resolvedDisableOuterSpacing &&
-          isLastInSequence &&
-          expandableBadgeStylesheet.containerLastInSequence,
-      ]}
-    >
+    <View style={[expandableBadgeStylesheet.container, style]}>
       <Pressable
         onPress={hasDetails ? onToggle : undefined}
         disabled={!hasDetails}
@@ -1507,12 +1503,13 @@ export const ToolCall = memo(function ToolCall({
         hasDetails && !isMobile
           ? renderDetails
           : hasDetails
-          ? () => null
-          : undefined
+            ? () => null
+            : undefined
       }
       isLoading={status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
+      style={isLastInSequence ? undefined : { marginBottom: theme.spacing[1] }}
       disableOuterSpacing={disableOuterSpacing}
     />
   );
