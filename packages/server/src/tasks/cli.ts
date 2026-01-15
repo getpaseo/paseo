@@ -585,12 +585,44 @@ Good examples:
 - "File src/utils/parser.ts exports parseConfig function"
 - "Running \`node cli.js --help\` prints usage information"
 
+## TDD Pattern
+
+When the top-level task mentions "TDD" or "test-driven", you MUST structure subtasks as test-first pairs:
+
+1. **Write failing test** task (comes first)
+   - Acceptance criteria: test file exists AND test fails for the RIGHT reason
+   - The "right reason" means the test fails because the feature doesn't exist yet, NOT because of syntax errors, import errors, or unrelated failures
+
+2. **Make test pass** task (depends on the failing test task)
+   - Acceptance criteria: the specific test passes AND overall test suite passes
+
+Example breakdown for "Add user login endpoint (TDD)":
+
+\`\`\`
+task create "Write failing test for POST /api/login" --parent {parent_id} \\
+  --body "Write a test that calls POST /api/login with valid credentials and expects a JWT token response" \\
+  --accept "File src/auth/login.test.ts exists" \\
+  --accept "npm test fails with error message containing 'login' or 'api/login'" \\
+  --accept "Test failure is due to missing endpoint (404 or 'not found'), NOT syntax/import errors"
+
+task create "Implement login endpoint to pass test" --parent {parent_id} --deps {previous_task_id} \\
+  --body "Implement POST /api/login to make the test pass" \\
+  --accept "npm test -- src/auth/login.test.ts passes" \\
+  --accept "POST /api/login with valid credentials returns 200 with JWT token"
+\`\`\`
+
+Key points:
+- The failing test task MUST verify the test fails for the correct reason (missing feature, not broken code)
+- The implementation task depends on the test task (enforced ordering)
+- Each pair focuses on ONE specific behavior
+
 ## Your Options
 
 1. If the current task is simple enough to implement directly, add a note explaining why and exit
 2. If it needs breakdown, create subtasks with clear, verifiable acceptance criteria
-3. If other tasks in the tree need reorganization based on what's been learned, do that
-4. If a task is catastrophically stuck with no clear path forward (repeated failures WITHOUT progress), mark it failed
+3. If TDD is requested, use the test-first pair pattern above
+4. If other tasks in the tree need reorganization based on what's been learned, do that
+5. If a task is catastrophically stuck with no clear path forward (repeated failures WITHOUT progress), mark it failed
 
 Note: Multiple iterations are fine if there's progress. Only mark failed if truly stuck with no way forward.
 
