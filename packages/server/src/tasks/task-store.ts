@@ -40,6 +40,13 @@ function serializeTask(task: Task): string {
     content += task.body + "\n";
   }
 
+  if (task.acceptanceCriteria.length > 0) {
+    content += "\n## Acceptance Criteria\n\n";
+    for (const criterion of task.acceptanceCriteria) {
+      content += `- [ ] ${criterion}\n`;
+    }
+  }
+
   if (task.notes.length > 0) {
     content += "\n## Notes\n";
     for (const note of task.notes) {
@@ -89,10 +96,25 @@ function parseTask(content: string): Task {
     }
   }
 
-  // Body is everything before ## Notes (backwards compat: also check for old "description" field name)
+  // Parse acceptance criteria
+  const acceptanceCriteria: string[] = [];
+  const criteriaSection = fileBody.match(
+    /## Acceptance Criteria\n\n([\s\S]*?)(?=\n## Notes|$)/
+  );
+  if (criteriaSection) {
+    const criteriaMatches = criteriaSection[1].matchAll(
+      /- \[[ x]\] (.+)$/gm
+    );
+    for (const match of criteriaMatches) {
+      acceptanceCriteria.push(match[1].trim());
+    }
+  }
+
+  // Body is everything before ## Acceptance Criteria or ## Notes
   let taskBody = fileBody;
-  if (notesSection) {
-    taskBody = fileBody.slice(0, fileBody.indexOf("## Notes")).trim();
+  const firstSection = fileBody.match(/\n## (Acceptance Criteria|Notes)\n/);
+  if (firstSection) {
+    taskBody = fileBody.slice(0, firstSection.index).trim();
   }
   taskBody = taskBody.trim();
 
@@ -106,6 +128,7 @@ function parseTask(content: string): Task {
     deps,
     parentId: parentId || undefined,
     body: taskBody,
+    acceptanceCriteria,
     notes,
     created: getValue("created") || new Date().toISOString(),
     assignee: assignee || undefined,
@@ -225,24 +248,54 @@ export class FileTaskStore implements TaskStore {
       .sort((a, b) => a.created.localeCompare(b.created));
   }
 
+  async getDescendants(id: string): Promise<Task[]> {
+    const result: Task[] = [];
+    const traverse = async (parentId: string): Promise<void> => {
+      const children = await this.getChildren(parentId);
+      for (const child of children) {
+        result.push(child);
+        await traverse(child.id);
+      }
+    };
+    await traverse(id);
+    return result;
+  }
+
   async getReady(scopeId?: string): Promise<Task[]> {
     const allTasks = await this.list();
     const taskMap = new Map(allTasks.map((t) => [t.id, t]));
 
     let candidates: Task[];
     if (scopeId) {
-      const tree = await this.getDepTree(scopeId);
-      candidates = tree;
+      // Include the scoped task itself and all its descendants (children tree)
+      const scopeTask = await this.get(scopeId);
+      const descendants = await this.getDescendants(scopeId);
+      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
     } else {
       candidates = allTasks;
     }
 
+    // Build children map for quick lookup
+    const childrenMap = new Map<string, Task[]>();
+    for (const t of allTasks) {
+      if (t.parentId) {
+        const siblings = childrenMap.get(t.parentId) ?? [];
+        siblings.push(t);
+        childrenMap.set(t.parentId, siblings);
+      }
+    }
+
     const isReady = (task: Task): boolean => {
       if (task.status !== "open") return false;
-      return task.deps.every((depId) => {
+      // All deps must be done
+      const depsReady = task.deps.every((depId) => {
         const dep = taskMap.get(depId);
         return dep?.status === "done";
       });
+      if (!depsReady) return false;
+      // All children must be done (if any exist)
+      const children = childrenMap.get(task.id) ?? [];
+      return children.every((c) => c.status === "done");
     };
 
     // Sort by created date (oldest first) for consistent ordering
@@ -257,8 +310,9 @@ export class FileTaskStore implements TaskStore {
 
     let candidates: Task[];
     if (scopeId) {
-      const tree = await this.getDepTree(scopeId);
-      candidates = tree;
+      const scopeTask = await this.get(scopeId);
+      const descendants = await this.getDescendants(scopeId);
+      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
     } else {
       candidates = allTasks;
     }
@@ -278,8 +332,9 @@ export class FileTaskStore implements TaskStore {
   async getClosed(scopeId?: string): Promise<Task[]> {
     let candidates: Task[];
     if (scopeId) {
-      const tree = await this.getDepTree(scopeId);
-      candidates = tree;
+      const scopeTask = await this.get(scopeId);
+      const descendants = await this.getDescendants(scopeId);
+      candidates = scopeTask ? [scopeTask, ...descendants] : descendants;
     } else {
       candidates = await this.list();
     }
@@ -306,6 +361,7 @@ export class FileTaskStore implements TaskStore {
       deps: opts?.deps ?? [],
       parentId: opts?.parentId,
       body: opts?.body ?? "",
+      acceptanceCriteria: opts?.acceptanceCriteria ?? [],
       notes: [],
       created: new Date().toISOString(),
       assignee: opts?.assignee,
@@ -436,5 +492,22 @@ export class FileTaskStore implements TaskStore {
       throw new Error(`Task not found: ${id}`);
     }
     await this.update(id, { status: "done" });
+  }
+
+  async fail(id: string): Promise<void> {
+    const task = await this.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    await this.update(id, { status: "failed" });
+  }
+
+  async addAcceptanceCriteria(id: string, criterion: string): Promise<void> {
+    const task = await this.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    task.acceptanceCriteria.push(criterion);
+    await this.writeTask(task);
   }
 }

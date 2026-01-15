@@ -1,6 +1,12 @@
-export type TaskStatus = "draft" | "open" | "in_progress" | "done";
+export type TaskStatus = "draft" | "open" | "in_progress" | "done" | "failed";
 
 export type AgentType = "claude" | "codex";
+
+export type ModelName =
+  | "haiku"
+  | "sonnet"
+  | "opus"
+  | `gpt-${string}`;
 
 export interface Note {
   timestamp: string; // ISO date
@@ -14,6 +20,7 @@ export interface Task {
   deps: string[]; // task IDs this task depends on (must be done before this can start)
   parentId?: string; // parent task ID for hierarchical structure (context inheritance)
   body: string; // long form markdown document
+  acceptanceCriteria: string[]; // immutable checklist items for verification
   notes: Note[];
   created: string; // ISO date
   assignee?: AgentType; // optional agent override
@@ -24,6 +31,7 @@ export interface CreateTaskOptions {
   parentId?: string;
   status?: TaskStatus;
   body?: string;
+  acceptanceCriteria?: string[];
   assignee?: AgentType;
 }
 
@@ -50,4 +58,8 @@ export interface TaskStore {
   open(id: string): Promise<void>; // draft -> open
   start(id: string): Promise<void>; // open -> in_progress
   close(id: string): Promise<void>; // any -> done
+  fail(id: string): Promise<void>; // any -> failed
+
+  // Acceptance criteria
+  addAcceptanceCriteria(id: string, criterion: string): Promise<void>;
 }

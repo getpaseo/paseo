@@ -435,47 +435,157 @@ describe("FileTaskStore", () => {
       expect(ready.map((t) => t.id)).toEqual([task1.id, task2.id, task3.id]);
     });
 
+    describe("parent blocked by children", () => {
+      it("excludes parent task when it has open children", async () => {
+        const parent = await store.create("Parent task");
+        await store.create("Child 1", { parentId: parent.id });
+        await store.create("Child 2", { parentId: parent.id });
+
+        const ready = await store.getReady();
+
+        // Children are ready but parent is not (has open children)
+        expect(ready).toHaveLength(2);
+        expect(ready.map((t) => t.id)).not.toContain(parent.id);
+      });
+
+      it("includes parent task when all children are done", async () => {
+        const parent = await store.create("Parent task");
+        const child1 = await store.create("Child 1", { parentId: parent.id });
+        const child2 = await store.create("Child 2", { parentId: parent.id });
+
+        await store.close(child1.id);
+        await store.close(child2.id);
+
+        const ready = await store.getReady();
+
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(parent.id);
+      });
+
+      it("excludes parent when some children are not done", async () => {
+        const parent = await store.create("Parent task");
+        const child1 = await store.create("Child 1", { parentId: parent.id });
+        await store.create("Child 2", { parentId: parent.id });
+
+        await store.close(child1.id);
+
+        const ready = await store.getReady();
+
+        // Only child2 is ready, parent is blocked by child2
+        expect(ready).toHaveLength(1);
+        expect(ready.map((t) => t.id)).not.toContain(parent.id);
+      });
+
+      it("handles nested children - parent waits for all descendants", async () => {
+        const parent = await store.create("Parent");
+        const child = await store.create("Child", { parentId: parent.id });
+        const grandchild = await store.create("Grandchild", {
+          parentId: child.id,
+        });
+
+        // Only grandchild is ready (no children)
+        let ready = await store.getReady();
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(grandchild.id);
+
+        // After grandchild done, child becomes ready
+        await store.close(grandchild.id);
+        ready = await store.getReady();
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(child.id);
+
+        // After child done, parent becomes ready
+        await store.close(child.id);
+        ready = await store.getReady();
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(parent.id);
+      });
+
+      it("combines deps and children blocking", async () => {
+        const dep = await store.create("Dependency");
+        const parent = await store.create("Parent", { deps: [dep.id] });
+        const child = await store.create("Child", { parentId: parent.id });
+
+        // Only dep and child are ready (parent blocked by both dep and child)
+        let ready = await store.getReady();
+        expect(ready).toHaveLength(2);
+        expect(ready.map((t) => t.id)).toContain(dep.id);
+        expect(ready.map((t) => t.id)).toContain(child.id);
+        expect(ready.map((t) => t.id)).not.toContain(parent.id);
+
+        // Close child but not dep - parent still blocked
+        await store.close(child.id);
+        ready = await store.getReady();
+        expect(ready.map((t) => t.id)).not.toContain(parent.id);
+
+        // Close dep - now parent is ready
+        await store.close(dep.id);
+        ready = await store.getReady();
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(parent.id);
+      });
+
+      it("task with no children is ready (leaf task)", async () => {
+        const task = await store.create("Leaf task");
+
+        const ready = await store.getReady();
+
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(task.id);
+      });
+    });
+
     describe("scoped to epic", () => {
-      it("returns only ready tasks in epic dep tree", async () => {
+      it("returns only ready tasks in epic children tree", async () => {
         await store.create("Unrelated task");
-        const dep = await store.create("Epic dep");
-        const epic = await store.create("Epic", { deps: [dep.id] });
+        const epic = await store.create("Epic");
+        const child = await store.create("Epic child", { parentId: epic.id });
 
         const ready = await store.getReady(epic.id);
 
+        // Only child is ready (epic blocked by its open child)
         expect(ready).toHaveLength(1);
-        expect(ready[0].id).toBe(dep.id);
+        expect(ready[0].id).toBe(child.id);
+
+        // After closing child, epic becomes ready
+        await store.close(child.id);
+        const readyAfter = await store.getReady(epic.id);
+        expect(readyAfter).toHaveLength(1);
+        expect(readyAfter[0].id).toBe(epic.id);
       });
 
-      it("returns empty when epic has no ready deps", async () => {
-        const dep = await store.create("Dep", { status: "draft" });
-        const epic = await store.create("Epic", { deps: [dep.id] });
+      it("returns empty when epic and children are not ready", async () => {
+        const epic = await store.create("Epic", { status: "draft" });
+        await store.create("Child", { parentId: epic.id, status: "draft" });
 
         const ready = await store.getReady(epic.id);
 
         expect(ready).toHaveLength(0);
       });
 
-      it("handles nested deps", async () => {
-        const leaf = await store.create("Leaf");
-        const middle = await store.create("Middle", { deps: [leaf.id] });
-        const epic = await store.create("Epic", { deps: [middle.id] });
+      it("handles nested children", async () => {
+        const epic = await store.create("Epic");
+        const child = await store.create("Child", { parentId: epic.id });
+        const grandchild = await store.create("Grandchild", {
+          parentId: child.id,
+        });
 
-        // Only leaf is ready initially
+        // Only grandchild is ready (leaf node)
         let ready = await store.getReady(epic.id);
         expect(ready).toHaveLength(1);
-        expect(ready[0].id).toBe(leaf.id);
+        expect(ready[0].id).toBe(grandchild.id);
 
-        // After leaf done, middle is ready
-        await store.close(leaf.id);
+        // After closing grandchild, child becomes ready
+        await store.close(grandchild.id);
         ready = await store.getReady(epic.id);
         expect(ready).toHaveLength(1);
-        expect(ready[0].id).toBe(middle.id);
+        expect(ready[0].id).toBe(child.id);
 
-        // After middle done, epic itself is ready (but we're scoped, so epic not in results)
-        await store.close(middle.id);
+        // After closing child, epic becomes ready
+        await store.close(child.id);
         ready = await store.getReady(epic.id);
-        expect(ready).toHaveLength(0);
+        expect(ready).toHaveLength(1);
+        expect(ready[0].id).toBe(epic.id);
       });
     });
   });
@@ -531,22 +641,23 @@ describe("FileTaskStore", () => {
     });
 
     describe("scoped to epic", () => {
-      it("returns only blocked tasks in epic dep tree", async () => {
+      it("returns only blocked tasks in epic children tree", async () => {
         const unrelatedDep = await store.create("Unrelated dep");
         await store.create("Unrelated blocked", {
           deps: [unrelatedDep.id],
         });
 
-        const epicDep = await store.create("Epic dep");
-        const epicChild = await store.create("Epic child", {
-          deps: [epicDep.id],
+        const epic = await store.create("Epic");
+        const externalDep = await store.create("External dep");
+        const blockedChild = await store.create("Blocked child", {
+          parentId: epic.id,
+          deps: [externalDep.id],
         });
-        const epic = await store.create("Epic", { deps: [epicChild.id] });
 
         const blocked = await store.getBlocked(epic.id);
 
         expect(blocked).toHaveLength(1);
-        expect(blocked[0].id).toBe(epicChild.id);
+        expect(blocked[0].id).toBe(blockedChild.id);
       });
     });
   });
@@ -590,18 +701,19 @@ describe("FileTaskStore", () => {
     });
 
     describe("scoped to epic", () => {
-      it("returns only closed tasks in epic dep tree", async () => {
+      it("returns only closed tasks in epic children tree", async () => {
         const unrelated = await store.create("Unrelated");
         await store.close(unrelated.id);
 
-        const dep = await store.create("Epic dep");
-        const epic = await store.create("Epic", { deps: [dep.id] });
-        await store.close(dep.id);
+        const epic = await store.create("Epic");
+        const child = await store.create("Epic child", { parentId: epic.id });
+        await store.close(child.id);
 
         const closed = await store.getClosed(epic.id);
 
+        // Only the closed child is returned (epic is still open)
         expect(closed).toHaveLength(1);
-        expect(closed[0].id).toBe(dep.id);
+        expect(closed[0].id).toBe(child.id);
       });
     });
   });
