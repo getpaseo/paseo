@@ -264,12 +264,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   agentContent: {
     flex: 1,
-    gap: theme.spacing[1],
+    gap: theme.spacing[0],
   },
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[0],
+    gap: theme.spacing[2],
   },
   agentTitle: {
     flex: 1,
