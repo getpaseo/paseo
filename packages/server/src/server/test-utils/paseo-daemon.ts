@@ -9,6 +9,8 @@ import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 type TestPaseoDaemonOptions = {
   basicUsers?: Record<string, string>;
   downloadTokenTtlMs?: number;
+  corsAllowedOrigins?: string[];
+  listen?: string;
 };
 
 export type TestPaseoDaemon = {
@@ -59,12 +61,13 @@ export async function createTestPaseoDaemon(
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const port = await getAvailablePort();
 
+    const listenHost = options.listen ?? '127.0.0.1';
     const config: PaseoDaemonConfig = {
-      listen: `127.0.0.1:${port}`,
+      listen: `${listenHost}:${port}`,
       paseoHome,
-      corsAllowedOrigins: [],
+      corsAllowedOrigins: options.corsAllowedOrigins ?? [],
       agentMcpRoute: "/mcp/agents",
-      agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+      agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `${listenHost}:${port}`],
       auth: {
         basicUsers,
         agentMcpAuthHeader,

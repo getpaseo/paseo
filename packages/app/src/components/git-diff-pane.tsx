@@ -286,6 +286,11 @@ const DiffFileSection = memo(function DiffFileSection({
               <Text style={styles.newBadgeText}>New</Text>
             </View>
           )}
+          {file.isDeleted && (
+            <View style={styles.deletedBadge}>
+              <Text style={styles.deletedBadgeText}>Deleted</Text>
+            </View>
+          )}
         </View>
         <View style={styles.fileHeaderRight}>
           <Text style={styles.additions}>+{file.additions}</Text>
@@ -578,6 +583,18 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.green[400],
+  },
+  deletedBadge: {
+    backgroundColor: "rgba(248, 81, 73, 0.2)",
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    flexShrink: 0,
+  },
+  deletedBadgeText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.palette.red[500],
   },
   additions: {
     fontSize: theme.fontSize.sm,

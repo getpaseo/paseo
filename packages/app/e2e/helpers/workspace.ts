@@ -13,6 +13,8 @@ export const createTempGitRepo = async (prefix = 'paseo-e2e-'): Promise<TempRepo
 
   execSync('git init', { cwd: repoPath, stdio: 'ignore' });
   await writeFile(path.join(repoPath, 'README.md'), '# Temp Repo\n');
+  execSync('git add README.md', { cwd: repoPath, stdio: 'ignore' });
+  execSync('git commit -m "Initial commit"', { cwd: repoPath, stdio: 'ignore' });
 
   return {
     path: repoPath,

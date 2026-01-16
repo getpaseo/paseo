@@ -10,7 +10,6 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -20,9 +19,6 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
-import { File as FSFile, Paths } from "expo-file-system";
-import * as LegacyFileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
@@ -30,7 +26,6 @@ import {
   BottomSheetView,
 } from "@gorhom/bottom-sheet";
 import {
-  Check,
   ChevronDown,
   Download,
   File,
@@ -39,12 +34,11 @@ import {
   Image as ImageIcon,
   MoreVertical,
   X,
-  XCircle,
 } from "lucide-react-native";
 import type { ExplorerEntry } from "@/stores/session-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import type { DaemonProfile } from "@/contexts/daemon-registry-context";
 import { useSessionStore } from "@/stores/session-store";
+import { useDownloadStore } from "@/stores/download-store";
 import {
   usePanelStore,
   type SortOption,
@@ -170,21 +164,7 @@ export function FileExplorerPane({
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
   const [menuHeight, setMenuHeight] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [downloadToast, setDownloadToast] = useState<{
-    status: "downloading" | "complete" | "error";
-    fileName: string;
-    message?: string;
-    progress?: {
-      percent: number;
-      bytesWritten: number;
-      totalBytes: number;
-      speed: number;
-      eta: number;
-    };
-  } | null>(null);
-  const downloadStartTimeRef = useRef<number>(0);
-  const lastProgressRef = useRef<{ bytes: number; time: number } | null>(null);
-  const downloadToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startDownload = useDownloadStore((state) => state.startDownload);
   const agentIdRef = useRef(agentId);
   const viewModeRef = useRef(viewMode);
   const requestFilePreviewRef = useRef(requestFilePreview);
@@ -434,121 +414,22 @@ export function FileExplorerPane({
     setMenuHeight((current) => (current === height ? current : height));
   }, []);
 
-  const showDownloadToast = useCallback(
-    (toast: { status: "downloading" | "complete" | "error"; fileName: string; message?: string }) => {
-      if (downloadToastTimeoutRef.current) {
-        clearTimeout(downloadToastTimeoutRef.current);
-        downloadToastTimeoutRef.current = null;
-      }
-      setDownloadToast(toast);
-      if (toast.status !== "downloading") {
-        downloadToastTimeoutRef.current = setTimeout(() => {
-          setDownloadToast(null);
-        }, 3000);
-      }
-    },
-    []
-  );
-
   const handleDownloadEntry = useCallback(
-    async (entry: ExplorerEntry) => {
+    (entry: ExplorerEntry) => {
       if (!agentId || !requestFileDownloadToken || entry.kind !== "file") {
         return;
       }
 
-      const displayName = entry.name;
-
-      try {
-        const tokenResponse = await requestFileDownloadToken(agentId, entry.path);
-        if (tokenResponse.error || !tokenResponse.token) {
-          throw new Error(tokenResponse.error ?? "Failed to request download token.");
-        }
-
-        const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
-        if (!downloadTarget.baseUrl) {
-          throw new Error("Download host is unavailable.");
-        }
-
-        const fileName = tokenResponse.fileName ?? entry.name;
-        const downloadUrl = buildDownloadUrl(
-          downloadTarget.baseUrl,
-          tokenResponse.token,
-          Platform.OS === "web" ? downloadTarget.authCredentials : null
-        );
-
-        if (Platform.OS === "web") {
-          triggerBrowserDownload(downloadUrl, fileName);
-          return;
-        }
-
-        downloadStartTimeRef.current = Date.now();
-        lastProgressRef.current = null;
-        showDownloadToast({ status: "downloading", fileName: displayName });
-
-        const targetFile = resolveDownloadTargetFile(fileName);
-        const downloadResumable = LegacyFileSystem.createDownloadResumable(
-          downloadUrl,
-          targetFile.uri,
-          downloadTarget.authHeader
-            ? { headers: { Authorization: downloadTarget.authHeader } }
-            : undefined,
-          (data) => {
-            const now = Date.now();
-            const { totalBytesWritten, totalBytesExpectedToWrite } = data;
-
-            if (totalBytesExpectedToWrite <= 0) {
-              return;
-            }
-
-            const percent = totalBytesWritten / totalBytesExpectedToWrite;
-            const elapsed = (now - downloadStartTimeRef.current) / 1000;
-            const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
-            const remaining = totalBytesExpectedToWrite - totalBytesWritten;
-            const eta = speed > 0 ? remaining / speed : 0;
-
-            lastProgressRef.current = { bytes: totalBytesWritten, time: now };
-
-            setDownloadToast((prev) =>
-              prev?.status === "downloading"
-                ? {
-                    ...prev,
-                    progress: {
-                      percent,
-                      bytesWritten: totalBytesWritten,
-                      totalBytes: totalBytesExpectedToWrite,
-                      speed,
-                      eta,
-                    },
-                  }
-                : prev
-            );
-          }
-        );
-
-        const result = await downloadResumable.downloadAsync();
-        if (!result) {
-          throw new Error("Download was cancelled.");
-        }
-
-        showDownloadToast({ status: "complete", fileName: displayName });
-
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(result.uri, {
-            mimeType: tokenResponse.mimeType ?? undefined,
-            dialogTitle: fileName ? `Share ${fileName}` : "Share file",
-          });
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to download file.";
-        if (Platform.OS === "web") {
-          console.warn("[FileExplorer] Download failed:", message);
-          return;
-        }
-        showDownloadToast({ status: "error", fileName: displayName, message });
-      }
+      startDownload({
+        serverId,
+        agentId,
+        fileName: entry.name,
+        path: entry.path,
+        daemonProfile,
+        requestFileDownloadToken,
+      });
     },
-    [agentId, daemonProfile, requestFileDownloadToken, showDownloadToast]
+    [agentId, serverId, daemonProfile, requestFileDownloadToken, startDownload]
   );
 
   const menuPosition = useMemo(() => {
@@ -991,53 +872,6 @@ export function FileExplorerPane({
           </View>
         )}
       </BottomSheetModal>
-
-      {downloadToast && (
-        <View style={styles.downloadToast}>
-          <View style={styles.downloadToastContent}>
-            {downloadToast.status === "downloading" ? (
-              <ActivityIndicator size="small" color={theme.colors.foreground} />
-            ) : downloadToast.status === "complete" ? (
-              <Check size={18} color={theme.colors.primary} />
-            ) : (
-              <XCircle size={18} color={theme.colors.destructive} />
-            )}
-            <View style={styles.downloadToastTextContainer}>
-              <Text style={styles.downloadToastFileName} numberOfLines={1}>
-                {downloadToast.fileName}
-              </Text>
-              <Text style={styles.downloadToastStatus}>
-                {downloadToast.status === "downloading"
-                  ? downloadToast.progress
-                    ? `${Math.round(downloadToast.progress.percent * 100)}% · ${formatSpeed(downloadToast.progress.speed)} · ${formatEta(downloadToast.progress.eta)}`
-                    : "Starting..."
-                  : downloadToast.status === "complete"
-                    ? "Download complete"
-                    : downloadToast.message ?? "Download failed"}
-              </Text>
-              {downloadToast.status === "downloading" && downloadToast.progress && (
-                <View style={styles.downloadProgressBar}>
-                  <View
-                    style={[
-                      styles.downloadProgressFill,
-                      { width: `${Math.round(downloadToast.progress.percent * 100)}%` },
-                    ]}
-                  />
-                </View>
-              )}
-            </View>
-            {downloadToast.status !== "downloading" && (
-              <Pressable
-                onPress={() => setDownloadToast(null)}
-                hitSlop={8}
-                style={styles.downloadToastDismiss}
-              >
-                <X size={16} color={theme.colors.foregroundMuted} />
-              </Pressable>
-            )}
-          </View>
-        </View>
-      )}
     </View>
   );
 }
@@ -1054,28 +888,6 @@ function formatFileSize({ size }: { size: number }): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond < 1024) {
-    return `${Math.round(bytesPerSecond)} B/s`;
-  }
-  if (bytesPerSecond < 1024 * 1024) {
-    return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
-  }
-  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
-}
-
-function formatEta(seconds: number): string {
-  if (seconds < 1) {
-    return "< 1s";
-  }
-  if (seconds < 60) {
-    return `${Math.round(seconds)}s`;
-  }
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  return `${mins}m ${secs}s`;
 }
 
 type EntryDisplayKind = "directory" | "image" | "text" | "other";
@@ -1174,120 +986,6 @@ function getExtension(name: string): string | null {
     return null;
   }
   return name.slice(index + 1).toLowerCase();
-}
-
-type DownloadTarget = {
-  baseUrl: string | null;
-  authHeader: string | null;
-  authCredentials: { username: string; password: string } | null;
-};
-
-function resolveDaemonDownloadTarget(daemon?: DaemonProfile): DownloadTarget {
-  const rawUrl = daemon?.restUrl ?? daemon?.wsUrl;
-  if (!rawUrl) {
-    return { baseUrl: null, authHeader: null, authCredentials: null };
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { baseUrl: null, authHeader: null, authCredentials: null };
-  }
-
-  if (parsed.protocol === "ws:") {
-    parsed.protocol = "http:";
-  } else if (parsed.protocol === "wss:") {
-    parsed.protocol = "https:";
-  }
-
-  let authCredentials: { username: string; password: string } | null = null;
-  if (parsed.username || parsed.password) {
-    authCredentials = {
-      username: decodeURIComponent(parsed.username),
-      password: decodeURIComponent(parsed.password),
-    };
-    parsed.username = "";
-    parsed.password = "";
-  }
-
-  parsed.pathname = parsed.pathname.replace(/\/ws\/?$/, "/");
-
-  const baseUrl = parsed.origin;
-  const authHeader = authCredentials
-    ? `Basic ${btoa(`${authCredentials.username}:${authCredentials.password}`)}`
-    : null;
-
-  return { baseUrl, authHeader, authCredentials };
-}
-
-function buildDownloadUrl(
-  baseUrl: string,
-  token: string,
-  authCredentials: { username: string; password: string } | null
-): string {
-  const url = new URL("/api/files/download", baseUrl);
-  url.searchParams.set("token", token);
-  if (authCredentials) {
-    url.username = authCredentials.username;
-    url.password = authCredentials.password;
-  }
-  return url.toString();
-}
-
-function triggerBrowserDownload(url: string, fileName: string) {
-  if (typeof document === "undefined") {
-    if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener");
-    }
-    return;
-  }
-
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.rel = "noopener";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-}
-
-function resolveDownloadTargetFile(fileName: string): FSFile {
-  const directory = Paths.cache ?? Paths.document;
-  if (!directory) {
-    throw new Error("No download directory available.");
-  }
-
-  const safeName = sanitizeDownloadFileName(fileName);
-  const split = splitFileName(safeName);
-  let targetFile = new FSFile(directory, safeName);
-  let suffix = 1;
-
-  while (targetFile.exists) {
-    targetFile = new FSFile(directory, `${split.base} (${suffix})${split.ext}`);
-    suffix += 1;
-  }
-
-  return targetFile;
-}
-
-function sanitizeDownloadFileName(fileName: string): string {
-  const trimmed = fileName.trim();
-  if (!trimmed) {
-    return "download";
-  }
-  return trimmed.replace(/[\\/:*?"<>|]+/g, "_");
-}
-
-function splitFileName(fileName: string): { base: string; ext: string } {
-  const lastDot = fileName.lastIndexOf(".");
-  if (lastDot <= 0) {
-    return { base: fileName, ext: "" };
-  }
-  return {
-    base: fileName.slice(0, lastDot),
-    ext: fileName.slice(lastDot),
-  };
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -1576,56 +1274,5 @@ const styles = StyleSheet.create((theme) => ({
   sheetImage: {
     width: "100%",
     aspectRatio: 1,
-  },
-  downloadToast: {
-    position: "absolute",
-    bottom: theme.spacing[4],
-    left: theme.spacing[4],
-    right: theme.spacing[4],
-    zIndex: 1000,
-  },
-  downloadToastContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  downloadToastTextContainer: {
-    flex: 1,
-    gap: theme.spacing[1],
-  },
-  downloadToastFileName: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  downloadToastStatus: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  downloadProgressBar: {
-    height: 3,
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.full,
-    marginTop: theme.spacing[1],
-    overflow: "hidden",
-  },
-  downloadProgressFill: {
-    height: "100%",
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.borderRadius.full,
-  },
-  downloadToastDismiss: {
-    padding: theme.spacing[1],
   },
 }));

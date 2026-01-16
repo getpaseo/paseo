@@ -59,3 +59,105 @@ export const createAgent = async (page: Page, message: string) => {
   await page.waitForURL(/\/agent\//);
   await expect(page.getByText(message, { exact: true })).toBeVisible();
 };
+
+export interface AgentConfig {
+  directory: string;
+  provider?: string;
+  model?: string;
+  mode?: string;
+  prompt: string;
+}
+
+export const selectProvider = async (page: Page, provider: string) => {
+  const providerLabel = page.getByText('PROVIDER', { exact: true }).first();
+  await expect(providerLabel).toBeVisible();
+  await providerLabel.click();
+
+  const option = page.getByText(provider, { exact: true }).first();
+  await expect(option).toBeVisible();
+  await option.click();
+};
+
+export const selectModel = async (page: Page, model: string) => {
+  const modelLabel = page.getByText('MODEL', { exact: true }).first();
+  await expect(modelLabel).toBeVisible();
+  await modelLabel.click();
+
+  // Wait for the model dropdown to open
+  const searchInput = page.getByRole('textbox', { name: /search model/i });
+  await expect(searchInput).toBeVisible({ timeout: 10000 });
+
+  // Type to search/filter models
+  await searchInput.fill(model);
+
+  // Wait for a matching option to appear (partial match via regex)
+  const option = page.getByText(new RegExp(model, 'i')).first();
+  await expect(option).toBeVisible({ timeout: 30000 });
+  await option.click();
+
+  // Wait for dropdown to close
+  await expect(searchInput).not.toBeVisible({ timeout: 5000 });
+};
+
+export const selectMode = async (page: Page, mode: string) => {
+  const modeLabel = page.getByText('MODE', { exact: true }).first();
+  await expect(modeLabel).toBeVisible();
+  await modeLabel.click();
+
+  // Wait for the mode dropdown to open
+  const searchInput = page.getByRole('textbox', { name: /search mode/i });
+  await expect(searchInput).toBeVisible({ timeout: 10000 });
+
+  // Type to filter modes
+  await searchInput.fill(mode);
+
+  // Click the matching option (use last() since the field label also contains the mode text)
+  const option = page.getByText(mode, { exact: true }).last();
+  await expect(option).toBeVisible();
+  await option.click();
+
+  // Wait for dropdown to close
+  await expect(searchInput).not.toBeVisible({ timeout: 5000 });
+};
+
+export const createAgentWithConfig = async (page: Page, config: AgentConfig) => {
+  await gotoHome(page);
+  await ensureHostSelected(page);
+  await setWorkingDirectory(page, config.directory);
+
+  if (config.provider) {
+    await selectProvider(page, config.provider);
+  }
+
+  if (config.model) {
+    await selectModel(page, config.model);
+  }
+
+  if (config.mode) {
+    await selectMode(page, config.mode);
+  }
+
+  await createAgent(page, config.prompt);
+};
+
+export const waitForPermissionPrompt = async (page: Page, timeout = 30000) => {
+  const promptText = page.getByText('How would you like to proceed?').first();
+  await expect(promptText).toBeVisible({ timeout });
+};
+
+export const allowPermission = async (page: Page) => {
+  const allowButton = page.getByText('Allow', { exact: true }).first();
+  await expect(allowButton).toBeVisible({ timeout: 5000 });
+  await allowButton.click();
+};
+
+export const denyPermission = async (page: Page) => {
+  const denyButton = page.getByText('Deny', { exact: true }).first();
+  await expect(denyButton).toBeVisible({ timeout: 5000 });
+  await denyButton.click();
+};
+
+export async function waitForAgentIdle(page: Page, timeout = 30000) {
+  const stopButton = page.getByRole('button', { name: /stop|cancel/i });
+  await expect(stopButton).not.toBeVisible({ timeout });
+}

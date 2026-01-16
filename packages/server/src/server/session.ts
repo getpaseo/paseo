@@ -2174,6 +2174,23 @@ export class Session {
         { cwd: agent.cwd }
       );
 
+      // Get file statuses (A=added, D=deleted, M=modified) to detect deleted files
+      const { stdout: nameStatusOutput } = await execAsync(
+        "git diff --name-status HEAD",
+        { cwd: agent.cwd }
+      );
+      const deletedFiles = new Set<string>();
+      const addedFiles = new Set<string>();
+      for (const line of nameStatusOutput.trim().split("\n").filter(Boolean)) {
+        const [status, ...pathParts] = line.split("\t");
+        const path = pathParts.join("\t");
+        if (status === "D") {
+          deletedFiles.add(path);
+        } else if (status === "A") {
+          addedFiles.add(path);
+        }
+      }
+
       // Parse numstat output: "additions\tdeletions\tfilepath" or "-\t-\tfilepath" for binary
       interface FileStats {
         path: string;
@@ -2181,6 +2198,8 @@ export class Session {
         deletions: number;
         isBinary: boolean;
         isTracked: boolean;
+        isDeleted: boolean;
+        isNew: boolean;
       }
       const fileStats: FileStats[] = [];
 
@@ -2196,6 +2215,8 @@ export class Session {
             deletions: isBinary ? 0 : parseInt(delStr, 10),
             isBinary,
             isTracked: true,
+            isDeleted: deletedFiles.has(path),
+            isNew: addedFiles.has(path),
           });
         }
       }
@@ -2224,6 +2245,8 @@ export class Session {
               deletions: 0,
               isBinary,
               isTracked: false,
+              isDeleted: false,
+              isNew: true,
             });
           } catch {
             // If we can't determine, assume text and try to get it
@@ -2233,6 +2256,8 @@ export class Session {
               deletions: 0,
               isBinary: false,
               isTracked: false,
+              isDeleted: false,
+              isNew: true,
             });
           }
         }
@@ -2250,8 +2275,8 @@ export class Session {
         if (stats.isBinary) {
           allFiles.push({
             path: stats.path,
-            isNew: !stats.isTracked,
-            isDeleted: false,
+            isNew: stats.isNew,
+            isDeleted: stats.isDeleted,
             additions: 0,
             deletions: 0,
             hunks: [],
@@ -2264,8 +2289,8 @@ export class Session {
         if (totalLines > MAX_DIFF_LINES) {
           allFiles.push({
             path: stats.path,
-            isNew: !stats.isTracked,
-            isDeleted: false,
+            isNew: stats.isNew,
+            isDeleted: stats.isDeleted,
             additions: stats.additions,
             deletions: stats.deletions,
             hunks: [],
@@ -2301,8 +2326,8 @@ export class Session {
           // If diff fails for this file, add it with empty hunks
           allFiles.push({
             path: stats.path,
-            isNew: !stats.isTracked,
-            isDeleted: false,
+            isNew: stats.isNew,
+            isDeleted: stats.isDeleted,
             additions: stats.additions,
             deletions: stats.deletions,
             hunks: [],
