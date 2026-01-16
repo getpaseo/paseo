@@ -17,6 +17,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode, useMemo } from "react";
 import { Platform } from "react-native";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
+import { DownloadToast } from "@/components/download-toast";
 import { usePanelStore } from "@/stores/panel-store";
 import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
 import {
@@ -158,6 +159,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
         <View style={{ flex: 1 }}>{children}</View>
       </View>
       {isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+      <DownloadToast />
     </View>
   );
 

@@ -16,7 +16,6 @@ import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
-import { Fonts } from "@/constants/theme";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -41,18 +40,14 @@ import {
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "./message";
-import { DiffViewer } from "./diff-viewer";
 import type { StreamItem } from "@/types/stream";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
-import {
-  extractCommandDetails,
-  extractEditEntries,
-  extractReadEntries,
-} from "@/utils/tool-call-parsers";
+import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
+import { ToolCallDetailsContent } from "./tool-call-details";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -762,9 +757,6 @@ function PermissionRequestCard({
   const { request } = permission;
   const title = request.title ?? request.name ?? "Permission Required";
   const description = request.description ?? "";
-  const inputPreview = request.input
-    ? JSON.stringify(request.input, null, 2)
-    : null;
 
   const planMarkdown = useMemo(() => {
     if (!request) {
@@ -784,19 +776,9 @@ function PermissionRequestCard({
     return undefined;
   }, [request]);
 
-  const editEntries = useMemo(
-    () => extractEditEntries(request.input, request.metadata),
-    [request]
-  );
-
-  const readEntries = useMemo(
-    () => extractReadEntries(request.input, request.metadata),
-    [request]
-  );
-
-  const commandDetails = useMemo(
-    () => extractCommandDetails(request.input, request.metadata),
-    [request]
+  const toolCallDisplay = useMemo(
+    () => parseToolCallDisplay(request.input, null),
+    [request.input]
   );
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
@@ -1016,187 +998,7 @@ function PermissionRequestCard({
         </View>
       ) : null}
 
-      {commandDetails ? (
-        <View style={permissionStyles.section}>
-          <Text
-            style={[
-              permissionStyles.sectionTitle,
-              { color: theme.colors.foregroundMuted },
-            ]}
-          >
-            Command
-          </Text>
-          {commandDetails.command ? (
-            <View style={permissionStyles.metadataRow}>
-              <Text
-                style={[
-                  permissionStyles.metadataLabel,
-                  { color: theme.colors.foregroundMuted },
-                ]}
-              >
-                Command
-              </Text>
-              <Text
-                style={[
-                  permissionStyles.metadataValue,
-                  { color: theme.colors.foreground },
-                ]}
-              >
-                {commandDetails.command}
-              </Text>
-            </View>
-          ) : null}
-          {commandDetails.cwd ? (
-            <View style={permissionStyles.metadataRow}>
-              <Text
-                style={[
-                  permissionStyles.metadataLabel,
-                  { color: theme.colors.foregroundMuted },
-                ]}
-              >
-                Directory
-              </Text>
-              <Text
-                style={[
-                  permissionStyles.metadataValue,
-                  { color: theme.colors.foreground },
-                ]}
-              >
-                {commandDetails.cwd}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
-      {editEntries.length > 0 ? (
-        <View style={permissionStyles.section}>
-          <Text
-            style={[
-              permissionStyles.sectionTitle,
-              { color: theme.colors.foregroundMuted },
-            ]}
-          >
-            Proposed Changes
-          </Text>
-          {editEntries.map((entry, index) => (
-            <View
-              key={`${entry.filePath ?? "change"}-${index}`}
-              style={permissionStyles.diffSection}
-            >
-              {entry.filePath ? (
-                <View
-                  style={[
-                    permissionStyles.fileBadge,
-                    {
-                      borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.surface2,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      permissionStyles.fileBadgeText,
-                      { color: theme.colors.foreground },
-                    ]}
-                  >
-                    {entry.filePath}
-                  </Text>
-                </View>
-              ) : null}
-              <View
-                style={[
-                  permissionStyles.diffWrapper,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surface2,
-                  },
-                ]}
-              >
-                <DiffViewer diffLines={entry.diffLines} maxHeight={200} />
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {readEntries.length > 0 ? (
-        <View style={permissionStyles.section}>
-          <Text
-            style={[
-              permissionStyles.sectionTitle,
-              { color: theme.colors.foregroundMuted },
-            ]}
-          >
-            File Content
-          </Text>
-          {readEntries.map((entry, index) => (
-            <View
-              key={`${entry.filePath ?? "content"}-${index}`}
-              style={[
-                permissionStyles.contentCard,
-                {
-                  backgroundColor: theme.colors.surface0,
-                  borderColor: theme.colors.border,
-                },
-              ]}
-            >
-              {entry.filePath ? (
-                <Text
-                  style={[
-                    permissionStyles.metadataLabel,
-                    {
-                      color: theme.colors.foregroundMuted,
-                      marginBottom: theme.spacing[1],
-                    },
-                  ]}
-                >
-                  {entry.filePath}
-                </Text>
-              ) : null}
-              <Text
-                style={[
-                  permissionStyles.rawContentText,
-                  { color: theme.colors.foreground },
-                ]}
-              >
-                {entry.content}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {inputPreview ? (
-        <View style={permissionStyles.section}>
-          <Text
-            style={[
-              permissionStyles.sectionTitle,
-              { color: theme.colors.foregroundMuted },
-            ]}
-          >
-            Raw Request
-          </Text>
-          <View
-            style={[
-              permissionStyles.contentCard,
-              {
-                backgroundColor: theme.colors.surface0,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                permissionStyles.rawContentText,
-                { color: theme.colors.foreground },
-              ]}
-            >
-              {inputPreview}
-            </Text>
-          </View>
-        </View>
-      ) : null}
+      <ToolCallDetailsContent display={toolCallDisplay} maxHeight={200} />
 
       <Text
         style={[
@@ -1400,42 +1202,6 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     flexShrink: 1,
     minWidth: 0,
-  },
-  metadataRow: {
-    marginBottom: theme.spacing[2],
-  },
-  metadataLabel: {
-    fontSize: theme.fontSize.xs,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-  },
-  metadataValue: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-  },
-  diffSection: {
-    gap: theme.spacing[2],
-  },
-  fileBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-  },
-  fileBadgeText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-  },
-  diffWrapper: {
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    overflow: "hidden",
-  },
-  rawContentText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
   },
   question: {
     fontSize: theme.fontSize.sm,
