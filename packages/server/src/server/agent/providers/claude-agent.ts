@@ -20,9 +20,7 @@ import {
   type SDKSystemMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { getRootLogger } from "../../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", provider: "claude" });
+import type { Logger } from "pino";
 
 import type {
   AgentCapabilityFlags,
@@ -109,11 +107,13 @@ type ClaudeOptions = Options;
 
 type ClaudeAgentClientOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
+  logger: Logger;
 };
 
 type ClaudeAgentSessionOptions = {
   defaults?: { agents?: Record<string, AgentDefinition> };
   handle?: AgentPersistenceHandle;
+  logger: Logger;
 };
 
 function appendCallerAgentId(url: string, agentId: string): string {
@@ -303,15 +303,18 @@ export class ClaudeAgentClient implements AgentClient {
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
+  private readonly logger: Logger;
 
-  constructor(options?: ClaudeAgentClientOptions) {
-    this.defaults = options?.defaults;
+  constructor(options: ClaudeAgentClientOptions) {
+    this.defaults = options.defaults;
+    this.logger = options.logger.child({ module: "agent", provider: "claude" });
   }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const claudeConfig = this.assertConfig(config);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
+      logger: this.logger,
     });
   }
 
@@ -329,6 +332,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       handle,
+      logger: this.logger,
     });
   }
 
@@ -400,6 +404,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private readonly config: ClaudeAgentConfig;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
+  private readonly logger: Logger;
   private query: Query | null = null;
   private input: Pushable<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
@@ -431,11 +436,12 @@ class ClaudeAgentSession implements AgentSession {
 
   constructor(
     config: ClaudeAgentConfig,
-    options?: ClaudeAgentSessionOptions
+    options: ClaudeAgentSessionOptions
   ) {
     this.config = config;
-    this.defaults = options?.defaults;
-    const handle = options?.handle;
+    this.defaults = options.defaults;
+    this.logger = options.logger;
+    const handle = options.handle;
 
     if (handle) {
       if (!handle.sessionId) {
@@ -552,7 +558,7 @@ class ClaudeAgentSession implements AgentSession {
       this.turnCancelRequested = true;
       // Store the interrupt promise so processPrompt can await it before calling query.next()
       this.pendingInterruptPromise = this.interruptActiveTurn().catch((error) => {
-        logger.warn({ err: error }, "Failed to interrupt during cancel");
+        this.logger.warn({ err: error }, "Failed to interrupt during cancel");
       });
       // Push turn_canceled before ending the queue so consumers get proper lifecycle signals
       queue.push({
@@ -575,7 +581,7 @@ class ClaudeAgentSession implements AgentSession {
     const forwardPromise = this.forwardPromptEvents(sdkMessage, queue, turnId);
     this.activeTurnPromise = forwardPromise;
     forwardPromise.catch((error) => {
-      logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
+      this.logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
     });
 
     try {
@@ -810,7 +816,7 @@ class ClaudeAgentSession implements AgentSession {
       },
       settingSources: ["user", "project"],
       stderr: (data: string) => {
-        logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
+        this.logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
       env: {
         ...process.env,
@@ -1022,7 +1028,7 @@ class ClaudeAgentSession implements AgentSession {
       this.query = null;
       this.input = null;
     } catch (error) {
-      logger.warn({ err: error }, "Failed to interrupt active turn");
+      this.logger.warn({ err: error }, "Failed to interrupt active turn");
     }
   }
 
@@ -1094,13 +1100,38 @@ class ClaudeAgentSession implements AgentSession {
     if (message.subtype !== "init") {
       return;
     }
-    this.claudeSessionId = message.session_id;
+
+    const newSessionId = message.session_id;
+    const existingSessionId = this.claudeSessionId;
+
+    if (existingSessionId === null) {
+      // First time setting session ID (empty → filled) - this is expected
+      this.claudeSessionId = newSessionId;
+      this.logger.debug(
+        { sessionId: newSessionId },
+        "Claude session ID set for the first time"
+      );
+    } else if (existingSessionId === newSessionId) {
+      // Same session ID - no-op, but log for visibility
+      this.logger.debug(
+        { sessionId: newSessionId },
+        "Claude session ID unchanged (same value)"
+      );
+    } else {
+      // CRITICAL: Session ID is being overwritten with a different value
+      // This should NEVER happen and indicates a serious bug
+      throw new Error(
+        `CRITICAL: Claude session ID overwrite detected! ` +
+          `Existing: ${existingSessionId}, New: ${newSessionId}. ` +
+          `This indicates a session identity corruption bug.`
+      );
+    }
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
     this.persistence = null;
     // Capture actual model from SDK init message (not just the configured model)
     if (message.model) {
-      logger.debug({ model: message.model }, "Captured model from SDK init");
+      this.logger.debug({ model: message.model }, "Captured model from SDK init");
       this.lastOptionsModel = message.model;
       // Invalidate cached runtime info so it picks up the new model
       this.cachedRuntimeInfo = null;

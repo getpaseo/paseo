@@ -3,7 +3,7 @@ import { Pressable, Text } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Menu, PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
-import { useSidebarStore } from "@/stores/sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 
 interface MenuHeaderProps {
   title?: string;
@@ -12,10 +12,13 @@ interface MenuHeaderProps {
 
 export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
   const { theme } = useUnistyles();
-  const { isOpen, toggle } = useSidebarStore();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
 
+  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
   const MenuIcon = isMobile ? Menu : PanelLeft;
   const menuIconColor = !isMobile && isOpen
     ? theme.colors.foreground
@@ -25,7 +28,7 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
     <ScreenHeader
       left={
         <>
-          <Pressable onPress={toggle} style={styles.menuButton}>
+          <Pressable onPress={toggleAgentList} style={styles.menuButton}>
             <MenuIcon size={16} color={menuIconColor} />
           </Pressable>
           {title && (

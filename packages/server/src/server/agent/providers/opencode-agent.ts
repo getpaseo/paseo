@@ -1,9 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
-import { getRootLogger } from "../../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", provider: "opencode" });
+import type { Logger } from "pino";
 
 import type {
   AgentCapabilityFlags,
@@ -69,10 +67,15 @@ export class OpenCodeServerManager {
   private server: ChildProcess | null = null;
   private port: number | null = null;
   private startPromise: Promise<{ port: number; url: string }> | null = null;
+  private readonly logger: Logger;
 
-  static getInstance(): OpenCodeServerManager {
+  private constructor(logger: Logger) {
+    this.logger = logger;
+  }
+
+  static getInstance(logger: Logger): OpenCodeServerManager {
     if (!OpenCodeServerManager.instance) {
-      OpenCodeServerManager.instance = new OpenCodeServerManager();
+      OpenCodeServerManager.instance = new OpenCodeServerManager(logger);
       OpenCodeServerManager.registerExitHandler();
     }
     return OpenCodeServerManager.instance;
@@ -141,7 +144,7 @@ export class OpenCodeServerManager {
       });
 
       this.server.stderr?.on("data", (data: Buffer) => {
-        logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
+        this.logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
       });
 
       this.server.on("error", (error) => {
@@ -183,7 +186,13 @@ export class OpenCodeAgentClient implements AgentClient {
   readonly provider: "opencode" = "opencode";
   readonly capabilities = OPENCODE_CAPABILITIES;
 
-  private serverManager = OpenCodeServerManager.getInstance();
+  private readonly serverManager: OpenCodeServerManager;
+  private readonly logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger.child({ module: "agent", provider: "opencode" });
+    this.serverManager = OpenCodeServerManager.getInstance(this.logger);
+  }
 
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);

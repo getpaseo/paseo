@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type {
@@ -11,6 +11,22 @@ import type {
 
 function generateId(): string {
   return randomBytes(4).toString("hex");
+}
+
+function sortByPriorityThenCreated(a: Task, b: Task): number {
+  // Tasks with priority come before tasks without
+  if (a.priority !== undefined && b.priority === undefined) return -1;
+  if (a.priority === undefined && b.priority !== undefined) return 1;
+
+  // If both have priority, lower number = higher priority
+  if (a.priority !== undefined && b.priority !== undefined) {
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
+    }
+  }
+
+  // Fall back to created date (oldest first)
+  return a.created.localeCompare(b.created);
 }
 
 function serializeTask(task: Task): string {
@@ -29,6 +45,10 @@ function serializeTask(task: Task): string {
 
   if (task.assignee) {
     frontmatterLines.push(`assignee: ${task.assignee}`);
+  }
+
+  if (task.priority !== undefined) {
+    frontmatterLines.push(`priority: ${task.priority}`);
   }
 
   frontmatterLines.push("---");
@@ -120,6 +140,8 @@ function parseTask(content: string): Task {
 
   const assignee = getValue("assignee") as AgentType | "";
   const parentId = getValue("parentId");
+  const priorityStr = getValue("priority");
+  const priority = priorityStr ? parseInt(priorityStr, 10) : undefined;
 
   return {
     id: getValue("id"),
@@ -132,6 +154,7 @@ function parseTask(content: string): Task {
     notes,
     created: getValue("created") || new Date().toISOString(),
     assignee: assignee || undefined,
+    priority,
   };
 }
 
@@ -245,7 +268,7 @@ export class FileTaskStore implements TaskStore {
     const allTasks = await this.list();
     return allTasks
       .filter((t) => t.parentId === id)
-      .sort((a, b) => a.created.localeCompare(b.created));
+      .sort(sortByPriorityThenCreated);
   }
 
   async getDescendants(id: string): Promise<Task[]> {
@@ -298,10 +321,8 @@ export class FileTaskStore implements TaskStore {
       return children.every((c) => c.status === "done");
     };
 
-    // Sort by created date (oldest first) for consistent ordering
-    return candidates.filter(isReady).sort((a, b) => {
-      return a.created.localeCompare(b.created);
-    });
+    // Sort by priority first (lower = higher priority), then created date
+    return candidates.filter(isReady).sort(sortByPriorityThenCreated);
   }
 
   async getBlocked(scopeId?: string): Promise<Task[]> {
@@ -365,6 +386,7 @@ export class FileTaskStore implements TaskStore {
       notes: [],
       created: new Date().toISOString(),
       assignee: opts?.assignee,
+      priority: opts?.priority,
     };
 
     await this.writeTask(task);
@@ -383,6 +405,14 @@ export class FileTaskStore implements TaskStore {
     const updated: Task = { ...task, ...changes };
     await this.writeTask(updated);
     return updated;
+  }
+
+  async delete(id: string): Promise<void> {
+    const task = await this.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    await unlink(this.taskPath(id));
   }
 
   async addDep(id: string, depId: string): Promise<void> {
@@ -468,9 +498,6 @@ export class FileTaskStore implements TaskStore {
     const task = await this.get(id);
     if (!task) {
       throw new Error(`Task not found: ${id}`);
-    }
-    if (task.status !== "draft") {
-      throw new Error(`Cannot open task with status: ${task.status}`);
     }
     await this.update(id, { status: "open" });
   }

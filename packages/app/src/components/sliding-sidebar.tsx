@@ -11,7 +11,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Plus, Settings } from "lucide-react-native";
 import { router } from "expo-router";
-import { useSidebarStore } from "@/stores/sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { AgentList } from "./agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
@@ -26,7 +26,15 @@ interface SlidingSidebarProps {
 export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { isOpen, close } = useSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const closeToAgent = usePanelStore((state) => state.closeToAgent);
+
+  // Derive isOpen from the unified panel state
+  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
+
   const { agents, isRevalidating, refreshAll } = useAggregatedAgents();
   const {
     translateX,
@@ -52,9 +60,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     }
   }, [isRevalidating, isManualRefresh]);
 
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
       if (a.requiresAttention && !b.requiresAttention) return -1;
@@ -70,15 +75,15 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const hasMore = agents.length > SIDEBAR_AGENT_LIMIT;
 
   const handleClose = useCallback(() => {
-    close();
-  }, [close]);
+    closeToAgent();
+  }, [closeToAgent]);
 
 
   // Mobile: close sidebar and navigate
   const handleCreateAgentMobile = useCallback(() => {
-    close();
+    closeToAgent();
     router.push("/");
-  }, [close]);
+  }, [closeToAgent]);
 
   // Desktop: just navigate, don't close
   const handleCreateAgentDesktop = useCallback(() => {
@@ -87,9 +92,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   // Mobile: close sidebar and navigate
   const handleSettingsMobile = useCallback(() => {
-    close();
+    closeToAgent();
     router.push("/settings");
-  }, [close]);
+  }, [closeToAgent]);
 
   // Desktop: just navigate, don't close
   const handleSettingsDesktop = useCallback(() => {
@@ -101,17 +106,17 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   const handleAgentSelectMobile = useCallback(() => {
     translateX.value = -windowWidth;
     backdropOpacity.value = 0;
-    close();
-  }, [close, translateX, backdropOpacity, windowWidth]);
+    closeToAgent();
+  }, [closeToAgent, translateX, backdropOpacity, windowWidth]);
 
   const handleViewMore = useCallback(() => {
     if (isMobile) {
       translateX.value = -windowWidth;
       backdropOpacity.value = 0;
     }
-    close();
+    closeToAgent();
     router.push("/agents");
-  }, [backdropOpacity, close, isMobile, translateX, windowWidth]);
+  }, [backdropOpacity, closeToAgent, isMobile, translateX, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
   const closeGesture = Gesture.Pan()

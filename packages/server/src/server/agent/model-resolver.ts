@@ -1,14 +1,13 @@
-import { fetchProviderModels } from "./provider-registry.js";
+import { buildProviderRegistry } from "./provider-registry.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { expandTilde } from "../../utils/path.js";
-import { getRootLogger } from "../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", component: "model-resolver" });
+import type { Logger } from "pino";
 
 type ResolveAgentModelOptions = {
   provider: AgentProvider;
   requestedModel?: string | null;
   cwd?: string;
+  logger: Logger;
 };
 
 export async function resolveAgentModel(
@@ -20,13 +19,14 @@ export async function resolveAgentModel(
   }
 
   try {
-    const models = await fetchProviderModels(options.provider, {
+    const providerRegistry = buildProviderRegistry(options.logger);
+    const models = await providerRegistry[options.provider].fetchModels({
       cwd: options.cwd ? expandTilde(options.cwd) : undefined,
     });
     const preferred = models.find((model) => model.isDefault) ?? models[0];
     return preferred?.id;
   } catch (error) {
-    logger.warn(
+    options.logger.warn(
       { err: error, provider: options.provider },
       "Failed to resolve default model"
     );

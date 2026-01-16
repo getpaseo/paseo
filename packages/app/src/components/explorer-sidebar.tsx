@@ -10,11 +10,11 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { X, GitBranch, Folder, LayoutGrid, List as ListIcon } from "lucide-react-native";
 import {
-  useExplorerSidebarStore,
+  usePanelStore,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
   type ViewMode,
-} from "@/stores/explorer-sidebar-store";
+} from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "./git-diff-pane";
@@ -30,8 +30,21 @@ interface ExplorerSidebarProps {
 export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const { isOpen, activeTab, width, viewMode, close, setActiveTab, setWidth, setViewMode } =
-    useExplorerSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const closeToAgent = usePanelStore((state) => state.closeToAgent);
+  const explorerTab = usePanelStore((state) => state.explorerTab);
+  const explorerWidth = usePanelStore((state) => state.explorerWidth);
+  const explorerViewMode = usePanelStore((state) => state.explorerViewMode);
+  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
+  const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
+  const setExplorerViewMode = usePanelStore((state) => state.setExplorerViewMode);
+
+  // Derive isOpen from the unified panel state
+  const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
+
   const {
     translateX,
     backdropOpacity,
@@ -42,22 +55,19 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
     closeGestureRef,
   } = useExplorerSidebarAnimation();
 
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-
   // For resize drag, track the starting width
-  const startWidthRef = useRef(width);
-  const resizeWidth = useSharedValue(width);
+  const startWidthRef = useRef(explorerWidth);
+  const resizeWidth = useSharedValue(explorerWidth);
 
   const handleClose = useCallback(() => {
-    close();
-  }, [close]);
+    closeToAgent();
+  }, [closeToAgent]);
 
   const handleTabPress = useCallback(
     (tab: ExplorerTab) => {
-      setActiveTab(tab);
+      setExplorerTab(tab);
     },
-    [setActiveTab]
+    [setExplorerTab]
   );
 
   // Swipe gesture to close (swipe right on mobile)
@@ -116,8 +126,8 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
         .enabled(!isMobile)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onStart(() => {
-          startWidthRef.current = width;
-          resizeWidth.value = width;
+          startWidthRef.current = explorerWidth;
+          resizeWidth.value = explorerWidth;
         })
         .onUpdate((event) => {
           // Dragging left (negative translationX) increases width
@@ -129,9 +139,9 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
           resizeWidth.value = clampedWidth;
         })
         .onEnd(() => {
-          runOnJS(setWidth)(resizeWidth.value);
+          runOnJS(setExplorerWidth)(resizeWidth.value);
         }),
-    [isMobile, width, resizeWidth, setWidth]
+    [isMobile, explorerWidth, resizeWidth, setExplorerWidth]
   );
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
@@ -168,13 +178,13 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
             pointerEvents="auto"
           >
             <SidebarContent
-              activeTab={activeTab}
+              activeTab={explorerTab}
               onTabPress={handleTabPress}
               onClose={handleClose}
               serverId={serverId}
               agentId={agentId}
-              fileViewMode={viewMode}
-              onFileViewModeChange={setViewMode}
+              fileViewMode={explorerViewMode}
+              onFileViewModeChange={setExplorerViewMode}
               isMobile={isMobile}
             />
           </Animated.View>
@@ -201,13 +211,13 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
       </GestureDetector>
 
       <SidebarContent
-        activeTab={activeTab}
+        activeTab={explorerTab}
         onTabPress={handleTabPress}
         onClose={handleClose}
         serverId={serverId}
         agentId={agentId}
-        fileViewMode={viewMode}
-        onFileViewModeChange={setViewMode}
+        fileViewMode={explorerViewMode}
+        onFileViewModeChange={setExplorerViewMode}
         isMobile={false}
       />
     </Animated.View>

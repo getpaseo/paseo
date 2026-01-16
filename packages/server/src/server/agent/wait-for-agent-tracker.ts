@@ -1,6 +1,4 @@
-import { getRootLogger } from "../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", component: "wait-for-agent-tracker" });
+import type { Logger } from "pino";
 
 export type WaitForAgentCanceler = (agentId: string, reason?: string) => boolean;
 
@@ -10,6 +8,11 @@ export type WaitForAgentCanceler = (agentId: string, reason?: string) => boolean
  */
 export class WaitForAgentTracker {
   private waiters = new Map<string, Set<(reason?: string) => void>>();
+  private logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger.child({ module: "agent", component: "wait-for-agent-tracker" });
+  }
 
   register(agentId: string, cancel: (reason?: string) => void): () => void {
     if (!this.waiters.has(agentId)) {
@@ -41,7 +44,7 @@ export class WaitForAgentTracker {
       try {
         cancel(reason);
       } catch (error) {
-        logger.warn(
+        this.logger.warn(
           { err: error, agentId },
           "Cancel callback failed"
         );

@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
+import { UnistylesRuntime } from "react-native-unistyles";
 import { useSessionStore } from "@/stores/session-store";
-import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 import type { HighlightedDiffResponse } from "@server/shared/messages";
 import { getNowMs, isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
@@ -30,7 +31,12 @@ export function useHighlightedDiffQuery({ serverId, agentId }: UseHighlightedDif
   const isConnected = useSessionStore(
     (state) => state.sessions[serverId]?.connection.isConnected ?? false
   );
-  const { isOpen, activeTab } = useExplorerSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const explorerTab = usePanelStore((state) => state.explorerTab);
+  const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   const query = useQuery({
     queryKey: highlightedDiffQueryKey(serverId, agentId),
@@ -80,14 +86,14 @@ export function useHighlightedDiffQuery({ serverId, agentId }: UseHighlightedDif
 
   // Revalidate when sidebar opens with "changes" tab active
   useEffect(() => {
-    if (!isOpen || activeTab !== "changes" || !agentId) {
+    if (!isOpen || explorerTab !== "changes" || !agentId) {
       return;
     }
     // Invalidate to trigger background refetch (shows stale data while fetching)
     queryClient.invalidateQueries({
       queryKey: highlightedDiffQueryKey(serverId, agentId),
     });
-  }, [isOpen, activeTab, serverId, agentId, queryClient]);
+  }, [isOpen, explorerTab, serverId, agentId, queryClient]);
 
   const refresh = useCallback(() => {
     return query.refetch();

@@ -1,7 +1,5 @@
-import { getRootLogger } from "../logger.js";
 import type { PushTokenStore } from "./token-store.js";
-
-const logger = getRootLogger().child({ module: "push", component: "push-service" });
+import type pino from "pino";
 
 interface PushPayload {
   title: string;
@@ -32,9 +30,11 @@ const MAX_BATCH_SIZE = 100;
  * Handles batching and invalid token removal.
  */
 export class PushService {
-  private tokenStore: PushTokenStore;
+  private readonly logger: pino.Logger;
+  private readonly tokenStore: PushTokenStore;
 
-  constructor(tokenStore: PushTokenStore) {
+  constructor(logger: pino.Logger, tokenStore: PushTokenStore) {
+    this.logger = logger.child({ component: "push-service" });
     this.tokenStore = tokenStore;
   }
 
@@ -74,7 +74,7 @@ export class PushService {
       });
 
       if (!response.ok) {
-        logger.error(
+        this.logger.error(
           { status: response.status, statusText: response.statusText },
           "Expo push API error"
         );
@@ -84,7 +84,7 @@ export class PushService {
       const result = (await response.json()) as { data: ExpoPushTicket[] };
       this.handleTickets(messages, result.data);
     } catch (error) {
-      logger.error({ err: error }, "Failed to send push notifications");
+      this.logger.error({ err: error }, "Failed to send push notifications");
     }
   }
 
@@ -97,7 +97,7 @@ export class PushService {
       const message = messages[i];
 
       if (ticket.status === "error") {
-        logger.error(
+        this.logger.error(
           { token: message.to, message: ticket.message, details: ticket.details },
           "Push failed for token"
         );

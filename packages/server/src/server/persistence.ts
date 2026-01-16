@@ -2,9 +2,17 @@ import { readFile, writeFile, readdir, unlink, mkdir, stat } from "fs/promises";
 import { join } from "path";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { standardizePrompt } from "ai/internal";
-import { getRootLogger } from "./logger.js";
 
-const logger = getRootLogger().child({ module: "persistence" });
+type LoggerLike = {
+  child(bindings: Record<string, unknown>): LoggerLike;
+  info(...args: any[]): void;
+  debug(...args: any[]): void;
+  error(...args: any[]): void;
+};
+
+function getLogger(logger: LoggerLike): LoggerLike {
+  return logger.child({ module: "persistence" });
+}
 
 const CONVERSATIONS_DIR = join(process.cwd(), "conversations");
 
@@ -32,9 +40,11 @@ async function ensureConversationsDir(): Promise<void> {
  * Save conversation to disk
  */
 export async function saveConversation(
+  logger: LoggerLike,
   conversationId: string,
   messages: ModelMessage[]
 ): Promise<void> {
+  const log = getLogger(logger);
   try {
     await ensureConversationsDir();
 
@@ -47,12 +57,12 @@ export async function saveConversation(
     };
 
     await writeFile(filepath, JSON.stringify(data, null, 2), "utf-8");
-    logger.info(
+    log.info(
       { conversationId, messageCount: messages.length },
       "Saved conversation"
     );
   } catch (error) {
-    logger.error(
+    log.error(
       { err: error, conversationId },
       "Failed to save conversation"
     );
@@ -65,8 +75,10 @@ export async function saveConversation(
  * Returns null if conversation doesn't exist or fails to parse
  */
 export async function loadConversation(
+  logger: LoggerLike,
   conversationId: string
 ): Promise<ModelMessage[] | null> {
+  const log = getLogger(logger);
   try {
     const filepath = join(CONVERSATIONS_DIR, `${conversationId}.json`);
 
@@ -74,7 +86,7 @@ export async function loadConversation(
     try {
       await stat(filepath);
     } catch {
-      logger.debug({ conversationId }, "Conversation not found");
+      log.debug({ conversationId }, "Conversation not found");
       return null;
     }
 
@@ -87,14 +99,14 @@ export async function loadConversation(
       prompt: data.messages,
     });
 
-    logger.info(
+    log.info(
       { conversationId, messageCount: data.messageCount },
       "Loaded conversation"
     );
 
     return result.messages as ModelMessage[];
   } catch (error) {
-    logger.error(
+    log.error(
       { err: error, conversationId },
       "Failed to load conversation"
     );
@@ -105,7 +117,8 @@ export async function loadConversation(
 /**
  * List all conversations with metadata
  */
-export async function listConversations(): Promise<ConversationMetadata[]> {
+export async function listConversations(logger: LoggerLike): Promise<ConversationMetadata[]> {
+  const log = getLogger(logger);
   try {
     await ensureConversationsDir();
 
@@ -126,7 +139,7 @@ export async function listConversations(): Promise<ConversationMetadata[]> {
           messageCount: data.messageCount,
         });
       } catch (error) {
-        logger.error({ err: error, file }, "Failed to read conversation");
+        log.error({ err: error, file }, "Failed to read conversation");
         // Skip invalid files
       }
     }
@@ -136,7 +149,7 @@ export async function listConversations(): Promise<ConversationMetadata[]> {
 
     return conversations;
   } catch (error) {
-    logger.error({ err: error }, "Failed to list conversations");
+    log.error({ err: error }, "Failed to list conversations");
     return [];
   }
 }
@@ -144,13 +157,14 @@ export async function listConversations(): Promise<ConversationMetadata[]> {
 /**
  * Delete conversation from disk
  */
-export async function deleteConversation(conversationId: string): Promise<void> {
+export async function deleteConversation(logger: LoggerLike, conversationId: string): Promise<void> {
+  const log = getLogger(logger);
   try {
     const filepath = join(CONVERSATIONS_DIR, `${conversationId}.json`);
     await unlink(filepath);
-    logger.info({ conversationId }, "Deleted conversation");
+    log.info({ conversationId }, "Deleted conversation");
   } catch (error) {
-    logger.error(
+    log.error(
       { err: error, conversationId },
       "Failed to delete conversation"
     );

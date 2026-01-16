@@ -4,9 +4,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
-import { getRootLogger } from "../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", component: "agent-manager" });
+import type { Logger } from "pino";
 
 import type {
   AgentCapabilityFlags,
@@ -61,6 +59,7 @@ export type AgentManagerOptions = {
   registry?: AgentRegistry;
   agentControlMcp?: AgentControlMcpConfig;
   onAgentAttention?: AgentAttentionCallback;
+  logger: Logger;
 };
 
 export type WaitForAgentOptions = {
@@ -187,14 +186,16 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly agentControlMcp?: AgentControlMcpConfig;
   private onAgentAttention?: AgentAttentionCallback;
+  private logger: Logger;
 
-  constructor(options?: AgentManagerOptions) {
+  constructor(options: AgentManagerOptions) {
     this.maxTimelineItems =
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.agentControlMcp = options?.agentControlMcp;
     this.onAgentAttention = options?.onAgentAttention;
+    this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
       for (const [provider, client] of Object.entries(options.clients)) {
         if (client) {
@@ -271,7 +272,7 @@ export class AgentManager {
         });
         descriptors.push(...entries);
       } catch (error) {
-        logger.warn(
+        this.logger.warn(
           { err: error, provider },
           "Failed to list persisted agents for provider"
         );
@@ -358,7 +359,7 @@ export class AgentManager {
     try {
       await existing.session.close();
     } catch (error) {
-      logger.warn(
+      this.logger.warn(
         { err: error, agentId },
         "Failed to close previous session during refresh"
       );
@@ -549,7 +550,7 @@ export class AgentManager {
     try {
       await agent.session.interrupt();
     } catch (error) {
-      logger.error(
+      this.logger.error(
         { err: error, agentId },
         "Failed to interrupt session"
       );
@@ -561,7 +562,7 @@ export class AgentManager {
       await pendingRun.return(undefined as unknown as AgentStreamEvent);
       return true;
     } catch (error) {
-      logger.error(
+      this.logger.error(
         { err: error, agentId },
         "Failed to cancel run"
       );

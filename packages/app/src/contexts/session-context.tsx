@@ -362,10 +362,11 @@ export interface SessionContextValue {
   createAgent: (options: {
     config: any;
     initialPrompt: string;
+    images?: Array<{ uri: string; mimeType?: string }>;
     git?: any;
     worktreeName?: string;
     requestId?: string;
-  }) => void;
+  }) => Promise<unknown>;
   setAgentMode: (agentId: string, modeId: string) => void;
   respondToPermission: (
     agentId: string,
@@ -2077,20 +2078,14 @@ export function SessionProvider({
           error
         );
       }
-      void client
-        .createAgent({
-          config,
-          ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
-          ...(imagesData && imagesData.length > 0
-            ? { images: imagesData }
-            : {}),
-          ...(git ? { git } : {}),
-          ...(worktreeName ? { worktreeName } : {}),
-          ...(requestId ? { requestId } : {}),
-        })
-        .catch((error) => {
-          console.error("[Session] Failed to create agent:", error);
-        });
+      return client.createAgent({
+        config,
+        ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
+        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+        ...(git ? { git } : {}),
+        ...(worktreeName ? { worktreeName } : {}),
+        ...(requestId ? { requestId } : {}),
+      });
     },
     [encodeImages, client]
   );

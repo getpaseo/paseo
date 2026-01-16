@@ -3,15 +3,13 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { AgentTimelineItem } from "../server/agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../server/agent/activity-curator.js";
-import { getRootLogger } from "../server/logger.js";
-
-const logger = getRootLogger().child({ module: "agent-title-generator" });
+import type pino from "pino";
 
 let openai: ReturnType<typeof createOpenAI> | null = null;
 
-export function initializeTitleGenerator(apiKey: string): void {
+export function initializeTitleGenerator(logger: pino.Logger, apiKey: string): void {
   openai = createOpenAI({ apiKey });
-  logger.info("Agent title generator initialized");
+  logger.child({ action: "initialize" }).info("Agent title generator initialized");
 }
 
 export function isTitleGeneratorInitialized(): boolean {
@@ -23,9 +21,11 @@ export function isTitleGeneratorInitialized(): boolean {
  * Returns a 3-5 word title similar to ChatGPT/Claude.ai
  */
 export async function generateAgentTitle(
+  logger: pino.Logger,
   timeline: AgentTimelineItem[],
   cwd: string
 ): Promise<string> {
+  const titleLogger = logger.child({ action: "generate" });
   if (!openai) {
     throw new Error("Title generator not initialized");
   }
@@ -59,11 +59,11 @@ ${activityContext}`,
       temperature: 0.7,
     });
 
-    logger.debug({ title: object.title }, "Generated agent title");
+    titleLogger.debug({ title: object.title }, "Generated agent title");
 
     return object.title;
   } catch (err) {
-    logger.error({ err }, "Failed to generate agent title");
+    titleLogger.error({ err }, "Failed to generate agent title");
     return "New Agent";
   }
 }

@@ -231,14 +231,19 @@ export function AgentInputArea({
       return;
     }
 
-    const isControlled = value !== undefined;
+    const isControlledLocal = value !== undefined;
     setSelectedImages([]);
     setIsProcessing(true);
 
     try {
       await submitMessage(trimmedMessage, imageAttachments);
       // Clear input only after successful submission
-      if (isControlled) {
+      // For controlled inputs with onSubmitMessage, the parent handles clearing
+      // because agent creation is async (WebSocket) and errors come back later
+      if (onSubmitMessageRef.current) {
+        // Parent manages input state - don't clear here
+        // Parent will clear on success via onChangeText
+      } else if (isControlledLocal) {
         onChangeText?.("");
       } else {
         setUserInput("");
@@ -284,8 +289,13 @@ export function AgentInputArea({
     }
   }, [isAgentRunning, isConnected]);
 
-  // Hydrate draft only when switching agents
+  // Hydrate draft only when switching agents (uncontrolled mode only)
+  const isControlled = value !== undefined;
   useEffect(() => {
+    // Skip draft hydration for controlled inputs - parent manages state
+    if (isControlled) {
+      return;
+    }
     const draft = getDraftInput(agentId);
     if (!draft) {
       setUserInput("");
@@ -295,7 +305,7 @@ export function AgentInputArea({
 
     setUserInput(draft.text);
     setSelectedImages(draft.images as ImageAttachment[]);
-  }, [agentId, getDraftInput]);
+  }, [agentId, getDraftInput, isControlled]);
 
   // Persist drafts into the shared session store with change detection to avoid redundant work
   useEffect(() => {

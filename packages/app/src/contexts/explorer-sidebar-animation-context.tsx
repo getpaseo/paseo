@@ -7,7 +7,8 @@ import {
   type SharedValue,
 } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
-import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
+import { UnistylesRuntime } from "react-native-unistyles";
+import { usePanelStore } from "@/stores/panel-store";
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
@@ -26,7 +27,13 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
-  const { isOpen } = useExplorerSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+
+  // Derive isOpen from the unified panel state
+  const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   // Right sidebar: closed = +windowWidth (off-screen right), open = 0
   const translateX = useSharedValue(isOpen ? 0 : windowWidth);

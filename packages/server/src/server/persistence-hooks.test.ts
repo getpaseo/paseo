@@ -11,6 +11,11 @@ import type {
   AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 
+const testLogger = {
+  child: () => testLogger,
+  error: vi.fn(),
+} as any;
+
 type ManagedAgentOverrides = Omit<
   Partial<ManagedAgent>,
   "config" | "pendingPermissions" | "session" | "pendingRun"
@@ -118,7 +123,7 @@ describe("persistence hooks", () => {
         };
       }),
     };
-    attachAgentRegistryPersistence(agentManager as any, {
+    attachAgentRegistryPersistence(testLogger, agentManager as any, {
       applySnapshot,
       list: vi.fn(),
     } as any);

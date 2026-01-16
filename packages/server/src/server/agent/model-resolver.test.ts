@@ -3,16 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentModel } from "./model-resolver.js";
 
 vi.mock("./provider-registry.js", () => ({
-  fetchProviderModels: vi.fn(),
+  buildProviderRegistry: vi.fn(),
 }));
 
-import { fetchProviderModels } from "./provider-registry.js";
+import { buildProviderRegistry } from "./provider-registry.js";
 
-const mockedFetch = vi.mocked(fetchProviderModels);
+const mockedBuildProviderRegistry = vi.mocked(buildProviderRegistry);
+const testLogger = { warn: vi.fn() } as any;
 
 describe("resolveAgentModel", () => {
   beforeEach(() => {
-    mockedFetch.mockReset();
+    mockedBuildProviderRegistry.mockReset();
+    testLogger.warn.mockClear();
   });
 
   it("returns the trimmed requested model when provided", async () => {
@@ -20,42 +22,59 @@ describe("resolveAgentModel", () => {
       provider: "codex",
       requestedModel: "  gpt-5.1  ",
       cwd: "/tmp",
+      logger: testLogger,
     });
 
     expect(result).toBe("gpt-5.1");
-    expect(mockedFetch).not.toHaveBeenCalled();
+    expect(mockedBuildProviderRegistry).not.toHaveBeenCalled();
   });
 
   it("uses the default model from the provider catalog when no model specified", async () => {
-    mockedFetch.mockResolvedValue([
-      { id: "claude-3.5-haiku", isDefault: false } as any,
-      { id: "claude-3.5-sonnet", isDefault: true } as any,
+    const fetchModels = vi.fn().mockResolvedValue([
+      { id: "claude-3.5-haiku", isDefault: false },
+      { id: "claude-3.5-sonnet", isDefault: true },
     ]);
+    mockedBuildProviderRegistry.mockReturnValue({
+      claude: { fetchModels },
+      codex: { fetchModels: vi.fn() },
+      opencode: { fetchModels: vi.fn() },
+    } as any);
 
-    const result = await resolveAgentModel({ provider: "claude", cwd: "~/repo" });
+    const result = await resolveAgentModel({ provider: "claude", cwd: "~/repo", logger: testLogger });
 
     expect(result).toBe("claude-3.5-sonnet");
-    expect(mockedFetch).toHaveBeenCalledWith("claude", {
+    expect(fetchModels).toHaveBeenCalledWith({
       cwd: expect.stringMatching(/repo$/),
     });
   });
 
   it("falls back to the first model when none are flagged as default", async () => {
-    mockedFetch.mockResolvedValue([
-      { id: "model-a", isDefault: false } as any,
-      { id: "model-b", isDefault: false } as any,
+    const fetchModels = vi.fn().mockResolvedValue([
+      { id: "model-a", isDefault: false },
+      { id: "model-b", isDefault: false },
     ]);
+    mockedBuildProviderRegistry.mockReturnValue({
+      claude: { fetchModels: vi.fn() },
+      codex: { fetchModels },
+      opencode: { fetchModels: vi.fn() },
+    } as any);
 
-    const result = await resolveAgentModel({ provider: "codex" });
+    const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
     expect(result).toBe("model-a");
   });
 
   it("returns undefined when the catalog lookup fails", async () => {
-    mockedFetch.mockRejectedValue(new Error("boom"));
+    const fetchModels = vi.fn().mockRejectedValue(new Error("boom"));
+    mockedBuildProviderRegistry.mockReturnValue({
+      claude: { fetchModels: vi.fn() },
+      codex: { fetchModels },
+      opencode: { fetchModels: vi.fn() },
+    } as any);
 
-    const result = await resolveAgentModel({ provider: "codex" });
+    const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
     expect(result).toBeUndefined();
+    expect(testLogger.warn).toHaveBeenCalled();
   });
 });

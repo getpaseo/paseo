@@ -6,6 +6,7 @@ import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import pino from "pino";
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 
@@ -168,7 +169,7 @@ describe("agent MCP end-to-end", () => {
       await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
       process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-      const daemon = await createPaseoDaemon(daemonConfig);
+      const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
       await new Promise<void>((resolve) => {
         daemon.httpServer.listen(port, () => resolve());
       });
@@ -382,7 +383,7 @@ describe("agent MCP end-to-end", () => {
       await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
       process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-      const daemon = await createPaseoDaemon(daemonConfig);
+      const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
       await new Promise<void>((resolve) => {
         daemon.httpServer.listen(port, () => resolve());
       });

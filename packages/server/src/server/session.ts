@@ -25,6 +25,8 @@ import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
 import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
+import type { OpenAISTT } from "./agent/stt-openai.js";
+import type { OpenAITTS } from "./agent/tts-openai.js";
 import {
   saveConversation,
   listConversations,
@@ -36,7 +38,7 @@ import {
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { fetchProviderModels } from "./agent/provider-registry.js";
+import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
@@ -69,9 +71,7 @@ import {
   validateBranchSlug,
 } from "../utils/worktree.js";
 import { expandTilde } from "../utils/path.js";
-import { getRootLogger } from "./logger.js";
-
-const logger = getRootLogger().child({ module: "session" });
+import type pino from "pino";
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -158,7 +158,11 @@ function convertPCMToWavBuffer(
   return wavBuffer;
 }
 
-function coerceAgentProvider(value: string, agentId?: string): AgentProvider {
+function coerceAgentProvider(
+  logger: pino.Logger,
+  value: string,
+  agentId?: string
+): AgentProvider {
   if (isValidAgentProvider(value)) {
     return value;
   }
@@ -170,6 +174,7 @@ function coerceAgentProvider(value: string, agentId?: string): AgentProvider {
 }
 
 function toAgentPersistenceHandle(
+  logger: pino.Logger,
   handle: StoredAgentRecord["persistence"]
 ): AgentPersistenceHandle | null {
   if (!handle) {
@@ -204,7 +209,7 @@ export class Session {
   private readonly clientId: string;
   private readonly conversationId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
-  private readonly sessionLogger: ReturnType<typeof logger.child>;
+  private readonly sessionLogger: pino.Logger;
 
   // State machine
   private abortController: AbortController;
@@ -238,6 +243,7 @@ export class Session {
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
+  private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
   private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private clientActivity: {
@@ -250,11 +256,14 @@ export class Session {
   constructor(
     clientId: string,
     onMessage: (msg: SessionOutboundMessage) => void,
+    logger: pino.Logger,
     downloadTokenStore: DownloadTokenStore,
     pushTokenStore: PushTokenStore,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     agentMcpConfig: AgentMcpClientConfig,
+    stt: OpenAISTT | null,
+    tts: OpenAITTS | null,
     options?: {
       conversationId?: string;
       initialMessages?: ModelMessage[];
@@ -269,7 +278,12 @@ export class Session {
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
     this.abortController = new AbortController();
-    this.sessionLogger = logger.child({ clientId: this.clientId, conversationId: this.conversationId });
+    this.sessionLogger = logger.child({
+      module: "session",
+      clientId: this.clientId,
+      conversationId: this.conversationId,
+    });
+    this.providerRegistry = buildProviderRegistry(this.sessionLogger);
 
     // Initialize conversation history
     if (options?.initialMessages) {
@@ -281,8 +295,8 @@ export class Session {
     }
 
     // Initialize per-session managers
-    this.ttsManager = new TTSManager(this.conversationId);
-    this.sttManager = new STTManager(this.conversationId);
+    this.ttsManager = new TTSManager(this.conversationId, this.sessionLogger, tts);
+    this.sttManager = new STTManager(this.conversationId, this.sessionLogger, stt);
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
@@ -559,7 +573,7 @@ export class Session {
       ? new Date(record.lastUserMessageAt)
       : null;
 
-    const provider = coerceAgentProvider(record.provider, record.id);
+    const provider = coerceAgentProvider(this.sessionLogger, record.provider, record.id);
     return {
       id: record.id,
       provider,
@@ -573,7 +587,7 @@ export class Session {
       currentModeId: record.lastModeId ?? null,
       availableModes: [],
       pendingPermissions: [],
-      persistence: toAgentPersistenceHandle(record.persistence),
+      persistence: toAgentPersistenceHandle(this.sessionLogger, record.persistence),
       lastUsage: undefined,
       lastError: undefined,
       title: record.title ?? null,
@@ -597,7 +611,7 @@ export class Session {
         throw new Error(`Agent not found: ${agentId}`);
       }
 
-      const handle = toAgentPersistenceHandle(record.persistence);
+      const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
       let snapshot: ManagedAgent;
       if (handle) {
         snapshot = await this.agentManager.resumeAgent(
@@ -694,7 +708,11 @@ export class Session {
         { agentId },
         `Generating title for agent ${agentId}`
       );
-      const title = await generateAgentTitle(timeline, snapshot.cwd);
+      const title = await generateAgentTitle(
+        this.sessionLogger.child({ module: "agent-title-generator" }),
+        timeline,
+        snapshot.cwd
+      );
       await this.agentRegistry.setTitle(agentId, title);
       this.setCachedTitle(agentId, title);
       const latest = this.agentManager.getAgent(agentId) ?? snapshot;
@@ -880,7 +898,7 @@ export class Session {
    */
   public async handleListConversations(requestId: string): Promise<void> {
     try {
-      const conversations = await listConversations();
+      const conversations = await listConversations(this.sessionLogger);
       this.emit({
         type: "list_conversations_response",
         payload: {
@@ -917,7 +935,7 @@ export class Session {
     requestId: string
   ): Promise<void> {
     try {
-      await deleteConversation(conversationId);
+      await deleteConversation(this.sessionLogger, conversationId);
       this.emit({
         type: "delete_conversation_response",
         payload: {
@@ -1467,7 +1485,7 @@ export class Session {
         if (!record) {
           throw new Error(`Agent not found: ${agentId}`);
         }
-        const handle = toAgentPersistenceHandle(record.persistence);
+        const handle = toAgentPersistenceHandle(this.sessionLogger, record.persistence);
         if (!handle) {
           throw new Error(
             `Agent ${agentId} cannot be refreshed because it lacks persistence`
@@ -1653,7 +1671,7 @@ export class Session {
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
     try {
-      const models = await fetchProviderModels(msg.provider, {
+      const models = await this.providerRegistry[msg.provider].fetchModels({
         cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
       });
       this.emit({
@@ -2943,7 +2961,7 @@ export class Session {
 
           // Persist conversation to disk
           try {
-            await saveConversation(this.conversationId, this.messages);
+            await saveConversation(this.sessionLogger, this.conversationId, this.messages);
           } catch (error) {
             this.sessionLogger.error(
               { err: error },

@@ -8,7 +8,6 @@ import {
   SessionInboundMessageSchema,
   WSOutboundMessageSchema,
 } from "../shared/messages.js";
-import { getRootLogger } from "../server/logger.js";
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
@@ -40,7 +39,19 @@ import type {
 } from "../server/agent/agent-sdk-types.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
 
-const logger = getRootLogger().child({ module: "daemon-client" });
+export interface Logger {
+  debug(obj: object, msg?: string): void;
+  info(obj: object, msg?: string): void;
+  warn(obj: object, msg?: string): void;
+  error(obj: object, msg?: string): void;
+}
+
+const consoleLogger: Logger = {
+  debug: (obj, msg) => console.debug(msg, obj),
+  info: (obj, msg) => console.info(msg, obj),
+  warn: (obj, msg) => console.warn(msg, obj),
+  error: (obj, msg) => console.error(msg, obj),
+};
 
 export type DaemonTransport = {
   send: (data: string) => void;
@@ -115,6 +126,7 @@ export type DaemonClientV2Config = {
   suppressSendErrors?: boolean;
   transportFactory?: DaemonTransportFactory;
   webSocketFactory?: WebSocketFactory;
+  logger?: Logger;
   reconnect?: {
     enabled?: boolean;
     baseDelayMs?: number;
@@ -197,6 +209,7 @@ export class DaemonClientV2 {
   private connectionState: ConnectionState = { status: "idle" };
   private messageQueueLimit: number | null;
   private agentIndex: Map<string, AgentSnapshotPayload> = new Map();
+  private logger: Logger;
 
   constructor(private config: DaemonClientV2Config) {
     this.messageQueueLimit =
@@ -204,6 +217,7 @@ export class DaemonClientV2 {
         ? DEFAULT_MESSAGE_QUEUE_LIMIT
         : config.messageQueueLimit;
     this.conversationId = config.conversationId ?? null;
+    this.logger = config.logger ?? consoleLogger;
   }
 
   // ============================================================================
@@ -1412,7 +1426,7 @@ export class DaemonClientV2 {
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
       const msgType = (parsedJson as { message?: { type?: string } })?.message?.type ?? "unknown";
-      logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
+      this.logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
       return;
     }
 

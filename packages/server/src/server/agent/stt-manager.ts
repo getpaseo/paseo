@@ -1,6 +1,6 @@
-import { transcribeAudio, type TranscriptionResult } from "./stt-openai.js";
+import type pino from "pino";
+import type { OpenAISTT, TranscriptionResult } from "./stt-openai.js";
 import { maybePersistDebugAudio } from "./stt-debug.js";
-import { getRootLogger } from "../logger.js";
 
 interface TranscriptionMetadata {
   agentId?: string;
@@ -20,11 +20,13 @@ export interface SessionTranscriptionResult extends TranscriptionResult {
  */
 export class STTManager {
   private readonly sessionId: string;
-  private readonly logger;
+  private readonly logger: pino.Logger;
+  private readonly stt: OpenAISTT | null;
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string, logger: pino.Logger, stt: OpenAISTT | null) {
     this.sessionId = sessionId;
-    this.logger = getRootLogger().child({ module: "agent", component: "stt-manager", sessionId });
+    this.logger = logger.child({ module: "agent", component: "stt-manager", sessionId });
+    this.stt = stt;
   }
 
   /**
@@ -35,6 +37,10 @@ export class STTManager {
     format: string,
     metadata?: TranscriptionMetadata
   ): Promise<SessionTranscriptionResult> {
+    if (!this.stt) {
+      throw new Error("STT not configured");
+    }
+
     this.logger.debug(
       { bytes: audio.length, format, label: metadata?.label },
       "Transcribing audio"
@@ -42,18 +48,22 @@ export class STTManager {
 
     let debugRecordingPath: string | null = null;
     try {
-      debugRecordingPath = await maybePersistDebugAudio(audio, {
-        sessionId: this.sessionId,
-        agentId: metadata?.agentId,
-        requestId: metadata?.requestId,
-        label: metadata?.label,
-        format,
-      });
+      debugRecordingPath = await maybePersistDebugAudio(
+        audio,
+        {
+          sessionId: this.sessionId,
+          agentId: metadata?.agentId,
+          requestId: metadata?.requestId,
+          label: metadata?.label,
+          format,
+        },
+        this.logger
+      );
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to persist debug audio");
     }
 
-    const result = await transcribeAudio(audio, format);
+    const result = await this.stt.transcribeAudio(audio, format);
 
     // Filter out low-confidence transcriptions (non-speech sounds)
     if (result.isLowConfidence) {

@@ -6,7 +6,7 @@ import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { getRootLogger } from "./logger.js";
+import type { Logger } from "pino";
 
 type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -40,8 +40,8 @@ function parseListenString(listen: string): ListenTarget {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
-import { initializeSTT, type STTConfig } from "./agent/stt-openai.js";
-import { initializeTTS, type TTSConfig } from "./agent/tts-openai.js";
+import { OpenAISTT, type STTConfig } from "./agent/stt-openai.js";
+import { OpenAITTS, type TTSConfig } from "./agent/tts-openai.js";
 import { listConversations, deleteConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
@@ -95,9 +95,10 @@ export interface PaseoDaemon {
 }
 
 export async function createPaseoDaemon(
-  config: PaseoDaemonConfig
+  config: PaseoDaemonConfig,
+  rootLogger: Logger
 ): Promise<PaseoDaemon> {
-  const logger = getRootLogger().child({ module: "bootstrap" });
+  const logger = rootLogger.child({ module: "bootstrap" });
 
   const agentMcpRoute = config.agentMcpRoute;
   const basicAuthUsers = config.auth.basicUsers;
@@ -177,7 +178,7 @@ export async function createPaseoDaemon(
   // Conversation management endpoints
   app.get("/api/conversations", async (_req, res) => {
     try {
-      const conversations = await listConversations();
+      const conversations = await listConversations(logger);
       res.json(conversations);
     } catch (err) {
       logger.error({ err }, "Failed to list conversations");
@@ -188,7 +189,7 @@ export async function createPaseoDaemon(
   app.delete("/api/conversations/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      await deleteConversation(id);
+      await deleteConversation(logger, id);
       res.json({ success: true });
     } catch (err) {
       logger.error({ err }, "Failed to delete conversation");
@@ -248,17 +249,18 @@ export async function createPaseoDaemon(
 
   const httpServer = createHTTPServer(app);
 
-  const agentRegistry = new AgentRegistry(config.agentRegistryPath);
+  const agentRegistry = new AgentRegistry(config.agentRegistryPath, logger);
   const agentManager = new AgentManager({
     clients: {
-      ...createAllClients(),
+      ...createAllClients(logger),
       ...config.agentClients,
     },
     registry: agentRegistry,
     agentControlMcp: config.agentControlMcp,
+    logger,
   });
 
-  attachAgentRegistryPersistence(agentManager, agentRegistry);
+  attachAgentRegistryPersistence(logger, agentManager, agentRegistry);
   const persistedRecords = await agentRegistry.list();
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
@@ -272,6 +274,7 @@ export async function createPaseoDaemon(
       agentManager,
       agentRegistry,
       callerAgentId,
+      logger,
     });
 
     const transport = new StreamableHTTPServerTransport({
@@ -372,17 +375,8 @@ export async function createPaseoDaemon(
   app.delete(agentMcpRoute, handleAgentMcpRequest);
   logger.info({ route: agentMcpRoute }, "Agent MCP server mounted");
 
-  const wsServer = new VoiceAssistantWebSocketServer(
-    httpServer,
-    agentManager,
-    agentRegistry,
-    downloadTokenStore,
-    {
-      agentMcpUrl: config.agentControlMcp.url,
-      agentMcpHeaders: config.agentControlMcp.headers,
-    },
-    { allowedOrigins }
-  );
+  let sttService: OpenAISTT | null = null;
+  let ttsService: OpenAITTS | null = null;
 
   const openaiApiKey = config.openai?.apiKey;
   if (openaiApiKey) {
@@ -391,28 +385,48 @@ export async function createPaseoDaemon(
     const sttApiKey = config.openai?.stt?.apiKey ?? openaiApiKey;
     if (sttApiKey) {
       const { apiKey: _sttApiKey, ...sttConfig } = config.openai?.stt ?? {};
-      initializeSTT({
-        apiKey: sttApiKey,
-        ...sttConfig,
-      });
+      sttService = new OpenAISTT(
+        {
+          apiKey: sttApiKey,
+          ...sttConfig,
+        },
+        logger
+      );
     }
 
     const ttsApiKey = config.openai?.tts?.apiKey ?? openaiApiKey;
     if (ttsApiKey) {
       const { apiKey: _ttsApiKey, ...ttsConfig } = config.openai?.tts ?? {};
-      initializeTTS({
-        apiKey: ttsApiKey,
-        voice: "alloy",
-        model: "tts-1",
-        responseFormat: "pcm",
-        ...ttsConfig,
-      });
+      ttsService = new OpenAITTS(
+        {
+          apiKey: ttsApiKey,
+          voice: "alloy",
+          model: "tts-1",
+          responseFormat: "pcm",
+          ...ttsConfig,
+        },
+        logger
+      );
     }
 
-    initializeTitleGenerator(openaiApiKey);
+    initializeTitleGenerator(logger.child({ module: "agent-title-generator" }), openaiApiKey);
   } else {
     logger.warn("OPENAI_API_KEY not set - LLM, STT, and TTS features will not work");
   }
+
+  const wsServer = new VoiceAssistantWebSocketServer(
+    httpServer,
+    logger,
+    agentManager,
+    agentRegistry,
+    downloadTokenStore,
+    {
+      agentMcpUrl: config.agentControlMcp.url,
+      agentMcpHeaders: config.agentControlMcp.headers,
+    },
+    { allowedOrigins },
+    { stt: sttService, tts: ttsService }
+  );
 
   const start = async () => {
     await new Promise<void>((resolve, reject) => {
@@ -448,8 +462,8 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await closeAllAgents(agentManager);
-    await shutdownProviders();
+    await closeAllAgents(logger, agentManager);
+    await shutdownProviders(logger);
     await wsServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
@@ -469,8 +483,10 @@ export async function createPaseoDaemon(
   };
 }
 
-async function closeAllAgents(agentManager: AgentManager): Promise<void> {
-  const logger = getRootLogger().child({ module: "bootstrap" });
+async function closeAllAgents(
+  logger: Logger,
+  agentManager: AgentManager
+): Promise<void> {
   const agents = agentManager.listAgents();
   for (const agent of agents) {
     try {

@@ -46,9 +46,9 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { DaemonProfile } from "@/contexts/daemon-registry-context";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  useExplorerSidebarStore,
+  usePanelStore,
   type SortOption,
-} from "@/stores/explorer-sidebar-store";
+} from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 
 const MAX_CONCURRENT_THUMBNAILS = 2;
@@ -90,7 +90,9 @@ export function FileExplorerPane({
   const requestFilePreview = methods?.requestFilePreview;
   const requestFileDownloadToken = methods?.requestFileDownloadToken;
   const navigateExplorerBack = methods?.navigateExplorerBack;
-  const { viewMode, sortOption, setSortOption } = useExplorerSidebarStore();
+  const viewMode = usePanelStore((state) => state.explorerViewMode);
+  const sortOption = usePanelStore((state) => state.explorerSortOption);
+  const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const listScrollRef = useRef<FlatList<ExplorerEntry> | null>(null);
   const listScrollOffsetRef = useRef(0);

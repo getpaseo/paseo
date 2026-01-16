@@ -28,7 +28,6 @@ import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-ag
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
-import { generateMessageId } from "@/types/stream";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import type {
   AgentProvider,
@@ -379,7 +378,6 @@ export default function HomeScreen() {
     }
   }, [isNonGitDirectory, useWorktree]);
 
-  const pendingRequestIdRef = useRef<string | null>(null);
   const sessionMethods = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
   );
@@ -446,17 +444,32 @@ export default function HomeScreen() {
         : undefined;
 
       void persistFormPreferences();
-
-      const requestId = generateMessageId();
-      pendingRequestIdRef.current = requestId;
       setIsLoading(true);
-      createAgent({
-        config,
-        initialPrompt: trimmedPrompt,
-        images,
-        git: gitOptions,
-        requestId,
-      });
+
+      try {
+        const result = await createAgent({
+          config,
+          initialPrompt: trimmedPrompt,
+          images,
+          git: gitOptions,
+        });
+
+        // Success - clear prompt and navigate to agent
+        setPromptText("");
+        const agentId = (result as { id?: string })?.id;
+        if (agentId && selectedServerId) {
+          router.replace({
+            pathname: "/agent/[serverId]/[agentId]",
+            params: { serverId: selectedServerId, agentId },
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to create agent";
+        setErrorMessage(message);
+        throw error; // Re-throw so AgentInputArea knows it failed
+      } finally {
+        setIsLoading(false);
+      }
     },
     [
       useWorktree,
@@ -470,6 +483,7 @@ export default function HomeScreen() {
       isNonGitDirectory,
       modeOptions,
       persistFormPreferences,
+      router,
       selectedMode,
       selectedModel,
       selectedProvider,
@@ -478,54 +492,6 @@ export default function HomeScreen() {
       workingDir,
     ]
   );
-
-  useEffect(() => {
-    if (!sessionClient) {
-      return;
-    }
-    const unsubscribe = sessionClient.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      const payload = message.payload as {
-        status: string;
-        agentId?: string;
-        requestId?: string;
-        error?: string;
-      };
-      const expectedRequestId = pendingRequestIdRef.current;
-      if (!expectedRequestId || payload.requestId !== expectedRequestId) {
-        return;
-      }
-      if (payload.status === "agent_create_failed") {
-        pendingRequestIdRef.current = null;
-        setIsLoading(false);
-        setErrorMessage(payload.error ?? "Failed to create agent");
-        return;
-      }
-      if (payload.status !== "agent_created" || !payload.agentId) {
-        return;
-      }
-      if (!selectedServerId) {
-        pendingRequestIdRef.current = null;
-        setIsLoading(false);
-        return;
-      }
-      pendingRequestIdRef.current = null;
-      setIsLoading(false);
-      router.replace({
-        pathname: "/agent/[serverId]/[agentId]",
-        params: {
-          serverId: selectedServerId,
-          agentId: payload.agentId,
-        },
-      });
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [router, selectedServerId, sessionClient]);
 
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>

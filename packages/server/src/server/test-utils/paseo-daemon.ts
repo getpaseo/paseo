@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 
+import pino from "pino";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 
 type TestPaseoDaemonOptions = {
@@ -84,7 +85,8 @@ export async function createTestPaseoDaemon(
       downloadTokenTtlMs: options.downloadTokenTtlMs,
     };
 
-    const daemon = await createPaseoDaemon(config);
+    const logger = pino({ level: "silent" });
+    const daemon = await createPaseoDaemon(config, logger);
     try {
       await daemon.start();
 

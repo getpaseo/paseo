@@ -29,7 +29,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { ChevronDown } from "lucide-react-native";
-import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
   UserMessage,
@@ -87,8 +87,8 @@ export function AgentStreamView({
   const hasAutoScrolledOnce = useRef(false);
   const isNearBottomRef = useRef(true);
   const streamItemCountRef = useRef(0);
-  const { open: openExplorer, setActiveTab: setExplorerTab } =
-    useExplorerSidebarStore();
+  const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
+  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
 
   // Get serverId (fallback to agent's serverId if not provided)
   const resolvedServerId = serverId ?? agent.serverId ?? "";
@@ -142,7 +142,7 @@ export function AgentStreamView({
       }
 
       setExplorerTab("files");
-      openExplorer();
+      openFileExplorer();
     },
     [
       agent.cwd,
@@ -150,7 +150,7 @@ export function AgentStreamView({
       requestDirectoryListingOrInert,
       requestFilePreviewOrInert,
       setExplorerTab,
-      openExplorer,
+      openFileExplorer,
     ]
   );
 

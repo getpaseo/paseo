@@ -28,7 +28,7 @@ import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import type { SessionContextValue } from "@/contexts/session-context";
-import { useSidebarStore } from "@/stores/sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 
 export interface ImageAttachment {
   uri: string;
@@ -117,7 +117,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ref
   ) {
     const { theme } = useUnistyles();
-    const toggleSidebar = useSidebarStore((state) => state.toggle);
+    const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const textInputRef = useRef<
       TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
@@ -397,7 +397,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // Cmd+B or Ctrl+B: toggle sidebar
     if ((metaKey || ctrlKey) && event.nativeEvent.key === "b") {
       event.preventDefault();
-      toggleSidebar();
+      toggleAgentList();
       return;
     }
 

@@ -41,14 +41,10 @@ export const ensureHostSelected = async (page: Page) => {
   if (await selectHost.isVisible()) {
     await selectHost.click();
 
+    // Wait for the host option to appear and click it
     const hostOption = page.getByText('localhost', { exact: true }).first();
-    if (await hostOption.isVisible()) {
-      await hostOption.click();
-    } else {
-      const fallbackOption = page.getByText('Local Host', { exact: true }).first();
-      await expect(fallbackOption).toBeVisible();
-      await fallbackOption.click();
-    }
+    await expect(hostOption).toBeVisible();
+    await hostOption.click();
   }
 
   await expect(input).toBeEditable();

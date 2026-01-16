@@ -30,6 +30,13 @@ describe("FileTaskStore", () => {
       expect(task.notes).toEqual([]);
       expect(task.created).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(task.assignee).toBeUndefined();
+      expect(task.priority).toBeUndefined();
+    });
+
+    it("creates a task with priority", async () => {
+      const task = await store.create("High priority task", { priority: 1 });
+
+      expect(task.priority).toBe(1);
     });
 
     it("creates a task with custom status", async () => {
@@ -192,6 +199,54 @@ describe("FileTaskStore", () => {
         store.update("nonexistent", { title: "New" })
       ).rejects.toThrow();
     });
+
+    it("replaces acceptance criteria", async () => {
+      const task = await store.create("Task", {
+        acceptanceCriteria: ["old criterion 1", "old criterion 2"],
+      });
+
+      const updated = await store.update(task.id, {
+        acceptanceCriteria: ["new criterion"],
+      });
+
+      expect(updated.acceptanceCriteria).toEqual(["new criterion"]);
+    });
+
+    it("clears acceptance criteria with empty array", async () => {
+      const task = await store.create("Task", {
+        acceptanceCriteria: ["criterion 1", "criterion 2"],
+      });
+
+      const updated = await store.update(task.id, {
+        acceptanceCriteria: [],
+      });
+
+      expect(updated.acceptanceCriteria).toEqual([]);
+    });
+  });
+
+  describe("delete", () => {
+    it("deletes a task", async () => {
+      const task = await store.create("Task to delete");
+      await store.delete(task.id);
+
+      const retrieved = await store.get(task.id);
+      expect(retrieved).toBeNull();
+    });
+
+    it("removes task from list", async () => {
+      const task1 = await store.create("Task 1");
+      const task2 = await store.create("Task 2");
+      await store.delete(task1.id);
+
+      const tasks = await store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].id).toBe(task2.id);
+    });
+
+    it("throws for non-existent task", async () => {
+      await expect(store.delete("nonexistent")).rejects.toThrow();
+    });
   });
 
   describe("status transitions", () => {
@@ -204,10 +259,39 @@ describe("FileTaskStore", () => {
         expect(updated?.status).toBe("open");
       });
 
-      it("throws when task is not draft", async () => {
-        const task = await store.create("Open task", { status: "open" });
+      it("reopens a done task", async () => {
+        const task = await store.create("Task");
+        await store.close(task.id);
+        await store.open(task.id);
 
-        await expect(store.open(task.id)).rejects.toThrow();
+        const updated = await store.get(task.id);
+        expect(updated?.status).toBe("open");
+      });
+
+      it("reopens a failed task", async () => {
+        const task = await store.create("Task");
+        await store.fail(task.id);
+        await store.open(task.id);
+
+        const updated = await store.get(task.id);
+        expect(updated?.status).toBe("open");
+      });
+
+      it("reopens an in_progress task", async () => {
+        const task = await store.create("Task");
+        await store.start(task.id);
+        await store.open(task.id);
+
+        const updated = await store.get(task.id);
+        expect(updated?.status).toBe("open");
+      });
+
+      it("is idempotent for already open task", async () => {
+        const task = await store.create("Task");
+        await store.open(task.id);
+
+        const updated = await store.get(task.id);
+        expect(updated?.status).toBe("open");
       });
     });
 
@@ -423,7 +507,7 @@ describe("FileTaskStore", () => {
       expect(ready.map((t) => t.id)).toContain(task.id);
     });
 
-    it("sorts by created date (oldest first)", async () => {
+    it("sorts by created date (oldest first) when no priority", async () => {
       const task1 = await store.create("Task 1");
       await new Promise((r) => setTimeout(r, 10));
       const task2 = await store.create("Task 2");
@@ -433,6 +517,39 @@ describe("FileTaskStore", () => {
       const ready = await store.getReady();
 
       expect(ready.map((t) => t.id)).toEqual([task1.id, task2.id, task3.id]);
+    });
+
+    it("sorts by priority first (lower number = higher priority)", async () => {
+      // Create in wrong order to prove priority wins over creation time
+      const low = await store.create("Low priority", { priority: 10 });
+      const high = await store.create("High priority", { priority: 1 });
+      const medium = await store.create("Medium priority", { priority: 5 });
+
+      const ready = await store.getReady();
+
+      expect(ready.map((t) => t.id)).toEqual([high.id, medium.id, low.id]);
+    });
+
+    it("tasks with priority come before tasks without", async () => {
+      // Create without priority first to prove priority wins
+      const noPriority = await store.create("No priority");
+      const withPriority = await store.create("With priority", { priority: 5 });
+
+      const ready = await store.getReady();
+
+      expect(ready.map((t) => t.id)).toEqual([withPriority.id, noPriority.id]);
+    });
+
+    it("sorts by created date within same priority", async () => {
+      const first = await store.create("First", { priority: 1 });
+      await new Promise((r) => setTimeout(r, 10));
+      const second = await store.create("Second", { priority: 1 });
+      await new Promise((r) => setTimeout(r, 10));
+      const third = await store.create("Third", { priority: 1 });
+
+      const ready = await store.getReady();
+
+      expect(ready.map((t) => t.id)).toEqual([first.id, second.id, third.id]);
     });
 
     describe("parent blocked by children", () => {
@@ -809,6 +926,15 @@ describe("FileTaskStore", () => {
 
       expect(retrieved?.parentId).toBe(parent.id);
     });
+
+    it("persists priority across store instances", async () => {
+      const task = await store.create("Priority task", { priority: 3 });
+
+      const store2 = new FileTaskStore(tempDir);
+      const retrieved = await store2.get(task.id);
+
+      expect(retrieved?.priority).toBe(3);
+    });
   });
 
   describe("parent-child hierarchy", () => {
@@ -883,6 +1009,46 @@ describe("FileTaskStore", () => {
 
         expect(children).toHaveLength(1);
         expect(children[0].id).toBe(parent.id);
+      });
+
+      it("sorts by priority first (lower number = higher priority)", async () => {
+        const parent = await store.create("Parent");
+        // Create in wrong order to prove priority wins over creation time
+        const low = await store.create("Low priority child", {
+          parentId: parent.id,
+          priority: 10,
+        });
+        const high = await store.create("High priority child", {
+          parentId: parent.id,
+          priority: 1,
+        });
+        const medium = await store.create("Medium priority child", {
+          parentId: parent.id,
+          priority: 5,
+        });
+
+        const children = await store.getChildren(parent.id);
+
+        expect(children.map((c) => c.id)).toEqual([high.id, medium.id, low.id]);
+      });
+
+      it("children with priority come before children without", async () => {
+        const parent = await store.create("Parent");
+        // Create without priority first to prove priority wins
+        const noPriority = await store.create("No priority", {
+          parentId: parent.id,
+        });
+        const withPriority = await store.create("With priority", {
+          parentId: parent.id,
+          priority: 5,
+        });
+
+        const children = await store.getChildren(parent.id);
+
+        expect(children.map((c) => c.id)).toEqual([
+          withPriority.id,
+          noPriority.id,
+        ]);
       });
     });
 

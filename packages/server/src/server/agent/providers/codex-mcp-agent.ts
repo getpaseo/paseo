@@ -14,9 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { getRootLogger } from "../../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", provider: "codex" });
+import type { Logger } from "pino";
 
 import type {
   AgentCapabilityFlags,
@@ -2373,7 +2371,7 @@ async function writeImageAttachment(mimeType: string, data: string): Promise<str
   return filePath;
 }
 
-async function replaceInlineImageData(promptText: string): Promise<string> {
+async function replaceInlineImageData(promptText: string, logger: Logger): Promise<string> {
   const dataUrlRegex =
     /data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
   const matches = Array.from(promptText.matchAll(dataUrlRegex));
@@ -2406,9 +2404,9 @@ async function replaceInlineImageData(promptText: string): Promise<string> {
   return output;
 }
 
-async function toPromptText(prompt: AgentPromptInput): Promise<string> {
+async function toPromptText(prompt: AgentPromptInput, logger: Logger): Promise<string> {
   if (typeof prompt === "string") {
-    return await replaceInlineImageData(prompt);
+    return await replaceInlineImageData(prompt, logger);
   }
   const parts: string[] = [];
   for (const chunk of prompt) {
@@ -2427,7 +2425,7 @@ async function toPromptText(prompt: AgentPromptInput): Promise<string> {
     }
   }
   const joined = parts.join("\n\n");
-  return await replaceInlineImageData(joined);
+  return await replaceInlineImageData(joined, logger);
 }
 
 function getCodexMcpCommand(): string {
@@ -2752,6 +2750,7 @@ class CodexMcpAgentSession implements AgentSession {
   readonly capabilities = CODEX_MCP_CAPABILITIES;
 
   private readonly client: Client;
+  private readonly logger: Logger;
   private transport: StdioClientTransport | null = null;
   private connected = false;
   private config: AgentSessionConfig;
@@ -2778,7 +2777,8 @@ class CodexMcpAgentSession implements AgentSession {
   private resumeHandle: AgentPersistenceHandle | null = null;
   private pendingResumeFile: string | null = null;
 
-  constructor(config: CodexMcpAgentConfig, resumeHandle?: AgentPersistenceHandle) {
+  constructor(config: CodexMcpAgentConfig, resumeHandle: AgentPersistenceHandle | undefined, logger: Logger) {
+    this.logger = logger;
     if (config.modeId === undefined) {
       throw new Error("Codex agent requires modeId to be specified");
     }
@@ -2889,7 +2889,7 @@ class CodexMcpAgentSession implements AgentSession {
     const timeline = await loadCodexPersistedTimeline(historyId, {
       rolloutPath: resolveCodexRolloutPath(metadata),
       sessionRoot: resolveCodexSessionRootFromMetadata(metadata),
-    });
+    }, this.logger);
     if (timeline.length > 0) {
       this.persistedHistory = timeline;
       this.historyPending = true;
@@ -2956,7 +2956,7 @@ class CodexMcpAgentSession implements AgentSession {
     const abortController = new AbortController();
     this.currentAbortController = abortController;
 
-    const promptText = await toPromptText(prompt);
+    const promptText = await toPromptText(prompt, this.logger);
     // NOTE: user_message is NOT emitted here because the agent-manager's
     // recordUserMessage() already handles emitting the user message timeline
     // event before calling stream(). Emitting here would cause duplicates.
@@ -4203,12 +4203,18 @@ export class CodexMcpAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_MCP_CAPABILITIES;
 
+  private readonly logger: Logger;
+
+  constructor(logger: Logger) {
+    this.logger = logger.child({ module: "agent", provider: "codex" });
+  }
+
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const sessionConfig: CodexMcpAgentConfig = {
       ...config,
       provider: CODEX_PROVIDER,
     };
-    const session = new CodexMcpAgentSession(sessionConfig);
+    const session = new CodexMcpAgentSession(sessionConfig, undefined, this.logger);
     await session.connect();
     return session;
   }
@@ -4233,7 +4239,7 @@ export class CodexMcpAgentClient implements AgentClient {
       ...merged,
       provider: CODEX_PROVIDER,
     };
-    const session = new CodexMcpAgentSession(sessionConfig, handle);
+    const session = new CodexMcpAgentSession(sessionConfig, handle, this.logger);
     await session.connect();
     return session;
   }
@@ -4274,7 +4280,7 @@ export class CodexMcpAgentClient implements AgentClient {
       const timeline = await loadCodexPersistedTimeline(sessionId, {
         sessionRoot: root,
         rolloutPath: candidate.path,
-      });
+      }, this.logger);
       descriptors.push({
         provider: CODEX_PROVIDER,
         sessionId,
@@ -4808,7 +4814,8 @@ type CodexPersistedTimelineOptions = {
 
 async function loadCodexPersistedTimeline(
   sessionId: string,
-  options?: CodexPersistedTimelineOptions
+  options?: CodexPersistedTimelineOptions,
+  logger?: Logger
 ): Promise<AgentTimelineItem[]> {
   const rolloutPath = options?.rolloutPath ?? null;
   if (rolloutPath) {
@@ -4847,7 +4854,7 @@ async function loadCodexPersistedTimeline(
     const timeline = await parseRolloutFile(rolloutFile);
     return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
   } catch (error) {
-    logger.warn(
+    logger?.warn(
       { err: error, sessionId },
       "Failed to load persisted timeline"
     );

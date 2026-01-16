@@ -4,13 +4,22 @@ import {
   View,
   Text,
   Pressable,
-  ScrollView,
   Modal,
   TextInput,
   ActivityIndicator,
   useWindowDimensions,
+  ScrollView,
+  Platform,
 } from "react-native";
 import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import {
+  BottomSheetModal,
+  BottomSheetScrollView,
+  BottomSheetBackdrop,
+  BottomSheetTextInput,
+  BottomSheetBackgroundProps,
+} from "@gorhom/bottom-sheet";
+import Animated from "react-native-reanimated";
 import { ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import type {
@@ -156,34 +165,78 @@ interface DropdownSheetProps {
   children: ReactNode;
 }
 
+function DropdownSheetBackground({ style }: BottomSheetBackgroundProps) {
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[style, styles.bottomSheetBackground]}
+    />
+  );
+}
+
 export function DropdownSheet({
   title,
   visible,
   onClose,
   children,
 }: DropdownSheetProps): ReactElement {
+  const bottomSheetRef = useRef<BottomSheetModal>(null);
+  const snapPoints = useMemo(() => ["60%", "90%"], []);
+
+  useEffect(() => {
+    if (visible) {
+      bottomSheetRef.current?.present();
+    } else {
+      bottomSheetRef.current?.dismiss();
+    }
+  }, [visible]);
+
+  const handleSheetChange = useCallback(
+    (index: number) => {
+      if (index === -1) {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  const renderBackdrop = useCallback(
+    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
+      <BottomSheetBackdrop
+        {...props}
+        disappearsOnIndex={-1}
+        appearsOnIndex={0}
+        opacity={0.45}
+      />
+    ),
+    []
+  );
+
   return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={visible}
-      onRequestClose={onClose}
+    <BottomSheetModal
+      ref={bottomSheetRef}
+      snapPoints={snapPoints}
+      index={0}
+      enableDynamicSizing={false}
+      onChange={handleSheetChange}
+      backdropComponent={renderBackdrop}
+      enablePanDownToClose
+      backgroundComponent={DropdownSheetBackground}
+      handleIndicatorStyle={styles.bottomSheetHandle}
+      keyboardBehavior="extend"
+      keyboardBlurBehavior="restore"
     >
-      <View style={styles.dropdownSheetOverlay}>
-        <Pressable style={styles.dropdownSheetBackdrop} onPress={onClose} />
-        <View style={styles.dropdownSheetContainer}>
-          <View style={styles.dropdownSheetHandle} />
-          <Text style={styles.dropdownSheetTitle}>{title}</Text>
-          <ScrollView
-            contentContainerStyle={styles.dropdownSheetScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </ScrollView>
-        </View>
+      <View style={styles.bottomSheetHeader}>
+        <Text style={styles.dropdownSheetTitle}>{title}</Text>
       </View>
-    </Modal>
+      <BottomSheetScrollView
+        contentContainerStyle={styles.dropdownSheetScrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {children}
+      </BottomSheetScrollView>
+    </BottomSheetModal>
   );
 }
 
@@ -205,6 +258,8 @@ export function AdaptiveSelect({
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const bottomSheetRef = useRef<BottomSheetModal>(null);
+  const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [dropdownPosition, setDropdownPosition] = useState({
     top: 0,
     left: 0,
@@ -240,29 +295,62 @@ export function AdaptiveSelect({
     });
   }, [visible, isMobile, anchorRef, windowWidth, windowHeight]);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    if (visible) {
+      bottomSheetRef.current?.present();
+    } else {
+      bottomSheetRef.current?.dismiss();
+    }
+  }, [visible, isMobile]);
+
+  const handleSheetChange = useCallback(
+    (index: number) => {
+      if (index === -1) {
+        onClose();
+      }
+    },
+    [onClose]
+  );
+
+  const renderBackdrop = useCallback(
+    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
+      <BottomSheetBackdrop
+        {...props}
+        disappearsOnIndex={-1}
+        appearsOnIndex={0}
+        opacity={0.45}
+      />
+    ),
+    []
+  );
+
   if (isMobile) {
     return (
-      <Modal
-        transparent
-        animationType="fade"
-        visible={visible}
-        onRequestClose={onClose}
+      <BottomSheetModal
+        ref={bottomSheetRef}
+        snapPoints={snapPoints}
+        index={0}
+        enableDynamicSizing={false}
+        onChange={handleSheetChange}
+        backdropComponent={renderBackdrop}
+        enablePanDownToClose
+        backgroundComponent={DropdownSheetBackground}
+        handleIndicatorStyle={styles.bottomSheetHandle}
+        keyboardBehavior="extend"
+        keyboardBlurBehavior="restore"
       >
-        <View style={styles.dropdownSheetOverlay}>
-          <Pressable style={styles.dropdownSheetBackdrop} onPress={onClose} />
-          <View style={styles.dropdownSheetContainer}>
-            <View style={styles.dropdownSheetHandle} />
-            <Text style={styles.dropdownSheetTitle}>{title}</Text>
-            <ScrollView
-              contentContainerStyle={styles.dropdownSheetScrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {children}
-            </ScrollView>
-          </View>
+        <View style={styles.bottomSheetHeader}>
+          <Text style={styles.dropdownSheetTitle}>{title}</Text>
         </View>
-      </Modal>
+        <BottomSheetScrollView
+          contentContainerStyle={styles.dropdownSheetScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {children}
+        </BottomSheetScrollView>
+      </BottomSheetModal>
     );
   }
 
@@ -332,7 +420,6 @@ export function ComboSelect({
 }: ComboSelectProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
-  const inputRef = useRef<TextInput | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   const selectedOption = options.find((opt) => opt.id === value);
@@ -347,7 +434,6 @@ export function ComboSelect({
   useEffect(() => {
     if (isOpen) {
       setSearchQuery("");
-      inputRef.current?.focus();
     }
   }, [isOpen]);
 
@@ -400,16 +486,29 @@ export function ComboSelect({
         onClose={handleClose}
         anchorRef={anchorRef}
       >
-        <TextInput
-          ref={inputRef}
-          style={styles.dropdownSearchInput}
-          placeholder={`Search ${label.toLowerCase()}...`}
-          placeholderTextColor={defaultTheme.colors.foregroundMuted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        {Platform.OS === "web" ? (
+          <TextInput
+            style={styles.dropdownSearchInput}
+            placeholder={`Search ${label.toLowerCase()}...`}
+            placeholderTextColor={defaultTheme.colors.foregroundMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+        ) : (
+          <BottomSheetTextInput
+            style={styles.dropdownSearchInput}
+            placeholder={`Search ${label.toLowerCase()}...`}
+            placeholderTextColor={defaultTheme.colors.foregroundMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+        )}
         {showCustomOption ? (
           <View style={styles.dropdownSheetList}>
             <Pressable
@@ -876,7 +975,6 @@ export function WorkingDirectoryDropdown({
 }: WorkingDirectoryDropdownProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
-  const inputRef = useRef<TextInput | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
@@ -885,7 +983,6 @@ export function WorkingDirectoryDropdown({
   useEffect(() => {
     if (isOpen) {
       setSearchQuery("");
-      inputRef.current?.focus();
     }
   }, [isOpen]);
 
@@ -929,16 +1026,29 @@ export function WorkingDirectoryDropdown({
         onClose={handleClose}
         anchorRef={anchorRef}
       >
-        <TextInput
-          ref={inputRef}
-          style={styles.dropdownSearchInput}
-          placeholder="/path/to/project"
-          placeholderTextColor={defaultTheme.colors.foregroundMuted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        {Platform.OS === "web" ? (
+          <TextInput
+            style={styles.dropdownSearchInput}
+            placeholder="/path/to/project"
+            placeholderTextColor={defaultTheme.colors.foregroundMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+        ) : (
+          <BottomSheetTextInput
+            style={styles.dropdownSearchInput}
+            placeholder="/path/to/project"
+            placeholderTextColor={defaultTheme.colors.foregroundMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+        )}
         {!hasSuggestedPaths && !showCustomOption ? (
           <Text style={styles.helperText}>
             We'll suggest directories from agents on this host once they exist.
@@ -1208,6 +1318,18 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     color: theme.colors.foreground,
   },
+  bottomSheetBackground: {
+    backgroundColor: theme.colors.surface2,
+    borderTopLeftRadius: theme.borderRadius["2xl"],
+    borderTopRightRadius: theme.borderRadius["2xl"],
+  },
+  bottomSheetHandle: {
+    backgroundColor: theme.colors.palette.zinc[600],
+  },
+  bottomSheetHeader: {
+    paddingHorizontal: theme.spacing[6],
+    paddingBottom: theme.spacing[2],
+  },
   dropdownSheetOverlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -1244,7 +1366,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     textAlign: "center",
-    marginBottom: theme.spacing[4],
   },
   dropdownSheetScrollContent: {
     paddingBottom: theme.spacing[8],

@@ -16,9 +16,9 @@ import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
-import { getRootLogger } from "./logger.js";
-
-const logger = getRootLogger().child({ module: "websocket-server" });
+import type { OpenAISTT } from "./agent/stt-openai.js";
+import type { OpenAITTS } from "./agent/tts-openai.js";
+import type pino from "pino";
 
 type AgentMcpClientConfig = {
   agentMcpUrl: string;
@@ -34,6 +34,7 @@ type WebSocketServerConfig = {
  * This is a thin transport layer with no business logic.
  */
 export class VoiceAssistantWebSocketServer {
+  private readonly logger: pino.Logger;
   private wss: WebSocketServer;
   private sessions: Map<WebSocket, Session> = new Map();
   private conversationIdToWs: Map<string, WebSocket> = new Map();
@@ -44,20 +45,29 @@ export class VoiceAssistantWebSocketServer {
   private pushTokenStore: PushTokenStore;
   private pushService: PushService;
   private readonly agentMcpConfig: AgentMcpClientConfig;
+  private readonly stt: OpenAISTT | null;
+  private readonly tts: OpenAITTS | null;
 
   constructor(
     server: HTTPServer,
+    logger: pino.Logger,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     downloadTokenStore: DownloadTokenStore,
     agentMcpConfig: AgentMcpClientConfig,
-    wsConfig: WebSocketServerConfig
+    wsConfig: WebSocketServerConfig,
+    speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null }
   ) {
+    this.logger = logger.child({ module: "websocket-server" });
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
     this.downloadTokenStore = downloadTokenStore;
-    this.pushTokenStore = new PushTokenStore();
-    this.pushService = new PushService(this.pushTokenStore);
+    this.stt = speech?.stt ?? null;
+    this.tts = speech?.tts ?? null;
+
+    const pushLogger = this.logger.child({ module: "push" });
+    this.pushTokenStore = new PushTokenStore(pushLogger);
+    this.pushService = new PushService(pushLogger, this.pushTokenStore);
     this.agentMcpConfig = agentMcpConfig;
 
     const { allowedOrigins } = wsConfig;
@@ -71,7 +81,7 @@ export class VoiceAssistantWebSocketServer {
         if (!origin || allowedOrigins.has(origin)) {
           callback(true);
         } else {
-          logger.warn({ origin }, "Rejected connection from origin");
+          this.logger.warn({ origin }, "Rejected connection from origin");
           callback(false, 403, "Origin not allowed");
         }
       },
@@ -85,7 +95,7 @@ export class VoiceAssistantWebSocketServer {
       this.broadcastAgentAttention(params);
     });
 
-    logger.info("WebSocket server initialized on /ws");
+    this.logger.info("WebSocket server initialized on /ws");
   }
 
   /**
@@ -94,6 +104,7 @@ export class VoiceAssistantWebSocketServer {
   private async handleConnection(ws: WebSocket, request: IncomingMessage): Promise<void> {
     // Generate unique client ID
     const clientId = `client-${++this.clientIdCounter}`;
+    const connectionLogger = this.logger.child({ clientId });
 
     // Extract conversation ID from URL query parameter if present
     const url = parseUrl(request.url || "", true);
@@ -102,16 +113,16 @@ export class VoiceAssistantWebSocketServer {
     // Load conversation if ID provided
     let initialMessages = null;
     if (conversationId) {
-      logger.debug({ conversationId }, "Client requesting conversation");
-      initialMessages = await loadConversation(conversationId);
+      connectionLogger.debug({ conversationId }, "Client requesting conversation");
+      initialMessages = await loadConversation(connectionLogger, conversationId);
 
       if (initialMessages) {
-        logger.debug(
+        connectionLogger.debug(
           { conversationId, messageCount: initialMessages.length },
           "Loaded conversation"
         );
       } else {
-        logger.debug({ conversationId }, "Conversation not found, starting fresh");
+        connectionLogger.debug({ conversationId }, "Conversation not found, starting fresh");
       }
     }
 
@@ -121,11 +132,14 @@ export class VoiceAssistantWebSocketServer {
       (msg) => {
         this.sendToClient(ws, wrapSessionMessage(msg));
       },
+      connectionLogger.child({ module: "session" }),
       this.downloadTokenStore,
       this.pushTokenStore,
       this.agentManager,
       this.agentRegistry,
       this.agentMcpConfig,
+      this.stt,
+      this.tts,
       {
         conversationId,
         initialMessages: initialMessages || undefined,
@@ -136,7 +150,7 @@ export class VoiceAssistantWebSocketServer {
     this.sessions.set(ws, session);
     this.conversationIdToWs.set(session.getConversationId(), ws);
 
-    logger.info(
+    connectionLogger.info(
       { clientId, conversationId: session.getConversationId(), totalSessions: this.sessions.size },
       "Client connected"
     );
@@ -154,7 +168,7 @@ export class VoiceAssistantWebSocketServer {
       const session = this.sessions.get(ws);
       if (!session) return;
 
-      logger.info(
+      connectionLogger.info(
         { clientId, totalSessions: this.sessions.size - 1 },
         "Client disconnected"
       );
@@ -166,13 +180,13 @@ export class VoiceAssistantWebSocketServer {
       this.sessions.delete(ws);
       this.conversationIdToWs.delete(session.getConversationId());
 
-      logger.debug({ conversationId: session.getConversationId() }, "Conversation deleted");
+      connectionLogger.debug({ conversationId: session.getConversationId() }, "Conversation deleted");
     });
 
     // Set up error handler
     ws.on("error", async (error) => {
       const err = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err }, "Client error");
+      connectionLogger.error({ err }, "Client error");
       const session = this.sessions.get(ws);
       if (!session) return;
 
@@ -206,7 +220,7 @@ export class VoiceAssistantWebSocketServer {
           sessionMessageType: message.message.type,
         } : {}),
       };
-      logger.debug(messageSummary, "Received message");
+      this.logger.debug(messageSummary, "Received message");
 
       // Handle WebSocket-level messages
       switch (message.type) {
@@ -215,7 +229,7 @@ export class VoiceAssistantWebSocketServer {
           return;
 
         case "recording_state":
-          logger.debug({ isRecording: message.isRecording }, "Recording state");
+          this.logger.debug({ isRecording: message.isRecording }, "Recording state");
           return;
 
         case "session":
@@ -224,7 +238,7 @@ export class VoiceAssistantWebSocketServer {
           if (sessionMessage) {
             // Debug: Log create_agent_request details
             if (sessionMessage.type === "create_agent_request") {
-              logger.debug({
+              this.logger.debug({
                 cwd: sessionMessage.config.cwd,
                 initialMode: sessionMessage.config.modeId,
                 worktreeName: sessionMessage.worktreeName,
@@ -236,7 +250,7 @@ export class VoiceAssistantWebSocketServer {
             if (session) {
               await session.handleMessage(sessionMessage);
             } else {
-              logger.error("No session found for client");
+              this.logger.error("No session found for client");
             }
           }
           return;
@@ -264,7 +278,7 @@ export class VoiceAssistantWebSocketServer {
         rawPayload = rawPayload ?? "<unreadable>";
         parsedPayload = parsedPayload ?? rawPayload;
         const payloadErr = payloadError instanceof Error ? payloadError : new Error(String(payloadError));
-        logger.error({ err: payloadErr }, "Failed to decode raw payload");
+        this.logger.error({ err: payloadErr }, "Failed to decode raw payload");
       }
 
       const trimmedRawPayload =
@@ -272,7 +286,7 @@ export class VoiceAssistantWebSocketServer {
           ? `${rawPayload.slice(0, 2000)}... (truncated)`
           : rawPayload;
 
-      logger.error({
+      this.logger.error({
         err,
         rawPayload: trimmedRawPayload,
         parsedPayload,
@@ -350,13 +364,13 @@ export class VoiceAssistantWebSocketServer {
   } {
     const activity = session.getClientActivity();
     if (!activity) {
-      logger.debug("getClientActivityState: no activity for session");
+      this.logger.debug("getClientActivityState: no activity for session");
       return { deviceType: null, focusedAgentId: null, isStale: true, appVisible: false };
     }
     const now = Date.now();
     const ageMs = now - activity.lastActivityAt.getTime();
     const isStale = ageMs >= this.ACTIVITY_THRESHOLD_MS;
-    logger.debug({
+    this.logger.debug({
       deviceType: activity.deviceType,
       focusedAgentId: activity.focusedAgentId,
       lastActivityAt: activity.lastActivityAt.toISOString(),
@@ -475,7 +489,7 @@ export class VoiceAssistantWebSocketServer {
 
     const allStates = clientEntries.map((e) => e.state);
 
-    logger.debug({
+    this.logger.debug({
       agentId: params.agentId,
       reason: params.reason,
       clientCount: clientEntries.length,
@@ -484,10 +498,10 @@ export class VoiceAssistantWebSocketServer {
 
     // Check if all clients are stale - if so, send push notification
     const allClientsStale = allStates.every((state) => state.isStale);
-    logger.debug({ allClientsStale }, "Client staleness check");
+    this.logger.debug({ allClientsStale }, "Client staleness check");
     if (allClientsStale) {
       const tokens = this.pushTokenStore.getAllTokens();
-      logger.info({ tokenCount: tokens.length }, "Sending push notification");
+      this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
       if (tokens.length > 0) {
         void this.pushService.sendPush(tokens, {
           title: "Agent needs attention",

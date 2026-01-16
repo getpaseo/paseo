@@ -6,7 +6,8 @@ import {
   Easing,
   type SharedValue,
 } from "react-native-reanimated";
-import { useSidebarStore } from "@/stores/sidebar-store";
+import { UnistylesRuntime } from "react-native-unistyles";
+import { usePanelStore } from "@/stores/panel-store";
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
@@ -24,7 +25,13 @@ const SidebarAnimationContext = createContext<SidebarAnimationContextValue | nul
 
 export function SidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
-  const { isOpen } = useSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+
+  // Derive isOpen from the unified panel state
+  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
 
   // Initialize based on current state
   const translateX = useSharedValue(isOpen ? 0 : -windowWidth);

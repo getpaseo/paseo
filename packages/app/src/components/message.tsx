@@ -649,6 +649,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View
+      testID="assistant-message"
       style={[
         assistantMessageStylesheet.container,
         !resolvedDisableOuterSpacing &&

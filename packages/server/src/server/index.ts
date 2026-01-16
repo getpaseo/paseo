@@ -15,7 +15,7 @@ async function main() {
   const persistedConfig = loadPersistedConfig(paseoHome);
   const logger = createRootLogger(persistedConfig);
   const config = loadConfig(paseoHome);
-  const daemon = await createPaseoDaemon(config);
+  const daemon = await createPaseoDaemon(config, logger);
 
   await daemon.start();
 

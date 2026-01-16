@@ -23,8 +23,6 @@ export function resolveLogConfig(
   return { level, format };
 }
 
-let rootLogger: pino.Logger | undefined;
-
 export function createRootLogger(
   persistedConfig: PersistedConfig | undefined
 ): pino.Logger {
@@ -42,21 +40,12 @@ export function createRootLogger(
         }
       : undefined;
 
-  rootLogger = pino({
+  return pino({
     level: config.level,
     transport,
   });
-
-  return rootLogger;
 }
 
-export function getRootLogger(): pino.Logger {
-  if (!rootLogger) {
-    throw new Error("Root logger not initialized. Call createRootLogger first.");
-  }
-  return rootLogger;
-}
-
-export function createChildLogger(name: string): pino.Logger {
-  return getRootLogger().child({ name });
+export function createChildLogger(parent: pino.Logger, name: string): pino.Logger {
+  return parent.child({ name });
 }

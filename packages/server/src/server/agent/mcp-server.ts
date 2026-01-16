@@ -3,9 +3,7 @@ import { z } from "zod";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ensureValidJson } from "../json-utils.js";
-import { getRootLogger } from "../logger.js";
-
-const logger = getRootLogger().child({ module: "agent", component: "mcp-server" });
+import type { Logger } from "pino";
 
 import type {
   AgentPromptInput,
@@ -38,6 +36,7 @@ export interface AgentMcpServerOptions {
    * When set, create_agent will auto-inject this as parentAgentId.
    */
   callerAgentId?: string;
+  logger: Logger;
 }
 
 const CLAUDE_TO_CODEX_MODE: Record<string, string> = {
@@ -179,7 +178,8 @@ async function waitForAgentWithTimeout(
 function startAgentRun(
   agentManager: AgentManager,
   agentId: string,
-  prompt: AgentPromptInput
+  prompt: AgentPromptInput,
+  logger: Logger
 ): void {
   const iterator = agentManager.streamAgent(agentId, prompt);
   void (async () => {
@@ -223,7 +223,8 @@ function sanitizePermissionRequest(
 
 async function resolveAgentTitle(
   agentRegistry: AgentRegistry,
-  agentId: string
+  agentId: string,
+  logger: Logger
 ): Promise<string | null> {
   try {
     const record = await agentRegistry.get(agentId);
@@ -239,17 +240,19 @@ async function resolveAgentTitle(
 
 async function serializeSnapshotWithMetadata(
   agentRegistry: AgentRegistry,
-  snapshot: ManagedAgent
+  snapshot: ManagedAgent,
+  logger: Logger
 ) {
-  const title = await resolveAgentTitle(agentRegistry, snapshot.id);
+  const title = await resolveAgentTitle(agentRegistry, snapshot.id, logger);
   return serializeAgentSnapshot(snapshot, { title });
 }
 
 export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
-  const { agentManager, agentRegistry, callerAgentId } = options;
-  const waitTracker = new WaitForAgentTracker();
+  const { agentManager, agentRegistry, callerAgentId, logger } = options;
+  const childLogger = logger.child({ module: "agent", component: "mcp-server" });
+  const waitTracker = new WaitForAgentTracker(logger);
 
   const server = new McpServer({
     name: "agent-mcp",
@@ -439,14 +442,14 @@ export async function createAgentMcpServer(
         try {
           agentManager.recordUserMessage(snapshot.id, initialPrompt);
         } catch (error) {
-          logger.error(
+          childLogger.error(
             { err: error, agentId: snapshot.id },
             "Failed to record initial prompt"
           );
         }
 
         try {
-          startAgentRun(agentManager, snapshot.id, initialPrompt);
+          startAgentRun(agentManager, snapshot.id, initialPrompt, childLogger);
 
           // If not running in background, wait for completion
           if (!background) {
@@ -475,7 +478,7 @@ export async function createAgentMcpServer(
             return response;
           }
         } catch (error) {
-          logger.error(
+          childLogger.error(
             { err: error, agentId: snapshot.id },
             "Failed to run initial prompt"
           );
@@ -620,14 +623,14 @@ export async function createAgentMcpServer(
       }
 
       if (snapshot.lifecycle === "running" || snapshot.pendingRun) {
-        logger.debug(
+        childLogger.debug(
           { agentId },
           "Interrupting active run before sending new prompt"
         );
         try {
           const cancelled = await agentManager.cancelAgentRun(agentId);
           if (!cancelled) {
-            logger.warn(
+            childLogger.warn(
               { agentId },
               "Agent reported running but no active run was cancelled"
             );
@@ -653,7 +656,7 @@ export async function createAgentMcpServer(
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
           }
         } catch (error) {
-          logger.error(
+          childLogger.error(
             { err: error, agentId },
             "Failed to interrupt agent"
           );
@@ -668,13 +671,13 @@ export async function createAgentMcpServer(
       try {
         agentManager.recordUserMessage(agentId, prompt);
       } catch (error) {
-        logger.error(
+        childLogger.error(
           { err: error, agentId },
           "Failed to record user message"
         );
       }
 
-      startAgentRun(agentManager, agentId, prompt);
+      startAgentRun(agentManager, agentId, prompt, childLogger);
 
       // If not running in background, wait for completion
       if (!background) {
@@ -740,7 +743,8 @@ export async function createAgentMcpServer(
 
       const structuredSnapshot = await serializeSnapshotWithMetadata(
         agentRegistry,
-        snapshot
+        snapshot,
+        childLogger
       );
       return {
         content: [],
@@ -766,7 +770,7 @@ export async function createAgentMcpServer(
       const snapshots = agentManager.listAgents();
       const agents = await Promise.all(
         snapshots.map((snapshot) =>
-          serializeSnapshotWithMetadata(agentRegistry, snapshot)
+          serializeSnapshotWithMetadata(agentRegistry, snapshot, childLogger)
         )
       );
       return {

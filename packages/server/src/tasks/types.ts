@@ -24,6 +24,7 @@ export interface Task {
   notes: Note[];
   created: string; // ISO date
   assignee?: AgentType; // optional agent override
+  priority?: number; // lower number = higher priority (1 is highest), tasks with priority sort before those without
 }
 
 export interface CreateTaskOptions {
@@ -33,6 +34,7 @@ export interface CreateTaskOptions {
   body?: string;
   acceptanceCriteria?: string[];
   assignee?: AgentType;
+  priority?: number;
 }
 
 export interface TaskStore {
@@ -49,6 +51,7 @@ export interface TaskStore {
   // Mutations
   create(title: string, opts?: CreateTaskOptions): Promise<Task>;
   update(id: string, changes: Partial<Omit<Task, "id" | "created">>): Promise<Task>;
+  delete(id: string): Promise<void>;
   addDep(id: string, depId: string): Promise<void>;
   removeDep(id: string, depId: string): Promise<void>;
   setParent(id: string, parentId: string | null): Promise<void>;

@@ -1,7 +1,7 @@
+import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
-import { synthesizeSpeech } from "./tts-openai.js";
+import type { OpenAITTS } from "./tts-openai.js";
 import type { SessionOutboundMessage } from "../messages.js";
-import { getRootLogger } from "../logger.js";
 
 interface PendingPlayback {
   resolve: () => void;
@@ -16,10 +16,12 @@ interface PendingPlayback {
  */
 export class TTSManager {
   private pendingPlaybacks: Map<string, PendingPlayback> = new Map();
-  private readonly logger;
+  private readonly logger: pino.Logger;
+  private readonly tts: OpenAITTS | null;
 
-  constructor(sessionId: string) {
-    this.logger = getRootLogger().child({ module: "agent", component: "tts-manager", sessionId });
+  constructor(sessionId: string, logger: pino.Logger, tts: OpenAITTS | null) {
+    this.logger = logger.child({ module: "agent", component: "tts-manager", sessionId });
+    this.tts = tts;
   }
 
   /**
@@ -32,13 +34,17 @@ export class TTSManager {
     abortSignal: AbortSignal,
     isRealtimeMode: boolean
   ): Promise<void> {
+    if (!this.tts) {
+      throw new Error("TTS not configured");
+    }
+
     if (abortSignal.aborted) {
       this.logger.debug("Aborted before generating audio");
       return;
     }
 
     // Generate TTS audio stream
-    const { stream, format } = await synthesizeSpeech(text);
+    const { stream, format } = await this.tts.synthesizeSpeech(text);
 
     if (abortSignal.aborted) {
       this.logger.debug("Aborted after generating audio");

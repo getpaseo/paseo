@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { getRootLogger } from "./logger.js";
 
 const PersistedConfigSchema = z.object({
   listen: z.string().optional(),
@@ -24,25 +23,28 @@ export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;
 
 const CONFIG_FILENAME = "config.json";
 
+type LoggerLike = {
+  child(bindings: Record<string, unknown>): LoggerLike;
+  info(...args: any[]): void;
+};
+
 function getConfigPath(paseoHome: string): string {
   return path.join(paseoHome, CONFIG_FILENAME);
 }
 
-function getLogger() {
-  try {
-    return getRootLogger().child({ module: "config" });
-  } catch {
-    // Root logger not initialized yet, return null
-    return null;
-  }
+function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
+  return logger?.child({ module: "config" });
 }
 
-export function loadPersistedConfig(paseoHome: string): PersistedConfig {
-  const logger = getLogger();
+export function loadPersistedConfig(
+  paseoHome: string,
+  logger?: LoggerLike
+): PersistedConfig {
+  const log = getLogger(logger);
   const configPath = getConfigPath(paseoHome);
 
   if (!existsSync(configPath)) {
-    logger?.info(`No config file at ${configPath}, using defaults`);
+    log?.info(`No config file at ${configPath}, using defaults`);
     return PersistedConfigSchema.parse({});
   }
 
@@ -70,15 +72,16 @@ export function loadPersistedConfig(paseoHome: string): PersistedConfig {
     throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
   }
 
-  logger?.info(`Loaded from ${configPath}`);
+  log?.info(`Loaded from ${configPath}`);
   return result.data;
 }
 
 export function savePersistedConfig(
   paseoHome: string,
-  config: PersistedConfig
+  config: PersistedConfig,
+  logger?: LoggerLike
 ): void {
-  const logger = getLogger();
+  const log = getLogger(logger);
   const configPath = getConfigPath(paseoHome);
 
   const result = PersistedConfigSchema.safeParse(config);
@@ -91,7 +94,7 @@ export function savePersistedConfig(
 
   try {
     writeFileSync(configPath, JSON.stringify(result.data, null, 2) + "\n");
-    logger?.info(`Saved to ${configPath}`);
+    log?.info(`Saved to ${configPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`[Config] Failed to write ${configPath}: ${message}`);

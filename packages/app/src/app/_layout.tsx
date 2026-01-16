@@ -17,7 +17,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode, useMemo } from "react";
 import { Platform } from "react-native";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
-import { useSidebarStore } from "@/stores/sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
 import {
   SidebarAnimationProvider,
@@ -54,8 +54,15 @@ interface AppContainerProps {
 
 function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
-  const { isOpen, open, toggle } = useSidebarStore();
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const openAgentList = usePanelStore((state) => state.openAgentList);
+  const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
+
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
 
   // Cmd+B to toggle sidebar (web only)
   useEffect(() => {
@@ -63,12 +70,12 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key === "b") {
         event.preventDefault();
-        toggle();
+        toggleAgentList();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggle]);
+  }, [toggleAgentList]);
   const {
     translateX,
     backdropOpacity,
@@ -77,8 +84,6 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
     animateToClose,
     isGesturing,
   } = useSidebarAnimation();
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   // Track initial touch position for manual activation
   const touchStartX = useSharedValue(0);
@@ -135,7 +140,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
           const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(open)();
+            runOnJS(openAgentList)();
           } else {
             animateToClose();
           }
@@ -143,7 +148,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
         .onFinalize(() => {
           isGesturing.value = false;
         }),
-    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, open, isGesturing, horizontalScroll?.isAnyScrolledRight, touchStartX]
+    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, openAgentList, isGesturing, horizontalScroll?.isAnyScrolledRight, touchStartX]
   );
 
   const content = (

@@ -46,7 +46,7 @@ import {
   ExplorerSidebarAnimationProvider,
   useExplorerSidebarAnimation,
 } from "@/contexts/explorer-sidebar-animation-context";
-import { useExplorerSidebarStore } from "@/stores/explorer-sidebar-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -188,7 +188,19 @@ function AgentScreenContent({
     addImagesRef.current = addImages;
   }, []);
 
-  const { isOpen: isExplorerOpen, toggle: toggleExplorer, open: openExplorer, close: closeExplorer, setActiveTab: setExplorerTab } = useExplorerSidebarStore();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
+
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+  const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
+  const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
+  const closeToAgent = usePanelStore((state) => state.closeToAgent);
+  const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
+
+  // Derive isExplorerOpen from the unified panel state
+  const isExplorerOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
+
   const {
     translateX: explorerTranslateX,
     backdropOpacity: explorerBackdropOpacity,
@@ -197,8 +209,6 @@ function AgentScreenContent({
     animateToClose: animateExplorerToClose,
     isGesturing: isExplorerGesturing,
   } = useExplorerSidebarAnimation();
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -239,7 +249,7 @@ function AgentScreenContent({
           const shouldOpen = event.translationX < -explorerWindowWidth / 3 || event.velocityX < -500;
           if (shouldOpen) {
             animateExplorerToOpen();
-            runOnJS(openExplorer)();
+            runOnJS(openFileExplorer)();
           } else {
             animateExplorerToClose();
           }
@@ -255,7 +265,7 @@ function AgentScreenContent({
       explorerBackdropOpacity,
       animateExplorerToOpen,
       animateExplorerToClose,
-      openExplorer,
+      openFileExplorer,
       isExplorerGesturing,
     ]
   );
@@ -266,14 +276,14 @@ function AgentScreenContent({
 
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
       if (isExplorerOpen) {
-        closeExplorer();
+        closeToAgent();
         return true; // Prevent default back navigation
       }
       return false; // Let default back navigation happen
     });
 
     return () => handler.remove();
-  }, [isExplorerOpen, closeExplorer]);
+  }, [isExplorerOpen, closeToAgent]);
 
   const resolvedAgentId = agentId;
 
@@ -565,14 +575,14 @@ function AgentScreenContent({
   const handleViewChanges = useCallback(() => {
     handleCloseMenu();
     setExplorerTab("changes");
-    openExplorer();
-  }, [handleCloseMenu, setExplorerTab, openExplorer]);
+    openFileExplorer();
+  }, [handleCloseMenu, setExplorerTab, openFileExplorer]);
 
   const handleBrowseFiles = useCallback(() => {
     handleCloseMenu();
     setExplorerTab("files");
-    openExplorer();
-  }, [handleCloseMenu, setExplorerTab, openExplorer]);
+    openFileExplorer();
+  }, [handleCloseMenu, setExplorerTab, openFileExplorer]);
 
   const handleRefreshAgent = useCallback(() => {
     if (!resolvedAgentId || !refreshAgent) {
@@ -637,7 +647,7 @@ function AgentScreenContent({
           title={agent.title || "Agent"}
           rightContent={
             <View style={styles.headerRightContent}>
-              <Pressable onPress={toggleExplorer} style={styles.menuButton}>
+              <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
                 {isMobile ? (
                   <Folder
                     size={16}

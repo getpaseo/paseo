@@ -196,7 +196,7 @@ export interface SessionState {
       git?: any;
       worktreeName?: string;
       requestId?: string;
-    }) => Promise<void>;
+    }) => Promise<unknown>;
     setAgentMode: (agentId: string, modeId: string) => void;
     respondToPermission: (agentId: string, requestId: string, response: any) => void;
     ensureAgentIsInitialized: (agentId: string) => Promise<void>;

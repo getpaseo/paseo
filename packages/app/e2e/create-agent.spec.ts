@@ -4,13 +4,20 @@ import { createTempGitRepo } from './helpers/workspace';
 
 test('create agent in a temp repo', async ({ page }) => {
   const repo = await createTempGitRepo();
-  const message = `E2E create agent ${Date.now()}`;
+  const prompt = "Respond with exactly: Hello";
 
   try {
     await gotoHome(page);
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
-    await createAgent(page, message);
+    await createAgent(page, prompt);
+
+    // Verify user message is shown in the stream
+    await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+
+    // Wait for agent response containing "Hello" within an assistant message
+    const assistantMessage = page.getByTestId('assistant-message').filter({ hasText: 'Hello' });
+    await expect(assistantMessage).toBeVisible({ timeout: 30000 });
   } finally {
     await repo.cleanup();
   }

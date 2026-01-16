@@ -7,9 +7,15 @@ import type {
   AgentRegistry,
   StoredAgentRecord,
 } from "./agent/agent-registry.js";
-import { getRootLogger } from "./logger.js";
 
-const logger = getRootLogger().child({ module: "persistence" });
+type LoggerLike = {
+  child(bindings: Record<string, unknown>): LoggerLike;
+  error(...args: any[]): void;
+};
+
+function getLogger(logger: LoggerLike): LoggerLike {
+  return logger.child({ module: "persistence" });
+}
 
 type AgentRegistryPersistence = Pick<AgentRegistry, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
@@ -23,15 +29,17 @@ function isKnownProvider(provider: string): provider is AgentProvider {
  * agent_state snapshot is flushed to disk.
  */
 export function attachAgentRegistryPersistence(
+  logger: LoggerLike,
   agentManager: AgentManagerStateSource,
   registry: AgentRegistryPersistence
 ): () => void {
+  const log = getLogger(logger);
   const unsubscribe = agentManager.subscribe((event) => {
     if (event.type !== "agent_state") {
       return;
     }
     void registry.applySnapshot(event.agent).catch((error) => {
-      logger.error({ err: error, agentId: event.agent.id }, "Failed to persist agent snapshot");
+      log.error({ err: error, agentId: event.agent.id }, "Failed to persist agent snapshot");
     });
   });
 
