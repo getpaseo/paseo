@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
 import type {
   AgentSessionConfig,
@@ -73,6 +74,7 @@ async function collectTurnEvents(
 }
 
 describe("OpenCodeAgentClient", () => {
+  const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
     provider: "opencode",
     cwd,
@@ -83,7 +85,7 @@ describe("OpenCodeAgentClient", () => {
     "creates a session with valid id and provider",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       // HARD ASSERT: Session has required fields
@@ -101,7 +103,7 @@ describe("OpenCodeAgentClient", () => {
     "single turn completes with streaming deltas",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const iterator = session.stream("Say hello");
@@ -133,7 +135,7 @@ describe("OpenCodeAgentClient", () => {
     "user prompt text never appears in assistant_message",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const userMarker = "UNIQUE_USER_MARKER_XYZ789";
@@ -161,7 +163,7 @@ describe("OpenCodeAgentClient", () => {
     "multi-turn preserves context",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const secretCode = "ZEBRA_42";
@@ -201,7 +203,7 @@ describe("OpenCodeAgentClient", () => {
       const testFile = path.join(cwd, "test-file.txt");
       writeFileSync(testFile, "original content\n");
 
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const iterator = session.stream(`Read the file at ${testFile}`);
@@ -228,7 +230,7 @@ describe("OpenCodeAgentClient", () => {
     "can be interrupted during streaming",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const events: AgentStreamEvent[] = [];
@@ -258,7 +260,7 @@ describe("OpenCodeAgentClient", () => {
     "run() returns accumulated response text",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const marker = "OPENCODE_ACK_TOKEN";
@@ -280,7 +282,7 @@ describe("OpenCodeAgentClient", () => {
     "handles permission requests",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       const events: AgentStreamEvent[] = [];
@@ -320,7 +322,7 @@ describe("OpenCodeAgentClient", () => {
   test(
     "listModels returns models with required fields",
     async () => {
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const models = await client.listModels();
 
       // HARD ASSERT: Returns an array
@@ -348,7 +350,7 @@ describe("OpenCodeAgentClient", () => {
     "streamHistory returns exact conversation history after multi-turn session",
     async () => {
       const cwd = tmpCwd();
-      const client = new OpenCodeAgentClient();
+      const client = new OpenCodeAgentClient(logger);
       const session = await client.createSession(buildConfig(cwd));
 
       // Turn 1: Ask agent to remember a secret
