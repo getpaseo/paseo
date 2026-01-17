@@ -1,8 +1,6 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
-const isCI = process.env.CI === "true";
-
 export default defineConfig({
   resolve: {
     alias: {
@@ -22,18 +20,6 @@ export default defineConfig({
         maxForks: 4,
       },
     },
-    // Skip e2e and integration tests in CI - they require real agent binaries or cross-package imports
-    exclude: isCI
-      ? [
-          "**/*.e2e.test.ts",
-          "**/opencode-agent.test.ts",
-          "**/codex-mcp-agent.test.ts",
-          "**/claude-agent.test.ts",
-          "**/claude-agent-commands.test.ts",
-          "**/worktree.test.ts",
-          "**/terminal-manager.test.ts",
-          "**/node_modules/**",
-        ]
-      : ["**/node_modules/**"],
+    exclude: ["**/node_modules/**"],
   },
 });
