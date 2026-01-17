@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type {
   AgentPermissionRequest,
   AgentSession,
@@ -401,13 +402,15 @@ function getConversationIdFromMetadata(metadata: unknown): string | undefined {
 }
 
 describe("CodexMcpAgentClient (MCP integration)", () => {
+  const logger = createTestLogger();
+
   test(
     "provider does not emit user_message (agent-manager handles that), emits exactly one assistant_message",
     async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -477,7 +480,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -507,7 +510,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -610,7 +613,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const restoreSessionDir = useTempCodexSessionDir();
       const mcpServerScript = writeTestMcpServerScript(cwd);
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
         provider: "codex",
@@ -758,7 +761,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const restoreSessionDir = useTempCodexSessionDir();
       const mcpServerScript = writeTestMcpServerScript(cwd);
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
         provider: "codex",
@@ -905,7 +908,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -963,7 +966,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1042,7 +1045,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1080,7 +1083,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1151,7 +1154,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1202,7 +1205,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1268,7 +1271,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1346,7 +1349,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1423,7 +1426,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const config = {
         provider: "codex",
         model: CODEX_TEST_MODEL,
@@ -1511,7 +1514,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
     "listModels returns models with required fields",
     async () => {
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
-      const client = new CodexMcpAgentClient();
+      const client = new CodexMcpAgentClient(logger);
       const models = await client.listModels();
 
       // HARD ASSERT: Returns an array

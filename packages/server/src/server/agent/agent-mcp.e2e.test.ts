@@ -129,8 +129,9 @@ describe("agent MCP end-to-end", () => {
           : undefined;
 
       const daemonConfig: PaseoDaemonConfig = {
-        port,
+        listen: `${port}`,
         paseoHome,
+        corsAllowedOrigins: [],
         agentMcpRoute: "/mcp/agents",
         agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
         auth: {
@@ -170,9 +171,7 @@ describe("agent MCP end-to-end", () => {
       process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
-      await new Promise<void>((resolve) => {
-        daemon.httpServer.listen(port, () => resolve());
-      });
+      await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
         new URL(`http://127.0.0.1:${port}/mcp/agents`),
@@ -283,7 +282,7 @@ describe("agent MCP end-to-end", () => {
           await client.callTool({ name: "kill_agent", args: { agentId } });
         }
         await client.close();
-        await daemon.close();
+        await daemon.stop();
         if (previousCodexSessionDir === undefined) {
           delete process.env.CODEX_SESSION_DIR;
         } else {
@@ -330,8 +329,9 @@ describe("agent MCP end-to-end", () => {
           : undefined;
 
       const daemonConfig: PaseoDaemonConfig = {
-        port,
+        listen: `${port}`,
         paseoHome,
+        corsAllowedOrigins: [],
         agentMcpRoute: "/mcp/agents",
         agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
         auth: {
@@ -384,9 +384,7 @@ describe("agent MCP end-to-end", () => {
       process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
-      await new Promise<void>((resolve) => {
-        daemon.httpServer.listen(port, () => resolve());
-      });
+      await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
         new URL(`http://127.0.0.1:${port}/mcp/agents`),
@@ -479,7 +477,7 @@ describe("agent MCP end-to-end", () => {
           await client.callTool({ name: "kill_agent", args: { agentId } });
         }
         await client.close();
-        await daemon.close();
+        await daemon.stop();
         if (previousCodexSessionDir === undefined) {
           delete process.env.CODEX_SESSION_DIR;
         } else {
