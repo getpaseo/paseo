@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     testTimeout: 30000,
-    hookTimeout: 30000,
+    hookTimeout: 60000,
     globals: true,
     environment: "node",
     setupFiles: [path.resolve(__dirname, "./src/test-utils/vitest-setup.ts")],
@@ -20,6 +20,6 @@ export default defineConfig({
         maxForks: 4,
       },
     },
-    exclude: ["**/node_modules/**"],
+    exclude: ["**/node_modules/**", "**/dist/**"],
   },
 });

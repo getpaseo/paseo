@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import type { AgentSession, AgentSessionConfig, AgentSlashCommand } from "../agent-sdk-types.js";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 describe("ClaudeAgentSession Commands", () => {
   let client: ClaudeAgentClient;
@@ -28,7 +29,7 @@ describe("ClaudeAgentSession Commands", () => {
   };
 
   beforeAll(async () => {
-    client = new ClaudeAgentClient();
+    client = new ClaudeAgentClient({ logger: createTestLogger() });
   });
 
   afterAll(async () => {
