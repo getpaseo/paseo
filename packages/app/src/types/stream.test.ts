@@ -65,19 +65,6 @@ function toolTimeline(
   };
 }
 
-function permissionTimeline(id: string, status: string): AgentStreamEventPayload {
-  return {
-    type: "timeline",
-    provider: "claude",
-    item: {
-      type: "tool_call",
-      name: "permission_request",
-      status,
-      callId: id,
-    },
-  };
-}
-
 function todoTimeline(items: { text: string; completed: boolean }[]): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -643,21 +630,7 @@ function testHydratedUserMessagesPersist() {
   });
 }
 
-// Test 8: Permission tool calls should not show in the timeline
-function testPermissionToolCallFiltering() {
-  const timestamp = new Date('2025-01-01T12:00:00Z');
-  const updates = [
-    { event: permissionTimeline('permission-1', 'pending'), timestamp },
-    { event: permissionTimeline('permission-1', 'granted'), timestamp },
-  ];
-
-  const state = hydrateStreamState(updates);
-  const permissionEntries = state.filter(isAgentToolCallItem);
-
-  assert.strictEqual(permissionEntries.length, 0);
-}
-
-// Test 9: Todo lists should consolidate into a single entry and update completions
+// Test 8: Todo lists should consolidate into a single entry and update completions
 function testTodoListConsolidation() {
   const timestamp1 = new Date('2025-01-01T12:30:00Z');
   const timestamp2 = new Date('2025-01-01T12:31:00Z');
@@ -1064,7 +1037,6 @@ describe('stream timeline reducers', () => {
   it('preserves whitespace in assistant chunk concatenation', testAssistantWhitespacePreservation);
   it('hydrates user messages and deduplicates optimistic/live entries', testUserMessageHydration);
   it('retains hydrated user messages across providers', testHydratedUserMessagesPersist);
-  it('filters permission tool calls from the stream', testPermissionToolCallFiltering);
   it('consolidates todo list updates', testTodoListConsolidation);
   it('keeps timeline ids stable after list shrinkage', testTimelineIdStabilityAfterRemovals);
   it('deduplicates live tool call entries', testToolCallDeduplicationLive);

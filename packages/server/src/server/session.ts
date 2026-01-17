@@ -364,25 +364,21 @@ export class Session {
     }
 
     if (snapshot.lifecycle !== "running" && !snapshot.pendingRun) {
+      console.error(`[INTERRUPT:${agentId.substring(0, 8)}] not running, skipping. lifecycle=${snapshot.lifecycle} pendingRun=${!!snapshot.pendingRun}`);
       return;
     }
 
-    this.sessionLogger.info(
-      { agentId },
-      `Interrupting active run for agent ${agentId}`
-    );
+    console.error(`[INTERRUPT:${agentId.substring(0, 8)}] starting interrupt. lifecycle=${snapshot.lifecycle} pendingRun=${!!snapshot.pendingRun}`);
 
     try {
+      const t0 = Date.now();
       const cancelled = await this.agentManager.cancelAgentRun(agentId);
+      console.error(`[INTERRUPT] cancelAgentRun returned cancelled=${cancelled} in ${Date.now() - t0}ms`);
       if (!cancelled) {
-        this.sessionLogger.warn(
-          { agentId },
-          `Agent ${agentId} reported running but no active run was cancelled`
-        );
+        console.error(`[INTERRUPT] WARNING: reported running but no active run was cancelled`);
       }
 
       // Wait for the agent to become idle after cancellation
-      // cancelAgentRun only initiates cancellation; doesn't wait for generator to terminate
       const maxWaitMs = 5000;
       const pollIntervalMs = 50;
       const startTime = Date.now();
@@ -392,15 +388,17 @@ export class Session {
           throw new Error(`Agent ${agentId} not found during cancellation wait`);
         }
         if (current.lifecycle !== "running" && !current.pendingRun) {
+          console.error(`[INTERRUPT] agent became idle after ${Date.now() - startTime}ms`);
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       }
+      const finalState = this.agentManager.getAgent(agentId);
+      if (finalState?.lifecycle === "running" || finalState?.pendingRun) {
+        console.error(`[INTERRUPT] WARNING: agent still running after 5s wait! lifecycle=${finalState?.lifecycle} pendingRun=${!!finalState?.pendingRun}`);
+      }
     } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId },
-        `Failed to interrupt agent ${agentId}`
-      );
+      console.error(`[INTERRUPT] ERROR:`, error);
       throw error;
     }
   }
@@ -409,6 +407,7 @@ export class Session {
    * Start streaming an agent run and forward results via the websocket broadcast
    */
   private startAgentStream(agentId: string, prompt: AgentPromptInput): void {
+    console.error(`[SESSION:startAgentStream] starting for agent ${agentId.substring(0, 8)}, prompt="${typeof prompt === 'string' ? prompt.substring(0, 40) : 'object'}"`);
     this.sessionLogger.info(
       { agentId },
       `Starting agent stream for ${agentId}`
@@ -1007,6 +1006,7 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
+    console.error(`[DELETE_AGENT] handleDeleteAgentRequest called for ${agentId} requestId=${requestId}`, new Error().stack);
     this.sessionLogger.info(
       { agentId },
       `Deleting agent ${agentId} from registry`
@@ -1060,14 +1060,18 @@ export class Session {
     messageId?: string,
     images?: Array<{ data: string; mimeType: string }>
   ): Promise<void> {
+    console.error(`[SESSION:handleSendAgentMessage] ENTERED agentId=${agentId.substring(0, 8)} text="${text.substring(0, 40)}"`);
     this.sessionLogger.info(
       { agentId, textPreview: text.substring(0, 50), imageCount: images?.length ?? 0 },
       `Sending text to agent ${agentId}${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
     );
 
     try {
+      console.error(`[SESSION:handleSendAgentMessage] calling ensureAgentLoaded...`);
       await this.ensureAgentLoaded(agentId);
+      console.error(`[SESSION:handleSendAgentMessage] ensureAgentLoaded done`);
     } catch (error) {
+      console.error(`[SESSION:handleSendAgentMessage] ensureAgentLoaded FAILED:`, error);
       this.handleAgentRunError(
         agentId,
         error,
@@ -1077,8 +1081,12 @@ export class Session {
     }
 
     try {
+      const snapshotBeforeInterrupt = this.agentManager.getAgent(agentId);
+      console.error(`[SESSION:handleSendAgentMessage] before interrupt: lifecycle=${snapshotBeforeInterrupt?.lifecycle} pendingRun=${!!snapshotBeforeInterrupt?.pendingRun}`);
       await this.interruptAgentIfRunning(agentId);
+      console.error(`[SESSION:handleSendAgentMessage] interrupt done`);
     } catch (error) {
+      console.error(`[SESSION:handleSendAgentMessage] interrupt FAILED:`, error);
       this.handleAgentRunError(
         agentId,
         error,
@@ -1088,6 +1096,7 @@ export class Session {
     }
 
     const prompt = this.buildAgentPrompt(text, images);
+    console.error(`[SESSION:handleSendAgentMessage] calling recordUserMessage...`);
 
     try {
       this.agentManager.recordUserMessage(agentId, text, { messageId });
@@ -1098,6 +1107,7 @@ export class Session {
       );
     }
 
+    console.error(`[SESSION:handleSendAgentMessage] calling startAgentStream...`);
     this.startAgentStream(agentId, prompt);
   }
 

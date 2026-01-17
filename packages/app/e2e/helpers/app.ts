@@ -161,3 +161,10 @@ export async function waitForAgentIdle(page: Page, timeout = 30000) {
   const stopButton = page.getByRole('button', { name: /stop|cancel/i });
   await expect(stopButton).not.toBeVisible({ timeout });
 }
+
+export async function getToolCallCount(page: Page): Promise<number> {
+  // Tool calls are rendered as ExpandableBadge components with tool names like Bash, Write, Read, etc.
+  // They appear as pressable badges in the agent stream
+  const toolCallBadges = page.locator('[data-testid="tool-call-badge"]');
+  return toolCallBadges.count();
+}

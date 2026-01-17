@@ -1228,9 +1228,11 @@ export class DaemonClientV2 {
         pendingPermissionIds.add(request.id);
       }
     }
-    let sawRunning =
-      current?.status === "running" ||
-      pendingPermissionIds.size > 0;
+
+    // Track whether we've seen a running state. Important: we only set this
+    // when we see running IN THE QUEUE, not based on current state. This prevents
+    // finding old idle states that occurred before the current run started.
+    let sawRunningInQueue = false;
     let queuedIdle: AgentSnapshotPayload | null = null;
 
     const updatePendingPermissions = (msg: SessionOutboundMessage): void => {
@@ -1267,10 +1269,11 @@ export class DaemonClientV2 {
         (msg.payload.pendingPermissions?.length ?? 0) > 0 ||
         pendingPermissionIds.size > 0;
       if (status === "running" || hasPendingPermissions) {
-        sawRunning = true;
+        sawRunningInQueue = true;
+        queuedIdle = null; // Reset: any previous idle was before this run
       }
       if (
-        sawRunning &&
+        sawRunningInQueue &&
         (status === "idle" || status === "error") &&
         !hasPendingPermissions
       ) {
@@ -1280,6 +1283,15 @@ export class DaemonClientV2 {
     if (queuedIdle) {
       return queuedIdle;
     }
+
+    // If current state is running (or has pending permissions), we need to wait
+    // for the next idle. If current is already idle and we didn't see running
+    // in the queue, this is an edge case - the agent might not have started yet
+    // or was already idle. Use the current state's running status to seed the waiter.
+    let sawRunning =
+      sawRunningInQueue ||
+      current?.status === "running" ||
+      pendingPermissionIds.size > 0;
 
     return this.waitFor(
       (msg) => {

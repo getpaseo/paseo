@@ -480,14 +480,6 @@ function appendAgentToolCall(
   return [...state, item];
 }
 
-function isPermissionToolCall(raw: unknown): boolean {
-  if (!raw || typeof raw !== "object") {
-    return false;
-  }
-  const candidate = raw as { name?: string };
-  return candidate.name === "permission_request";
-}
-
 const FAILED_STATUS_PATTERN =
   /fail|error|deny|reject|cancel|abort|exception|refus/;
 const COMPLETED_STATUS_PATTERN =
@@ -762,9 +754,6 @@ export function reduceStreamUpdate(
         case "reasoning":
           return appendThought(state, item.text, timestamp);
         case "tool_call": {
-          if (isPermissionToolCall(item)) {
-            return state;
-          }
           nextState = appendAgentToolCall(
             state,
             {

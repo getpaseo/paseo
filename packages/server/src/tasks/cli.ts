@@ -4,6 +4,10 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FileTaskStore } from "./task-store.js";
+import {
+  computeExecutionOrder,
+  buildSortedChildrenMap,
+} from "./execution-order.js";
 import type { AgentType, ModelName, Task } from "./types.js";
 
 const TASKS_DIR = resolve(process.cwd(), ".tasks");
@@ -65,11 +69,6 @@ Examples:
   # See completed work
   task closed --scope abc123
 
-  # Run agent loop on an epic
-  task run abc123
-  task run abc123 --agent codex
-  task run --watch
-
 Body vs Notes:
   The BODY is the task's markdown document - edit it while grooming/defining the task.
   NOTES are timestamped entries added during implementation to document progress.
@@ -77,6 +76,89 @@ Body vs Notes:
   - While defining a task: edit the body with "task update <id> --body ..."
   - While implementing: add notes with "task note <id> ..."
   - When done: add a final note explaining what was done, then close
+
+---
+
+The Run Command (task run):
+
+  The run command executes an agent loop that works until acceptance criteria are met.
+  This can run for hours, days, or weeks for large epics.
+
+  Basic usage:
+    task run <scope-id>              # Run without planner (task must be well-defined)
+    task run <scope-id> --plan       # Run with planner (for larger epics)
+
+  Without --plan: The scoped task runs in a worker/judge loop. The worker implements,
+  the judge verifies. If not done, it loops. No breakdown happens - the task must be
+  atomic and well-defined from the start.
+
+  With --plan: The planner first breaks down the scope into subtasks, then workers
+  execute leaf tasks while the planner can reorganize as needed. Use this for epics
+  where you define WHAT you want but not HOW to achieve it.
+
+  When replanning happens:
+    - At the start (initial breakdown)
+    - When a task fails 5+ times (something is wrong with the approach)
+    - When you add a steering note (task steer <scope-id> "new direction")
+
+  Monitoring a running loop:
+    task plan <scope-id>             # See execution timeline and progress
+    task show <task-id>              # Check specific task details
+    tail -f task-run.*.log           # Follow the live log
+
+  Steering mid-run:
+    task steer <scope-id> "focus on X first"
+    task steer <scope-id> "skip Y, it's not needed"
+    task steer <scope-id> "run e2e tests every iteration"
+
+  Steering triggers an immediate replan. Use it to course-correct without stopping.
+
+Writing Good Acceptance Criteria:
+
+  Acceptance criteria determine when a task is DONE. They must be specific enough
+  that agents cannot "cheat" by taking shortcuts.
+
+  Bad (agents can game these):
+    - "tests pass"              → could delete tests, skip them, or weaken assertions
+    - "code works"              → subjective, unverifiable
+    - "feature complete"        → vague
+
+  Good (specific and non-gameable):
+    - "npm test exits 0 with 0 failures and 0 skipped"
+    - "test count >= 150 (no deleting tests)"
+    - "coverage does not decrease from baseline"
+    - "npm run typecheck exits 0"
+    - "GET /api/users returns 200 with JSON array"
+
+  Philosophy: Specify the floor (minimum requirements) without capping the ceiling.
+  "Zero failures, zero skipped" is strict but doesn't prevent adding more tests.
+
+  For test-related tasks, consider:
+    --accept "npm test exits 0"
+    --accept "no test files deleted"
+    --accept "no .skip or test.todo added"
+    --accept "no assertions removed or weakened"
+
+Acceptance Criteria vs Body Guidance:
+
+  Acceptance criteria = required OUTPUT (must-haves, verified at the end)
+  Body guidance = HOW to approach the work (instructions for the planner)
+
+  Acceptance criteria examples (verifiable end-state):
+    - "PR created with description and test plan"
+    - "Branch name follows convention: feat/<name>"
+    - "npm run typecheck exits 0"
+
+  Body guidance examples (process instructions):
+    - "Split work by module"
+    - "Commit after each subtask"
+    - "Run typecheck after each change"
+
+  The planner reads body guidance and propagates it into subtask acceptance criteria.
+  For example, if the body says "commit after each chunk of work", the planner adds
+  "git status shows clean working tree" to each subtask's criteria.
+
+  This makes process requirements verifiable at each step, not just at the end.
 `
   );
 
@@ -233,68 +315,106 @@ program
   });
 
 program
-  .command("tree <id>")
-  .description("Show task hierarchy with dependencies")
-  .action(async (id) => {
-    const root = await store.get(id);
-    if (!root) {
-      process.stderr.write(`Task not found: ${id}\n`);
-      process.exit(1);
-    }
-
-    // Build a map of all tasks for dependency lookups
+  .command("plan [scope]")
+  .alias("tree")
+  .description("Show execution timeline (tree view by default)")
+  .option("--flat", "Show flat list instead of tree")
+  .option("-d, --depth <n>", "Limit tree depth (0 = root only)")
+  .action(async (scopeId: string | undefined, opts) => {
+    const { timeline, orderMap, blocked } = await computeExecutionOrder(
+      store,
+      scopeId
+    );
     const allTasks = await store.list();
     const taskMap = new Map(allTasks.map((t) => [t.id, t]));
+    const maxDepth = opts.depth !== undefined ? parseInt(opts.depth, 10) : Infinity;
 
-    // Print a task line with optional dependency info
-    const printTask = (task: Task, prefix: string, connector: string) => {
-      const assignee = task.assignee ? ` @${task.assignee}` : "";
-      const priority = task.priority !== undefined ? ` !${task.priority}` : "";
-      process.stdout.write(
-        `${prefix}${connector}${task.id} [${task.status}] ${task.title}${priority}${assignee}\n`
-      );
-      // Print dependencies on next line with arrow
-      if (task.deps.length > 0) {
-        const depNames = task.deps
-          .map((depId) => {
-            const dep = taskMap.get(depId);
-            return dep ? `${dep.title} (${depId})` : depId;
-          })
-          .join(", ");
-        const depPrefix = prefix + (connector === "└── " ? "    " : "│   ");
-        process.stdout.write(`${depPrefix}→ depends on: ${depNames}\n`);
-      }
+    const formatDeps = (task: Task): string => {
+      if (task.deps.length === 0) return "";
+      return ` (deps: ${task.deps.join(", ")})`;
     };
 
-    // Print root task
-    const rootAssignee = root.assignee ? ` @${root.assignee}` : "";
-    const rootPriority = root.priority !== undefined ? ` !${root.priority}` : "";
-    process.stdout.write(`${root.id} [${root.status}] ${root.title}${rootPriority}${rootAssignee}\n`);
-    if (root.deps.length > 0) {
-      const depNames = root.deps
-        .map((depId) => {
-          const dep = taskMap.get(depId);
-          return dep ? `${dep.title} (${depId})` : depId;
-        })
-        .join(", ");
-      process.stdout.write(`→ depends on: ${depNames}\n`);
+    if (opts.flat) {
+      // Flat list view
+      const printTask = (t: Task, idx: number) => {
+        const priority = t.priority !== undefined ? `!${t.priority} ` : "";
+        const assignee = t.assignee ? ` @${t.assignee}` : "";
+        const num = String(idx + 1).padStart(3, " ");
+        const mark = t.status === "done" ? "✓" : " ";
+        const deps = formatDeps(t);
+        process.stdout.write(
+          `${mark}${num}. ${priority}${t.id}  ${t.title}${assignee}${deps}\n`
+        );
+      };
+
+      for (let i = 0; i < timeline.length; i++) {
+        printTask(timeline[i], i);
+      }
+    } else {
+      // Tree view (default)
+      if (!scopeId) {
+        process.stderr.write("Tree view requires a scope ID\n");
+        process.exit(1);
+      }
+
+      const root = await store.get(scopeId);
+      if (!root) {
+        process.stderr.write(`Task not found: ${scopeId}\n`);
+        process.exit(1);
+      }
+
+      const sortedChildrenMap = buildSortedChildrenMap(allTasks, orderMap);
+
+      const printTask = (
+        task: Task,
+        prefix: string,
+        connector: string,
+        depth: number
+      ) => {
+        const assignee = task.assignee ? ` @${task.assignee}` : "";
+        const priority =
+          task.priority !== undefined ? ` !${task.priority}` : "";
+        const mark = task.status === "done" ? "✓ " : "  ";
+        const deps = formatDeps(task);
+        process.stdout.write(
+          `${mark}${prefix}${connector}${task.id} [${task.status}] ${task.title}${priority}${assignee}${deps}\n`
+        );
+      };
+
+      // Print root
+      const rootAssignee = root.assignee ? ` @${root.assignee}` : "";
+      const rootPriority =
+        root.priority !== undefined ? ` !${root.priority}` : "";
+      const rootMark = root.status === "done" ? "✓ " : "  ";
+      const rootDeps = formatDeps(root);
+      process.stdout.write(
+        `${rootMark}${root.id} [${root.status}] ${root.title}${rootPriority}${rootAssignee}${rootDeps}\n`
+      );
+
+      // Recursively print children in execution order
+      const printChildren = (parentId: string, prefix: string, depth: number) => {
+        if (depth >= maxDepth) return;
+        const children = sortedChildrenMap.get(parentId) ?? [];
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          const isLast = i === children.length - 1;
+          const connector = isLast ? "└── " : "├── ";
+          const childPrefix = prefix + (isLast ? "    " : "│   ");
+
+          printTask(child, prefix, connector, depth);
+          printChildren(child.id, childPrefix, depth + 1);
+        }
+      };
+
+      printChildren(scopeId, "", 0);
     }
 
-    // Recursively print children (hierarchy)
-    const printChildren = async (parentId: string, prefix: string) => {
-      const children = await store.getChildren(parentId);
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i];
-        const isLast = i === children.length - 1;
-        const connector = isLast ? "└── " : "├── ";
-        const childPrefix = prefix + (isLast ? "    " : "│   ");
-
-        printTask(child, prefix, connector);
-        await printChildren(child.id, childPrefix);
-      }
-    };
-
-    await printChildren(id, "");
+    if (blocked.size > 0) {
+      process.stdout.write(`\n... +${blocked.size} blocked/unreachable\n`);
+    }
+    if (timeline.length === 0) {
+      process.stdout.write("No tasks.\n");
+    }
   });
 
 program
@@ -590,7 +710,7 @@ ${task.body || "(no body)"}
 ${acceptanceCriteriaText}${notesText}`;
 }
 
-function makePlannerPrompt(task: Task, context: string, iteration: number): string {
+function makePlannerPrompt(task: Task, context: string, reason: string): string {
   return `${context}
 
 ---
@@ -599,7 +719,9 @@ You are a PLANNER agent. You ORCHESTRATE work - you do NOT do the work yourself.
 
 Your job is to organize tasks so that WORKER agents can accomplish the top-level acceptance criteria.
 
-Current iteration: ${iteration}
+## Why you were called
+
+${reason}
 
 ## Planning vs Working
 
@@ -617,29 +739,71 @@ As a planner you must NOT:
 Take the task descriptions AS GIVEN and create well-organized subtasks for workers to investigate and implement.
 
 ## Task CLI Commands
-- \`task show ${task.id}\` - view task details with parent context
-- \`task list\` - see all tasks
-- \`task tree ${task.id}\` - see full task hierarchy
-- \`task children ${task.id}\` - list subtasks
-- \`task ready\` - see what's ready to work on
-- \`task create "title" --parent <id> --body "..." --accept "criterion"\` - create task (any level)
-- \`task update <id> --title "..." --body "..." --accept "criterion"\` - update task
+
+### Understanding the plan
+- \`task plan ${task.id}\` - **START HERE**: shows full execution timeline (done ✓ then pending in order)
+- \`task tree ${task.id}\` - see task hierarchy with dependencies (parent → children)
+- \`task show <id>\` - view task details, body, acceptance criteria, and notes
+- \`task children <id>\` - list direct children of a task
+- \`task ready --scope ${task.id}\` - see what's ready to work on right now
+- \`task blocked --scope ${task.id}\` - see what's blocked and why
+
+### Navigating the task tree
+
+The tree has two relationships:
+1. **Parent/children** (hierarchy): \`--parent <id>\` groups tasks. Use \`task tree\` and \`task children\`.
+2. **Dependencies** (ordering): \`--deps <id>\` blocks execution. Shown as \`← [dep1, dep2]\` in tree output.
+
+To understand what workers will actually implement, find the **leaf tasks** (tasks with no children).
+Parent tasks are just containers - workers execute leaf tasks.
+
+**Always navigate down to leaves:**
+\`\`\`
+task tree ${task.id}      # see full structure
+task children <parent>    # drill into a branch
+task show <leaf>          # read the actual work item
+\`\`\`
+
+When planning, ensure leaf tasks have:
+- Clear acceptance criteria (verifiable by judge)
+- Correct dependencies (won't run until deps are done)
+- Appropriate priority (controls order among siblings)
+
+### Modifying tasks
+- \`task create "title" --parent <id> --body "..." --accept "criterion" -p <priority>\` - create task
+- \`task update <id> --title "..." --body "..." -p <priority>\` - update task properties
+- \`task update <id> --accept "criterion"\` - add acceptance criterion
+- \`task update <id> --clear-acceptance -a "new criterion"\` - replace all acceptance criteria
+- \`task delete <id>\` - remove a task permanently
 - \`task note <id> "content"\` - add planning notes
-- \`task delete <id>\` - remove a task that's no longer needed
 - \`task fail <id>\` - mark task as failed if catastrophically stuck
+
+### Priority (-p flag)
+Priority controls execution order. **Lower number = higher priority** (executed first).
+- \`-p 0\` - critical/urgent, do immediately
+- \`-p 1\` - high priority
+- \`-p 2\` - normal priority
+- (no priority) - lowest, done after all prioritized tasks
+
+When user steers with urgent changes, set priority on new tasks to ensure they run BEFORE existing tasks.
+Example: \`task create "Fix critical bug" --parent ${task.id} -p 0 --accept "..."\`
+Example: \`task update <id> -p 0\` - bump existing task to run next
 
 ## Your Scope
 
 You can reorganize ANY task under this scope. The TOP-LEVEL task's acceptance criteria are IMMUTABLE - they are the north star. Everything else can be:
 
-- Broken down into subtasks
-- Deleted if no longer relevant
-- Reordered/reprioritized
-- Updated with better acceptance criteria
+- **Deleted** if no longer relevant (use \`task delete <id>\`)
+- **Reprioritized** to change execution order (use \`task update <id> -p <n>\`)
+- **Broken down** into subtasks
+- **Updated** with better acceptance criteria
 
-User steering notes override the task body - follow them.
+**You are FREE to delete tasks and start over.** If the plan isn't working, throw it away. If user steers in a new direction, delete obsolete tasks rather than leaving them in the queue.
 
-Always keep the top-level goal in mind when reorganizing.
+User steering notes (STEER:) override the task body - follow them immediately by:
+1. Creating new tasks with high priority (-p 0 or -p 1)
+2. Deleting tasks that are now obsolete
+3. Adjusting priorities on existing tasks if needed
 
 ## Writing Good Acceptance Criteria
 
@@ -659,6 +823,33 @@ Good examples:
 - "GET /api/users returns 200 with JSON array"
 - "File src/utils/parser.ts exports parseConfig function"
 - "Running \`node cli.js --help\` prints usage information"
+
+## Propagating Requirements to Subtasks
+
+Both body guidance AND acceptance criteria must be propagated to subtasks. Break them
+down so requirements are verified at each step, not deferred until the end.
+
+**Propagate body guidance** (process instructions → subtask criteria):
+
+Example: Body says "commit after each chunk of work"
+  → Add to EACH subtask: --accept "git status shows clean working tree"
+
+Example: Body says "run typecheck after each change"
+  → Add to EACH subtask: --accept "npm run typecheck exits 0"
+
+**Propagate acceptance criteria** (scope them to the subtask's module/area):
+
+Example: Top-level says "no test.skip added"
+  → Subtask for module X: --accept "no test.skip in src/modules/X/**"
+
+Example: Top-level says "npm test passes with 0 failures"
+  → Subtask for auth module: --accept "npm test src/auth passes with 0 failures"
+
+Example: Top-level says "coverage >= 80%"
+  → Subtask for utils: --accept "coverage for src/utils >= 80%"
+
+This ensures requirements are enforced incrementally. Don't wait until the end to
+verify - by then it's too late to fix without rework.
 
 ## TDD Pattern
 
@@ -700,6 +891,17 @@ Key points:
 5. If a task is catastrophically stuck with no clear path forward (repeated failures WITHOUT progress), mark it failed
 
 Note: Multiple iterations are fine if there's progress. Only mark failed if truly stuck with no way forward.
+
+## Before You Exit - Sanity Check
+
+ALWAYS run these checks before finishing:
+
+1. **Run \`task plan ${task.id}\`** - verify the execution order makes sense
+2. **Check priorities** - are urgent/steering tasks at the top (low priority numbers)?
+3. **Check acceptance criteria** - does every pending task have clear, verifiable criteria?
+4. **Clean up obsolete tasks** - delete anything that's no longer relevant
+
+If something looks wrong, fix it before exiting.
 
 DO NOT implement tasks. Only plan and organize.
 When done planning, simply exit. Do not mark tasks as done.
@@ -836,7 +1038,7 @@ program
     const runPlanner = async (task: Task, reason: string): Promise<boolean> => {
       log(logFile, `[PLANNER] Running ${plannerModel} (${reason})...`);
       const context = await buildTaskContext(task, scopeId);
-      const plannerPrompt = makePlannerPrompt(task, context, 1);
+      const plannerPrompt = makePlannerPrompt(task, context, reason);
       runAgentWithModel(plannerPrompt, plannerModel, logFile);
 
       // Check if planner created subtasks for this task
@@ -895,7 +1097,13 @@ program
         }
 
         const task = ready[0];
-        const workerModel = (task.assignee === "codex" ? "gpt-5.2" : "sonnet") as ModelName;
+        const baseModel = (
+          task.assignee === "codex" ? "gpt-5.2-codex" :
+          task.assignee ? task.assignee :
+          "sonnet"
+        ) as ModelName;
+        let workerModel = baseModel;
+        const canUpgrade = baseModel === "sonnet"; // Only upgrade if starting from sonnet
 
         log(logFile, `\n=== Starting task: ${task.id} - ${task.title} ===`);
         await store.start(task.id);
@@ -904,27 +1112,36 @@ program
         let iteration = 1;
         let taskDone = false;
         let consecutiveNotDone = 0;
-        let lastSeenSteerCount = task.notes.filter(n => n.content.startsWith("STEER:")).length;
+        // Track steering notes on scope (not leaf task) since that's where user adds them
+        const scopeTaskForSteer = scopeId ? await store.get(scopeId) : null;
+        let lastSeenSteerCount = scopeTaskForSteer?.notes.filter(n => n.content.startsWith("STEER:")).length ?? 0;
 
         while ((maxIterations === 0 || iteration <= maxIterations) && !taskDone) {
           const iterLabel = maxIterations === 0 ? `${iteration}` : `${iteration}/${maxIterations}`;
           log(logFile, `[WORKER] Iteration ${iterLabel} with ${workerModel}...`);
 
-          // Check for new steering notes before worker runs
-          const preTask = await store.get(task.id);
-          if (!preTask) break;
-          const currentSteerCount = preTask.notes.filter(n => n.content.startsWith("STEER:")).length;
-          if (enablePlanner && currentSteerCount > lastSeenSteerCount) {
-            const newSteers = preTask.notes.filter(n => n.content.startsWith("STEER:")).slice(lastSeenSteerCount);
-            log(logFile, `[STEER] New steering note detected - triggering planner`);
-            lastSeenSteerCount = currentSteerCount;
-            const shouldRestart = await runPlanner(preTask, `steering: ${newSteers.map(n => n.content).join("; ")}`);
-            if (shouldRestart) {
-              const updatedTask = await store.get(task.id);
-              if (updatedTask && updatedTask.status === "in_progress") {
-                await store.update(task.id, { status: "open" });
+          // Check for new steering notes on scope before worker runs
+          if (enablePlanner && scopeId) {
+            const freshScope = await store.get(scopeId);
+            if (freshScope) {
+              const currentSteerCount = freshScope.notes.filter(n => n.content.startsWith("STEER:")).length;
+              if (currentSteerCount > lastSeenSteerCount) {
+                const newSteers = freshScope.notes
+                  .filter(n => n.content.startsWith("STEER:"))
+                  .slice(lastSeenSteerCount)
+                  .map(n => n.content.replace(/^STEER:\s*/, ""));
+                log(logFile, `[STEER] New steering note detected - triggering planner`);
+                lastSeenSteerCount = currentSteerCount;
+                const reason = `User steering: ${newSteers.join("; ")}`;
+                const shouldRestart = await runPlanner(freshScope, reason);
+                if (shouldRestart) {
+                  const updatedTask = await store.get(task.id);
+                  if (updatedTask && updatedTask.status === "in_progress") {
+                    await store.update(task.id, { status: "open" });
+                  }
+                  break;
+                }
               }
-              break;
             }
           }
 
@@ -954,12 +1171,18 @@ program
             consecutiveNotDone = 0;
           } else {
             consecutiveNotDone++;
-            // Only replan after 5 consecutive NOT_DONEs
-            if (enablePlanner && consecutiveNotDone >= 5) {
-              log(logFile, `[JUDGE] ${consecutiveNotDone} consecutive NOT_DONE - triggering planner`);
-              const currentTask = await store.get(task.id);
-              if (currentTask) {
-                const shouldRestart = await runPlanner(currentTask, `${consecutiveNotDone} consecutive NOT_DONE`);
+            // Upgrade to opus on first NOT_DONE (if not already using opus)
+            if (canUpgrade && workerModel === "sonnet") {
+              workerModel = "opus";
+              log(logFile, `[WORKER] Upgrading to opus after NOT_DONE`);
+            }
+            // Only replan after 5 consecutive NOT_DONEs - use scope for bird's eye view
+            if (enablePlanner && consecutiveNotDone >= 5 && scopeId) {
+              log(logFile, `[JUDGE] ${consecutiveNotDone} consecutive NOT_DONE on ${task.id} - triggering planner`);
+              const scopeTask = await store.get(scopeId);
+              if (scopeTask) {
+                const reason = `task ${task.id} "${task.title}" got ${consecutiveNotDone} consecutive NOT_DONE`;
+                const shouldRestart = await runPlanner(scopeTask, reason);
                 consecutiveNotDone = 0;
                 if (shouldRestart) {
                   // Planner created subtasks or marked failed, restart the main loop

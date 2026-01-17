@@ -508,14 +508,6 @@ describe("ClaudeAgentClient (SDK integration)", () => {
           timeline.some(
             (item) =>
               item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "granted"
-          )
-        ).toBe(true);
-        expect(
-          timeline.some(
-            (item) =>
-              item.type === "tool_call" &&
               isPermissionCommandToolCall(item) &&
               item.status === "completed"
           )
@@ -578,14 +570,6 @@ describe("ClaudeAgentClient (SDK integration)", () => {
       try {
         expect(captured).not.toBeNull();
         expect(sawResolvedDeny).toBe(true);
-        expect(
-          timeline.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "denied"
-          )
-        ).toBe(true);
         expect(
           timeline.some(
             (item) =>
@@ -657,14 +641,6 @@ describe("ClaudeAgentClient (SDK integration)", () => {
         expect(captured).not.toBeNull();
         expect(sawResolvedInterrupt).toBe(true);
         expect(sawTerminalEvent).toBe(true);
-        expect(
-          timeline.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "denied"
-          )
-        ).toBe(true);
         expect(
           timeline.some(
             (item) =>

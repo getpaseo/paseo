@@ -26,6 +26,10 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-v2-"));
 }
 
+// Use gpt-5.1-codex-mini with low reasoning effort for faster test execution
+const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+const CODEX_TEST_REASONING_EFFORT = "low";
+
 function waitForSignal<T>(
   timeoutMs: number,
   setup: (
@@ -151,7 +155,9 @@ describe("daemon client v2 E2E", () => {
       });
 
       const agent = await ctx.client.createAgent({
-        provider: "codex",
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         title: "Daemon Client V2",
         requestId: createRequestId,
@@ -192,7 +198,9 @@ describe("daemon client v2 E2E", () => {
       });
 
       const failResult = await ctx.client.createAgentExpectFail({
-        provider: "codex",
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd: "/this/path/does/not/exist/12345",
         title: "Should Fail",
         requestId: failRequestId,
@@ -401,7 +409,9 @@ describe("daemon client v2 E2E", () => {
       const filePath = path.join(cwd, "permission.txt");
 
       const agent = await ctx.client.createAgent({
-        provider: "codex",
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         title: "Permission Test",
         modeId: "auto",
@@ -475,7 +485,9 @@ describe("daemon client v2 E2E", () => {
     async () => {
       const cwd = tmpCwd();
       const agent = await ctx.client.createAgent({
-        provider: "codex",
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         title: "Raw Events Test",
       });
@@ -656,7 +668,9 @@ describe("daemon client v2 E2E", () => {
       writeFileSync(downloadFile, downloadContents, "utf-8");
 
       const agent = await ctx.client.createAgent({
-        provider: "codex",
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         title: "Git/File Test",
       });

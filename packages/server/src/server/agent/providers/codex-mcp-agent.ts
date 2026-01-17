@@ -2555,6 +2555,11 @@ function buildCodexMcpConfig(
     innerConfig.mcp_servers = mcpServers;
   }
 
+  // Add reasoning effort to config if provided
+  if (typeof config.reasoningEffort === "string" && config.reasoningEffort.length > 0) {
+    innerConfig.model_reasoning_effort = config.reasoningEffort;
+  }
+
   const configPayload: {
     prompt: string;
     cwd?: string;
@@ -2578,6 +2583,7 @@ function buildCodexMcpConfig(
   if (typeof config.model === "string" && config.model.length > 0) {
     configPayload.model = config.model;
   }
+
 
   // Add developer instructions for session resume context
   if (developerInstructions) {
@@ -3113,17 +3119,6 @@ class CodexMcpAgentSession implements AgentSession {
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
     this.resolvedPermissionRequests.add(requestId);
-    const status = response.behavior === "allow" ? "granted" : "denied";
-    this.emitEvent({
-      type: "timeline",
-      provider: CODEX_PROVIDER,
-      item: createToolCallTimelineItem({
-        name: "permission",
-        status,
-        callId: pending.request.id,
-        input: pending.request.input,
-      }),
-    });
 
     this.emitEvent({
       type: "permission_resolved",
@@ -3453,16 +3448,6 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private emitPermissionRequested(request: AgentPermissionRequest): void {
-    this.emitEvent({
-      type: "timeline",
-      provider: CODEX_PROVIDER,
-      item: createToolCallTimelineItem({
-        name: "permission",
-        status: "requested",
-        callId: request.id,
-        input: request.input,
-      }),
-    });
     this.emitEvent({
       type: "permission_requested",
       provider: CODEX_PROVIDER,

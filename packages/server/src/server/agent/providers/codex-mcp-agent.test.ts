@@ -16,6 +16,10 @@ import type {
 
 type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
+// Use gpt-5.1-codex-mini with low reasoning effort for faster test execution
+const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+const CODEX_TEST_REASONING_EFFORT = "low";
+
 function tmpCwd(): string {
   return mkdtempSync(path.join(os.tmpdir(), "codex-mcp-e2e-"));
 }
@@ -406,6 +410,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -474,6 +480,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -502,6 +510,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -530,7 +540,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             if (event.item.type === "reasoning") {
               sawReasoning = true;
             }
-            if (event.item.type === "tool_call" && event.item.name !== "permission") {
+            if (event.item.type === "tool_call") {
               toolCalls.push(event.item);
             }
           }
@@ -604,6 +614,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
         extra: {
@@ -750,6 +762,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const nodeModulesPath = resolveNodeModulesPath();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
         extra: {
@@ -783,7 +797,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         for await (const event of session.stream(prompt)) {
           if (event.type === "timeline" && providerFromEvent(event) === "codex") {
-            if (event.item.type === "tool_call" && event.item.name !== "permission") {
+            if (event.item.type === "tool_call") {
               toolCalls.push(event.item);
             }
           }
@@ -894,6 +908,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -950,6 +966,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -1027,6 +1045,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
       } satisfies AgentSessionConfig;
@@ -1063,6 +1083,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1109,14 +1131,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         expect(session.getPendingPermissions()).toHaveLength(0);
         expect(
           timelineItems.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "granted"
-          )
-        ).toBe(true);
-        expect(
-          timelineItems.some(
             (item) => item.type === "tool_call" && item.name === "shell"
           )
         ).toBe(true);
@@ -1140,6 +1154,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "read-only",
         approvalPolicy: "on-request",
@@ -1171,14 +1187,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         }
 
         expect(captured).not.toBeNull();
-        expect(
-          timelineItems.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "requested"
-          )
-        ).toBe(true);
       } finally {
         await session?.close();
         rmSync(cwd, { recursive: true, force: true });
@@ -1197,6 +1205,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1242,14 +1252,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         expect(captured).not.toBeNull();
         expect(sawPermissionDenied).toBe(true);
-        expect(
-          timelineItems.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "denied"
-          )
-        ).toBe(true);
         expect(existsSync(filePath)).toBe(false);
       } finally {
         await session?.close();
@@ -1269,6 +1271,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
@@ -1323,14 +1327,6 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
 
         expect(captured).not.toBeNull();
         expect(sawPermissionResolved).toBe(true);
-        expect(
-          timelineItems.some(
-            (item) =>
-              item.type === "tool_call" &&
-              item.name === "permission" &&
-              item.status === "denied"
-          )
-        ).toBe(true);
         expect(sawTurnFailed).toBe(true);
         const message = failureMessage ? failureMessage : "";
         expect(message).toMatch(/aborted|interrupted/i);
@@ -1353,6 +1349,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",
@@ -1428,6 +1426,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       const client = new CodexMcpAgentClient();
       const config = {
         provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
         modeId: "full-access",
         approvalPolicy: "on-request",

@@ -7,6 +7,7 @@ import {
   allowPermission,
   denyPermission,
   waitForAgentIdle,
+  getToolCallCount,
 } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 
@@ -37,6 +38,10 @@ test.describe('permission prompts', () => {
           timeout: 10000,
         })
         .toBe(true);
+
+      // Verify exactly one tool call is visible (no duplicate permission badge)
+      const toolCallCount = await getToolCallCount(page);
+      expect(toolCallCount).toBe(1);
     } finally {
       await repo.cleanup();
     }
@@ -61,6 +66,10 @@ test.describe('permission prompts', () => {
       await waitForAgentIdle(page);
 
       expect(existsSync(filePath)).toBe(false);
+
+      // Verify exactly one tool call is visible (no duplicate permission badge)
+      const toolCallCount = await getToolCallCount(page);
+      expect(toolCallCount).toBe(1);
     } finally {
       await repo.cleanup();
     }

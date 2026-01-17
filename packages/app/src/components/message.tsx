@@ -1067,6 +1067,7 @@ interface ExpandableBadgeProps {
   isError?: boolean;
   isLastInSequence?: boolean;
   disableOuterSpacing?: boolean;
+  testID?: string;
 }
 
 const ExpandableBadge = memo(function ExpandableBadge({
@@ -1081,6 +1082,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   isError = false,
   isLastInSequence = false,
   disableOuterSpacing,
+  testID,
 }: ExpandableBadgeProps) {
   const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing =
@@ -1140,7 +1142,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }
 
   return (
-    <View style={[expandableBadgeStylesheet.container, style]}>
+    <View style={[expandableBadgeStylesheet.container, style]} testID={testID}>
       <Pressable
         onPress={hasDetails ? onToggle : undefined}
         disabled={!hasDetails}
@@ -1495,6 +1497,7 @@ export const ToolCall = memo(function ToolCall({
 
   return (
     <ExpandableBadge
+      testID="tool-call-badge"
       label={toolName}
       secondaryLabel={principalParam}
       icon={IconComponent}

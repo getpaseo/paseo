@@ -532,6 +532,7 @@ class ClaudeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     _options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
+    console.error(`[CLAUDE-AGENT:stream] starting stream for prompt: "${typeof prompt === 'string' ? prompt.substring(0, 50) : 'object'}"`);
     // Increment turn ID to invalidate any in-flight processPrompt() loops from previous turns.
     // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
     const turnId = ++this.currentTurnId;
@@ -584,8 +585,12 @@ class ClaudeAgentSession implements AgentSession {
       this.logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
     });
 
+    let eventCount = 0;
     try {
+      console.error(`[CLAUDE-AGENT:stream] starting for-await-of loop on queue`);
       for await (const event of queue) {
+        eventCount++;
+        console.error(`[CLAUDE-AGENT:stream] yielding event #${eventCount}: type=${event.type}${event.type === "timeline" ? ` item.type=${(event as any).item?.type}` : ""}`);
         yield event;
         if (
           event.type === "turn_completed" ||
@@ -593,9 +598,11 @@ class ClaudeAgentSession implements AgentSession {
           event.type === "turn_canceled"
         ) {
           finishedNaturally = true;
+          console.error(`[CLAUDE-AGENT:stream] terminal event reached: ${event.type}, total events: ${eventCount}`);
           break;
         }
       }
+      console.error(`[CLAUDE-AGENT:stream] queue iteration completed naturally, eventCount=${eventCount}`);
     } finally {
       if (!finishedNaturally && !cancelIssued) {
         requestCancel();
@@ -679,12 +686,6 @@ class ClaudeAgentSession implements AgentSession {
         updatedPermissions: this.normalizePermissionUpdates(response.updatedPermissions),
       };
       pending.resolve(result);
-      this.pushToolCall({
-        name: "permission",
-        status: "granted",
-        callId: pending.request.id,
-        input: pending.request.input,
-      });
     } else {
       const result: PermissionResult = {
         behavior: "deny",
@@ -692,12 +693,6 @@ class ClaudeAgentSession implements AgentSession {
         interrupt: response.interrupt,
       };
       pending.resolve(result);
-      this.pushToolCall({
-        name: "permission",
-        status: "denied",
-        callId: pending.request.id,
-        input: pending.request.input,
-      });
     }
 
     this.pushEvent({
@@ -967,6 +962,7 @@ class ClaudeAgentSession implements AgentSession {
     queue: Pushable<AgentStreamEvent>,
     turnId: number
   ) {
+    console.error(`[CLAUDE-AGENT:forwardPromptEvents] START turnId=${turnId}`);
     // Create a turn-local context to track streaming state.
     // This prevents race conditions when a new stream() call interrupts a running one.
     const turnContext: TurnContext = {
@@ -974,21 +970,27 @@ class ClaudeAgentSession implements AgentSession {
       streamedReasoningThisTurn: false,
     };
     let completedNormally = false;
+    let eventCount = 0;
     try {
       for await (const sdkEvent of this.processPrompt(message, turnId)) {
+        eventCount++;
         // Check if this turn has been superseded before pushing events
         if (this.currentTurnId !== turnId) {
+          console.error(`[CLAUDE-AGENT:forwardPromptEvents] turn superseded, breaking. currentTurnId=${this.currentTurnId} ourTurnId=${turnId}`);
           break;
         }
         const events = this.translateMessageToEvents(sdkEvent, turnContext);
         for (const event of events) {
           queue.push(event);
           if (event.type === "turn_completed") {
+            console.error(`[CLAUDE-AGENT:forwardPromptEvents] turn_completed pushed`);
             completedNormally = true;
           }
         }
       }
+      console.error(`[CLAUDE-AGENT:forwardPromptEvents] processPrompt loop done, eventCount=${eventCount} completedNormally=${completedNormally}`);
     } catch (error) {
+      console.error(`[CLAUDE-AGENT:forwardPromptEvents] ERROR: ${error}`);
       if (!this.turnCancelRequested && this.currentTurnId === turnId) {
         queue.push({
           type: "turn_failed",
@@ -1001,7 +1003,9 @@ class ClaudeAgentSession implements AgentSession {
       // Use turn_canceled (not turn_failed) to distinguish intentional interruption from errors.
       // Only emit if not already emitted by requestCancel() (indicated by turnCancelRequested).
       const wasSuperseded = this.currentTurnId !== turnId;
+      console.error(`[CLAUDE-AGENT:forwardPromptEvents] FINALLY wasSuperseded=${wasSuperseded} completedNormally=${completedNormally} turnCancelRequested=${this.turnCancelRequested}`);
       if (wasSuperseded && !completedNormally && !this.turnCancelRequested) {
+        console.error(`[CLAUDE-AGENT:forwardPromptEvents] pushing turn_canceled for superseded turn`);
         queue.push({
           type: "turn_canceled",
           provider: "claude",
@@ -1009,6 +1013,7 @@ class ClaudeAgentSession implements AgentSession {
         });
       }
       this.turnCancelRequested = false;
+      console.error(`[CLAUDE-AGENT:forwardPromptEvents] calling queue.end()`);
       queue.end();
     }
   }
@@ -1016,15 +1021,22 @@ class ClaudeAgentSession implements AgentSession {
   private async interruptActiveTurn(): Promise<void> {
     const queryToInterrupt = this.query;
     if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
+      this.logger.info("interruptActiveTurn: no query to interrupt");
       return;
     }
     try {
+      this.logger.info("interruptActiveTurn: calling query.interrupt()...");
+      const t0 = Date.now();
       await queryToInterrupt.interrupt();
+      this.logger.info({ durationMs: Date.now() - t0 }, "interruptActiveTurn: query.interrupt() returned");
       // After interrupt(), the query iterator is done (returns done: true).
       // Clear it so ensureQuery() creates a fresh query for the next turn.
       // Also end the input stream and call return() to clean up the SDK process.
       this.input?.end();
+      this.logger.info("interruptActiveTurn: calling query.return()...");
+      const t1 = Date.now();
       await queryToInterrupt.return?.();
+      this.logger.info({ durationMs: Date.now() - t1 }, "interruptActiveTurn: query.return() returned");
       this.query = null;
       this.input = null;
     } catch (error) {
@@ -1178,13 +1190,6 @@ class ClaudeAgentSession implements AgentSession {
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
-    this.pushToolCall({
-      name: "permission",
-      status: "requested",
-      callId: requestId,
-      input,
-    });
-
     this.pushEvent({ type: "permission_requested", provider: "claude", request });
 
     return await new Promise<PermissionResult>((resolve, reject) => {
@@ -1203,12 +1208,6 @@ class ClaudeAgentSession implements AgentSession {
         this.pendingPermissions.delete(requestId);
         cleanup();
         const error = new Error("Permission request timed out");
-        this.pushToolCall({
-          name: "permission",
-          status: "denied",
-          callId: requestId,
-          input,
-        });
         this.pushEvent({
           type: "permission_resolved",
           provider: "claude",
