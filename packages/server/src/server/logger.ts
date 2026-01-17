@@ -16,7 +16,7 @@ export function resolveLogConfig(
   const envFormat = process.env.PASEO_LOG_FORMAT as LogFormat | undefined;
 
   const level: LogLevel =
-    envLevel ?? persistedConfig?.log?.level ?? "info";
+    envLevel ?? persistedConfig?.log?.level ?? "debug";
   const format: LogFormat =
     envFormat ?? persistedConfig?.log?.format ?? "pretty";
 
