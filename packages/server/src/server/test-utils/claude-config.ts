@@ -1,14 +1,7 @@
-import { mkdtempSync, writeFileSync, copyFileSync, existsSync, rmSync } from "fs";
-import { tmpdir, homedir } from "os";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import path from "path";
-
-function copyClaudeCredentials(sourceDir: string, targetDir: string): void {
-  const sourceCredentials = path.join(sourceDir, ".credentials.json");
-  if (!existsSync(sourceCredentials)) {
-    return;
-  }
-  copyFileSync(sourceCredentials, path.join(targetDir, ".credentials.json"));
-}
+import { seedClaudeAuth } from "./claude-auth.js";
 
 /**
  * Sets up an isolated Claude config directory for testing.
@@ -22,8 +15,6 @@ function copyClaudeCredentials(sourceDir: string, targetDir: string): void {
  */
 export function useTempClaudeConfigDir(): () => void {
   const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const sourceConfigDir =
-    previousConfigDir ?? path.join(homedir(), ".claude");
   const configDir = mkdtempSync(path.join(tmpdir(), "claude-config-"));
   const settings = {
     permissions: {
@@ -40,7 +31,7 @@ export function useTempClaudeConfigDir(): () => void {
   const settingsText = `${JSON.stringify(settings, null, 2)}\n`;
   writeFileSync(path.join(configDir, "settings.json"), settingsText, "utf8");
   writeFileSync(path.join(configDir, "settings.local.json"), settingsText, "utf8");
-  copyClaudeCredentials(sourceConfigDir, configDir);
+  seedClaudeAuth(configDir);
   process.env.CLAUDE_CONFIG_DIR = configDir;
   return () => {
     if (previousConfigDir === undefined) {
