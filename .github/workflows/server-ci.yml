@@ -20,6 +20,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      # Claude authentication (required for Claude Code tests)
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_SESSION_TOKEN: ${{ secrets.CLAUDE_SESSION_TOKEN }}
+      # OpenAI authentication (required for Codex and OpenCode tests)
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +34,36 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+
+      - name: Preflight - Validate LLM credentials
+        run: |
+          # Fail fast if required credentials are missing
+          MISSING_VARS=()
+
+          # Claude requires EITHER ANTHROPIC_API_KEY OR CLAUDE_SESSION_TOKEN
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_SESSION_TOKEN" ]; then
+            MISSING_VARS+=("ANTHROPIC_API_KEY or CLAUDE_SESSION_TOKEN")
+          fi
+
+          # OpenAI API key required for Codex and OpenCode
+          if [ -z "$OPENAI_API_KEY" ]; then
+            MISSING_VARS+=("OPENAI_API_KEY")
+          fi
+
+          if [ ${#MISSING_VARS[@]} -gt 0 ]; then
+            echo "ERROR: Missing required LLM credentials for server tests"
+            echo "Please configure the following GitHub Actions secrets:"
+            for var in "${MISSING_VARS[@]}"; do
+              echo "  - $var"
+            done
+            echo ""
+            echo "Required secrets:"
+            echo "  - ANTHROPIC_API_KEY or CLAUDE_SESSION_TOKEN (for Claude Code tests)"
+            echo "  - OPENAI_API_KEY (for Codex and OpenCode tests)"
+            exit 1
+          fi
+
+          echo "✓ All required LLM credentials are configured"
 
       - name: Install server dependencies
         run: npm install --workspace=@paseo/server --include-workspace-root
