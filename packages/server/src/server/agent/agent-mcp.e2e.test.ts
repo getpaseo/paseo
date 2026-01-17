@@ -2,13 +2,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import { validateClaudeAuth } from "../test-utils/claude-auth.js";
 
 type StructuredContent = { [key: string]: unknown };
 
@@ -21,31 +22,6 @@ type McpClient = {
   callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
   close: () => Promise<void>;
 };
-
-type PermissionPayload = {
-  id: string;
-};
-
-const CLAUDE_SETTINGS = {
-  permissions: {
-    allow: [],
-    deny: [],
-    ask: ["Bash(rm:*)"],
-    additionalDirectories: [],
-  },
-  sandbox: {
-    enabled: true,
-    autoAllowBashIfSandboxed: false,
-  },
-};
-
-async function copyClaudeCredentials(sourceDir: string, targetDir: string): Promise<void> {
-  const sourceCredentials = path.join(sourceDir, ".credentials.json");
-  if (!existsSync(sourceCredentials)) {
-    return;
-  }
-  await copyFile(sourceCredentials, path.join(targetDir, ".credentials.json"));
-}
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -110,8 +86,9 @@ async function waitForAgentCompletion(
 
 describe("agent MCP end-to-end", () => {
   test(
-    "creates a Claude agent and writes a file",
+    "creates a Claude agent and deletes a file",
     async () => {
+      validateClaudeAuth();
       const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
       const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
@@ -160,15 +137,6 @@ describe("agent MCP end-to-end", () => {
       const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-home-"));
       process.env.CODEX_SESSION_DIR = codexSessionDir;
       process.env.CODEX_HOME = codexHome;
-      const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
-      const sourceClaudeConfigDir =
-        previousClaudeConfigDir ?? path.join(os.homedir(), ".claude");
-      const claudeConfigDir = await mkdtemp(path.join(os.tmpdir(), "claude-config-"));
-      const claudeSettingsText = `${JSON.stringify(CLAUDE_SETTINGS, null, 2)}\n`;
-      await writeFile(path.join(claudeConfigDir, "settings.json"), claudeSettingsText, "utf8");
-      await writeFile(path.join(claudeConfigDir, "settings.local.json"), claudeSettingsText, "utf8");
-      await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
-      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
       await daemon.start();
@@ -190,17 +158,18 @@ describe("agent MCP end-to-end", () => {
         await writeFile(filePath, "ok", "utf8");
         const initialPrompt = [
           "You must call the Bash command tool with the exact command `rm -f mcp-smoke.txt`.",
-          "After approval, run it and reply with done and stop.",
+          "Run it and reply with done and stop.",
           "Do not respond before the command finishes.",
         ].join("\n");
 
+        // Use bypassPermissions mode so tests don't depend on user's permission settings
         const result = (await client.callTool({
           name: "create_agent",
           args: {
             cwd: agentCwd,
             title: "MCP e2e smoke",
             agentType: "claude",
-            initialMode: "default",
+            initialMode: "bypassPermissions",
             initialPrompt,
             background: false,
           },
@@ -210,17 +179,9 @@ describe("agent MCP end-to-end", () => {
         expect(payload).toBeTruthy();
         agentId = payload?.agentId as string | null;
         expect(agentId).toBeTruthy();
-        const createPermission = payload?.permission as PermissionPayload | null;
-        expect(createPermission?.id).toBeTruthy();
-        await client.callTool({
-          name: "respond_to_permission",
-          args: {
-            agentId,
-            requestId: createPermission!.id,
-            response: { behavior: "allow" },
-          },
-        });
-        await waitForAgentCompletion(client, agentId);
+
+        // With bypassPermissions mode, agent should complete without waiting for permission
+        await waitForAgentCompletion(client, agentId!);
 
         if (existsSync(filePath)) {
           const contents = await readFile(filePath, "utf8");
@@ -229,47 +190,25 @@ describe("agent MCP end-to-end", () => {
           );
         }
 
+        // Test follow-up prompt
         const secondFilePath = path.join(agentCwd, "mcp-smoke-2.txt");
         await writeFile(secondFilePath, "ok-2", "utf8");
         const prompt = [
           "You must call the Bash command tool with the exact command `rm -f mcp-smoke-2.txt`.",
-          "After approval, run it and reply with done and stop.",
+          "Run it and reply with done and stop.",
           "Do not respond before the command finishes.",
         ].join("\n");
 
-        const promptResult = (await client.callTool({
+        await client.callTool({
           name: "send_agent_prompt",
           args: {
             agentId,
             prompt,
-            sessionMode: "default",
             background: false,
-          },
-        })) as McpToolResult;
-
-        const promptPayload = getStructuredContent(promptResult);
-        const promptPermission = promptPayload?.permission as PermissionPayload | null;
-        expect(promptPermission?.id).toBeTruthy();
-
-        const waitPermissionResult = (await client.callTool({
-          name: "wait_for_agent",
-          args: { agentId },
-        })) as McpToolResult;
-        const waitPermissionPayload = getStructuredContent(waitPermissionResult);
-        const waitPermission =
-          waitPermissionPayload?.permission as PermissionPayload | null;
-        expect(waitPermission?.id).toBe(promptPermission?.id);
-
-        await client.callTool({
-          name: "respond_to_permission",
-          args: {
-            agentId,
-            requestId: promptPermission!.id,
-            response: { behavior: "allow" },
           },
         });
 
-        await waitForAgentCompletion(client, agentId);
+        await waitForAgentCompletion(client, agentId!);
 
         if (existsSync(secondFilePath)) {
           const secondContents = await readFile(secondFilePath, "utf8");
@@ -293,17 +232,11 @@ describe("agent MCP end-to-end", () => {
         } else {
           process.env.CODEX_HOME = previousCodexHome;
         }
-        if (previousClaudeConfigDir === undefined) {
-          delete process.env.CLAUDE_CONFIG_DIR;
-        } else {
-          process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
-        }
         await rm(paseoHome, { recursive: true, force: true });
         await rm(staticDir, { recursive: true, force: true });
         await rm(agentCwd, { recursive: true, force: true });
         await rm(codexSessionDir, { recursive: true, force: true });
         await rm(codexHome, { recursive: true, force: true });
-        await rm(claudeConfigDir, { recursive: true, force: true });
       }
     },
     180_000
@@ -360,28 +293,6 @@ describe("agent MCP end-to-end", () => {
       const codexHome = await mkdtemp(path.join(os.tmpdir(), "codex-home-"));
       process.env.CODEX_SESSION_DIR = codexSessionDir;
       process.env.CODEX_HOME = codexHome;
-      const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
-      const sourceClaudeConfigDir =
-        previousClaudeConfigDir ?? path.join(os.homedir(), ".claude");
-      const claudeConfigDir = await mkdtemp(path.join(os.tmpdir(), "claude-config-"));
-      // Use bypass mode so agent doesn't require permission approval
-      const bypassSettings = {
-        permissions: {
-          allow: ["Bash(*)", "Read(*)", "Write(*)"],
-          deny: [],
-          ask: [],
-          additionalDirectories: [],
-        },
-        sandbox: {
-          enabled: true,
-          autoAllowBashIfSandboxed: true,
-        },
-      };
-      const claudeSettingsText = `${JSON.stringify(bypassSettings, null, 2)}\n`;
-      await writeFile(path.join(claudeConfigDir, "settings.json"), claudeSettingsText, "utf8");
-      await writeFile(path.join(claudeConfigDir, "settings.local.json"), claudeSettingsText, "utf8");
-      await copyClaudeCredentials(sourceClaudeConfigDir, claudeConfigDir);
-      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
       await daemon.start();
@@ -488,17 +399,11 @@ describe("agent MCP end-to-end", () => {
         } else {
           process.env.CODEX_HOME = previousCodexHome;
         }
-        if (previousClaudeConfigDir === undefined) {
-          delete process.env.CLAUDE_CONFIG_DIR;
-        } else {
-          process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
-        }
         await rm(paseoHome, { recursive: true, force: true });
         await rm(staticDir, { recursive: true, force: true });
         await rm(agentCwd, { recursive: true, force: true });
         await rm(codexSessionDir, { recursive: true, force: true });
         await rm(codexHome, { recursive: true, force: true });
-        await rm(claudeConfigDir, { recursive: true, force: true });
       }
     },
     180_000

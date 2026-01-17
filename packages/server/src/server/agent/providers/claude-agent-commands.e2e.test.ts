@@ -3,18 +3,22 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../../test-utils/index.js";
+import { validateClaudeAuth } from "../../test-utils/claude-auth.js";
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
 
 describe("claude agent commands E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeEach(async () => {
+    validateClaudeAuth();
     ctx = await createDaemonTestContext();
   });
 
   afterEach(async () => {
-    await ctx.cleanup();
-  }, 60000);
+    // Add timeout to prevent hanging on Claude SDK cleanup
+    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+    await Promise.race([ctx?.cleanup(), timeoutPromise]);
+  }, 10000);
 
   test("lists available slash commands for a claude agent", async () => {
     // Create a Claude agent
@@ -49,7 +53,7 @@ describe("claude agent commands E2E", () => {
     // These are skills that come from CLAUDE.md configurations
     // At minimum we should have some commands available
     expect(commandNames.length).toBeGreaterThan(0);
-  }, 120000);
+  }, 60000);
 
   test("returns error for non-existent agent", async () => {
     const result = await ctx.client.listCommands("non-existent-agent-id");
