@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentRegistry } from "./agent-registry.js";
 import type {
@@ -101,15 +102,18 @@ class TestAgentSession implements AgentSession {
 }
 
 describe("AgentManager", () => {
+  const logger = createTestLogger();
+
   test("normalizeConfig does not inject default model when omitted", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath);
+    const registry = new AgentRegistry(registryPath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
       registry,
+      logger,
       idFactory: () => "agent-without-model",
     });
 
@@ -124,12 +128,13 @@ describe("AgentManager", () => {
   test("createAgent persists provided title before returning", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath);
+    const registry = new AgentRegistry(registryPath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
       registry,
+      logger,
       idFactory: () => "agent-with-title",
     });
 
@@ -150,12 +155,13 @@ describe("AgentManager", () => {
   test("createAgent populates runtimeInfo after session creation", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath);
+    const registry = new AgentRegistry(registryPath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
       registry,
+      logger,
       idFactory: () => "agent-with-runtime-info",
     });
 
@@ -174,12 +180,13 @@ describe("AgentManager", () => {
   test("runAgent refreshes runtimeInfo after completion", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
     const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath);
+    const registry = new AgentRegistry(registryPath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
       registry,
+      logger,
       idFactory: () => "agent-with-run-runtime",
     });
 

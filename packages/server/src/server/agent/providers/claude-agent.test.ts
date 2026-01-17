@@ -15,6 +15,7 @@ import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
 import { useTempClaudeConfigDir } from "../../test-utils/claude-config.js";
 import {
@@ -106,16 +107,18 @@ type AgentMcpServerHandle = {
 };
 
 async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
+  const testLogger = createTestLogger();
   const app = express();
   app.use(express.json());
   const httpServer = createHTTPServer(app);
 
   const registryDir = mkdtempSync(path.join(os.tmpdir(), "agent-mcp-registry-"));
   const registryPath = path.join(registryDir, "agents.json");
-  const agentRegistry = new AgentRegistry(registryPath);
+  const agentRegistry = new AgentRegistry(registryPath, testLogger);
   const agentManager = new AgentManager({
     clients: {},
     registry: agentRegistry,
+    logger: testLogger,
   });
 
   let allowedHosts: string[] | undefined;
@@ -126,6 +129,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
       agentManager,
       agentRegistry,
       callerAgentId,
+      logger: testLogger,
     });
 
     const transport = new StreamableHTTPServerTransport({
@@ -221,6 +225,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
 }
 
 describe("ClaudeAgentClient (SDK integration)", () => {
+  const logger = createTestLogger();
   let agentMcpServer: AgentMcpServerHandle;
   let restoreClaudeConfigDir: (() => void) | null = null;
   const buildConfig = (
@@ -257,7 +262,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "responds with text",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
@@ -278,7 +283,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "streams reasoning chunks",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
@@ -310,7 +315,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "emits a single assistant message in the hydrated stream",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
       const updates: StreamHydrationUpdate[] = [];
@@ -344,7 +349,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "shows the command inside pending tool calls",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
@@ -381,7 +386,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "tracks permission + tool lifecycle when editing a file",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
@@ -459,7 +464,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "permission flow parity - allows command after approval",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
@@ -524,7 +529,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "permission flow parity - denies command execution",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
@@ -590,7 +595,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "permission flow parity - aborts on interrupt response",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024, modeId: "default" });
       const session = await client.createSession(config);
       const filePath = path.join(cwd, "permission.txt");
@@ -661,7 +666,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "interrupts a long-running bash command before it finishes",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       let session: Awaited<ReturnType<typeof client.createSession>> | null = null;
       let runStartedAt: number | null = null;
@@ -719,7 +724,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "supports multi-turn conversations",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
 
@@ -741,7 +746,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "resumes a persisted session with context preserved",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
@@ -822,7 +827,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "updates session modes",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
       const session = await client.createSession(config);
 
@@ -847,7 +852,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "handles plan mode approval flow",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 2048 });
       const session = await client.createSession(config);
       await session.setMode("plan");
@@ -889,7 +894,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "hydrates persisted tool call results into the UI stream",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 4096 });
       const session = await client.createSession(config);
       const prompt = [
@@ -1020,7 +1025,7 @@ describe("ClaudeAgentClient (SDK integration)", () => {
     "hydrates user messages from persisted history",
     async () => {
       const cwd = tmpCwd();
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const config = buildConfig(cwd, { maxThinkingTokens: 1024 });
 
       const promptMarker = `HYDRATED_USER_${Date.now().toString(36)}`;
@@ -1284,10 +1289,12 @@ function rawContainsText(raw: unknown, text: string, depth = 0): boolean {
 // in daemon.e2e.test.ts which exercises the full flow through the WebSocket API.
 
 describe("ClaudeAgentClient.listModels", () => {
+  const logger = createTestLogger();
+
   test(
     "returns models with required fields",
     async () => {
-      const client = new ClaudeAgentClient();
+      const client = new ClaudeAgentClient({ logger });
       const models = await client.listModels();
 
       // HARD ASSERT: Returns an array
