@@ -532,7 +532,6 @@ class ClaudeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     _options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
-    console.error(`[CLAUDE-AGENT:stream] starting stream for prompt: "${typeof prompt === 'string' ? prompt.substring(0, 50) : 'object'}"`);
     // Increment turn ID to invalidate any in-flight processPrompt() loops from previous turns.
     // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
     const turnId = ++this.currentTurnId;
@@ -585,12 +584,8 @@ class ClaudeAgentSession implements AgentSession {
       this.logger.error({ err: error }, "Unexpected error in forwardPromptEvents");
     });
 
-    let eventCount = 0;
     try {
-      console.error(`[CLAUDE-AGENT:stream] starting for-await-of loop on queue`);
       for await (const event of queue) {
-        eventCount++;
-        console.error(`[CLAUDE-AGENT:stream] yielding event #${eventCount}: type=${event.type}${event.type === "timeline" ? ` item.type=${(event as any).item?.type}` : ""}`);
         yield event;
         if (
           event.type === "turn_completed" ||
@@ -598,11 +593,9 @@ class ClaudeAgentSession implements AgentSession {
           event.type === "turn_canceled"
         ) {
           finishedNaturally = true;
-          console.error(`[CLAUDE-AGENT:stream] terminal event reached: ${event.type}, total events: ${eventCount}`);
           break;
         }
       }
-      console.error(`[CLAUDE-AGENT:stream] queue iteration completed naturally, eventCount=${eventCount}`);
     } finally {
       if (!finishedNaturally && !cancelIssued) {
         requestCancel();
@@ -789,6 +782,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = new Pushable<SDKUserMessage>();
     const options = this.buildOptions();
+    this.logger.debug({ options }, "claude query");
     this.input = input;
     this.query = query({ prompt: input, options });
     await this.query.setPermissionMode(this.currentMode);
@@ -855,7 +849,6 @@ class ClaudeAgentSession implements AgentSession {
     this.lastOptionsModel = base.model ?? null;
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
-      base.continue = true;
     }
     return base;
   }
@@ -962,7 +955,6 @@ class ClaudeAgentSession implements AgentSession {
     queue: Pushable<AgentStreamEvent>,
     turnId: number
   ) {
-    console.error(`[CLAUDE-AGENT:forwardPromptEvents] START turnId=${turnId}`);
     // Create a turn-local context to track streaming state.
     // This prevents race conditions when a new stream() call interrupts a running one.
     const turnContext: TurnContext = {
@@ -970,27 +962,21 @@ class ClaudeAgentSession implements AgentSession {
       streamedReasoningThisTurn: false,
     };
     let completedNormally = false;
-    let eventCount = 0;
     try {
       for await (const sdkEvent of this.processPrompt(message, turnId)) {
-        eventCount++;
         // Check if this turn has been superseded before pushing events
         if (this.currentTurnId !== turnId) {
-          console.error(`[CLAUDE-AGENT:forwardPromptEvents] turn superseded, breaking. currentTurnId=${this.currentTurnId} ourTurnId=${turnId}`);
           break;
         }
         const events = this.translateMessageToEvents(sdkEvent, turnContext);
         for (const event of events) {
           queue.push(event);
           if (event.type === "turn_completed") {
-            console.error(`[CLAUDE-AGENT:forwardPromptEvents] turn_completed pushed`);
             completedNormally = true;
           }
         }
       }
-      console.error(`[CLAUDE-AGENT:forwardPromptEvents] processPrompt loop done, eventCount=${eventCount} completedNormally=${completedNormally}`);
     } catch (error) {
-      console.error(`[CLAUDE-AGENT:forwardPromptEvents] ERROR: ${error}`);
       if (!this.turnCancelRequested && this.currentTurnId === turnId) {
         queue.push({
           type: "turn_failed",
@@ -1003,9 +989,7 @@ class ClaudeAgentSession implements AgentSession {
       // Use turn_canceled (not turn_failed) to distinguish intentional interruption from errors.
       // Only emit if not already emitted by requestCancel() (indicated by turnCancelRequested).
       const wasSuperseded = this.currentTurnId !== turnId;
-      console.error(`[CLAUDE-AGENT:forwardPromptEvents] FINALLY wasSuperseded=${wasSuperseded} completedNormally=${completedNormally} turnCancelRequested=${this.turnCancelRequested}`);
       if (wasSuperseded && !completedNormally && !this.turnCancelRequested) {
-        console.error(`[CLAUDE-AGENT:forwardPromptEvents] pushing turn_canceled for superseded turn`);
         queue.push({
           type: "turn_canceled",
           provider: "claude",
@@ -1013,7 +997,6 @@ class ClaudeAgentSession implements AgentSession {
         });
       }
       this.turnCancelRequested = false;
-      console.error(`[CLAUDE-AGENT:forwardPromptEvents] calling queue.end()`);
       queue.end();
     }
   }
