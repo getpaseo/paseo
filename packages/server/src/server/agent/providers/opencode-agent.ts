@@ -202,9 +202,15 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: openCodeConfig.cwd,
     });
 
-    const response = await client.session.create({
-      directory: openCodeConfig.cwd,
+    // Set a timeout for session creation to fail fast
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("OpenCode session.create timed out after 10s")), 10_000);
     });
+
+    const response = await Promise.race([
+      client.session.create({ directory: openCodeConfig.cwd }),
+      timeoutPromise,
+    ]);
 
     if (response.error) {
       throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
@@ -249,9 +255,15 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: options?.cwd ?? process.cwd(),
     });
 
-    const response = await client.provider.list({
-      directory: options?.cwd ?? process.cwd(),
+    // Set a timeout for the API call to fail fast if OpenCode isn't responding
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("OpenCode provider.list timed out after 10s - server may not be authenticated or connected to any providers")), 10_000);
     });
+
+    const response = await Promise.race([
+      client.provider.list({ directory: options?.cwd ?? process.cwd() }),
+      timeoutPromise,
+    ]);
 
     if (response.error) {
       throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
@@ -264,6 +276,11 @@ export class OpenCodeAgentClient implements AgentClient {
 
     // Only include models from connected providers (ones that are actually available)
     const connectedProviderIds = new Set(providers.connected);
+
+    // Fail fast if no providers are connected
+    if (connectedProviderIds.size === 0) {
+      throw new Error("OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).");
+    }
 
     const models: AgentModelDefinition[] = [];
     for (const provider of providers.all) {

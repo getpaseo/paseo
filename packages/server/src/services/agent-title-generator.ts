@@ -41,12 +41,12 @@ export async function generateAgentTitle(
   }
 
   try {
-    const { object } = await generateObject({
-      model: openai("gpt-5-nano"),
-      schema: z.object({
-        title: z.string().describe("A concise 3-5 word title describing what the agent is working on"),
-      }),
-      prompt: `Generate a concise title for this agent session. The title should describe what the user asked the agent to do.
+    const titleSchema = z.object({
+      title: z.string().describe("A concise 3-5 word title describing what the agent is working on"),
+    });
+
+    const model = openai("gpt-4o-mini");
+    const prompt = `Generate a concise title for this agent session. The title should describe what the user asked the agent to do.
 
 IMPORTANT: Focus primarily on [User] messages to understand the task. User messages contain the actual request - use their words and intent to name the chat. Tool calls and assistant messages are just implementation details and should NOT drive the title.
 
@@ -55,9 +55,16 @@ Be specific but brief (3-5 words). Examples: "Fix Authentication Bug", "Build Da
 Working directory: ${cwd}
 
 Activity:
-${activityContext}`,
+${activityContext}`;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (generateObject as any)({
+      model,
+      schema: titleSchema,
+      prompt,
       temperature: 0.7,
     });
+    const object = result.object as z.infer<typeof titleSchema>;
 
     titleLogger.debug({ title: object.title }, "Generated agent title");
 
