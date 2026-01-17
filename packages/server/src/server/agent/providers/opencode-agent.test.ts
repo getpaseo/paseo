@@ -91,15 +91,18 @@ describe("OpenCodeAgentClient", () => {
 
     logger.info({ modelCount: models.length, elapsed: Date.now() - startTime }, "beforeAll: Retrieved models");
 
-    // Prefer free models (especially gpt-4o-mini which is fast and cheap)
-    const freeModel = models.find((m) =>
+    // Prefer fast models for tests - nano models are typically fastest
+    const fastModel = models.find((m) =>
+      m.id.includes("gpt-4.1-nano") ||
+      m.id.includes("gpt-5-nano") ||
+      m.id.includes("gpt-5.1-codex-mini") ||
       m.id.includes("gpt-4o-mini") ||
       m.id.includes("gpt-3.5") ||
       m.id.includes("free")
     );
 
-    if (freeModel) {
-      TEST_MODEL = freeModel.id;
+    if (fastModel) {
+      TEST_MODEL = fastModel.id;
     } else if (models.length > 0) {
       // Fallback to any available model
       TEST_MODEL = models[0].id;
