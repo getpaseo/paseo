@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentRegistry } from "./agent-registry.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -94,11 +95,12 @@ describe("AgentRegistry", () => {
   let tmpDir: string;
   let filePath: string;
   let registry: AgentRegistry;
+  const logger = createTestLogger();
 
   beforeEach(() => {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), "agent-registry-"));
     filePath = path.join(tmpDir, "agents.json");
-    registry = new AgentRegistry(filePath);
+    registry = new AgentRegistry(filePath, logger);
   });
 
   afterEach(() => {
@@ -129,7 +131,7 @@ describe("AgentRegistry", () => {
     expect(record.lastModeId).toBe("coding");
     expect(record.lastStatus).toBe("idle");
 
-    const reloaded = new AgentRegistry(filePath);
+    const reloaded = new AgentRegistry(filePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
@@ -172,7 +174,7 @@ describe("AgentRegistry", () => {
     const current = await registry.get("agent-2");
     expect(current?.title).toBe("Fix Login Bug");
 
-    const reloaded = new AgentRegistry(filePath);
+    const reloaded = new AgentRegistry(filePath, logger);
     const persisted = await reloaded.get("agent-2");
     expect(persisted?.title).toBe("Fix Login Bug");
   });
@@ -239,7 +241,7 @@ describe("AgentRegistry", () => {
       `${JSON.stringify(payload, null, 2)}\nGARBAGE-TRAILING`
     );
 
-    const reloaded = new AgentRegistry(filePath);
+    const reloaded = new AgentRegistry(filePath, logger);
     const result = await reloaded.list();
     expect(result).toHaveLength(1);
     expect(result[0]?.title).toBe("Recovered agent");

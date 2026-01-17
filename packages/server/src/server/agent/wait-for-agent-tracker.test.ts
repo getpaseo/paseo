@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 
 describe("WaitForAgentTracker", () => {
+  const logger = createTestLogger();
+
   it("registers and cancels waiters per agent", () => {
-    const tracker = new WaitForAgentTracker();
+    const tracker = new WaitForAgentTracker(logger);
     const cancelA = vi.fn();
     const cancelB = vi.fn();
 
@@ -26,7 +29,7 @@ describe("WaitForAgentTracker", () => {
   });
 
   it("supports cancelling all waiters", () => {
-    const tracker = new WaitForAgentTracker();
+    const tracker = new WaitForAgentTracker(logger);
     const cancelA = vi.fn();
     const cancelB = vi.fn();
 

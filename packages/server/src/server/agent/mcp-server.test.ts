@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentRegistry } from "./agent-registry.js";
@@ -45,9 +46,11 @@ function createTestDeps(): TestDeps {
 }
 
 describe("create_agent MCP tool", () => {
+  const logger = createTestLogger();
+
   it("requires a concise title no longer than 40 characters", async () => {
     const { agentManager, agentRegistry } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentRegistry });
+    const server = await createAgentMcpServer({ agentManager, agentRegistry, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     expect(tool).toBeDefined();
 
@@ -84,7 +87,7 @@ describe("create_agent MCP tool", () => {
       availableModes: [],
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentRegistry });
+    const server = await createAgentMcpServer({ agentManager, agentRegistry, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     await tool.callback({
       cwd: "/tmp/repo",
