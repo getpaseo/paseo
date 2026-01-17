@@ -9,7 +9,6 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import pino from "pino";
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
-import { validateClaudeAuth } from "../test-utils/claude-auth.js";
 
 type StructuredContent = { [key: string]: unknown };
 
@@ -88,7 +87,6 @@ describe("agent MCP end-to-end", () => {
   test(
     "creates a Claude agent and deletes a file",
     async () => {
-      validateClaudeAuth();
       const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
       const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));

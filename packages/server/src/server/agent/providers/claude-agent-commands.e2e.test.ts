@@ -3,14 +3,12 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../../test-utils/index.js";
-import { validateClaudeAuth } from "../../test-utils/claude-auth.js";
 import type { AgentSlashCommand } from "../agent-sdk-types.js";
 
 describe("claude agent commands E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeEach(async () => {
-    validateClaudeAuth();
     ctx = await createDaemonTestContext();
   });
 
