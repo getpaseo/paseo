@@ -971,9 +971,28 @@ The ONLY question: Does the acceptance criterion pass when verified? Yes or No.
 
 If an agent left notes explaining why something couldn't be done, IGNORE THE EXPLANATION. Just check: is the criterion met?
 
+## REQUIRED: Provide Feedback to the Worker
+
+After verifying, you MUST leave feedback for the worker by adding a note. The worker will read
+this note in the next iteration - it's their ONLY way to know what went wrong and what's missing.
+
+\`\`\`
+task note ${task.id} "JUDGE: [verdict] - [specific feedback for the worker]"
+\`\`\`
+
+Your feedback should tell the worker exactly what to fix:
+- Which specific tests failed and with what error messages
+- Which files or commands still need attention
+- What's missing from the acceptance criteria
+
+BAD: "tests failed" (useless - worker doesn't know which ones)
+GOOD: "3 tests fail: codex-mcp-agent.test.ts 'Session not found', opencode-agent.test.ts timeout after 60s, tool-calls.e2e.test.ts shell assertion"
+
+The worker cannot see your output - only the notes you leave.
+
 ## Output Format - CRITICAL
 
-You MUST output one of these XML tags at the END of your response. This is REQUIRED for the system to parse your verdict:
+You MUST output one of these XML tags at the END of your response:
 
 If ALL criteria pass:
 <VERDICT>DONE</VERDICT>
@@ -981,10 +1000,7 @@ If ALL criteria pass:
 If ANY criterion fails:
 <VERDICT>NOT_DONE</VERDICT>
 
-If you do not include this exact XML tag, your verdict will not be recorded and the task will retry.
-
-Then add a note to the task with your findings:
-\`task note ${task.id} "JUDGE: [DONE/NOT_DONE] - details..."\`
+If you do not include this exact XML tag, your verdict will not be recorded.
 `;
 }
 
