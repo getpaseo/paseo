@@ -2,9 +2,15 @@ import { test, expect } from './fixtures';
 import { createAgent, ensureHostSelected, gotoHome, setWorkingDirectory } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
 import type { Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
-function addFakeMicrophone(page: Page) {
-  return page.addInitScript(() => {
+async function addFakeMicrophone(page: Page) {
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'recording.webm');
+  const base64Audio = (await readFile(fixturePath)).toString('base64');
+  const mimeType = 'audio/webm;codecs=opus';
+
+  return page.addInitScript(({ base64Audio, mimeType }) => {
     const mic = {
       active: 0,
       getUserMediaCalls: 0,
@@ -13,29 +19,34 @@ function addFakeMicrophone(page: Page) {
     };
     (window as any).__mic = mic;
 
-    const ensureMediaDevices = () => {
-      const nav = navigator as any;
-      if (!nav.mediaDevices) {
-        nav.mediaDevices = {};
-      }
-      if (typeof nav.mediaDevices.getUserMedia !== 'function') {
-        nav.mediaDevices.getUserMedia = async () => {
-          mic.getUserMediaCalls += 1;
-          mic.active += 1;
-          const track = {
-            stop: () => {
-              mic.stopCalls += 1;
-              mic.active = Math.max(0, mic.active - 1);
-            },
-          };
-          return {
-            getTracks: () => [track],
-          };
-        };
-      }
+    (window as any).isSecureContext = true;
+
+    const nav = navigator as any;
+    if (!nav.mediaDevices) {
+      nav.mediaDevices = {};
+    }
+    nav.mediaDevices.getUserMedia = async () => {
+      mic.getUserMediaCalls += 1;
+      mic.active += 1;
+      const track = {
+        stop: () => {
+          mic.stopCalls += 1;
+          mic.active = Math.max(0, mic.active - 1);
+        },
+      };
+      return {
+        getTracks: () => [track],
+      };
     };
 
-    ensureMediaDevices();
+    const blobFromBase64 = (base64: string, mimeType: string): Blob => {
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: mimeType });
+    };
 
     class FakeMediaRecorder extends EventTarget {
       public static isTypeSupported() {
@@ -64,7 +75,7 @@ function addFakeMicrophone(page: Page) {
         this.state = 'inactive';
         try {
           this.ondataavailable?.({
-            data: new Blob(['paseo-e2e-audio'], { type: this.mimeType }),
+            data: blobFromBase64(base64Audio, mimeType),
           });
         } catch (err) {
           this.onerror?.(err);
@@ -74,7 +85,7 @@ function addFakeMicrophone(page: Page) {
     }
 
     (window as any).MediaRecorder = FakeMediaRecorder;
-  });
+  }, { base64Audio, mimeType });
 }
 
 test('dictation hotkeys do not trigger on background screens', async ({ page }) => {
@@ -88,6 +99,7 @@ test('dictation hotkeys do not trigger on background screens', async ({ page }) 
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent\//);
+    await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
 
     await page.keyboard.press('Control+d');
     await page.waitForTimeout(200);
@@ -107,6 +119,33 @@ test('dictation hotkeys do not trigger on background screens', async ({ page }) 
   }
 });
 
+test('dictation transcribes fixture via real STT', async ({ page }) => {
+  await addFakeMicrophone(page);
+
+  const repo = await createTempGitRepo();
+  try {
+    await gotoHome(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, 'Respond with exactly: Hello');
+
+    await expect(page).toHaveURL(/\/agent\//);
+    await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
+
+    await page.keyboard.press('Control+d');
+    await expect
+      .poll(async () => page.evaluate(() => (window as any).__mic.active as number))
+      .toBe(1);
+
+    await page.keyboard.press('Control+d');
+
+    const transcriptLocator = page.getByText(/voice note/i);
+    await expect(transcriptLocator).toBeVisible({ timeout: 60_000 });
+  } finally {
+    await repo.cleanup();
+  }
+});
+
 test('cancel stops mic even if recorder is already inactive', async ({ page }) => {
   await addFakeMicrophone(page);
 
@@ -118,6 +157,7 @@ test('cancel stops mic even if recorder is already inactive', async ({ page }) =
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent\//);
+    await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
 
     await page.keyboard.press('Control+d');
     await expect
@@ -135,6 +175,44 @@ test('cancel stops mic even if recorder is already inactive', async ({ page }) =
     await expect
       .poll(async () => page.evaluate(() => (window as any).__mic.active as number))
       .toBe(0);
+  } finally {
+    await repo.cleanup();
+  }
+});
+
+test('dictation confirm+send does not dispatch after navigating away', async ({ page }) => {
+  await addFakeMicrophone(page);
+
+  const repo = await createTempGitRepo();
+  try {
+    await gotoHome(page);
+    await setWorkingDirectory(page, repo.path);
+    await ensureHostSelected(page);
+    await createAgent(page, 'Respond with exactly: Hello');
+
+    await expect(page).toHaveURL(/\/agent\//);
+    await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
+
+    await page.keyboard.press('Control+d');
+    await expect
+      .poll(async () => page.evaluate(() => (window as any).__mic.active as number))
+      .toBe(1);
+
+    await page.keyboard.press('Control+d');
+
+    const newAgentButton = page.getByText('New Agent', { exact: true }).first();
+    await expect(newAgentButton).toBeVisible();
+    await newAgentButton.click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await page.waitForTimeout(10_000);
+
+    const agentEntry = page.getByText(repo.path).first();
+    await expect(agentEntry).toBeVisible();
+    await agentEntry.click();
+    await expect(page).toHaveURL(/\/agent\//);
+
+    await expect(page.getByText(/voice note/i)).not.toBeVisible();
   } finally {
     await repo.cleanup();
   }

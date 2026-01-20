@@ -54,6 +54,8 @@ export interface MessageInputProps {
   placeholder?: string;
   autoFocus?: boolean;
   disabled?: boolean;
+  /** True when the containing screen is focused (React Navigation). Used to disable global hotkeys and cancel dictation when unfocused. */
+  isScreenFocused?: boolean;
   /** Content to render on the left side of the button row (e.g., AgentStatusBar) */
   leftContent?: React.ReactNode;
   /** Content to render on the right side after voice button (e.g., realtime button, cancel button) */
@@ -105,6 +107,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       placeholder = "Message...",
       autoFocus = false,
       disabled = false,
+      isScreenFocused = true,
       leftContent,
       rightContent,
       isAgentRunning = false,
@@ -202,12 +205,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     onError: handleDictationError,
     canStart: canStartDictation,
     canConfirm: canConfirmDictation,
+    autoStopWhenHidden: { isVisible: isScreenFocused },
     enableDuration: true,
   });
 
+  useEffect(() => {
+    if (isDictating || isDictationProcessing || dictationStatus === "retrying") {
+      return;
+    }
+    sendAfterTranscriptRef.current = false;
+  }, [dictationStatus, isDictating, isDictationProcessing]);
+
   // Cmd+D to start/submit dictation, Escape to cancel
   useEffect(() => {
-    if (!IS_WEB) return;
+    if (!IS_WEB || !isScreenFocused) return;
     function handleKeyDown(event: KeyboardEvent) {
       // Cmd+D: start dictation or submit if already dictating
       if ((event.metaKey || event.ctrlKey) && event.key === "d") {
