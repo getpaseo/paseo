@@ -19,8 +19,14 @@ async function main() {
 
   await daemon.start();
 
+  let shuttingDown = false;
   const handleShutdown = async (signal: string) => {
-    logger.info(`${signal} received, shutting down gracefully...`);
+    if (shuttingDown) {
+      logger.info("Forcing exit...");
+      process.exit(1);
+    }
+    shuttingDown = true;
+    logger.info(`${signal} received, shutting down gracefully... (press Ctrl+C again to force exit)`);
 
     const forceExit = setTimeout(() => {
       logger.warn("Forcing shutdown - HTTP server didn't close in time");

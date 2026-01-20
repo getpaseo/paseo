@@ -103,6 +103,20 @@ describe("FileTaskStore", () => {
       expect(task.created >= before).toBe(true);
       expect(task.created <= after).toBe(true);
     });
+
+    it("returns task with raw content", async () => {
+      const task = await store.create("Test task", {
+        body: "Task body here",
+        acceptanceCriteria: ["criterion 1", "criterion 2"],
+      });
+
+      expect(task.raw).toContain("---");
+      expect(task.raw).toContain("title: Test task");
+      expect(task.raw).toContain("Task body here");
+      expect(task.raw).toContain("## Acceptance Criteria");
+      expect(task.raw).toContain("criterion 1");
+      expect(task.raw).toContain("criterion 2");
+    });
   });
 
   describe("get", () => {
@@ -124,6 +138,24 @@ describe("FileTaskStore", () => {
       const retrieved = await store.get(created.id);
 
       expect(retrieved?.assignee).toBe("codex");
+    });
+
+    it("returns raw content matching the file", async () => {
+      const created = await store.create("Task with body", {
+        body: "Some body content",
+        acceptanceCriteria: ["test passes", "lint passes"],
+      });
+      await store.addNote(created.id, "A note was added");
+
+      const retrieved = await store.get(created.id);
+
+      expect(retrieved?.raw).toContain("title: Task with body");
+      expect(retrieved?.raw).toContain("Some body content");
+      expect(retrieved?.raw).toContain("## Acceptance Criteria");
+      expect(retrieved?.raw).toContain("test passes");
+      expect(retrieved?.raw).toContain("lint passes");
+      expect(retrieved?.raw).toContain("## Notes");
+      expect(retrieved?.raw).toContain("A note was added");
     });
   });
 
@@ -934,6 +966,29 @@ describe("FileTaskStore", () => {
       const retrieved = await store2.get(task.id);
 
       expect(retrieved?.priority).toBe(3);
+    });
+
+    it("persists raw content across store instances", async () => {
+      const task = await store.create("Task with everything", {
+        body: "Detailed body",
+        acceptanceCriteria: ["tests pass", "build succeeds"],
+        assignee: "claude",
+        priority: 1,
+      });
+      await store.addNote(task.id, "Implementation note");
+
+      const store2 = new FileTaskStore(tempDir);
+      const retrieved = await store2.get(task.id);
+
+      expect(retrieved?.raw).toContain("title: Task with everything");
+      expect(retrieved?.raw).toContain("Detailed body");
+      expect(retrieved?.raw).toContain("## Acceptance Criteria");
+      expect(retrieved?.raw).toContain("tests pass");
+      expect(retrieved?.raw).toContain("build succeeds");
+      expect(retrieved?.raw).toContain("## Notes");
+      expect(retrieved?.raw).toContain("Implementation note");
+      expect(retrieved?.raw).toContain("assignee: claude");
+      expect(retrieved?.raw).toContain("priority: 1");
     });
   });
 

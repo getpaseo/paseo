@@ -117,13 +117,13 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(46, 160, 67, 0.15)",
   },
   addText: {
-    color: theme.colors.palette.green[800],
+    color: theme.colors.foreground,
   },
   removeLine: {
     backgroundColor: "rgba(248, 81, 73, 0.1)",
   },
   removeText: {
-    color: theme.colors.palette.red[800],
+    color: theme.colors.foreground,
   },
   addHighlight: {
     backgroundColor: "rgba(46, 160, 67, 0.4)",

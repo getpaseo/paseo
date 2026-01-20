@@ -49,3 +49,5 @@ CLAUDE.local.md
 
 # Task CLI
 .tasks/
+
+.debug.conversations/

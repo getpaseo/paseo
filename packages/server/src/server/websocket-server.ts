@@ -18,6 +18,7 @@ import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 
 type AgentMcpClientConfig = {
@@ -47,6 +48,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private readonly stt: OpenAISTT | null;
   private readonly tts: OpenAITTS | null;
+  private readonly terminalManager: TerminalManager | null;
 
   constructor(
     server: HTTPServer,
@@ -56,7 +58,8 @@ export class VoiceAssistantWebSocketServer {
     downloadTokenStore: DownloadTokenStore,
     agentMcpConfig: AgentMcpClientConfig,
     wsConfig: WebSocketServerConfig,
-    speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null }
+    speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
+    terminalManager?: TerminalManager | null
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.agentManager = agentManager;
@@ -64,6 +67,7 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
+    this.terminalManager = terminalManager ?? null;
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger);
@@ -140,6 +144,7 @@ export class VoiceAssistantWebSocketServer {
       this.agentMcpConfig,
       this.stt,
       this.tts,
+      this.terminalManager,
       {
         conversationId,
         initialMessages: initialMessages || undefined,

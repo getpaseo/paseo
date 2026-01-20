@@ -24,7 +24,12 @@ import type {
   ListCommandsResponse,
   ListConversationsResponseMessage,
   ListProviderModelsResponseMessage,
-  SendAgentAudio,
+  ListTerminalsResponse,
+  CreateTerminalResponse,
+  SubscribeTerminalResponse,
+  TerminalOutput,
+  KillTerminalResponse,
+  TerminalInput,
   SendAgentMessage,
   SessionInboundMessage,
   SessionOutboundMessage,
@@ -137,7 +142,11 @@ export type DaemonClientV2Config = {
 
 export type SendMessageOptions = Pick<SendAgentMessage, "messageId" | "images">;
 
-export type SendAgentAudioOptions = Omit<SendAgentAudio, "type">;
+export type TranscribeAudioOptions = {
+  audio: string; // base64 encoded
+  format: string;
+  timeout?: number;
+};
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
@@ -164,6 +173,11 @@ type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type TranscriptionResultPayload = TranscriptionResultMessage["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
+type ListTerminalsPayload = ListTerminalsResponse["payload"];
+type CreateTerminalPayload = CreateTerminalResponse["payload"];
+type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
+type TerminalOutputPayload = TerminalOutput["payload"];
+type KillTerminalPayload = KillTerminalResponse["payload"];
 
 type AgentCreateFailedStatusPayload = z.infer<
   typeof AgentCreateFailedStatusPayloadSchema
@@ -811,28 +825,13 @@ export class DaemonClientV2 {
     await this.sendAgentMessage(agentId, text, options);
   }
 
-  async sendAgentAudio(options: SendAgentAudioOptions): Promise<void> {
-    const requestId = options.requestId ?? this.createRequestId();
-    const message = SessionInboundMessageSchema.parse({
-      type: "send_agent_audio",
-      ...(options.agentId ? { agentId: options.agentId } : {}),
-      audio: options.audio,
-      format: options.format,
-      isLast: options.isLast,
-      requestId,
-      ...(options.mode ? { mode: options.mode } : {}),
-    });
-    this.sendSessionMessage(message);
-  }
-
-  async waitForTranscriptionResult(
-    requestId: string,
-    timeout = 120000
+  async transcribeAudio(
+    options: TranscribeAudioOptions
   ): Promise<TranscriptionResultPayload> {
-    if (!requestId) {
-      throw new Error("requestId is required");
-    }
-    return this.waitFor(
+    const requestId = this.createRequestId();
+    const timeout = options.timeout ?? 120000;
+
+    const responsePromise = this.waitFor(
       (msg) => {
         if (msg.type !== "transcription_result") {
           return null;
@@ -845,6 +844,16 @@ export class DaemonClientV2 {
       timeout,
       { skipQueue: true }
     );
+
+    const message = SessionInboundMessageSchema.parse({
+      type: "transcribe_audio_request",
+      audio: options.audio,
+      format: options.format,
+      requestId,
+    });
+    this.sendSessionMessage(message);
+
+    return responsePromise;
   }
 
   async cancelAgent(agentId: string): Promise<void> {
@@ -1393,6 +1402,157 @@ export class DaemonClientV2 {
           }
         }
         return null;
+      },
+      timeout,
+      { skipQueue: true }
+    );
+  }
+
+  // ============================================================================
+  // Terminals
+  // ============================================================================
+
+  async listTerminals(
+    cwd: string,
+    requestId?: string
+  ): Promise<ListTerminalsPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "list_terminals_request",
+      cwd,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "list_terminals_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async createTerminal(
+    cwd: string,
+    name?: string,
+    requestId?: string
+  ): Promise<CreateTerminalPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "create_terminal_request",
+      cwd,
+      name,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "create_terminal_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async subscribeTerminal(
+    terminalId: string,
+    requestId?: string
+  ): Promise<SubscribeTerminalPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "subscribe_terminal_request",
+      terminalId,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "subscribe_terminal_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  unsubscribeTerminal(terminalId: string): void {
+    this.sendSessionMessage({
+      type: "unsubscribe_terminal_request",
+      terminalId,
+    });
+  }
+
+  sendTerminalInput(
+    terminalId: string,
+    message: TerminalInput["message"]
+  ): void {
+    this.sendSessionMessage({
+      type: "terminal_input",
+      terminalId,
+      message,
+    });
+  }
+
+  async killTerminal(
+    terminalId: string,
+    requestId?: string
+  ): Promise<KillTerminalPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "kill_terminal_request",
+      terminalId,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "kill_terminal_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async waitForTerminalOutput(
+    terminalId: string,
+    timeout = 5000
+  ): Promise<TerminalOutputPayload> {
+    return this.waitFor(
+      (msg) => {
+        if (msg.type !== "terminal_output") {
+          return null;
+        }
+        if (msg.payload.terminalId !== terminalId) {
+          return null;
+        }
+        return msg.payload;
       },
       timeout,
       { skipQueue: true }

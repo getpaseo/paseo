@@ -27,7 +27,6 @@ import Animated, {
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
-import type { SessionContextValue } from "@/contexts/session-context";
 import { usePanelStore } from "@/stores/panel-store";
 
 export interface ImageAttachment {
@@ -52,7 +51,6 @@ export interface MessageInputProps {
   onPickImages?: () => void;
   onRemoveImage?: (index: number) => void;
   client: DaemonClientV2 | null;
-  sendAgentAudio: SessionContextValue["sendAgentAudio"];
   placeholder?: string;
   autoFocus?: boolean;
   disabled?: boolean;
@@ -104,7 +102,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       onPickImages,
       onRemoveImage,
       client,
-      sendAgentAudio,
       placeholder = "Message...",
       autoFocus = false,
       disabled = false,
@@ -200,9 +197,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     retryFailedDictation,
     discardFailedDictation,
   } = useDictation({
-    sendAgentAudio,
     client,
-    mode: "transcribe_only",
     onTranscript: handleDictationTranscript,
     onError: handleDictationError,
     canStart: canStartDictation,
@@ -538,8 +533,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             {leftContent}
           </View>
 
-          {/* Right: send/queue button, voice button, rightContent slot */}
+          {/* Right: voice button, contextual button (realtime/send/cancel) */}
           <View style={styles.rightButtonGroup}>
+            <Pressable
+              onPress={handleVoicePress}
+              disabled={!isConnected || disabled}
+              style={[
+                styles.voiceButton,
+                (!isConnected || disabled) && styles.buttonDisabled,
+                isDictating && styles.voiceButtonRecording,
+              ]}
+            >
+              {isDictating ? (
+                <Square size={14} color="white" fill="white" />
+              ) : (
+                <Mic size={20} color={theme.colors.foreground} />
+              )}
+            </Pressable>
             {shouldShowSendButton && (
               <Pressable
                 onPress={handleSendMessage}
@@ -561,22 +571,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 <ArrowUp size={20} color="white" />
               </Pressable>
             )}
-            <Pressable
-              onPress={handleVoicePress}
-              disabled={!isConnected || disabled}
-              style={[
-                styles.voiceButton,
-                (!isConnected || disabled) && styles.buttonDisabled,
-                isDictating && styles.voiceButtonRecording,
-              ]}
-            >
-              {isDictating ? (
-                <Square size={14} color="white" fill="white" />
-              ) : (
-                <Mic size={20} color={theme.colors.foreground} />
-              )}
-            </Pressable>
-            {rightContent}
+            {!shouldShowSendButton && rightContent}
           </View>
         </View>
       </Animated.View>

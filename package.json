@@ -6,7 +6,8 @@
     "packages/server",
     "packages/app",
     "packages/relay",
-    "packages/website"
+    "packages/website",
+    "packages/desktop"
   ],
   "scripts": {
     "dev": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
@@ -21,6 +22,8 @@
     "android:dev-release": "ANDROID_VARIANT=devRelease npm run android --workspace=@paseo/app",
     "ios": "npm run ios --workspace=@paseo/app",
     "web": "npm run web --workspace=@paseo/app",
+    "desktop": "npm run dev --workspace=@paseo/desktop",
+    "desktop:build": "npm run build --workspace=@paseo/desktop",
     "postinstall": "patch-package"
   },
   "devDependencies": {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
-import type { SessionContextValue } from "@/contexts/session-context";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import type { TranscriptionResultMessage } from "@server/shared/messages";
@@ -33,10 +32,7 @@ export type DictationOutcome =
   | { type: "failure"; requestId: string; errorMessage: string; timestamp: number };
 
 export type UseDictationOptions = {
-  agentId?: string;
-  sendAgentAudio: SessionContextValue["sendAgentAudio"];
   client: DaemonClientV2 | null;
-  mode?: "transcribe_only" | "auto_run";
   onTranscript: (text: string, meta: { requestId: string }) => void;
   onError?: (error: Error) => void;
   onRetryAttempt?: (info: DictationRetryInfo) => void;
@@ -121,6 +117,16 @@ type CapturedAudioPayload = {
 
 type TranscriptionPayload = TranscriptionResultMessage["payload"];
 
+const blobToBase64 = async (blob: Blob): Promise<string> => {
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
 const deriveFormatFromMime = (mimeType?: string): string => {
   if (!mimeType || mimeType.length === 0) {
     return "webm";
@@ -144,10 +150,7 @@ const buildCapturedAudioPayload = (blob: Blob, durationSeconds: number): Capture
 
 export function useDictation(options: UseDictationOptions): UseDictationResult {
   const {
-    agentId,
-    sendAgentAudio,
     client,
-    mode = "transcribe_only",
     onTranscript,
     onError,
     onRetryAttempt,
@@ -172,7 +175,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const maxRetryAttempts = MAX_AUTO_RETRY_ATTEMPTS;
 
   const transcriptionMutation = useMutation({
-    mutationFn: async (requestId: string): Promise<TranscriptionPayload> => {
+    mutationFn: async (): Promise<TranscriptionPayload> => {
       const capturedAudio = pendingAudioRef.current;
       if (!capturedAudio) {
         throw new Error("No recorded audio available for transcription");
@@ -199,9 +202,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
           }
 
           console.info("[useDictation] sending transcription request", {
-            requestId,
             attempt,
-            agentId,
             size: capturedAudio.sizeBytes,
             durationSeconds: capturedAudio.durationSeconds,
           });
@@ -210,20 +211,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
           setRetryAttempt(attempt);
 
           try {
-            const transcriptionPromise = client.waitForTranscriptionResult(
-              requestId,
-              TRANSCRIPTION_TIMEOUT_MS
-            );
-            try {
-              await sendAgentAudio(agentId, capturedAudio.blob, requestId, {
-                mode,
-              });
-            } catch (error) {
-              transcriptionPromise.catch(() => {});
-              throw new DictationAttemptError("dispatch", toError(error));
-            }
-
-            return await transcriptionPromise;
+            const base64Audio = await blobToBase64(capturedAudio.blob);
+            return await client.transcribeAudio({
+              audio: base64Audio,
+              format: capturedAudio.format,
+              timeout: TRANSCRIPTION_TIMEOUT_MS,
+            });
           } catch (error) {
             const normalized = toError(error);
             const reason: DictationRetryReason = isTimeoutError(normalized)
@@ -256,7 +249,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
           setRetryInfo(info);
           onRetryAttemptRef.current?.(info);
           console.warn("[useDictation] retry scheduled", {
-            requestId,
             attempt: nextAttempt,
             maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
             reason: attemptError.reason,
@@ -383,12 +375,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, []);
 
   const transmitDictation = useCallback(
-    async (requestId: string) => runTranscription(requestId),
+    async () => runTranscription(),
     [runTranscription]
   );
 
   const handleTranscriptionSuccess = useCallback(
-    (transcription: TranscriptionPayload, requestId: string) => {
+    (transcription: TranscriptionPayload) => {
+      const requestId = transcription.requestId;
       pendingRequestIdRef.current = null;
       setPendingRequestId(null);
       setIsProcessing(false);
@@ -409,16 +402,15 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
         requestId,
         textLength: transcriptText.length,
       });
-      onTranscriptRef.current?.(transcriptText, {
-        requestId: transcription.requestId ?? requestId,
-      });
+      onTranscriptRef.current?.(transcriptText, { requestId });
     },
     [onTranscriptRef]
   );
 
   const handleDictationFailure = useCallback(
-    (failure: unknown, requestId: string | null) => {
+    (failure: unknown) => {
       const normalized = toError(failure);
+      const failureId = generateMessageId();
       pendingRequestIdRef.current = null;
       setPendingRequestId(null);
       setIsProcessing(false);
@@ -431,16 +423,14 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       if (capturedAudio) {
         setStatus("failed");
         setFailedRecording({
-          requestId: requestId ?? generateMessageId(),
+          requestId: failureId,
           durationSeconds: capturedAudio.durationSeconds,
           sizeBytes: capturedAudio.sizeBytes,
           format: capturedAudio.format,
           recordedAt: capturedAudio.recordedAt,
           errorMessage: normalized.message,
         });
-        if (requestId) {
-          onPermanentFailureRef.current?.(normalized, { requestId });
-        }
+        onPermanentFailureRef.current?.(normalized, { requestId: failureId });
       } else {
         setStatus("idle");
       }
@@ -448,7 +438,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       setRetryAttempt(0);
       setLastOutcome({
         type: "failure",
-        requestId: requestId ?? generateMessageId(),
+        requestId: failureId,
         errorMessage: normalized.message,
         timestamp: Date.now(),
       });
@@ -571,7 +561,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setRetryAttempt(0);
     setLastOutcome(null);
 
-    let requestId: string | null = null;
     try {
       const audioData = await stopRecorder();
       const recordedDurationSeconds = durationRef.current;
@@ -581,21 +570,15 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       setIsRecording(false);
       setVolume(0);
 
-      requestId = generateMessageId();
-      pendingRequestIdRef.current = requestId;
-      setPendingRequestId(requestId);
-
-      const transcription = await transmitDictation(requestId);
-      handleTranscriptionSuccess(transcription, requestId);
+      const transcription = await transmitDictation();
+      handleTranscriptionSuccess(transcription);
     } catch (err) {
       resetTranscriptionMutation();
-      handleDictationFailure(err, requestId);
+      handleDictationFailure(err);
     }
   }, [
-    agentId,
     canConfirm,
     isProcessing,
-    mode,
     handleDictationFailure,
     handleTranscriptionSuccess,
     resetTranscriptionMutation,
@@ -615,16 +598,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setIsProcessing(true);
     setLastOutcome(null);
 
-    const requestId = generateMessageId();
-    pendingRequestIdRef.current = requestId;
-    setPendingRequestId(requestId);
-
     try {
-      const transcription = await transmitDictation(requestId);
-      handleTranscriptionSuccess(transcription, requestId);
+      const transcription = await transmitDictation();
+      handleTranscriptionSuccess(transcription);
     } catch (err) {
       resetTranscriptionMutation();
-      handleDictationFailure(err, requestId);
+      handleDictationFailure(err);
     }
   }, [
     handleDictationFailure,
@@ -687,17 +666,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     }
   }, [autoStopWhenHidden?.isVisible]);
 
-  useEffect(() => {
-    pendingRequestIdRef.current = null;
-    setPendingRequestId(null);
-    setIsProcessing(false);
-    pendingAudioRef.current = null;
-    setStatus("idle");
-    setRetryAttempt(0);
-    setRetryInfo(null);
-    setFailedRecording(null);
-    resetTranscriptionMutation();
-  }, [agentId, resetTranscriptionMutation]);
 
   useEffect(() => {
     return () => {

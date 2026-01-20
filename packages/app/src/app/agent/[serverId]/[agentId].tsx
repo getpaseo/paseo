@@ -30,8 +30,6 @@ import {
   GitBranch,
   Folder,
   RotateCcw,
-  Users,
-  ChevronRight,
   PlusIcon,
   PanelRight,
 } from "lucide-react-native";
@@ -51,7 +49,6 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
-import type { Agent } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import {
   buildAgentNavigationKey,
@@ -61,6 +58,7 @@ import {
 } from "@/utils/navigation-timing";
 import { extractAgentModel } from "@/utils/extract-agent-model";
 import { startPerfMonitor } from "@/utils/perf-monitor";
+import { shortenPath } from "@/utils/shorten-path";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -293,35 +291,6 @@ function AgentScreenContent({
       ? state.sessions[serverId]?.agents?.get(resolvedAgentId)
       : undefined
   );
-
-  // Select the agents Map directly - this is a stable reference that only changes when agents are added/removed
-  const allAgents = useSessionStore(
-    (state) => state.sessions[serverId]?.agents
-  );
-
-  // Derive child agents in useMemo to avoid creating new references on every store update
-  // This prevents infinite loops caused by useShallow not doing deep equality on object arrays
-  const childAgents = useMemo(() => {
-    if (!resolvedAgentId || !allAgents) return [];
-    const children: Array<{
-      id: string;
-      title: string | null;
-      createdAt: Date;
-      status: Agent["status"];
-    }> = [];
-    for (const [id, a] of allAgents) {
-      if (a.parentAgentId === resolvedAgentId) {
-        children.push({
-          id,
-          title: a.title,
-          createdAt: a.createdAt,
-          status: a.status,
-        });
-      }
-    }
-    children.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    return children;
-  }, [allAgents, resolvedAgentId]);
 
   // Select only the specific stream tail - use stable empty array to avoid infinite loop
   const streamItemsRaw = useSessionStore((state) =>
@@ -613,20 +582,6 @@ function AgentScreenContent({
     router.push({ pathname: "/", params });
   }, [agent, agentModel, handleCloseMenu, router, serverId]);
 
-  const handleNavigateToChildAgent = useCallback(
-    (childAgentId: string) => {
-      handleCloseMenu();
-      router.push({
-        pathname: "/agent/[serverId]/[agentId]",
-        params: {
-          serverId: serverId,
-          agentId: childAgentId,
-        },
-      });
-    },
-    [handleCloseMenu, router, serverId]
-  );
-
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -736,7 +691,7 @@ function AgentScreenContent({
                     numberOfLines={2}
                     ellipsizeMode="middle"
                   >
-                    {agent.cwd}
+                    {shortenPath(agent.cwd)}
                   </Text>
                 </View>
 
@@ -780,50 +735,6 @@ function AgentScreenContent({
                     )}
                   </View>
                 </View>
-              </View>
-
-              <View style={styles.menuDivider} />
-
-              {/* Sub-Agents Section */}
-              <View style={styles.menuSubAgentsSection}>
-                <View style={styles.menuSubAgentsHeader}>
-                  <Users size={16} color={theme.colors.foregroundMuted} />
-                  <Text style={styles.menuSubAgentsLabel}>Sub-Agents</Text>
-                </View>
-                {childAgents.length === 0 ? (
-                  <Text style={styles.menuSubAgentsEmpty}>No sub-agents</Text>
-                ) : (
-                  <ScrollView
-                    style={styles.menuSubAgentsList}
-                    contentContainerStyle={styles.menuSubAgentsListContent}
-                    showsVerticalScrollIndicator={childAgents.length > 3}
-                  >
-                    {childAgents.map((child) => (
-                      <Pressable
-                        key={child.id}
-                        onPress={() => handleNavigateToChildAgent(child.id)}
-                        style={styles.menuSubAgentItem}
-                      >
-                        <Text
-                          style={styles.menuSubAgentText}
-                          numberOfLines={1}
-                          ellipsizeMode="tail"
-                        >
-                          {child.title || "Untitled Agent"}
-                        </Text>
-                        <View style={styles.menuSubAgentMeta}>
-                          {child.status === "running" ? (
-                            <View style={styles.menuSubAgentDot} />
-                          ) : null}
-                          <ChevronRight
-                            size={16}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        </View>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                )}
               </View>
 
               <View style={styles.menuDivider} />
@@ -1107,58 +1018,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
-  },
-  menuSubAgentsSection: {
-    gap: theme.spacing[2],
-  },
-  menuSubAgentsHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  menuSubAgentsLabel: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-  },
-  menuSubAgentsEmpty: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundMuted,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-  },
-  menuSubAgentsList: {
-    maxHeight: (theme.spacing[2] * 2 + theme.fontSize.base) * 3,
-  },
-  menuSubAgentsListContent: {
-    gap: theme.spacing[1],
-  },
-  menuSubAgentItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  menuSubAgentText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foreground,
-    flex: 1,
-    marginRight: theme.spacing[2],
-  },
-  menuSubAgentMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  menuSubAgentDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: "#3b82f6",
   },
 }));

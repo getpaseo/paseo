@@ -340,6 +340,37 @@ const styles = StyleSheet.create((theme) => ({
   themeToggleTextActive: {
     color: theme.colors.foreground,
   },
+  // Dev section
+  devCard: {
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+  },
+  devButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  devButtonBorder: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  devButtonContent: {
+    flex: 1,
+  },
+  devButtonTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  devButtonDescription: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: 2,
+  },
 }));
 
 type DaemonTestState = {
@@ -757,6 +788,24 @@ export default function SettingsScreen() {
                   thumbColor={settings.keepScreenOn ? defaultTheme.colors.palette.white : defaultTheme.colors.palette.gray[300]}
                 />
               </View>
+            </View>
+          </View>
+
+          {/* Developer */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Developer</Text>
+            <View style={styles.devCard}>
+              <Pressable
+                style={styles.devButton}
+                onPress={() => router.push("/audio-test")}
+              >
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonTitle}>Audio Test</Text>
+                  <Text style={styles.devButtonDescription}>
+                    Test audio recording and playback
+                  </Text>
+                </View>
+              </Pressable>
             </View>
           </View>
 

@@ -18,9 +18,9 @@ const PrincipalParamSchema = z.union([
   z.object({ filePath: z.string() }).transform((d) => ({ type: "path" as const, value: d.filePath })),
   z.object({ path: z.string() }).transform((d) => ({ type: "path" as const, value: d.path })),
   // Command as string
-  z.object({ command: z.string() }).transform((d) => ({ type: "text" as const, value: d.command })),
+  z.object({ command: z.string() }).transform((d) => ({ type: "command" as const, value: d.command })),
   // Command as array (Codex sends this)
-  z.object({ command: z.array(z.string()).nonempty() }).transform((d) => ({ type: "text" as const, value: d.command.join(" ") })),
+  z.object({ command: z.array(z.string()).nonempty() }).transform((d) => ({ type: "command" as const, value: d.command.join(" ") })),
   // Other text params
   z.object({ pattern: z.string() }).transform((d) => ({ type: "text" as const, value: d.pattern })),
   z.object({ query: z.string() }).transform((d) => ({ type: "text" as const, value: d.query })),
@@ -53,6 +53,14 @@ export function stripCwdPrefix(filePath: string, cwd?: string): string {
   return filePath;
 }
 
+// Strips shell wrapper prefixes like "/bin/zsh -lc cd /path && " from commands
+// This is used for display purposes to show the actual command being run
+const SHELL_WRAPPER_PATTERN = /^\/bin\/(?:zsh|bash|sh)\s+(?:-[a-zA-Z]+\s+)?cd\s+\S+\s+&&\s+/;
+
+export function stripShellWrapperPrefix(command: string): string {
+  return command.replace(SHELL_WRAPPER_PATTERN, "");
+}
+
 export function extractPrincipalParam(args: unknown, cwd?: string): string | undefined {
   const parsed = PrincipalParamSchema.safeParse(args);
   if (!parsed.success) {
@@ -60,7 +68,13 @@ export function extractPrincipalParam(args: unknown, cwd?: string): string | und
   }
 
   const { type, value } = parsed.data;
-  return type === "path" ? stripCwdPrefix(value, cwd) : value;
+  if (type === "path") {
+    return stripCwdPrefix(value, cwd);
+  }
+  if (type === "command") {
+    return stripShellWrapperPrefix(value);
+  }
+  return value;
 }
 
 // ---- TodoWrite Extraction ----

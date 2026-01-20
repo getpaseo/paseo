@@ -54,12 +54,8 @@ describe("daemon E2E", () => {
         expect(tokenResponse.token).toBeTruthy();
         expect(tokenResponse.fileName).toBe("download.txt");
 
-        const authHeader = ctx.daemon.agentMcpAuthHeader;
-        expect(authHeader).toBeTruthy();
-
         const response = await fetch(
-          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-          { headers: { Authorization: authHeader! } }
+          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`
         );
 
         expect(response.status).toBe(200);
@@ -80,12 +76,8 @@ describe("daemon E2E", () => {
     test(
       "rejects invalid token",
       async () => {
-        const authHeader = ctx.daemon.agentMcpAuthHeader;
-        expect(authHeader).toBeTruthy();
-
         const response = await fetch(
-          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=invalid-token`,
-          { headers: { Authorization: authHeader! } }
+          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=invalid-token`
         );
 
         expect(response.status).toBe(403);
@@ -119,12 +111,8 @@ describe("daemon E2E", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 150));
 
-        const authHeader = ctx.daemon.agentMcpAuthHeader;
-        expect(authHeader).toBeTruthy();
-
         const response = await fetch(
-          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-          { headers: { Authorization: authHeader! } }
+          `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`
         );
 
         expect(response.status).toBe(403);

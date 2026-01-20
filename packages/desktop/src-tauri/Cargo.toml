@@ -1,0 +1,29 @@
+[package]
+name = "paseo"
+version = "0.1.0"
+description = "Paseo Desktop"
+authors = ["moboudra"]
+license = "MIT"
+repository = "https://github.com/moboudra/paseo"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "paseo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "Paseo"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.9.5", features = [] }
+tauri-plugin-log = "2"

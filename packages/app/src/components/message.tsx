@@ -387,15 +387,20 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   detailWrapper: {
-    marginTop: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    borderBottomLeftRadius: theme.borderRadius.lg,
+    borderBottomRightRadius: theme.borderRadius.lg,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    borderTopWidth: 0,
+    borderColor: theme.colors.borderAccent,
     backgroundColor: theme.colors.surface0,
     padding: theme.spacing[2],
     gap: theme.spacing[2],
     flexShrink: 1,
     minWidth: 0,
+  },
+  pressableExpanded: {
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
 }));
 
@@ -511,7 +516,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.text]}>
           {node.content}
         </Text>
       ),
@@ -525,7 +530,6 @@ export const AssistantMessage = memo(function AssistantMessage({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.textgroup]}
-          selectable
         >
           {children}
         </Text>
@@ -540,7 +544,6 @@ export const AssistantMessage = memo(function AssistantMessage({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.code_block]}
-          selectable
         >
           {node.content}
         </Text>
@@ -552,7 +555,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
           {node.content}
         </Text>
       ),
@@ -576,7 +579,6 @@ export const AssistantMessage = memo(function AssistantMessage({
                 inheritedStyles,
                 assistantMessageStylesheet.markdownCodeInline,
               ]}
-              selectable
             >
               {content}
             </Text>
@@ -1153,6 +1155,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
           pressed && hasDetails
             ? expandableBadgeStylesheet.pressablePressed
             : null,
+          isExpanded && expandableBadgeStylesheet.pressableExpanded,
         ]}
       >
         <View style={expandableBadgeStylesheet.headerRow}>
@@ -1181,12 +1184,12 @@ const ExpandableBadge = memo(function ExpandableBadge({
             />
           ) : null}
         </View>
-        {detailContent ? (
-          <View style={expandableBadgeStylesheet.detailWrapper}>
-            {detailContent}
-          </View>
-        ) : null}
       </Pressable>
+      {detailContent ? (
+        <View style={expandableBadgeStylesheet.detailWrapper}>
+          {detailContent}
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -1226,7 +1229,7 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.text]}>
           {node.content}
         </Text>
       ),
@@ -1240,7 +1243,6 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.textgroup]}
-          selectable
         >
           {children}
         </Text>
@@ -1255,7 +1257,6 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.code_block]}
-          selectable
         >
           {node.content}
         </Text>
@@ -1267,7 +1268,7 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
           {node.content}
         </Text>
       ),
@@ -1281,7 +1282,6 @@ export const AgentThoughtMessage = memo(function AgentThoughtMessage({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.code_inline]}
-          selectable
         >
           {node.content}
         </Text>
@@ -1432,7 +1432,7 @@ export const ToolCall = memo(function ToolCall({
     args !== undefined || result !== undefined || error !== undefined;
 
   // Parse tool call details for inline rendering
-  const { display, errorText } = useToolCallDetails({ args, result, error });
+  const { display, errorText } = useToolCallDetails({ toolName, args, result, error });
 
   const handleToggle = useCallback(() => {
     if (!isMobile && isPerfLoggingEnabled()) {
@@ -1498,7 +1498,7 @@ export const ToolCall = memo(function ToolCall({
   return (
     <ExpandableBadge
       testID="tool-call-badge"
-      label={toolName}
+      label={display.toolName}
       secondaryLabel={principalParam}
       icon={IconComponent}
       isExpanded={!isMobile && isExpanded}

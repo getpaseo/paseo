@@ -155,6 +155,7 @@ function parseTask(content: string): Task {
     created: getValue("created") || new Date().toISOString(),
     assignee: assignee || undefined,
     priority,
+    raw: content,
   };
 }
 
@@ -387,10 +388,13 @@ export class FileTaskStore implements TaskStore {
       created: new Date().toISOString(),
       assignee: opts?.assignee,
       priority: opts?.priority,
+      raw: "", // will be set after serialization
     };
 
     await this.writeTask(task);
-    return task;
+    // Re-read to get the raw content
+    const saved = await this.get(task.id);
+    return saved!;
   }
 
   async update(

@@ -182,12 +182,6 @@ export interface SessionState {
       message: string,
       images?: Array<{ uri: string; mimeType?: string }>
     ) => Promise<void>;
-    sendAgentAudio: (
-      agentId: string | undefined,
-      audioBlob: Blob,
-      requestId?: string,
-      options?: { mode?: "transcribe_only" | "auto_run" }
-    ) => Promise<void>;
     deleteAgent: (agentId: string) => void;
     createAgent: (options: {
       config: any;

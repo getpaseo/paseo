@@ -11,6 +11,7 @@ import { useCallback, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { formatTimeAgo } from "@/utils/time";
+import { shortenPath } from "@/utils/shorten-path";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -144,7 +145,7 @@ export function AgentList({
               </View>
 
               <Text style={styles.secondaryRow} numberOfLines={1}>
-                {agent.cwd.replace(/^\/(?:Users|home)\/[^/]+/, "~")} · {timeAgo}
+                {shortenPath(agent.cwd)} · {timeAgo}
               </Text>
             </View>
           )}

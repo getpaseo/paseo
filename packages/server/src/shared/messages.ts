@@ -318,16 +318,11 @@ export const SendAgentMessageSchema = z.object({
   })).optional(),
 });
 
-export const SendAgentAudioSchema = z.object({
-  type: z.literal("send_agent_audio"),
-  agentId: z.string().optional(), // Required for auto_run mode, optional for transcribe_only
+export const TranscribeAudioRequestSchema = z.object({
+  type: z.literal("transcribe_audio_request"),
   audio: z.string(), // base64 encoded
   format: z.string(),
-  isLast: z.boolean(),
-  requestId: z.string(), // Client-provided ID for tracking transcription
-  mode: z
-    .enum(["transcribe_only", "auto_run"])
-    .optional(),
+  requestId: z.string(),
 });
 
 const GitSetupOptionsSchema = z.object({
@@ -528,6 +523,58 @@ export const RegisterPushTokenMessageSchema = z.object({
   token: z.string(),
 });
 
+// ============================================================================
+// Terminal Messages
+// ============================================================================
+
+export const ListTerminalsRequestSchema = z.object({
+  type: z.literal("list_terminals_request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
+export const CreateTerminalRequestSchema = z.object({
+  type: z.literal("create_terminal_request"),
+  cwd: z.string(),
+  name: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const SubscribeTerminalRequestSchema = z.object({
+  type: z.literal("subscribe_terminal_request"),
+  terminalId: z.string(),
+  requestId: z.string(),
+});
+
+export const UnsubscribeTerminalRequestSchema = z.object({
+  type: z.literal("unsubscribe_terminal_request"),
+  terminalId: z.string(),
+});
+
+const TerminalClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("input"), data: z.string() }),
+  z.object({ type: z.literal("resize"), rows: z.number(), cols: z.number() }),
+  z.object({
+    type: z.literal("mouse"),
+    row: z.number(),
+    col: z.number(),
+    button: z.number(),
+    action: z.enum(["down", "up", "move"]),
+  }),
+]);
+
+export const TerminalInputSchema = z.object({
+  type: z.literal("terminal_input"),
+  terminalId: z.string(),
+  message: TerminalClientMessageSchema,
+});
+
+export const KillTerminalRequestSchema = z.object({
+  type: z.literal("kill_terminal_request"),
+  terminalId: z.string(),
+  requestId: z.string(),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
   RealtimeAudioChunkMessageSchema,
@@ -539,7 +586,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteAgentRequestMessageSchema,
   SetRealtimeModeMessageSchema,
   SendAgentMessageSchema,
-  SendAgentAudioSchema,
+  TranscribeAudioRequestSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
@@ -558,6 +605,12 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ClientHeartbeatMessageSchema,
   ListCommandsRequestSchema,
   RegisterPushTokenMessageSchema,
+  ListTerminalsRequestSchema,
+  CreateTerminalRequestSchema,
+  SubscribeTerminalRequestSchema,
+  UnsubscribeTerminalRequestSchema,
+  TerminalInputSchema,
+  KillTerminalRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -884,6 +937,80 @@ export const ListCommandsResponseSchema = z.object({
   }),
 });
 
+// ============================================================================
+// Terminal Outbound Messages
+// ============================================================================
+
+const TerminalInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  cwd: z.string(),
+});
+
+const TerminalCellSchema = z.object({
+  char: z.string(),
+  fg: z.number().optional(),
+  bg: z.number().optional(),
+  fgMode: z.number().optional(),
+  bgMode: z.number().optional(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+});
+
+const TerminalStateSchema = z.object({
+  rows: z.number(),
+  cols: z.number(),
+  grid: z.array(z.array(TerminalCellSchema)),
+  scrollback: z.array(z.array(TerminalCellSchema)),
+  cursor: z.object({ row: z.number(), col: z.number() }),
+});
+
+export const ListTerminalsResponseSchema = z.object({
+  type: z.literal("list_terminals_response"),
+  payload: z.object({
+    cwd: z.string(),
+    terminals: z.array(TerminalInfoSchema.omit({ cwd: true })),
+    requestId: z.string(),
+  }),
+});
+
+export const CreateTerminalResponseSchema = z.object({
+  type: z.literal("create_terminal_response"),
+  payload: z.object({
+    terminal: TerminalInfoSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const SubscribeTerminalResponseSchema = z.object({
+  type: z.literal("subscribe_terminal_response"),
+  payload: z.object({
+    terminalId: z.string(),
+    state: TerminalStateSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const TerminalOutputSchema = z.object({
+  type: z.literal("terminal_output"),
+  payload: z.object({
+    terminalId: z.string(),
+    state: TerminalStateSchema,
+  }),
+});
+
+export const KillTerminalResponseSchema = z.object({
+  type: z.literal("kill_terminal_response"),
+  payload: z.object({
+    terminalId: z.string(),
+    success: z.boolean(),
+    requestId: z.string(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -910,6 +1037,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
   ListCommandsResponseSchema,
+  ListTerminalsResponseSchema,
+  CreateTerminalResponseSchema,
+  SubscribeTerminalResponseSchema,
+  TerminalOutputSchema,
+  KillTerminalResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<
@@ -948,7 +1080,7 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
 export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessageSchema>;
 export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
-export type SendAgentAudio = z.infer<typeof SendAgentAudioSchema>;
+export type TranscribeAudioRequest = z.infer<typeof TranscribeAudioRequestSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
@@ -973,6 +1105,19 @@ export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
 export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
+
+// Terminal message types
+export type ListTerminalsRequest = z.infer<typeof ListTerminalsRequestSchema>;
+export type ListTerminalsResponse = z.infer<typeof ListTerminalsResponseSchema>;
+export type CreateTerminalRequest = z.infer<typeof CreateTerminalRequestSchema>;
+export type CreateTerminalResponse = z.infer<typeof CreateTerminalResponseSchema>;
+export type SubscribeTerminalRequest = z.infer<typeof SubscribeTerminalRequestSchema>;
+export type SubscribeTerminalResponse = z.infer<typeof SubscribeTerminalResponseSchema>;
+export type UnsubscribeTerminalRequest = z.infer<typeof UnsubscribeTerminalRequestSchema>;
+export type TerminalInput = z.infer<typeof TerminalInputSchema>;
+export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
+export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
+export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

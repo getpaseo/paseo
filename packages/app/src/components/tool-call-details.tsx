@@ -7,6 +7,7 @@ import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import {
   parseToolCallDisplay,
   buildLineDiff,
+  parseUnifiedDiff,
   type ToolCallDisplay,
 } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
@@ -14,6 +15,7 @@ import { DiffViewer } from "./diff-viewer";
 // ---- Types ----
 
 export interface ToolCallDetailsData {
+  toolName: string;
   args?: unknown;
   result?: unknown;
   error?: unknown;
@@ -139,6 +141,10 @@ export function ToolCallDetailsContent({
   // Compute diff lines for edit type
   const diffLines = useMemo(() => {
     if (display.type !== "edit") return undefined;
+    // Use pre-computed unified diff if available (e.g., from apply_patch)
+    if (display.unifiedDiff) {
+      return parseUnifiedDiff(display.unifiedDiff);
+    }
     return buildLineDiff(display.oldString, display.newString);
   }, [display]);
 
@@ -304,12 +310,12 @@ export function ToolCallDetailsContent({
 // ---- Hook for parsing tool call data ----
 
 export function useToolCallDetails(data: ToolCallDetailsData) {
-  const { args, result, error } = data;
+  const { toolName, args, result, error } = data;
 
   return useMemo(() => {
     const shouldLog = isPerfLoggingEnabled();
     const startMs = shouldLog ? getNowMs() : 0;
-    const display = parseToolCallDisplay(args, result);
+    const display = parseToolCallDisplay(toolName, args, result);
     const errorText = error !== undefined ? formatValue(error) : undefined;
     if (shouldLog) {
       const durationMs = getNowMs() - startMs;
@@ -329,7 +335,7 @@ export function useToolCallDetails(data: ToolCallDetailsData) {
       }
     }
     return { display, errorText };
-  }, [args, result, error]);
+  }, [toolName, args, result, error]);
 }
 
 // ---- Styles ----

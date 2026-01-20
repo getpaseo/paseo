@@ -144,7 +144,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     ? toolKindIcons[kind.toLowerCase()] || Wrench
     : Wrench;
 
-  const { display, errorText } = useToolCallDetails({ args, result, error });
+  const { display, errorText } = useToolCallDetails({ toolName, args, result, error });
 
   return (
     <View style={styles.container}>
@@ -153,7 +153,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         <View style={styles.headerLeft}>
           <IconComponent size={20} color={styles.headerIcon.color} />
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {toolName}
+            {display.toolName}
           </Text>
         </View>
         <Pressable onPress={onClose} style={styles.closeButton}>

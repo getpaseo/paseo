@@ -15,6 +15,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { AgentList } from "./agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
+import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 const SIDEBAR_AGENT_LIMIT = 15;
@@ -44,6 +45,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     animateToClose,
     isGesturing,
   } = useSidebarAnimation();
+  const trafficLightPadding = useTrafficLightPadding();
+  const dragHandlers = useTauriDragHandlers();
 
   // Track user-initiated refresh to avoid showing spinner on background revalidation
   const [isManualRefresh, setIsManualRefresh] = useState(false);
@@ -249,8 +252,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
 
   return (
     <View style={[styles.desktopSidebar, { width: DESKTOP_SIDEBAR_WIDTH }]}>
-      {/* Header: New Agent button */}
-      <View style={styles.sidebarHeader}>
+      {/* Header: New Agent button - top padding area is draggable on Tauri */}
+      <View
+        style={[styles.sidebarHeader, { paddingTop: trafficLightPadding.top || styles.sidebarHeader.paddingTop }]}
+        {...dragHandlers}
+      >
         <Pressable
           style={({ hovered }) => [
             styles.newAgentButton,
@@ -316,6 +322,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[2],
+    userSelect: "none",
   },
   newAgentButton: {
     flexDirection: "row",

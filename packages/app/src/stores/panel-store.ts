@@ -27,7 +27,7 @@ interface DesktopSidebarState {
   fileExplorerOpen: boolean;
 }
 
-type ExplorerTab = "changes" | "files";
+export type ExplorerTab = "changes" | "files";
 export type ViewMode = "list" | "grid";
 export type SortOption = "name" | "modified" | "size";
 

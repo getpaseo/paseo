@@ -6,7 +6,6 @@ import type { TTSConfig } from "./agent/tts-openai.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
 const DEFAULT_LISTEN = "127.0.0.1:6767";
-const DEFAULT_BASIC_AUTH_USERS = { mo: "bo" } as const;
 const DEFAULT_AGENT_MCP_ROUTE = "/mcp/agents";
 
 function parseOpenAIConfig(env: NodeJS.ProcessEnv) {
@@ -68,17 +67,6 @@ export function loadConfig(
   const listen = env.PASEO_LISTEN ?? persisted.listen ?? DEFAULT_LISTEN;
   const mcpListen = getListenForMcp(listen);
 
-  const basicUsers = DEFAULT_BASIC_AUTH_USERS;
-  const [agentMcpUser, agentMcpPassword] = Object.entries(basicUsers)[0] ?? [];
-  const agentMcpAuthHeader =
-    agentMcpUser && agentMcpPassword
-      ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
-      : undefined;
-  const agentMcpBearerToken =
-    agentMcpUser && agentMcpPassword
-      ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
-      : undefined;
-
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
     : [];
@@ -89,18 +77,9 @@ export function loadConfig(
     corsAllowedOrigins: [...persisted.cors.allowedOrigins, ...envCorsOrigins],
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
     agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],
-    auth: {
-      basicUsers,
-      agentMcpAuthHeader,
-      agentMcpBearerToken,
-      realm: "Voice Assistant",
-    },
     mcpDebug: env.MCP_DEBUG === "1",
     agentControlMcp: {
       url: `http://${mcpListen}${DEFAULT_AGENT_MCP_ROUTE}`,
-      ...(agentMcpAuthHeader
-        ? { headers: { Authorization: agentMcpAuthHeader } }
-        : {}),
     },
     agentRegistryPath: path.join(paseoHome, "agents.json"),
     staticDir: "public",
