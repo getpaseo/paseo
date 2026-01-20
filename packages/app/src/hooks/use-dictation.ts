@@ -5,6 +5,7 @@ import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import type { TranscriptionResultMessage } from "@server/shared/messages";
 import { generateMessageId } from "@/types/stream";
+import { AttemptGuard } from "@/utils/attempt-guard";
 
 export type DictationStatus = "idle" | "recording" | "uploading" | "retrying" | "failed";
 
@@ -310,9 +311,15 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
+  const isProcessingRef = useRef(isProcessing);
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
   const pendingRequestIdRef = useRef<string | null>(null);
   const activeStopPromiseRef = useRef<Promise<Blob> | null>(null);
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const attemptGuardRef = useRef(new AttemptGuard());
 
   const stopDurationTracking = useCallback(() => {
     if (durationIntervalRef.current) {
@@ -510,6 +517,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       isRecording: isRecordingRef.current,
       hasActiveStop: Boolean(activeStopPromiseRef.current),
     });
+    attemptGuardRef.current.cancel();
     if (!isRecordingRef.current && !activeStopPromiseRef.current) {
       console.log("[useDictation] cancelDictation ignored: nothing to cancel");
       return;
@@ -561,8 +569,11 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setRetryAttempt(0);
     setLastOutcome(null);
 
+    const attemptId = attemptGuardRef.current.next();
+
     try {
       const audioData = await stopRecorder();
+      attemptGuardRef.current.assertCurrent(attemptId);
       const recordedDurationSeconds = durationRef.current;
       pendingAudioRef.current = buildCapturedAudioPayload(audioData, recordedDurationSeconds);
       setStatus("uploading");
@@ -571,6 +582,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       setVolume(0);
 
       const transcription = await transmitDictation();
+      attemptGuardRef.current.assertCurrent(attemptId);
       handleTranscriptionSuccess(transcription);
     } catch (err) {
       resetTranscriptionMutation();
@@ -661,14 +673,34 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     const prevVisible = visibilityRef.current;
     visibilityRef.current = nextVisible;
 
-    if (prevVisible === true && nextVisible === false && isRecordingRef.current) {
-      cancelRef.current?.();
+    if (prevVisible === true && nextVisible === false) {
+      attemptGuardRef.current.cancel();
+
+      if (isRecordingRef.current) {
+        cancelRef.current?.();
+        return;
+      }
+
+      if (isProcessingRef.current) {
+        stopDurationTracking();
+        setDuration(0);
+        setIsProcessing(false);
+        setVolume(0);
+        setError(null);
+        setStatus("idle");
+        setRetryAttempt(0);
+        setRetryInfo(null);
+        pendingAudioRef.current = null;
+        setFailedRecording(null);
+        setLastOutcome(null);
+      }
     }
-  }, [autoStopWhenHidden?.isVisible]);
+  }, [autoStopWhenHidden?.isVisible, stopDurationTracking]);
 
 
   useEffect(() => {
     return () => {
+      attemptGuardRef.current.cancel();
       stopDurationTracking();
       const activeStop = activeStopPromiseRef.current;
       if (activeStop) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AttemptCancelledError, AttemptGuard } from "@/utils/attempt-guard";
 
 export interface AudioCaptureConfig {
   sampleRate?: number;
@@ -21,6 +22,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const attemptGuardRef = useRef(new AttemptGuard());
   const chunksRef = useRef<Blob[]>([]);
   const supportedMimeTypeRef = useRef<string | null | undefined>(undefined);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -79,6 +81,14 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     }
   }, []);
 
+  const hardReset = useCallback(() => {
+    stopMetering();
+    cleanupStream();
+    mediaRecorderRef.current = null;
+    chunksRef.current = [];
+    setIsRecording(false);
+  }, [cleanupStream, stopMetering]);
+
   const startMetering = useCallback((stream: MediaStream) => {
     const onAudioLevel = configRef.current?.onAudioLevel;
     if (!onAudioLevel) {
@@ -129,6 +139,8 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   }, []);
 
   const start = useCallback(async () => {
+    const attemptId = attemptGuardRef.current.next();
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       throw new Error("Already recording");
     }
@@ -171,6 +183,22 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (error: any) {
       throw new Error(`Failed to access microphone: ${error?.message ?? error}`);
+    }
+
+    try {
+      attemptGuardRef.current.assertCurrent(attemptId);
+    } catch (err) {
+      if (err instanceof AttemptCancelledError) {
+        stream.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {
+            // Ignore track stop errors.
+          }
+        });
+        return;
+      }
+      throw err;
     }
 
     mediaStreamRef.current = stream;
@@ -222,9 +250,23 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   }, [cleanupStream, detectSupportedMimeType, startMetering]);
 
   const stop = useCallback(async (): Promise<Blob> => {
+    attemptGuardRef.current.cancel();
+
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder) {
       throw new Error("Not recording");
+    }
+
+    if (recorder.state === "inactive") {
+      stopMetering();
+      cleanupStream();
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+
+      const mimeType = recorder.mimeType || detectSupportedMimeType() || "audio/webm";
+      const blob = new Blob(chunksRef.current, { type: mimeType });
+      chunksRef.current = [];
+      return blob;
     }
 
     return await new Promise<Blob>((resolve, reject) => {
@@ -275,17 +317,15 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        try {
-          mediaRecorderRef.current.stop();
-        } catch {
-          // Ignore stop during unmount.
-        }
+      attemptGuardRef.current.cancel();
+      try {
+        void mediaRecorderRef.current?.stop();
+      } catch {
+        // Ignore stop during unmount.
       }
-      stopMetering();
-      cleanupStream();
+      hardReset();
     };
-  }, [cleanupStream, stopMetering]);
+  }, [hardReset]);
 
   const getSupportedMimeType = useCallback(() => detectSupportedMimeType(), [
     detectSupportedMimeType,

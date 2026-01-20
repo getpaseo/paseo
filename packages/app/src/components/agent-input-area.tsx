@@ -16,6 +16,7 @@ import Animated, {
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRealtime } from "@/contexts/realtime-context";
+import { useIsFocused } from "@react-navigation/native";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
@@ -77,6 +78,7 @@ export function AgentInputArea({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const isScreenFocused = useIsFocused();
 
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
@@ -568,6 +570,7 @@ export function AgentInputArea({
             placeholder="Message agent..."
             autoFocus={autoFocus}
             disabled={isRealtimeMode}
+            isScreenFocused={isScreenFocused}
             leftContent={leftContent}
             rightContent={rightContent}
             isAgentRunning={isAgentRunning}

@@ -1,6 +1,7 @@
 import { useAudioRecorder as useExpoAudioRecorder, useAudioRecorderState, RecordingOptions, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { Paths, File, Directory, FileInfo } from 'expo-file-system';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { AttemptCancelledError, AttemptGuard } from '@/utils/attempt-guard';
 
 export interface AudioCaptureConfig {
   sampleRate?: number;
@@ -127,8 +128,8 @@ async function uriToBlob(uri: string): Promise<Blob> {
  */
 export function useAudioRecorder(config?: AudioCaptureConfig) {
   const [recordingStartTime, setRecordingStartTime] = useState<Date | null>(null);
-  const recordingIntentRef = useRef(false);
-  const stopRequestedRef = useRef(false);
+  const attemptGuardRef = useRef(new AttemptGuard());
+  const startStopMutexRef = useRef<Promise<unknown> | null>(null);
 
   // Store config callbacks in refs so they can update without recreating the recorder
   const configRef = useRef(config);
@@ -203,19 +204,13 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     }
 
     try {
-      recordingIntentRef.current = true;
-      const ensureNotCancelled = () => {
-        if (stopRequestedRef.current) {
-          throw new Error('Recording cancelled');
-        }
-      };
-
-      ensureNotCancelled();
+      const attemptId = attemptGuardRef.current.next();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       // Request microphone permissions
       console.log('[AudioRecorder] Requesting recording permissions...');
       const permissionResponse = await requestRecordingPermissionsAsync();
-      ensureNotCancelled();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       if (!permissionResponse.granted) {
         throw new Error('Microphone permission denied. Please enable microphone access in your device settings.');
@@ -227,7 +222,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
         playsInSilentMode: true,
         allowsRecording: true,
       });
-      ensureNotCancelled();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       console.log('[AudioRecorder] Starting recording with options:', {
         sampleRate: recordingOptions.sampleRate,
@@ -237,25 +232,26 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
       const startTime = new Date();
       setRecordingStartTime(startTime);
-      ensureNotCancelled();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       // Prepare the recorder before recording (required step)
       console.log('[AudioRecorder] Preparing recorder...');
       await recorder.prepareToRecordAsync();
-      ensureNotCancelled();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       console.log('[AudioRecorder] Starting recording...');
       await recorder.record();
-      ensureNotCancelled();
+      attemptGuardRef.current.assertCurrent(attemptId);
 
       console.log('[AudioRecorder] Recording started at:', startTime.toISOString());
       console.log('[AudioRecorder] Recorder isRecording:', recorder.isRecording);
     } catch (error: any) {
-      recordingIntentRef.current = false;
       setRecordingStartTime(null);
-      if (error?.message === 'Recording cancelled') {
+      if (error instanceof AttemptCancelledError) {
         console.log('[AudioRecorder] Recording start cancelled.');
-      } else {
+        return;
+      }
+      if (error?.message !== 'Recording cancelled') {
         console.error('[AudioRecorder] Failed to start recording:', error);
       }
       throw new Error(`Failed to start audio recording: ${error.message}`);
@@ -265,76 +261,75 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   const stop = useCallback(async (): Promise<Blob> => {
     const recorder = recorderRef.current;
 
-    // Guard against duplicate stop calls
-    if (!recorder.isRecording && !recordingIntentRef.current) {
-      console.error('[AudioRecorder] Attempted to stop when not recording. Recorder state:', {
-        isRecording: recorder.isRecording,
-        hasRecordingIntent: recordingIntentRef.current,
-        hasRecordingStartTime: !!recordingStartTime,
-      });
-      throw new Error('Not recording');
+    // Cancel any in-flight start attempt and serialize stop/cleanup.
+    attemptGuardRef.current.cancel();
+    if (startStopMutexRef.current) {
+      await startStopMutexRef.current.catch(() => undefined);
     }
 
-    stopRequestedRef.current = true;
-
     try {
-      // Stop recording
-      if (recorder.isRecording) {
-        await recorder.stop();
-      } else {
-        console.warn('[AudioRecorder] Recorder already stopped before stop() call, continuing cleanup.');
-      }
-
-      // Get URI from recorder
-      let uri = recorder.uri;
-      console.log('[AudioRecorder] Initial URI from recorder:', uri);
-
-      // Workaround for Expo SDK 54 Android bug - find actual recording file
-      if (recordingStartTime && (!uri || uri === '')) {
-        console.log('[AudioRecorder] Using workaround to find actual recording file...');
-        const actualUri = await getActualRecordingUri(recordingStartTime);
-        if (actualUri) {
-          uri = actualUri;
-          console.log('[AudioRecorder] Found actual recording URI:', uri);
+      const stopPromise = (async () => {
+        // Stop recording
+        if (recorder.isRecording) {
+          await recorder.stop();
+        } else {
+          console.warn('[AudioRecorder] Recorder already stopped before stop() call, continuing cleanup.');
         }
-      }
 
-      if (!uri || uri === '') {
-        throw new Error('No recording URI found');
-      }
+        // Get URI from recorder
+        let uri = recorder.uri;
+        console.log('[AudioRecorder] Initial URI from recorder:', uri);
 
-      // Get file info
-      const file = new File(uri);
-      const exists = file.exists;
-      console.log('[AudioRecorder] File exists:', exists);
+        // Workaround for Expo SDK 54 Android bug - find actual recording file
+        if (recordingStartTime && (!uri || uri === '')) {
+          console.log('[AudioRecorder] Using workaround to find actual recording file...');
+          const actualUri = await getActualRecordingUri(recordingStartTime);
+          if (actualUri) {
+            uri = actualUri;
+            console.log('[AudioRecorder] Found actual recording URI:', uri);
+          }
+        }
 
-      if (!exists) {
-        throw new Error('Recording file does not exist');
-      }
+        if (!uri || uri === '') {
+          // Cancellation / early stop: return an empty blob, but guarantee cleanup.
+          setRecordingStartTime(null);
+          return new Blob([], { type: 'audio/m4a' });
+        }
 
-      // Convert URI to Blob
-      const audioBlob = await uriToBlob(uri);
+        // Get file info
+        const file = new File(uri);
+        const exists = file.exists;
+        console.log('[AudioRecorder] File exists:', exists);
 
-      console.log('[AudioRecorder] Recording converted to blob:', {
-        size: audioBlob.size,
-        type: audioBlob.type,
-      });
+        if (!exists) {
+          setRecordingStartTime(null);
+          return new Blob([], { type: 'audio/m4a' });
+        }
 
-      // Clean up the temporary file
-      file.delete();
+        // Convert URI to Blob
+        const audioBlob = await uriToBlob(uri);
 
-      // Reset start time and clear recording intent
-      setRecordingStartTime(null);
-      recordingIntentRef.current = false;
+        console.log('[AudioRecorder] Recording converted to blob:', {
+          size: audioBlob.size,
+          type: audioBlob.type,
+        });
 
-      return audioBlob;
+        // Clean up the temporary file
+        file.delete();
+
+        // Reset start time
+        setRecordingStartTime(null);
+
+        return audioBlob;
+      })();
+      startStopMutexRef.current = stopPromise;
+      return await stopPromise;
     } catch (error: any) {
-      recordingIntentRef.current = false;
       setRecordingStartTime(null);
       console.error('[AudioRecorder] Failed to stop recording:', error);
       throw new Error(`Failed to stop audio recording: ${error.message}`);
     } finally {
-      stopRequestedRef.current = false;
+      startStopMutexRef.current = null;
     }
   }, [recordingStartTime]);
 
@@ -345,8 +340,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   }, []);
 
   const isRecording = useCallback(() => {
-    // Treat local intent as backup so callers can detect pending sessions
-    return Boolean(recorderState.isRecording) || recordingIntentRef.current;
+    return Boolean(recorderState.isRecording);
   }, [recorderState.isRecording]);
 
   // Return stable object using useMemo
