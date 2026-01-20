@@ -15,6 +15,11 @@ test('create agent in a temp repo', async ({ page }) => {
     // Verify user message is shown in the stream
     await expect(page.getByText(prompt, { exact: true })).toBeVisible();
 
+    // Verify we used a fast model (do not fall back to a default like Sonnet).
+    await page.getByTestId('agent-overflow-menu').click();
+    await expect(page.getByText('Model', { exact: true })).toBeVisible();
+    await expect(page.getByText(/haiku/i)).toBeVisible();
+
     // Wait for agent response containing "Hello" within an assistant message
     const assistantMessage = page.getByTestId('assistant-message').filter({ hasText: 'Hello' });
     await expect(assistantMessage).toBeVisible({ timeout: 30000 });

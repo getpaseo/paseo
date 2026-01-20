@@ -163,8 +163,14 @@ function resolveFormState(
       } else {
         result.model = "";
       }
-    } else if (providerPrefs?.model && isValidModel(providerPrefs.model)) {
-      result.model = providerPrefs.model;
+    } else if (typeof providerPrefs?.model === "string" && providerPrefs.model.length > 0) {
+      // If models haven't loaded yet, optimistically apply the stored preference.
+      // We'll validate once models load and clear it if it isn't available.
+      if (!availableModels || isValidModel(providerPrefs.model)) {
+        result.model = providerPrefs.model;
+      } else {
+        result.model = "";
+      }
     } else {
       result.model = "";
     }
