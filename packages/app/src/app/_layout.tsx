@@ -217,7 +217,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   // useLocalSearchParams doesn't update when navigating between same-pattern routes
   const selectedAgentKey = useMemo(() => {
     // Match /agent/[serverId]/[agentId] pattern
-    const match = pathname.match(/^\/agent\/([^/]+)\/([^/]+)$/);
+    const match = pathname.match(/^\/agent\/([^/]+)\/([^/]+)\/?$/);
     if (match) {
       const [, serverId, agentId] = match;
       return `${serverId}:${agentId}`;

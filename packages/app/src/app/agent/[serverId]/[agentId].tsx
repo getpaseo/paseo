@@ -624,7 +624,7 @@ function AgentScreenContent({
                 )}
               </Pressable>
               <View ref={menuButtonRef} collapsable={false}>
-                <Pressable onPress={handleOpenMenu} style={styles.menuButton}>
+                <Pressable testID="agent-overflow-menu" onPress={handleOpenMenu} style={styles.menuButton}>
                   <MoreVertical size={16} color={theme.colors.foregroundMuted} />
                 </Pressable>
               </View>
