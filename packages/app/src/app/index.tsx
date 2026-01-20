@@ -45,6 +45,14 @@ function getParamValue(value: string | string[] | undefined) {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
   }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const trimmed = entry.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
   return undefined;
 }
 

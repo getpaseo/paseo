@@ -193,6 +193,29 @@ function resolveFormState(
   return result;
 }
 
+function combineInitialValues(
+  initialValues: FormInitialValues | undefined,
+  initialServerId: string | null
+): FormInitialValues | undefined {
+  const hasExplicitServerId = initialValues?.serverId !== undefined;
+  const serverIdFromOptions = initialServerId === null ? undefined : initialServerId;
+
+  // If nobody provided initial values or an explicit serverId, let preferences drive defaults.
+  if (!initialValues && !hasExplicitServerId && serverIdFromOptions === undefined) {
+    return undefined;
+  }
+
+  if (hasExplicitServerId) {
+    return { ...initialValues, serverId: initialValues?.serverId };
+  }
+
+  if (serverIdFromOptions !== undefined) {
+    return { ...initialValues, serverId: serverIdFromOptions };
+  }
+
+  return initialValues;
+}
+
 export function useAgentFormState(
   options: UseAgentFormStateOptions = {}
 ): UseAgentFormStateResult {
@@ -251,13 +274,7 @@ export function useAgentFormState(
 
   // Combine initialValues with initialServerId for resolution
   const combinedInitialValues = useMemo((): FormInitialValues | undefined => {
-    if (!initialValues && initialServerId === null) {
-      return undefined;
-    }
-    return {
-      ...initialValues,
-      serverId: initialValues?.serverId ?? initialServerId,
-    };
+    return combineInitialValues(initialValues, initialServerId);
   }, [initialValues, initialServerId]);
 
   // Resolve form state when data sources change
@@ -547,3 +564,8 @@ export function useAgentFormState(
 
 // Re-export for backwards compatibility
 export type CreateAgentInitialValues = FormInitialValues;
+
+export const __private__ = {
+  combineInitialValues,
+  resolveFormState,
+};
