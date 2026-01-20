@@ -130,7 +130,6 @@ export function FileExplorerPane({
     return sorted;
   }, [rawEntries, sortOption]);
   const showInitialListLoading = isListingLoading && entries.length === 0;
-  const showListLoadingBanner = isListingLoading && entries.length > 0;
   const isPreviewLoading = Boolean(
     isExplorerLoading &&
       pendingRequest?.mode === "file" &&
@@ -585,14 +584,9 @@ export function FileExplorerPane({
             <View style={styles.entryIcon}>
               {renderEntryIcon(displayKind, theme.colors)}
             </View>
-            <View style={styles.entryTextContainer}>
-              <Text style={styles.entryName} numberOfLines={1}>
-                {item.name}
-              </Text>
-              <Text style={styles.entryMeta} numberOfLines={1}>
-                {formatFileSize({ size: item.size })} · {formatTimeAgo(new Date(item.modifiedAt))}
-              </Text>
-            </View>
+            <Text style={styles.entryName} numberOfLines={1}>
+              {item.name}
+            </Text>
           </View>
           <Pressable
             onPress={(event) => handleOpenMenu(item, event)}
@@ -642,17 +636,9 @@ export function FileExplorerPane({
             <ChevronDown size={14} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
-        {showListLoadingBanner && (
-          <View style={styles.loadingBanner}>
-            <ActivityIndicator size="small" />
-            <Text style={styles.loadingBannerText}>
-              Loading {formatDirectoryLabel(activePath)}...
-            </Text>
-          </View>
-        )}
       </View>
     );
-  }, [activePath, currentSortLabel, explorerState?.history?.length, handleNavigateBack, handleSortCycle, showListLoadingBanner, theme.colors.mutedForeground]);
+  }, [activePath, currentSortLabel, explorerState?.history?.length, handleNavigateBack, handleSortCycle]);
 
   // Watch for completed file previews and process queue
   useEffect(() => {
@@ -789,6 +775,15 @@ export function FileExplorerPane({
               ]}
               onLayout={handleMenuLayout}
             >
+              <View style={styles.entryMenuHeader}>
+                <Text style={styles.entryMenuMeta}>
+                  {formatFileSize({ size: menuEntry.size })}
+                </Text>
+                <Text style={styles.entryMenuMeta}>
+                  {formatTimeAgo(new Date(menuEntry.modifiedAt))}
+                </Text>
+              </View>
+              <View style={styles.entryMenuDivider} />
               <Pressable
                 style={styles.entryMenuItem}
                 onPress={() => {
@@ -866,7 +861,7 @@ export function FileExplorerPane({
         ) : (
           <View style={styles.sheetCenterState}>
             <Text style={styles.emptyText}>Binary preview unavailable</Text>
-            <Text style={styles.entryMeta}>
+            <Text style={styles.entryMenuMeta}>
               {formatFileSize({ size: preview.size })}
             </Text>
           </View>
@@ -1035,17 +1030,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     color: theme.colors.foreground,
   },
-  loadingBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-  },
-  loadingBannerText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
   sortButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1114,8 +1098,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    paddingLeft: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
@@ -1128,24 +1112,16 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    columnGap: theme.spacing[2],
-    marginRight: theme.spacing[3],
+    gap: theme.spacing[2],
+    minWidth: 0,
   },
   entryIcon: {
-    width: 28,
-    alignItems: "center",
-  },
-  entryTextContainer: {
-    flex: 1,
+    flexShrink: 0,
   },
   entryName: {
+    flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  entryMeta: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    marginTop: theme.spacing[1],
+    fontSize: theme.fontSize.sm,
   },
   menuButton: {
     width: 36,
@@ -1167,6 +1143,22 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
     padding: theme.spacing[1],
+  },
+  entryMenuHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+  },
+  entryMenuMeta: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  entryMenuDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginHorizontal: theme.spacing[2],
+    marginVertical: theme.spacing[1],
   },
   entryMenuItem: {
     paddingVertical: theme.spacing[2],

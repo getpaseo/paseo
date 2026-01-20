@@ -9,6 +9,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "./test-utils/index.js";
+import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 
 const defaultEnvPath = path.resolve(process.cwd(), ".env");
 const fallbackEnvPath = path.resolve(process.cwd(), "packages", "server", ".env");
@@ -25,10 +26,6 @@ if (envPath) {
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-v2-"));
 }
-
-// Use gpt-5.1-codex-mini with low reasoning effort for faster test execution
-const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
 
 function waitForSignal<T>(
   timeoutMs: number,
@@ -155,9 +152,7 @@ describe("daemon client v2 E2E", () => {
       });
 
       const agent = await ctx.client.createAgent({
-        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-        model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        ...getFullAccessConfig("codex"),
         cwd,
         title: "Daemon Client V2",
         requestId: createRequestId,
@@ -198,9 +193,7 @@ describe("daemon client v2 E2E", () => {
       });
 
       const failResult = await ctx.client.createAgentExpectFail({
-        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-        model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        ...getFullAccessConfig("codex"),
         cwd: "/this/path/does/not/exist/12345",
         title: "Should Fail",
         requestId: failRequestId,
@@ -409,12 +402,9 @@ describe("daemon client v2 E2E", () => {
       const filePath = path.join(cwd, "permission.txt");
 
       const agent = await ctx.client.createAgent({
-        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-        model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        ...getAskModeConfig("codex"),
         cwd,
         title: "Permission Test",
-        modeId: "auto",
       });
 
       const permissionRequestPromise = waitForSignal(60000, (resolve) => {
@@ -485,9 +475,7 @@ describe("daemon client v2 E2E", () => {
     async () => {
       const cwd = tmpCwd();
       const agent = await ctx.client.createAgent({
-        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-        model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        ...getFullAccessConfig("codex"),
         cwd,
         title: "Raw Events Test",
       });
@@ -668,9 +656,7 @@ describe("daemon client v2 E2E", () => {
       writeFileSync(downloadFile, downloadContents, "utf-8");
 
       const agent = await ctx.client.createAgent({
-        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-        model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        ...getFullAccessConfig("codex"),
         cwd,
         title: "Git/File Test",
       });
@@ -871,12 +857,8 @@ describe("daemon client v2 E2E", () => {
       expect(tokenMessage.payload.agentId).toBe(agent.id);
       expect(tokenMessage.payload.requestId).toBe(tokenRequestId);
 
-      const authHeader = ctx.daemon.agentMcpAuthHeader;
-      expect(authHeader).toBeTruthy();
-
       const response = await fetch(
-        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
-        { headers: { Authorization: authHeader! } }
+        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`
       );
 
       expect(response.status).toBe(200);

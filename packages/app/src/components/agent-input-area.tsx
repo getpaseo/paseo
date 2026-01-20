@@ -101,10 +101,6 @@ export function AgentInputArea({
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
-  // Noop fallback for sendAgentAudio (required by MessageInput)
-  const noopSendAgentAudio = useCallback(async () => {}, []);
-  const sendAgentAudio = methods?.sendAgentAudio ?? noopSendAgentAudio;
-
   const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
 
   const [internalInput, setInternalInput] = useState("");
@@ -448,52 +444,47 @@ export function AgentInputArea({
     ]
   );
 
-  const rightContent = (
-    <>
-      <Pressable
-        onPress={handleRealtimePress}
-        disabled={!isConnected && !isRealtimeMode}
-        style={[
-          styles.realtimeButton as any,
-          (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
-          (!isConnected && !isRealtimeMode
-            ? styles.buttonDisabled
-            : undefined) as any,
-        ]}
-      >
-        {isRealtimeMode ? (
-          <Square
-            size={18}
-            color={theme.colors.background}
-            fill={theme.colors.background}
-          />
-        ) : (
-          <AudioLines size={20} color={theme.colors.background} />
-        )}
-      </Pressable>
-      {isAgentRunning && (
-        <Pressable
-          onPress={handleCancelAgent}
-          disabled={!isConnected || isCancellingAgent}
-          accessibilityLabel={
-            isCancellingAgent ? "Canceling agent" : "Stop agent"
-          }
-          accessibilityRole="button"
-          style={[
-            styles.cancelButton as any,
-            (!isConnected || isCancellingAgent
-              ? styles.buttonDisabled
-              : undefined) as any,
-          ]}
-        >
-          {isCancellingAgent ? (
-            <ActivityIndicator size="small" color="white" />
-          ) : (
-            <Square size={18} color="white" fill="white" />
-          )}
-        </Pressable>
+  const rightContent = isAgentRunning ? (
+    <Pressable
+      onPress={handleCancelAgent}
+      disabled={!isConnected || isCancellingAgent}
+      accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
+      accessibilityRole="button"
+      style={[
+        styles.cancelButton as any,
+        (!isConnected || isCancellingAgent
+          ? styles.buttonDisabled
+          : undefined) as any,
+      ]}
+    >
+      {isCancellingAgent ? (
+        <ActivityIndicator size="small" color="white" />
+      ) : (
+        <Square size={18} color="white" fill="white" />
       )}
-    </>
+    </Pressable>
+  ) : (
+    <Pressable
+      onPress={handleRealtimePress}
+      disabled={!isConnected && !isRealtimeMode}
+      style={[
+        styles.realtimeButton as any,
+        (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
+        (!isConnected && !isRealtimeMode
+          ? styles.buttonDisabled
+          : undefined) as any,
+      ]}
+    >
+      {isRealtimeMode ? (
+        <Square
+          size={18}
+          color={theme.colors.background}
+          fill={theme.colors.background}
+        />
+      ) : (
+        <AudioLines size={20} color={theme.colors.background} />
+      )}
+    </Pressable>
   );
 
   const leftContent = <AgentStatusBar agentId={agentId} serverId={serverId} />;
@@ -574,7 +565,6 @@ export function AgentInputArea({
             onPickImages={handlePickImage}
             onRemoveImage={handleRemoveImage}
             client={client}
-            sendAgentAudio={sendAgentAudio}
             placeholder="Message agent..."
             autoFocus={autoFocus}
             disabled={isRealtimeMode}
@@ -630,10 +620,10 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     backgroundColor: theme.colors.palette.blue[600],
   },
   cancelButton: {
-    width: BUTTON_SIZE,
-    height: BUTTON_SIZE,
+    width: 34,
+    height: 34,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.palette.red[500],
+    backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
   },

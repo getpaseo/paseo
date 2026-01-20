@@ -25,6 +25,7 @@ export interface Task {
   created: string; // ISO date
   assignee?: AgentType; // optional agent override
   priority?: number; // lower number = higher priority (1 is highest), tasks with priority sort before those without
+  raw: string; // the raw markdown file content
 }
 
 export interface CreateTaskOptions {

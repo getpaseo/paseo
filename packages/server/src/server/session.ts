@@ -19,7 +19,14 @@ import {
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
   type GitSetupOptions,
+  type ListTerminalsRequest,
+  type CreateTerminalRequest,
+  type SubscribeTerminalRequest,
+  type UnsubscribeTerminalRequest,
+  type TerminalInput,
+  type KillTerminalRequest,
 } from "./messages.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { parseAndHighlightDiff, type ParsedDiffFile } from "./utils/diff-highlighter.js";
 import { getSystemPrompt } from "./agent/system-prompt.js";
 import { getAllTools } from "./agent/llm-openai.js";
@@ -252,6 +259,8 @@ export class Session {
     lastActivityAt: Date;
     appVisible: boolean;
   } | null = null;
+  private readonly terminalManager: TerminalManager | null;
+  private terminalSubscriptions: Map<string, () => void> = new Map();
 
   constructor(
     clientId: string,
@@ -264,6 +273,7 @@ export class Session {
     agentMcpConfig: AgentMcpClientConfig,
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
+    terminalManager: TerminalManager | null,
     options?: {
       conversationId?: string;
       initialMessages?: ModelMessage[];
@@ -277,6 +287,7 @@ export class Session {
     this.agentManager = agentManager;
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
+    this.terminalManager = terminalManager;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
@@ -777,8 +788,8 @@ export class Session {
           );
           break;
 
-        case "send_agent_audio":
-          await this.handleSendAgentAudio(msg);
+        case "transcribe_audio_request":
+          await this.handleTranscribeAudio(msg);
           break;
 
         case "create_agent_request":
@@ -855,6 +866,30 @@ export class Session {
 
         case "register_push_token":
           this.handleRegisterPushToken(msg.token);
+          break;
+
+        case "list_terminals_request":
+          await this.handleListTerminalsRequest(msg);
+          break;
+
+        case "create_terminal_request":
+          await this.handleCreateTerminalRequest(msg);
+          break;
+
+        case "subscribe_terminal_request":
+          await this.handleSubscribeTerminalRequest(msg);
+          break;
+
+        case "unsubscribe_terminal_request":
+          this.handleUnsubscribeTerminalRequest(msg);
+          break;
+
+        case "terminal_input":
+          this.handleTerminalInput(msg);
+          break;
+
+        case "kill_terminal_request":
+          await this.handleKillTerminalRequest(msg);
           break;
       }
     } catch (error: any) {
@@ -1112,65 +1147,28 @@ export class Session {
   }
 
   /**
-   * Handle audio message to agent (transcribe then send)
+   * Handle audio transcription request
    */
-  private async handleSendAgentAudio(
-    msg: Extract<SessionInboundMessage, { type: "send_agent_audio" }>
+  private async handleTranscribeAudio(
+    msg: Extract<SessionInboundMessage, { type: "transcribe_audio_request" }>
   ): Promise<void> {
-    const { agentId, audio, format, isLast, requestId, mode } = msg;
-    const shouldAutoRun = mode === "auto_run";
+    const { audio, format, requestId } = msg;
 
-    // agentId is required for auto_run mode
-    if (shouldAutoRun && !agentId) {
-      this.sessionLogger.error("agentId is required for auto_run mode");
-      return;
-    }
-
-    // Use placeholder for logging when agentId is not provided
-    const logAgentId = agentId ?? "transcription";
-
-    // Decode base64
     const audioBuffer = Buffer.from(audio, "base64");
 
-    // For now, we'll process each audio segment immediately
-    // In the future, we might want to buffer chunks similar to realtime audio
-    if (!isLast) {
-      this.sessionLogger.debug(
-        { agentId: logAgentId },
-        `Buffering agent audio chunk for agent ${logAgentId}`
-      );
-      // TODO: Implement buffering if needed
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { agentId: logAgentId },
-      `Transcribing audio for agent ${logAgentId}`
-    );
+    this.sessionLogger.debug({ requestId }, "Transcribing audio");
 
     try {
-      // Transcribe the audio
       const result = await this.sttManager.transcribe(audioBuffer, format, {
-        agentId: logAgentId,
         requestId,
-        label: shouldAutoRun ? "dictation:auto_run" : "dictation",
+        label: "dictation",
       });
 
-      const transcriptText = result.text.trim();
-      if (!transcriptText) {
-        this.sessionLogger.debug(
-          { agentId: logAgentId },
-          `Empty transcription for agent ${logAgentId}, ignoring`
-        );
-        return;
-      }
-
       this.sessionLogger.info(
-        { agentId: logAgentId, transcriptText },
-        `Transcribed audio for agent ${logAgentId}`
+        { requestId, textLength: result.text.length },
+        "Transcription complete"
       );
 
-      // Emit transcription result to client with requestId
       this.emit({
         type: "transcription_result",
         payload: {
@@ -1185,67 +1183,15 @@ export class Session {
           debugRecordingPath: result.debugRecordingPath,
         },
       });
-
-      if (!shouldAutoRun) {
-        this.sessionLogger.info(
-          { agentId: logAgentId, requestId },
-          `Completed transcription for agent ${logAgentId} (requestId: ${requestId})`
-        );
-        return;
-      }
-
-      // At this point, agentId is guaranteed to be defined (validated at function start)
-      const validAgentId = agentId!;
-
-      try {
-        await this.ensureAgentLoaded(validAgentId);
-      } catch (error) {
-        this.handleAgentRunError(
-          validAgentId,
-          error,
-          "Failed to initialize agent before sending audio prompt"
-        );
-        return;
-      }
-
-      try {
-        await this.interruptAgentIfRunning(validAgentId);
-      } catch (error) {
-        this.handleAgentRunError(
-          validAgentId,
-          error,
-          "Failed to interrupt running agent before sending audio prompt"
-        );
-        return;
-      }
-
-      try {
-        this.agentManager.recordUserMessage(validAgentId, transcriptText);
-      } catch (recordError) {
-        this.sessionLogger.error(
-          { err: recordError, agentId: validAgentId },
-          `Failed to record transcribed user message for agent ${validAgentId}`
-        );
-      }
-
-      // Send transcribed text to agent
-      this.startAgentStream(validAgentId, transcriptText);
-      this.sessionLogger.info(
-        { agentId: validAgentId },
-        `Sent transcribed text to agent ${validAgentId}`
-      );
     } catch (error: any) {
-      this.sessionLogger.error(
-        { err: error, agentId: logAgentId },
-        `Failed to process audio for agent ${logAgentId}`
-      );
+      this.sessionLogger.error({ err: error, requestId }, "Transcription failed");
       this.emit({
         type: "activity_log",
         payload: {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to process audio for agent: ${error.message}`,
+          content: `Transcription failed: ${error.message}`,
         },
       });
       throw error;
@@ -3493,5 +3439,202 @@ export class Session {
       this.agentTools = null;
     }
 
+    // Unsubscribe from all terminals
+    for (const unsubscribe of this.terminalSubscriptions.values()) {
+      unsubscribe();
+    }
+    this.terminalSubscriptions.clear();
+  }
+
+  // ============================================================================
+  // Terminal Handlers
+  // ============================================================================
+
+  private async handleListTerminalsRequest(msg: ListTerminalsRequest): Promise<void> {
+    if (!this.terminalManager) {
+      this.emit({
+        type: "list_terminals_response",
+        payload: {
+          cwd: msg.cwd,
+          terminals: [],
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const terminals = await this.terminalManager.getTerminals(msg.cwd);
+      this.emit({
+        type: "list_terminals_response",
+        payload: {
+          cwd: msg.cwd,
+          terminals: terminals.map((t) => ({ id: t.id, name: t.name })),
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, cwd: msg.cwd }, "Failed to list terminals");
+      this.emit({
+        type: "list_terminals_response",
+        payload: {
+          cwd: msg.cwd,
+          terminals: [],
+          requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {
+    if (!this.terminalManager) {
+      this.emit({
+        type: "create_terminal_response",
+        payload: {
+          terminal: null,
+          error: "Terminal manager not available",
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const session = await this.terminalManager.createTerminal({
+        cwd: msg.cwd,
+        name: msg.name,
+      });
+      this.emit({
+        type: "create_terminal_response",
+        payload: {
+          terminal: { id: session.id, name: session.name, cwd: session.cwd },
+          error: null,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error: any) {
+      this.sessionLogger.error({ err: error, cwd: msg.cwd }, "Failed to create terminal");
+      this.emit({
+        type: "create_terminal_response",
+        payload: {
+          terminal: null,
+          error: error.message,
+          requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleSubscribeTerminalRequest(msg: SubscribeTerminalRequest): Promise<void> {
+    if (!this.terminalManager) {
+      this.emit({
+        type: "subscribe_terminal_response",
+        payload: {
+          terminalId: msg.terminalId,
+          state: null,
+          error: "Terminal manager not available",
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    const session = this.terminalManager.getTerminal(msg.terminalId);
+    if (!session) {
+      this.emit({
+        type: "subscribe_terminal_response",
+        payload: {
+          terminalId: msg.terminalId,
+          state: null,
+          error: "Terminal not found",
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    // Unsubscribe from previous subscription if any
+    const existing = this.terminalSubscriptions.get(msg.terminalId);
+    if (existing) {
+      existing();
+    }
+
+    // Subscribe to terminal updates
+    const unsubscribe = session.subscribe((serverMsg) => {
+      if (serverMsg.type === "full") {
+        this.emit({
+          type: "terminal_output",
+          payload: {
+            terminalId: msg.terminalId,
+            state: serverMsg.state,
+          },
+        });
+      }
+    });
+    this.terminalSubscriptions.set(msg.terminalId, unsubscribe);
+
+    // Send initial state
+    this.emit({
+      type: "subscribe_terminal_response",
+      payload: {
+        terminalId: msg.terminalId,
+        state: session.getState(),
+        error: null,
+        requestId: msg.requestId,
+      },
+    });
+  }
+
+  private handleUnsubscribeTerminalRequest(msg: UnsubscribeTerminalRequest): void {
+    const unsubscribe = this.terminalSubscriptions.get(msg.terminalId);
+    if (unsubscribe) {
+      unsubscribe();
+      this.terminalSubscriptions.delete(msg.terminalId);
+    }
+  }
+
+  private handleTerminalInput(msg: TerminalInput): void {
+    if (!this.terminalManager) {
+      return;
+    }
+
+    const session = this.terminalManager.getTerminal(msg.terminalId);
+    if (!session) {
+      this.sessionLogger.warn({ terminalId: msg.terminalId }, "Terminal not found for input");
+      return;
+    }
+
+    session.send(msg.message);
+  }
+
+  private async handleKillTerminalRequest(msg: KillTerminalRequest): Promise<void> {
+    if (!this.terminalManager) {
+      this.emit({
+        type: "kill_terminal_response",
+        payload: {
+          terminalId: msg.terminalId,
+          success: false,
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
+    // Unsubscribe first
+    const unsubscribe = this.terminalSubscriptions.get(msg.terminalId);
+    if (unsubscribe) {
+      unsubscribe();
+      this.terminalSubscriptions.delete(msg.terminalId);
+    }
+
+    this.terminalManager.killTerminal(msg.terminalId);
+    this.emit({
+      type: "kill_terminal_response",
+      payload: {
+        terminalId: msg.terminalId,
+        success: true,
+        requestId: msg.requestId,
+      },
+    });
   }
 }

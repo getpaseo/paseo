@@ -270,7 +270,7 @@ export function buildLineDiff(originalText: string, updatedText: string): DiffLi
   return diff;
 }
 
-function parseUnifiedDiff(diffText?: string): DiffLine[] {
+export function parseUnifiedDiff(diffText?: string): DiffLine[] {
   if (!diffText) {
     return [];
   }
@@ -1023,7 +1023,7 @@ const EditToolCallSchema = z
     input: EditInputSchema,
     result: z.unknown(),
   })
-  .transform((data): { type: "edit"; filePath: string; oldString: string; newString: string } => {
+  .transform((data): { type: "edit"; filePath: string; oldString: string; newString: string; unifiedDiff?: string } => {
     const filePath = data.input.file_path;
     const oldString = "old_string" in data.input
       ? (data.input as { old_string: string }).old_string
@@ -1037,6 +1037,52 @@ const EditToolCallSchema = z
       filePath,
       oldString,
       newString,
+    };
+  });
+
+// Codex apply_patch input: { files: [{ path: string, kind: string }] }
+const ApplyPatchInputSchema = z.object({
+  files: z.array(z.object({
+    path: z.string(),
+    kind: z.string().optional(),
+  })).min(1),
+}).passthrough();
+
+// Codex apply_patch result: { files: [{ path: string, patch: string, kind: string }], message: string, success: boolean }
+const ApplyPatchResultSchema = z.object({
+  files: z.array(z.object({
+    path: z.string(),
+    patch: z.string().optional(),
+    kind: z.string().optional(),
+  })).optional(),
+  message: z.string().optional(),
+  success: z.boolean().optional(),
+}).passthrough();
+
+// Apply patch tool call display schema - transforms to edit type with unified diff
+const ApplyPatchToolCallSchema = z
+  .object({
+    input: ApplyPatchInputSchema,
+    result: z.unknown(),
+  })
+  .transform((data): { type: "edit"; filePath: string; oldString: string; newString: string; unifiedDiff?: string } => {
+    const firstFile = data.input.files[0];
+    const filePath = firstFile.path;
+
+    // Try to get the patch from the result
+    const resultParsed = ApplyPatchResultSchema.safeParse(data.result);
+    let unifiedDiff: string | undefined;
+    if (resultParsed.success && resultParsed.data.files) {
+      const resultFile = resultParsed.data.files.find(f => f.path === filePath) ?? resultParsed.data.files[0];
+      unifiedDiff = resultFile?.patch;
+    }
+
+    return {
+      type: "edit",
+      filePath,
+      oldString: "",
+      newString: "",
+      unifiedDiff,
     };
   });
 
@@ -1054,7 +1100,7 @@ const ReadResultSchema = z.object({
   content: z.string(),
 }).passthrough();
 
-// Read tool call display schema
+// Read tool call display schema (Claude)
 const ReadToolCallSchema = z
   .object({
     input: ReadInputSchema,
@@ -1066,6 +1112,30 @@ const ReadToolCallSchema = z
     content: data.result.content,
     offset: data.input.offset,
     limit: data.input.limit,
+  }));
+
+// Codex read_file input: { path: string }
+const CodexReadInputSchema = z.object({
+  path: z.string(),
+}).passthrough();
+
+// Codex read_file result: { type: "read_file", path: string, content: string }
+const CodexReadResultSchema = z.object({
+  type: z.literal("read_file"),
+  path: z.string(),
+  content: z.string(),
+}).passthrough();
+
+// Codex read_file tool call display schema
+const CodexReadToolCallSchema = z
+  .object({
+    input: CodexReadInputSchema,
+    result: CodexReadResultSchema,
+  })
+  .transform((data): { type: "read"; filePath: string; content: string; offset?: number; limit?: number } => ({
+    type: "read",
+    filePath: data.input.path,
+    content: data.result.content,
   }));
 
 // Generic tool call display schema (fallback)
@@ -1085,12 +1155,60 @@ const GenericToolCallSchema = z
     };
   });
 
-const ToolCallDisplaySchema = z.union([ShellToolCallSchema, EditToolCallSchema, ReadToolCallSchema, GenericToolCallSchema]);
+// Normalizes tool names for consistent display across agents
+const TOOL_NAME_MAP: Record<string, string> = {
+  shell: "Shell",
+  Bash: "Shell",
+  read_file: "Read",
+  apply_patch: "Edit",
+};
+
+const ToolCallDisplaySchema = z
+  .object({
+    toolName: z.string(),
+    input: z.unknown(),
+    result: z.unknown(),
+  })
+  .transform((data) => {
+    const normalizedToolName = TOOL_NAME_MAP[data.toolName] ?? data.toolName;
+
+    // Try each schema in order
+    const shellParsed = ShellToolCallSchema.safeParse({ input: data.input, result: data.result });
+    if (shellParsed.success) {
+      return { ...shellParsed.data, toolName: normalizedToolName };
+    }
+
+    const editParsed = EditToolCallSchema.safeParse({ input: data.input, result: data.result });
+    if (editParsed.success) {
+      return { ...editParsed.data, toolName: normalizedToolName };
+    }
+
+    // Codex apply_patch - try before read since it also uses files array
+    const applyPatchParsed = ApplyPatchToolCallSchema.safeParse({ input: data.input, result: data.result });
+    if (applyPatchParsed.success) {
+      return { ...applyPatchParsed.data, toolName: normalizedToolName };
+    }
+
+    const readParsed = ReadToolCallSchema.safeParse({ input: data.input, result: data.result });
+    if (readParsed.success) {
+      return { ...readParsed.data, toolName: normalizedToolName };
+    }
+
+    // Codex read_file
+    const codexReadParsed = CodexReadToolCallSchema.safeParse({ input: data.input, result: data.result });
+    if (codexReadParsed.success) {
+      return { ...codexReadParsed.data, toolName: normalizedToolName };
+    }
+
+    // Fallback to generic
+    const genericParsed = GenericToolCallSchema.parse({ input: data.input, result: data.result });
+    return { ...genericParsed, toolName: normalizedToolName };
+  });
 
 export type ToolCallDisplay = z.infer<typeof ToolCallDisplaySchema>;
 
-export function parseToolCallDisplay(input: unknown, result: unknown): ToolCallDisplay {
-  return ToolCallDisplaySchema.parse({ input, result });
+export function parseToolCallDisplay(toolName: string, input: unknown, result: unknown): ToolCallDisplay {
+  return ToolCallDisplaySchema.parse({ toolName, input, result });
 }
 
 // ---- Principal Parameter Extraction ----

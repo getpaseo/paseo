@@ -106,7 +106,7 @@ export default function HomeScreen() {
   const resolvedModel = getParamValue(params.model);
   const resolvedWorkingDir = getParamValue(params.workingDir);
 
-  const initialValues = useMemo(() => {
+  const initialValues = useMemo((): CreateAgentInitialValues => {
     const values: CreateAgentInitialValues = {};
     if (resolvedWorkingDir) {
       values.workingDir = resolvedWorkingDir;
@@ -117,8 +117,12 @@ export default function HomeScreen() {
     if (resolvedMode) {
       values.modeId = resolvedMode;
     }
+    if (resolvedModel) {
+      values.model = resolvedModel;
+    }
     return values;
-  }, [resolvedMode, resolvedProvider, resolvedWorkingDir]);
+  }, [resolvedMode, resolvedModel, resolvedProvider, resolvedWorkingDir]);
+
   const {
     selectedServerId,
     setSelectedServerIdFromUser,
@@ -143,21 +147,6 @@ export default function HomeScreen() {
     isVisible: true,
     isCreateFlow: true,
   });
-  const hasAppliedModelParamRef = useRef(false);
-  useEffect(() => {
-    if (!resolvedModel || hasAppliedModelParamRef.current) {
-      return;
-    }
-    if (availableModels.length === 0) {
-      return;
-    }
-    const isValidModel = availableModels.some((model) => model.id === resolvedModel);
-    hasAppliedModelParamRef.current = true;
-    if (!isValidModel) {
-      return;
-    }
-    setModelFromUser(resolvedModel);
-  }, [availableModels, resolvedModel, setModelFromUser]);
   const hostEntry = selectedServerId
     ? connectionStates.get(selectedServerId)
     : undefined;

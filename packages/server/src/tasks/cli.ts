@@ -609,11 +609,28 @@ program
 interface AgentConfig {
   cli: "claude" | "codex";
   model?: string;
+  effort?: string;
 }
 
-function getAgentConfig(model: ModelName): AgentConfig {
+// Parse model string like "gpt-5.2-xhigh" into model and effort
+function parseModelString(modelStr: string): { model: string; effort?: string } {
+  // GPT models with effort: gpt-5.2-low, gpt-5.2-medium, gpt-5.2-high, gpt-5.2-xhigh
+  const effortLevels = ["low", "medium", "high", "xhigh"];
+  for (const effort of effortLevels) {
+    if (modelStr.endsWith(`-${effort}`)) {
+      return {
+        model: modelStr.slice(0, -(effort.length + 1)),
+        effort,
+      };
+    }
+  }
+  return { model: modelStr };
+}
+
+function getAgentConfig(modelStr: string): AgentConfig {
+  const { model, effort } = parseModelString(modelStr);
   if (model.startsWith("gpt-")) {
-    return { cli: "codex", model };
+    return { cli: "codex", model, effort };
   }
   // Claude CLI accepts aliases directly: haiku, sonnet, opus
   return { cli: "claude", model };
@@ -621,10 +638,10 @@ function getAgentConfig(model: ModelName): AgentConfig {
 
 function runAgentWithModel(
   prompt: string,
-  model: ModelName,
+  modelStr: string,
   logFile: string
 ): { success: boolean; output: string } {
-  const config = getAgentConfig(model);
+  const config = getAgentConfig(modelStr);
   let args: string[];
 
   if (config.cli === "claude") {
@@ -634,12 +651,13 @@ function runAgentWithModel(
     }
     args.push("-p", prompt);
   } else {
+    const effort = config.effort ?? "medium";
     args = [
       "exec",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
       "-c",
-      "model_reasoning_effort=\"medium\"",
+      `model_reasoning_effort="${effort}"`,
     ];
     if (config.model) {
       args.push("--model", config.model);
@@ -686,28 +704,9 @@ async function buildTaskContext(task: Task, scopeId?: string): Promise<string> {
     }
   }
 
-  let acceptanceCriteriaText = "";
-  if (task.acceptanceCriteria.length > 0) {
-    acceptanceCriteriaText = "\n## Acceptance Criteria\n\n";
-    for (const criterion of task.acceptanceCriteria) {
-      acceptanceCriteriaText += `- [ ] ${criterion}\n`;
-    }
-  }
-
-  let notesText = "";
-  if (task.notes.length > 0) {
-    notesText = "\n## Notes\n";
-    for (const note of task.notes) {
-      notesText += `\n**${note.timestamp}**\n${note.content}\n`;
-    }
-  }
-
   return `Working directory: ${process.cwd()}
 ${scopeContext}${parentContext}
-# Task: ${task.title}
-
-${task.body || "(no body)"}
-${acceptanceCriteriaText}${notesText}`;
+${task.raw}`;
 }
 
 function makePlannerPrompt(task: Task, context: string, reason: string): string {
@@ -917,42 +916,58 @@ You are a WORKER agent implementing this task.
 
 Current iteration: ${iteration}
 
-IMPORTANT RULES:
-- You CANNOT mark this task as done (task close is forbidden for you)
+## How to Work
+
+Make MEANINGFUL progress toward the acceptance criteria:
+- If the task can be completed in one iteration, do it all
+- If it's too large, make the largest meaningful chunk of progress you can
+- Read the notes from previous iterations - don't repeat work, BUILD on it
+- A judge will verify your work against the acceptance criteria and leave feedback
+
+The judge's feedback (in notes) tells you exactly what's still failing. Address it.
+
+## Rules
+
+- You CANNOT mark this task as done (a judge verifies completion)
 - You MUST add a note documenting what you did: \`task note ${task.id} "WORKER: what you did"\`
-- You CAN use \`task show ${task.id}\` to see full context
-- You CAN use \`task children ${task.id}\` to see subtasks
+- You CAN use \`task show ${task.id}\` to refresh context
 
-Focus on implementing the task. The acceptance criteria will be verified by a separate judge agent.
-
-When you've done your best work, add a note explaining what you did and exit.
+When you've made meaningful progress, add a note explaining what you did and exit.
 `;
 }
 
 function makeJudgePrompt(task: Task): string {
-  let criteriaText = "";
-  if (task.acceptanceCriteria.length > 0) {
-    criteriaText = "## Acceptance Criteria to Verify\n\n";
-    for (let i = 0; i < task.acceptanceCriteria.length; i++) {
-      criteriaText += `${i + 1}. ${task.acceptanceCriteria[i]}\n`;
-    }
-  } else {
-    criteriaText = "No explicit acceptance criteria defined. Verify the task is reasonably complete based on the title and body.\n";
-  }
-
   return `You are a JUDGE agent. Your ONLY job is to verify if acceptance criteria are met.
 
-# Task: ${task.title}
-
-${task.body || "(no body)"}
-
-${criteriaText}
+${task.raw}
 
 ## Your Instructions
 
 1. For EACH criterion, verify if it is satisfied by running commands and checking actual state
 2. You may run commands to check (e.g., \`npm run test\`, \`npm run typecheck\`, check file existence, run the code)
 3. After checking all criteria, output your verdict
+
+## FAIL EARLY for NOT_DONE
+
+For large tasks, the worker may yield after implementing incremental progress. Don't waste time
+checking every criterion if it's obvious the task isn't complete.
+
+**Fail early strategy:**
+- Start with a quick smoke test (e.g., does \`npm run typecheck\` or \`npm test\` pass?)
+- If the smoke test fails badly, you can immediately return NOT_DONE
+- If you find ANY failing criterion, you can immediately return NOT_DONE
+- No need to check all criteria if you already know the verdict is NOT_DONE
+
+**Example:** If you run \`npm test\` and see 15 failures, don't methodically check each acceptance
+criterion - just note the failures and return NOT_DONE.
+
+## For DONE: Full Verification Required
+
+Unlike NOT_DONE, you CANNOT shortcut DONE. To mark something DONE:
+- You MUST verify EVERY acceptance criterion explicitly
+- You MUST run the actual commands to check (not assume from context)
+- You MUST confirm each criterion passes before concluding DONE
+- No shortcuts, no assumptions, no "it probably works"
 
 ## CRITICAL: No Excuses Policy
 
@@ -977,18 +992,38 @@ After verifying, you MUST leave feedback for the worker by adding a note. The wo
 this note in the next iteration - it's their ONLY way to know what went wrong and what's missing.
 
 \`\`\`
-task note ${task.id} "JUDGE: [verdict] - [specific feedback for the worker]"
+task note ${task.id} "JUDGE: [verdict] - [observed facts only]"
 \`\`\`
 
-Your feedback should tell the worker exactly what to fix:
-- Which specific tests failed and with what error messages
-- Which files or commands still need attention
-- What's missing from the acceptance criteria
+**CRITICAL: State ONLY observed facts. Do NOT provide solutions or debugging advice.**
 
-BAD: "tests failed" (useless - worker doesn't know which ones)
-GOOD: "3 tests fail: codex-mcp-agent.test.ts 'Session not found', opencode-agent.test.ts timeout after 60s, tool-calls.e2e.test.ts shell assertion"
+You are a verification agent, not a debugging assistant. The worker has access to the task body
+which contains the full context and instructions. Your job is to report WHAT failed, not HOW to fix it.
 
-The worker cannot see your output - only the notes you leave.
+DO:
+- State which tests failed and their error messages
+- State which commands returned non-zero exit codes
+- State which files are missing or have wrong content
+- Quote exact error output
+
+DO NOT:
+- Suggest fixes or solutions
+- Explain why something might have failed
+- Offer debugging strategies
+- Recommend approaches or alternatives
+
+BAD: "3 tests fail - try mocking the database connection"
+BAD: "typecheck fails - you need to add the missing type annotation"
+GOOD: "3 tests fail: auth.test.ts:42 'expected 200, got 401', user.test.ts:15 'timeout after 5000ms'"
+GOOD: "npm run typecheck exit 1: src/api.ts:23 - Property 'foo' does not exist on type 'Bar'"
+
+For non-test criteria, state observable facts about the code:
+GOOD: "validateUser() in auth.ts:45-72 duplicates validateAdmin() in admin.ts:23-50 (criterion: no code duplication)"
+GOOD: "processOrder() is 187 lines (criterion: functions under 50 lines)"
+GOOD: "UserService calls database directly at line 34 (criterion: all DB access via repository layer)"
+GOOD: "auth module exports JWT secret at line 12 (criterion: secrets not exported from modules)"
+
+The worker has the task body with full instructions. Just tell them what's broken.
 
 ## Output Format - CRITICAL
 
@@ -1030,26 +1065,29 @@ program
   .description("Run agent loop on tasks with planner/worker/judge")
   .option("--plan", "Enable planner agent")
   .option("--planner <model>", "Planner model (default: gpt-5.2)", "gpt-5.2")
-  .option("--judge <model>", "Judge model (default: haiku)", "haiku")
+  .option("--worker-model <model>", "Worker model (default: sonnet). For GPT models, append effort: gpt-5.2-high", "sonnet")
+  .option("--judge-model <model>", "Judge model (default: haiku)", "haiku")
   .option("--max-iterations <n>", "Max worker/judge iterations per task (0 = no limit)", "0")
   .option("-w, --watch", "Keep running and wait for new tasks")
   .action(async (scopeId: string | undefined, opts) => {
     const enablePlanner = opts.plan;
-    const plannerModel = opts.planner as ModelName;
-    const judgeModel = opts.judge as ModelName;
+    const plannerModel = opts.planner as string;
+    const baseWorkerModel = opts.workerModel as string;
+    const judgeModel = opts.judgeModel as string;
     const maxIterations = parseInt(opts.maxIterations, 10);
     const watchMode = opts.watch;
     const logFile = getLogFile();
 
     process.stdout.write("Task Runner started (planner/worker/judge loop)\n");
     process.stdout.write(`Planner: ${enablePlanner ? plannerModel : "disabled"}\n`);
+    process.stdout.write(`Worker: ${baseWorkerModel}\n`);
     process.stdout.write(`Judge: ${judgeModel}\n`);
     process.stdout.write(`Max iterations: ${maxIterations === 0 ? "unlimited" : maxIterations}\n`);
     if (scopeId) process.stdout.write(`Scope: ${scopeId}\n`);
     process.stdout.write(`Log: ${logFile}\n`);
     process.stdout.write("\n");
 
-    log(logFile, `Started with planner=${enablePlanner ? plannerModel : "disabled"} judge=${judgeModel} maxIter=${maxIterations} scope=${scopeId || "all"}`);
+    log(logFile, `Started with planner=${enablePlanner ? plannerModel : "disabled"} worker=${baseWorkerModel} judge=${judgeModel} maxIter=${maxIterations} scope=${scopeId || "all"}`);
 
     const runPlanner = async (task: Task, reason: string): Promise<boolean> => {
       log(logFile, `[PLANNER] Running ${plannerModel} (${reason})...`);
@@ -1113,13 +1151,12 @@ program
         }
 
         const task = ready[0];
-        const baseModel = (
-          task.assignee === "codex" ? "gpt-5.2-codex" :
-          task.assignee ? task.assignee :
-          "sonnet"
-        ) as ModelName;
-        let workerModel = baseModel;
-        const canUpgrade = baseModel === "sonnet"; // Only upgrade if starting from sonnet
+        // CLI --worker-model takes precedence, then task assignee, then default
+        let workerModel = baseWorkerModel;
+        if (!workerModel && task.assignee) {
+          workerModel = task.assignee === "codex" ? "gpt-5.2-codex" : task.assignee;
+        }
+        const canUpgrade = workerModel === "sonnet"; // Only upgrade if starting from sonnet
 
         log(logFile, `\n=== Starting task: ${task.id} - ${task.title} ===`);
         await store.start(task.id);

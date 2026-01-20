@@ -495,12 +495,6 @@ export function AgentStreamView({
             </View>
           ) : null}
 
-          {showWorkingIndicator ? (
-            <View style={stylesheet.workingIndicatorWrapper}>
-              <WorkingIndicator />
-            </View>
-          ) : null}
-
           {hasHeadItems
             ? [...streamHead].reverse().map((item, index) => {
                 const rendered = renderStreamItemContent(item, index);
@@ -511,6 +505,12 @@ export function AgentStreamView({
                 ) : null;
               })
             : null}
+
+          {showWorkingIndicator ? (
+            <View style={stylesheet.workingIndicatorWrapper}>
+              <WorkingIndicator />
+            </View>
+          ) : null}
         </View>
       </View>
     );
@@ -555,10 +555,12 @@ export function AgentStreamView({
             }
             ListHeaderComponent={listHeaderComponent}
             extraData={flatListExtraData}
-            maintainVisibleContentPosition={{
-              minIndexForVisible: 0,
-              autoscrollToTopThreshold: 40,
-            }}
+            maintainVisibleContentPosition={
+              // Disable when streaming and user is at bottom - we handle auto-scroll ourselves
+              agent.status === "running" && isNearBottom
+                ? undefined
+                : { minIndexForVisible: 0, autoscrollToTopThreshold: 40 }
+            }
             initialNumToRender={12}
             windowSize={10}
             inverted
@@ -777,8 +779,8 @@ function PermissionRequestCard({
   }, [request]);
 
   const toolCallDisplay = useMemo(
-    () => parseToolCallDisplay(request.input, null),
-    [request.input]
+    () => parseToolCallDisplay(request.name ?? "unknown", request.input, null),
+    [request.name, request.input]
   );
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
@@ -792,7 +794,7 @@ function PermissionRequestCard({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.text]}>
           {node.content}
         </Text>
       ),
@@ -806,7 +808,6 @@ function PermissionRequestCard({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.textgroup]}
-          selectable
         >
           {children}
         </Text>
@@ -821,7 +822,6 @@ function PermissionRequestCard({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.code_block]}
-          selectable
         >
           {node.content}
         </Text>
@@ -833,7 +833,7 @@ function PermissionRequestCard({
         styles: any,
         inheritedStyles: any = {}
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]} selectable>
+        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
           {node.content}
         </Text>
       ),
@@ -847,7 +847,6 @@ function PermissionRequestCard({
         <Text
           key={node.key}
           style={[inheritedStyles, styles.code_inline]}
-          selectable
         >
           {node.content}
         </Text>
@@ -893,7 +892,6 @@ function PermissionRequestCard({
             <Text style={iconStyle}>{bullet}</Text>
             <Text
               style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
-              selectable
             >
               {children}
             </Text>

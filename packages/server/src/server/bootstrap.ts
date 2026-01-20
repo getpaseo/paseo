@@ -1,5 +1,4 @@
 import express from "express";
-import basicAuth from "express-basic-auth";
 import { createServer as createHTTPServer } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
@@ -49,6 +48,7 @@ import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
+import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   AgentClient,
   AgentControlMcpConfig,
@@ -56,13 +56,6 @@ import type {
 } from "./agent/agent-sdk-types.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
-
-export type PaseoAuthConfig = {
-  basicUsers: Record<string, string>;
-  realm?: string;
-  agentMcpBearerToken?: string;
-  agentMcpAuthHeader?: string;
-};
 
 export type PaseoOpenAIConfig = {
   apiKey?: string;
@@ -76,7 +69,6 @@ export type PaseoDaemonConfig = {
   corsAllowedOrigins: string[];
   agentMcpRoute: string;
   agentMcpAllowedHosts: string[];
-  auth: PaseoAuthConfig;
   staticDir: string;
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
@@ -90,6 +82,7 @@ export interface PaseoDaemon {
   config: PaseoDaemonConfig;
   agentManager: AgentManager;
   agentRegistry: AgentRegistry;
+  terminalManager: TerminalManager;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -101,12 +94,8 @@ export async function createPaseoDaemon(
   const logger = rootLogger.child({ module: "bootstrap" });
 
   const agentMcpRoute = config.agentMcpRoute;
-  const basicAuthUsers = config.auth.basicUsers;
   const staticDir = config.staticDir;
-  const authRealm = config.auth.realm ?? "Voice Assistant";
   const downloadTokenTtlMs = config.downloadTokenTtlMs ?? 60000;
-
-  const agentMcpBearerToken = config.auth.agentMcpBearerToken;
 
   const downloadTokenStore = new DownloadTokenStore({ ttlMs: downloadTokenTtlMs });
 
@@ -142,30 +131,8 @@ export async function createPaseoDaemon(
     next();
   });
 
-  // Serve static files from public directory (no auth required for APK downloads)
+  // Serve static files from public directory
   app.use("/public", express.static(staticDir));
-
-  // Basic authentication (skip for /public routes)
-  const basicAuthMiddleware = basicAuth({
-    users: basicAuthUsers,
-    challenge: true,
-    realm: authRealm,
-  });
-  app.use((req, res, next) => {
-    if (req.path === "/api/files/download") {
-      return next();
-    }
-    if (agentMcpBearerToken && req.path.startsWith(agentMcpRoute)) {
-      const authHeader = req.header("authorization") ?? "";
-      if (authHeader.startsWith("Bearer ")) {
-        const token = authHeader.slice("Bearer ".length).trim();
-        if (token === agentMcpBearerToken) {
-          return next();
-        }
-      }
-    }
-    return basicAuthMiddleware(req, res, next);
-  });
 
   // Middleware
   app.use(express.json());
@@ -259,6 +226,8 @@ export async function createPaseoDaemon(
     agentControlMcp: config.agentControlMcp,
     logger,
   });
+
+  const terminalManager = createTerminalManager();
 
   attachAgentRegistryPersistence(logger, agentManager, agentRegistry);
   const persistedRecords = await agentRegistry.list();
@@ -425,7 +394,8 @@ export async function createPaseoDaemon(
       agentMcpHeaders: config.agentControlMcp.headers,
     },
     { allowedOrigins },
-    { stt: sttService, tts: ttsService }
+    { stt: sttService, tts: ttsService },
+    terminalManager
   );
 
   const start = async () => {
@@ -464,6 +434,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await closeAllAgents(logger, agentManager);
     await shutdownProviders(logger);
+    terminalManager.killAll();
     await wsServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
@@ -478,6 +449,7 @@ export async function createPaseoDaemon(
     config,
     agentManager,
     agentRegistry,
+    terminalManager,
     start,
     stop,
   };

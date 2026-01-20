@@ -91,17 +91,6 @@ describe("agent MCP end-to-end", () => {
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
       const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
       const port = await getAvailablePort();
-      const basicUsers = { test: "pass" };
-      const [agentMcpUser, agentMcpPassword] =
-        Object.entries(basicUsers)[0] ?? [];
-      const agentMcpAuthHeader =
-        agentMcpUser && agentMcpPassword
-          ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
-          : undefined;
-      const agentMcpBearerToken =
-        agentMcpUser && agentMcpPassword
-          ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
-          : undefined;
 
       const daemonConfig: PaseoDaemonConfig = {
         listen: `${port}`,
@@ -109,21 +98,12 @@ describe("agent MCP end-to-end", () => {
         corsAllowedOrigins: [],
         agentMcpRoute: "/mcp/agents",
         agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
-        auth: {
-          basicUsers,
-          agentMcpAuthHeader,
-          agentMcpBearerToken,
-          realm: "Voice Assistant",
-        },
         staticDir,
         mcpDebug: false,
         agentClients: {},
         agentRegistryPath: path.join(paseoHome, "agents.json"),
         agentControlMcp: {
           url: `http://127.0.0.1:${port}/mcp/agents`,
-          ...(agentMcpAuthHeader
-            ? { headers: { Authorization: agentMcpAuthHeader } }
-            : {}),
         },
       };
 
@@ -140,10 +120,7 @@ describe("agent MCP end-to-end", () => {
       await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${port}/mcp/agents`),
-        agentMcpAuthHeader
-          ? { requestInit: { headers: { Authorization: agentMcpAuthHeader } } }
-          : undefined
+        new URL(`http://127.0.0.1:${port}/mcp/agents`)
       );
       const client = (await experimental_createMCPClient({
         transport,
@@ -247,17 +224,6 @@ describe("agent MCP end-to-end", () => {
       const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
       const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
       const port = await getAvailablePort();
-      const basicUsers = { test: "pass" };
-      const [agentMcpUser, agentMcpPassword] =
-        Object.entries(basicUsers)[0] ?? [];
-      const agentMcpAuthHeader =
-        agentMcpUser && agentMcpPassword
-          ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
-          : undefined;
-      const agentMcpBearerToken =
-        agentMcpUser && agentMcpPassword
-          ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
-          : undefined;
 
       const daemonConfig: PaseoDaemonConfig = {
         listen: `${port}`,
@@ -265,21 +231,12 @@ describe("agent MCP end-to-end", () => {
         corsAllowedOrigins: [],
         agentMcpRoute: "/mcp/agents",
         agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
-        auth: {
-          basicUsers,
-          agentMcpAuthHeader,
-          agentMcpBearerToken,
-          realm: "Voice Assistant",
-        },
         staticDir,
         mcpDebug: false,
         agentClients: {},
         agentRegistryPath: path.join(paseoHome, "agents.json"),
         agentControlMcp: {
           url: `http://127.0.0.1:${port}/mcp/agents`,
-          ...(agentMcpAuthHeader
-            ? { headers: { Authorization: agentMcpAuthHeader } }
-            : {}),
         },
       };
 
@@ -296,10 +253,7 @@ describe("agent MCP end-to-end", () => {
       await daemon.start();
 
       const transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${port}/mcp/agents`),
-        agentMcpAuthHeader
-          ? { requestInit: { headers: { Authorization: agentMcpAuthHeader } } }
-          : undefined
+        new URL(`http://127.0.0.1:${port}/mcp/agents`)
       );
       const client = (await experimental_createMCPClient({
         transport,

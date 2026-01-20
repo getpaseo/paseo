@@ -14,13 +14,12 @@ import {
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
   type ViewMode,
+  type ExplorerTab,
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
-
-type ExplorerTab = "changes" | "files";
 
 interface ExplorerSidebarProps {
   serverId: string;
@@ -309,13 +308,11 @@ function SidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {activeTab === "changes" ? (
+        {activeTab === "changes" && (
           <GitDiffPane serverId={serverId} agentId={agentId} />
-        ) : (
-          <FileExplorerPane
-            serverId={serverId}
-            agentId={agentId}
-          />
+        )}
+        {activeTab === "files" && (
+          <FileExplorerPane serverId={serverId} agentId={agentId} />
         )}
       </View>
     </View>

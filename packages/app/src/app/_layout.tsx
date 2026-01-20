@@ -28,6 +28,8 @@ import {
   HorizontalScrollProvider,
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
+import { getIsTauriMac } from "@/constants/layout";
+import { useTrafficLightPadding } from "@/utils/tauri-window";
 
 function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -152,11 +154,17 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
     [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, openAgentList, isGesturing, horizontalScroll?.isAnyScrolledRight, touchStartX]
   );
 
+  // When sidebar is collapsed on desktop Tauri macOS, add left padding for traffic lights
+  const trafficLightPadding = useTrafficLightPadding();
+  const needsTrafficLightPadding = !isMobile && !isOpen && getIsTauriMac();
+
   const content = (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
         {!isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
-        <View style={{ flex: 1 }}>{children}</View>
+        <View style={{ flex: 1, paddingLeft: needsTrafficLightPadding ? trafficLightPadding.left : 0 }}>
+          {children}
+        </View>
       </View>
       {isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />

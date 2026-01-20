@@ -352,12 +352,6 @@ export interface SessionContextValue {
     message: string,
     images?: Array<{ uri: string; mimeType?: string }>
   ) => Promise<void>;
-  sendAgentAudio: (
-    agentId: string | undefined,
-    audioBlob: Blob,
-    requestId?: string,
-    options?: { mode?: "transcribe_only" | "auto_run" }
-  ) => Promise<void>;
   deleteAgent: (agentId: string) => void;
   createAgent: (options: {
     config: any;
@@ -1972,69 +1966,6 @@ export function SessionProvider({
     [client]
   );
 
-  const sendAgentAudio = useCallback(
-    async (
-      agentId: string | undefined,
-      audioBlob: Blob,
-      requestId?: string,
-      options?: { mode?: "transcribe_only" | "auto_run" }
-    ) => {
-      try {
-        if (!client) {
-          throw new Error("Daemon client unavailable");
-        }
-        if (!client.isConnected) {
-          throw new Error("Daemon client is disconnected");
-        }
-        const resolvedRequestId = requestId ?? generateMessageId();
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64Audio = btoa(binary);
-
-        const deriveFormat = (mimeType: string | undefined): string => {
-          if (!mimeType || mimeType.length === 0) {
-            return "webm";
-          }
-          const slashIndex = mimeType.indexOf("/");
-          let formatPart =
-            slashIndex >= 0 ? mimeType.slice(slashIndex + 1) : mimeType;
-          const semicolonIndex = formatPart.indexOf(";");
-          if (semicolonIndex >= 0) {
-            formatPart = formatPart.slice(0, semicolonIndex);
-          }
-          return formatPart.trim().length > 0 ? formatPart.trim() : "webm";
-        };
-
-        const format = deriveFormat(audioBlob.type);
-        await client.sendAgentAudio({
-          ...(agentId ? { agentId } : {}),
-          audio: base64Audio,
-          format,
-          isLast: true,
-          requestId: resolvedRequestId,
-          ...(options?.mode ? { mode: options.mode } : {}),
-        });
-
-        console.log(
-          "[Session] Sent audio:",
-          agentId ?? "(no agent)",
-          format,
-          audioBlob.size,
-          "bytes",
-          `(requestId: ${resolvedRequestId})`
-        );
-      } catch (error) {
-        console.error("[Session] Failed to send audio:", error);
-        throw error;
-      }
-    },
-    [client]
-  );
-
   const createAgent = useCallback(
     async ({
       config,
@@ -2344,7 +2275,6 @@ export function SessionProvider({
       cancelAgentRun,
       deleteAgent,
       sendAgentMessage,
-      sendAgentAudio,
       createAgent,
       setAgentMode,
       respondToPermission,
@@ -2368,7 +2298,6 @@ export function SessionProvider({
       cancelAgentRun,
       deleteAgent,
       sendAgentMessage,
-      sendAgentAudio,
       createAgent,
       setAgentMode,
       respondToPermission,
@@ -2394,7 +2323,6 @@ export function SessionProvider({
       refreshSession,
       cancelAgentRun,
       sendAgentMessage,
-      sendAgentAudio,
       deleteAgent,
       createAgent,
       setAgentMode,
@@ -2415,7 +2343,6 @@ export function SessionProvider({
       refreshSession,
       cancelAgentRun,
       sendAgentMessage,
-      sendAgentAudio,
       deleteAgent,
       createAgent,
       setAgentMode,

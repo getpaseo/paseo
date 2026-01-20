@@ -7,7 +7,6 @@ import pino from "pino";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 
 type TestPaseoDaemonOptions = {
-  basicUsers?: Record<string, string>;
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -19,8 +18,6 @@ export type TestPaseoDaemon = {
   port: number;
   paseoHome: string;
   staticDir: string;
-  agentMcpAuthHeader?: string;
-  agentMcpBearerToken?: string;
   close: () => Promise<void>;
 };
 
@@ -42,16 +39,6 @@ async function getAvailablePort(): Promise<number> {
 export async function createTestPaseoDaemon(
   options: TestPaseoDaemonOptions = {}
 ): Promise<TestPaseoDaemon> {
-  const basicUsers = options.basicUsers ?? { test: "pass" };
-  const [agentMcpUser, agentMcpPassword] = Object.entries(basicUsers)[0] ?? [];
-  const agentMcpAuthHeader =
-    agentMcpUser && agentMcpPassword
-      ? `Basic ${Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")}`
-      : undefined;
-  const agentMcpBearerToken =
-    agentMcpUser && agentMcpPassword
-      ? Buffer.from(`${agentMcpUser}:${agentMcpPassword}`).toString("base64")
-      : undefined;
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const maxAttempts = 5;
   let lastError: unknown;
@@ -68,21 +55,12 @@ export async function createTestPaseoDaemon(
       corsAllowedOrigins: options.corsAllowedOrigins ?? [],
       agentMcpRoute: "/mcp/agents",
       agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `${listenHost}:${port}`],
-      auth: {
-        basicUsers,
-        agentMcpAuthHeader,
-        agentMcpBearerToken,
-        realm: "Voice Assistant",
-      },
       staticDir,
       mcpDebug: false,
       agentClients: {},
       agentRegistryPath: path.join(paseoHome, "agents.json"),
       agentControlMcp: {
         url: `http://127.0.0.1:${port}/mcp/agents`,
-        ...(agentMcpAuthHeader
-          ? { headers: { Authorization: agentMcpAuthHeader } }
-          : {}),
       },
       openai: openaiApiKey ? { apiKey: openaiApiKey } : undefined,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
@@ -106,8 +84,6 @@ export async function createTestPaseoDaemon(
         port,
         paseoHome,
         staticDir,
-        agentMcpAuthHeader,
-        agentMcpBearerToken,
         close,
       };
     } catch (error) {

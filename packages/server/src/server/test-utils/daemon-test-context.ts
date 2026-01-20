@@ -37,7 +37,6 @@ export async function createDaemonTestContext(
   const daemon = await createTestPaseoDaemon(options);
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
-    authHeader: daemon.agentMcpAuthHeader,
   });
   await client.connect();
 

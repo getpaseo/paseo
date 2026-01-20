@@ -3,6 +3,7 @@ import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { useTauriDragHandlers } from "@/utils/tauri-window";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -21,10 +22,14 @@ export function ScreenHeader({ left, right, leftStyle, rightStyle }: ScreenHeade
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? 8 : 0;
 
+  // On Tauri macOS, enable window dragging and double-click to maximize
+  // Left padding for traffic lights is handled by _layout.tsx when sidebar is collapsed
+  const dragHandlers = useTauriDragHandlers();
+
   return (
     <View style={styles.header}>
       <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
-        <View style={styles.row}>
+        <View style={styles.row} {...dragHandlers}>
           <View style={[styles.left, leftStyle]}>{left}</View>
           <View style={[styles.right, rightStyle]}>{right}</View>
         </View>
@@ -46,6 +51,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
+    userSelect: "none",
   },
   left: {
     flex: 1,

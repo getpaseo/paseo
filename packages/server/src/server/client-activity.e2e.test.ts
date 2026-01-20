@@ -49,7 +49,6 @@ describe("client activity tracking", () => {
   async function createClient(): Promise<DaemonClient> {
     const client = new DaemonClient({
       url: `ws://127.0.0.1:${daemon.port}/ws`,
-      authHeader: daemon.agentMcpAuthHeader,
       messageQueueLimit: null,
     });
     await client.connect();
