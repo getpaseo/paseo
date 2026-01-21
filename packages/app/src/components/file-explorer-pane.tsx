@@ -16,18 +16,17 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
-  BottomSheetView,
 } from "@gorhom/bottom-sheet";
 import {
+  ArrowLeft,
   ChevronDown,
-  Download,
   File,
   FileText,
   Folder,
@@ -64,6 +63,8 @@ export function FileExplorerPane({
   agentId,
 }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const { connectionStates } = useDaemonConnections();
   const daemonProfile = connectionStates.get(serverId)?.daemon;
 
@@ -335,12 +336,15 @@ export function FileExplorerPane({
 
   // Open/close preview sheet based on selection
   useEffect(() => {
+    if (!isMobile) {
+      return;
+    }
     if (selectedEntryPath) {
       previewSheetRef.current?.present();
     } else {
       previewSheetRef.current?.dismiss();
     }
-  }, [selectedEntryPath]);
+  }, [isMobile, selectedEntryPath]);
 
   useEffect(() => {
     if (shouldShowPreview) {
@@ -483,6 +487,12 @@ export function FileExplorerPane({
     ),
     []
   );
+
+  const inlinePreviewTitle = useMemo(() => {
+    return selectedEntryPath?.split("/").pop() ?? "Preview";
+  }, [selectedEntryPath]);
+
+  const shouldShowInlinePreview = !isMobile && Boolean(selectedEntryPath);
 
   const handleRetryDirectory = useCallback(() => {
     if (!agentId || !requestDirectoryListing) {
@@ -693,7 +703,68 @@ export function FileExplorerPane({
     <View style={styles.container} onLayout={handleContainerLayout}>
       <View style={styles.content}>
         <View style={styles.listSection}>
-          {error ? (
+          {shouldShowInlinePreview ? (
+            <View style={styles.inlinePreviewContainer}>
+              <View style={styles.inlinePreviewHeader}>
+                <Pressable
+                  onPress={handleClosePreviewSheet}
+                  style={styles.inlinePreviewBackButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to files"
+                >
+                  <ArrowLeft size={18} color={theme.colors.foregroundMuted} />
+                </Pressable>
+
+                <View style={styles.inlinePreviewTitleContainer}>
+                  <Text style={styles.inlinePreviewTitle} numberOfLines={1}>
+                    {inlinePreviewTitle}
+                  </Text>
+                  {selectedEntryPath ? (
+                    <Text style={styles.inlinePreviewSubtitle} numberOfLines={1}>
+                      {selectedEntryPath}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+
+              {isPreviewLoading && !preview ? (
+                <View style={styles.sheetCenterState}>
+                  <ActivityIndicator size="small" />
+                  <Text style={styles.loadingText}>Loading file...</Text>
+                </View>
+              ) : !preview ? (
+                <View style={styles.sheetCenterState}>
+                  <Text style={styles.emptyText}>No preview available yet</Text>
+                </View>
+              ) : preview.kind === "text" ? (
+                <ScrollView
+                  style={styles.sheetContent}
+                  contentContainerStyle={styles.sheetScrollContent}
+                >
+                  <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+                    <Text style={styles.codeText}>{preview.content}</Text>
+                  </ScrollView>
+                </ScrollView>
+              ) : preview.kind === "image" && preview.content ? (
+                <ScrollView contentContainerStyle={styles.sheetImageScrollContent}>
+                  <RNImage
+                    source={{
+                      uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+                    }}
+                    style={styles.sheetImage}
+                    resizeMode="contain"
+                  />
+                </ScrollView>
+              ) : (
+                <View style={styles.sheetCenterState}>
+                  <Text style={styles.emptyText}>Binary preview unavailable</Text>
+                  <Text style={styles.entryMenuMeta}>
+                    {formatFileSize({ size: preview.size })}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : error ? (
             <View style={styles.centerState}>
               <Text style={styles.errorText}>{error}</Text>
               <View style={styles.errorActions}>
@@ -809,64 +880,66 @@ export function FileExplorerPane({
         </View>
       </Modal>
 
-      <BottomSheetModal
-        ref={previewSheetRef}
-        snapPoints={previewSnapPoints}
-        index={0}
-        enableDynamicSizing={false}
-        onChange={handlePreviewSheetChange}
-        backdropComponent={renderPreviewBackdrop}
-        enablePanDownToClose
-        backgroundStyle={styles.sheetBackground}
-        handleIndicatorStyle={styles.handleIndicator}
-      >
-        <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle} numberOfLines={1}>
-            {selectedEntryPath?.split("/").pop() ?? "Preview"}
-          </Text>
-          <Pressable onPress={handleClosePreviewSheet} style={styles.sheetCloseButton}>
-            <X size={20} color={theme.colors.foregroundMuted} />
-          </Pressable>
-        </View>
-        {isPreviewLoading && !preview ? (
-          <View style={styles.sheetCenterState}>
-            <ActivityIndicator size="small" />
-            <Text style={styles.loadingText}>Loading file...</Text>
-          </View>
-        ) : !preview ? (
-          <View style={styles.sheetCenterState}>
-            <Text style={styles.emptyText}>No preview available yet</Text>
-          </View>
-        ) : preview.kind === "text" ? (
-          <BottomSheetScrollView
-            style={styles.sheetContent}
-            contentContainerStyle={styles.sheetScrollContent}
-          >
-            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-              <Text style={styles.codeText}>{preview.content}</Text>
-            </ScrollView>
-          </BottomSheetScrollView>
-        ) : preview.kind === "image" && preview.content ? (
-          <BottomSheetScrollView
-            contentContainerStyle={styles.sheetImageScrollContent}
-          >
-            <RNImage
-              source={{
-                uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-              }}
-              style={styles.sheetImage}
-              resizeMode="contain"
-            />
-          </BottomSheetScrollView>
-        ) : (
-          <View style={styles.sheetCenterState}>
-            <Text style={styles.emptyText}>Binary preview unavailable</Text>
-            <Text style={styles.entryMenuMeta}>
-              {formatFileSize({ size: preview.size })}
+      {isMobile ? (
+        <BottomSheetModal
+          ref={previewSheetRef}
+          snapPoints={previewSnapPoints}
+          index={0}
+          enableDynamicSizing={false}
+          onChange={handlePreviewSheetChange}
+          backdropComponent={renderPreviewBackdrop}
+          enablePanDownToClose
+          backgroundStyle={styles.sheetBackground}
+          handleIndicatorStyle={styles.handleIndicator}
+        >
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>
+              {selectedEntryPath?.split("/").pop() ?? "Preview"}
             </Text>
+            <Pressable onPress={handleClosePreviewSheet} style={styles.sheetCloseButton}>
+              <X size={20} color={theme.colors.foregroundMuted} />
+            </Pressable>
           </View>
-        )}
-      </BottomSheetModal>
+          {isPreviewLoading && !preview ? (
+            <View style={styles.sheetCenterState}>
+              <ActivityIndicator size="small" />
+              <Text style={styles.loadingText}>Loading file...</Text>
+            </View>
+          ) : !preview ? (
+            <View style={styles.sheetCenterState}>
+              <Text style={styles.emptyText}>No preview available yet</Text>
+            </View>
+          ) : preview.kind === "text" ? (
+            <BottomSheetScrollView
+              style={styles.sheetContent}
+              contentContainerStyle={styles.sheetScrollContent}
+            >
+              <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+                <Text style={styles.codeText}>{preview.content}</Text>
+              </ScrollView>
+            </BottomSheetScrollView>
+          ) : preview.kind === "image" && preview.content ? (
+            <BottomSheetScrollView
+              contentContainerStyle={styles.sheetImageScrollContent}
+            >
+              <RNImage
+                source={{
+                  uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
+                }}
+                style={styles.sheetImage}
+                resizeMode="contain"
+              />
+            </BottomSheetScrollView>
+          ) : (
+            <View style={styles.sheetCenterState}>
+              <Text style={styles.emptyText}>Binary preview unavailable</Text>
+              <Text style={styles.entryMenuMeta}>
+                {formatFileSize({ size: preview.size })}
+              </Text>
+            </View>
+          )}
+        </BottomSheetModal>
+      ) : null}
     </View>
   );
 }
@@ -1219,6 +1292,40 @@ const styles = StyleSheet.create((theme) => ({
   gridMeta: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  inlinePreviewContainer: {
+    flex: 1,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    overflow: "hidden",
+  },
+  inlinePreviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  inlinePreviewBackButton: {
+    padding: theme.spacing[1],
+  },
+  inlinePreviewTitleContainer: {
+    flex: 1,
+    minWidth: 0,
+  },
+  inlinePreviewTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  inlinePreviewSubtitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontFamily: Fonts.mono,
   },
   sheetBackground: {
     backgroundColor: theme.colors.surface2,
