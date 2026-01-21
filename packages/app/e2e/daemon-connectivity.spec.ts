@@ -10,6 +10,6 @@ test('daemon is connected in settings', async ({ page }) => {
   await gotoHome(page);
   await openSettings(page);
 
-  await expect(page.getByText(`ws://localhost:${daemonPort}/ws`)).toBeVisible();
-  await expect(page.getByText('Online', { exact: true })).toBeVisible();
+  await expect(page.getByText(`127.0.0.1:${daemonPort}`)).toBeVisible();
+  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible();
 });

@@ -571,7 +571,7 @@ export default function HomeScreen() {
               <View style={styles.dropdownSheetList}>
                 {Array.from(connectionStates.values()).map(({ daemon, status }) => {
                   const isSelected = daemon.id === selectedServerId;
-                  const label = daemon.label ?? daemon.wsUrl ?? daemon.id;
+                  const label = daemon.label ?? daemon.endpoints?.[0] ?? daemon.id;
                   return (
                     <Pressable
                       key={daemon.id}

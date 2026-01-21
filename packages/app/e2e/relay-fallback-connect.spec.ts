@@ -1,0 +1,35 @@
+import { test, expect } from './fixtures';
+
+test('connects via relay when direct endpoints fail', async ({ page }) => {
+  const relayPort = process.env.E2E_RELAY_PORT;
+  const sessionId = process.env.E2E_RELAY_SESSION_ID;
+  if (!relayPort || !sessionId) {
+    throw new Error('E2E_RELAY_PORT or E2E_RELAY_SESSION_ID is not set (expected from globalSetup).');
+  }
+
+  const nowIso = new Date().toISOString();
+  const relayEndpoint = `127.0.0.1:${relayPort}`;
+
+  const host = {
+    id: 'relay-only-daemon',
+    label: 'relay-daemon',
+    endpoints: [relayEndpoint],
+    relay: { endpoint: relayEndpoint, sessionId },
+    metadata: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  // Override the default fixture seeding for this test.
+  await page.goto('/settings');
+  await page.evaluate((daemon) => {
+    localStorage.setItem('@paseo:e2e-disable-default-seed-once', '1');
+    localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
+    localStorage.removeItem('@paseo:settings');
+  }, host);
+  await page.reload();
+
+  // Should eventually connect through the relay candidate URL.
+  await expect(page.getByText(relayEndpoint, { exact: true })).toBeVisible();
+  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible({ timeout: 20000 });
+});

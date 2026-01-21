@@ -289,8 +289,8 @@ export function useAgentFormState(
       return;
     }
 
-    // Wait for preferences to load before first resolution
-    if (isPreferencesLoading && !hasResolvedRef.current) {
+    // Wait for preferences to load before first resolution, unless explicit URL overrides exist.
+    if (isPreferencesLoading && !hasResolvedRef.current && !combinedInitialValues) {
       return;
     }
 
@@ -323,6 +323,25 @@ export function useAgentFormState(
     availableModels,
     userModified,
     formState,
+  ]);
+
+  // Persist inferred serverId so reloads keep the selection (e.g. URL serverId or first-time load).
+  useEffect(() => {
+    if (!isVisible || !isCreateFlow) return;
+    if (isPreferencesLoading) return;
+    if (userModified.serverId) return;
+    const serverId = formState.serverId;
+    if (!serverId) return;
+    if (preferences?.serverId === serverId) return;
+    void updatePreferences({ serverId });
+  }, [
+    isVisible,
+    isCreateFlow,
+    isPreferencesLoading,
+    userModified.serverId,
+    formState.serverId,
+    preferences?.serverId,
+    updatePreferences,
   ]);
 
   // Provider model request timers

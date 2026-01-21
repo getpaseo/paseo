@@ -37,6 +37,10 @@ tsconfig.tsbuildinfo
 # Testing
 coverage/
 
+# Playwright
+test-results/
+**/test-results/
+
 # Vercel
 .vercel/
 

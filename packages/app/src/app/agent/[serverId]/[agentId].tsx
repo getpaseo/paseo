@@ -30,7 +30,6 @@ import {
   GitBranch,
   Folder,
   RotateCcw,
-  PlusIcon,
   PanelRight,
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
@@ -561,27 +560,6 @@ function AgentScreenContent({
     refreshAgent({ agentId: resolvedAgentId });
   }, [handleCloseMenu, resolvedAgentId, refreshAgent]);
 
-  const handleCreateNewAgent = useCallback(() => {
-    if (!agent) {
-      return;
-    }
-    handleCloseMenu();
-    const params: Record<string, string> = { serverId };
-    if (agent.cwd) {
-      params.workingDir = agent.cwd;
-    }
-    if (agent.provider) {
-      params.provider = agent.provider;
-    }
-    if (agent.currentModeId) {
-      params.modeId = agent.currentModeId;
-    }
-    if (agentModel) {
-      params.model = agentModel;
-    }
-    router.push({ pathname: "/", params });
-  }, [agent, agentModel, handleCloseMenu, router, serverId]);
-
   if (!agent) {
     return (
       <View style={styles.container}>
@@ -746,10 +724,6 @@ function AgentScreenContent({
               <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
                 <Folder size={16} color={theme.colors.foreground} />
                 <Text style={styles.menuItemText}>Browse Files</Text>
-              </Pressable>
-              <Pressable onPress={handleCreateNewAgent} style={styles.menuItem}>
-                <PlusIcon size={16} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>New Agent</Text>
               </Pressable>
               <Pressable
                 onPress={handleRefreshAgent}

@@ -4,6 +4,7 @@ import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import type { DaemonProfile } from "@/contexts/daemon-registry-context";
+import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 
 interface DownloadProgress {
   percent: number;
@@ -246,14 +247,14 @@ type DownloadTarget = {
 };
 
 function resolveDaemonDownloadTarget(daemon?: DaemonProfile): DownloadTarget {
-  const rawUrl = daemon?.restUrl ?? daemon?.wsUrl;
-  if (!rawUrl) {
+  const endpoint = daemon?.endpoints?.[0] ?? null;
+  if (!endpoint) {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }
 
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
+    parsed = new URL(buildDaemonWebSocketUrl(endpoint));
   } catch {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }

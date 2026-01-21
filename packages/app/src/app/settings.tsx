@@ -23,6 +23,7 @@ import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
 import { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import { buildDaemonWebSocketUrl, normalizeHostPort } from "@/utils/daemon-endpoints";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -380,10 +381,23 @@ type DaemonTestState = {
 
 export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
-  const { daemons, isLoading: daemonLoading, addDaemon, updateDaemon, removeDaemon } = useDaemonRegistry();
+  const {
+    daemons,
+    isLoading: daemonLoading,
+    addDaemon,
+    updateDaemon,
+    removeDaemon,
+    upsertDaemonFromOfferUrl,
+  } = useDaemonRegistry();
   const { connectionStates, updateConnectionStatus } = useDaemonConnections();
   const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
-  const [daemonForm, setDaemonForm] = useState<{ id: string | null; label: string; wsUrl: string }>({ id: null, label: "", wsUrl: "" });
+  const [daemonFormMode, setDaemonFormMode] = useState<"choose" | "manual" | "pair">("choose");
+  const [daemonForm, setDaemonForm] = useState<{
+    id: string | null;
+    label: string;
+    endpoint: string;
+    offerUrl: string;
+  }>({ id: null, label: "", endpoint: "", offerUrl: "" });
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
   const [daemonTestStates, setDaemonTestStates] = useState<Map<string, DaemonTestState>>(() => new Map());
   const isLoading = settingsLoading || daemonLoading;
@@ -448,51 +462,86 @@ export default function SettingsScreen() {
 
   const handleOpenDaemonForm = useCallback((profile?: DaemonProfile) => {
     if (profile) {
+      setDaemonFormMode("manual");
       setDaemonForm({
         id: profile.id,
         label: profile.label,
-        wsUrl: profile.wsUrl,
+        endpoint: profile.endpoints?.[0] ?? "",
+        offerUrl: "",
       });
     } else {
-      setDaemonForm({ id: null, label: "", wsUrl: "" });
+      setDaemonFormMode("choose");
+      setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
     }
     setIsDaemonFormVisible(true);
   }, []);
 
   const handleCloseDaemonForm = useCallback(() => {
     setIsDaemonFormVisible(false);
-    setDaemonForm({ id: null, label: "", wsUrl: "" });
+    setDaemonFormMode("choose");
+    setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
   }, []);
 
   const handleSubmitDaemonForm = useCallback(async () => {
-    if (!daemonForm.label.trim()) {
-      Alert.alert("Label required", "Please enter a label for the host.");
-      return;
-    }
-    if (!validateServerUrl(daemonForm.wsUrl)) {
-      Alert.alert("Invalid URL", "Host URL must be ws:// or wss://");
+    if (daemonFormMode === "manual") {
+      const raw = daemonForm.endpoint.trim();
+      if (raw.includes("://") || raw.includes("/")) {
+        Alert.alert("Invalid host", "Manual hosts must be entered as host:port (no ws://, no /ws).");
+        return;
+      }
+
+      let endpoint: string;
+      try {
+        endpoint = normalizeHostPort(raw);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid host:port";
+        Alert.alert("Invalid host", message);
+        return;
+      }
+
+      try {
+        setIsSavingDaemon(true);
+        const payload = {
+          label: daemonForm.label.trim(),
+          endpoints: [endpoint],
+        };
+        if (daemonForm.id) {
+          await updateDaemon(daemonForm.id, payload);
+        } else {
+          await addDaemon(payload);
+        }
+        handleCloseDaemonForm();
+      } catch (error) {
+        console.error("[Settings] Failed to save daemon", error);
+        Alert.alert("Error", "Unable to save host");
+      } finally {
+        setIsSavingDaemon(false);
+      }
       return;
     }
 
-    try {
-      setIsSavingDaemon(true);
-      const payload = {
-        label: daemonForm.label.trim(),
-        wsUrl: daemonForm.wsUrl.trim(),
-      };
-      if (daemonForm.id) {
-        await updateDaemon(daemonForm.id, payload);
-      } else {
-        await addDaemon(payload);
+    if (daemonFormMode === "pair") {
+      const offer = daemonForm.offerUrl.trim();
+      if (!offer) {
+        Alert.alert("Offer required", "Paste the pairing link (…/#offer=...)");
+        return;
       }
-      handleCloseDaemonForm();
-    } catch (error) {
-      console.error("[Settings] Failed to save daemon", error);
-      Alert.alert("Error", "Unable to save host");
-    } finally {
-      setIsSavingDaemon(false);
+      try {
+        setIsSavingDaemon(true);
+        await upsertDaemonFromOfferUrl(offer);
+        handleCloseDaemonForm();
+      } catch (error) {
+        console.error("[Settings] Failed to pair host", error);
+        const message = error instanceof Error ? error.message : "Unable to pair host";
+        Alert.alert("Error", message);
+      } finally {
+        setIsSavingDaemon(false);
+      }
+      return;
     }
-  }, [daemonForm, addDaemon, updateDaemon, handleCloseDaemonForm]);
+
+    Alert.alert("Choose a method", "Select Pair or Manual to add a host.");
+  }, [daemonForm, daemonFormMode, addDaemon, updateDaemon, upsertDaemonFromOfferUrl, handleCloseDaemonForm]);
 
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
@@ -529,11 +578,12 @@ export default function SettingsScreen() {
 
   const handleTestDaemonConnection = useCallback(
     async (profile: DaemonProfile) => {
-      const url = profile.wsUrl;
-      if (!validateServerUrl(url)) {
-        Alert.alert("Invalid URL", "Host URL must be ws:// or wss://");
+      const endpoint = profile.endpoints?.[0] ?? null;
+      if (!endpoint) {
+        Alert.alert("Missing host", "This host has no endpoints configured.");
         return;
       }
+      const url = buildDaemonWebSocketUrl(endpoint);
       updateDaemonTestState(profile.id, { status: "testing" });
       updateConnectionStatus(profile.id, { status: "connecting" });
       try {
@@ -575,15 +625,6 @@ export default function SettingsScreen() {
     },
     [updateSettings]
   );
-
-  function validateServerUrl(url: string): boolean {
-    try {
-      const urlObj = new URL(url);
-      return urlObj.protocol === "ws:" || urlObj.protocol === "wss:";
-    } catch {
-      return false;
-    }
-  }
 
   function handleReset() {
     Alert.alert(
@@ -666,40 +707,85 @@ export default function SettingsScreen() {
             {isDaemonFormVisible ? (
               <View style={styles.formCard}>
                 <Text style={styles.formTitle}>{daemonForm.id ? "Edit Host" : "Add Host"}</Text>
-                <View style={styles.formField}>
-                  <Text style={styles.label}>Label</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={daemonForm.label}
-                    onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
-                    placeholder="My Host"
-                    placeholderTextColor={defaultTheme.colors.mutedForeground}
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <Text style={styles.label}>Host URL</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputUrl]}
-                    value={daemonForm.wsUrl}
-                    onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, wsUrl: text }))}
-                    placeholder="wss://example.com/ws"
-                    placeholderTextColor={defaultTheme.colors.mutedForeground}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                  />
-                </View>
+
+                {daemonForm.id ? (
+                  <View style={styles.formField}>
+                    <Text style={styles.label}>Label</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={daemonForm.label}
+                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
+                      placeholder="My Host"
+                      placeholderTextColor={defaultTheme.colors.mutedForeground}
+                    />
+                  </View>
+                ) : null}
+
+                {daemonForm.id ? null : daemonFormMode === "choose" ? (
+                  <View style={styles.formActionsRow}>
+                    <Pressable
+                      style={[styles.formButton, styles.formButtonPrimary]}
+                      onPress={() => setDaemonFormMode("pair")}
+                    >
+                      <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Pair</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.formButton, styles.formButtonPrimary]}
+                      onPress={() => setDaemonFormMode("manual")}
+                    >
+                      <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Manual</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                {daemonFormMode === "manual" ? (
+                  <View style={styles.formField}>
+                    <Text style={styles.label}>Host</Text>
+                    <TextInput
+                      style={[styles.input, styles.inputUrl]}
+                      value={daemonForm.endpoint}
+                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, endpoint: text }))}
+                      placeholder="localhost:6767"
+                      placeholderTextColor={defaultTheme.colors.mutedForeground}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+                  </View>
+                ) : null}
+
+                {daemonFormMode === "pair" ? (
+                  <View style={styles.formField}>
+                    <Text style={styles.label}>Pairing Link</Text>
+                    <TextInput
+                      style={[styles.input, styles.inputUrl]}
+                      value={daemonForm.offerUrl}
+                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, offerUrl: text }))}
+                      placeholder="https://app.paseo.sh/#offer=..."
+                      placeholderTextColor={defaultTheme.colors.mutedForeground}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+                  </View>
+                ) : null}
+
                 <View style={styles.formActionsRow}>
                   <Pressable style={styles.formButton} onPress={handleCloseDaemonForm}>
                     <Text style={styles.formButtonText}>Cancel</Text>
                   </Pressable>
+                  {!daemonForm.id && daemonFormMode !== "choose" ? (
+                    <Pressable style={styles.formButton} onPress={() => setDaemonFormMode("choose")}>
+                      <Text style={styles.formButtonText}>Back</Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable
                     style={[styles.formButton, styles.formButtonPrimary, isSavingDaemon && styles.hostActionDisabled]}
                     onPress={handleSubmitDaemonForm}
                     disabled={isSavingDaemon}
                   >
                     <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
-                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save" : "Add"}
+                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save" : daemonFormMode === "pair" ? "Pair" : "Add"}
                     </Text>
                   </Pressable>
                 </View>
@@ -853,6 +939,7 @@ function DaemonCard({
   isScreenMountedRef,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
+  const directWsUrl = buildDaemonWebSocketUrl(daemon.endpoints?.[0] ?? "localhost:6767");
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
   const statusColor =
@@ -890,7 +977,7 @@ function DaemonCard({
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await testServerConnection(daemon.wsUrl);
+        await testServerConnection(directWsUrl);
         const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
 
         if (isScreenMountedRef.current) {
@@ -921,7 +1008,7 @@ function DaemonCard({
         await delay(retryDelayMs);
       }
     }
-  }, [daemon.label, daemon.wsUrl, isScreenMountedRef, testServerConnection, waitForCondition]);
+  }, [daemon.label, directWsUrl, isScreenMountedRef, testServerConnection, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
     if (!restartServerFn) {
@@ -1017,7 +1104,7 @@ function DaemonCard({
             <Text style={[styles.statusText, { color: statusColor }]}>{badgeText}</Text>
           </View>
         </View>
-        <Text style={styles.hostUrl}>{daemon.wsUrl}</Text>
+        <Text style={styles.hostUrl}>{daemon.endpoints?.[0] ?? ""}</Text>
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
         {testState && testState.status !== "idle" ? (
           <Text style={[styles.testResultText, { color: testResultColor }]}>

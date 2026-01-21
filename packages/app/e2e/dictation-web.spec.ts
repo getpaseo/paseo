@@ -94,8 +94,8 @@ test('dictation hotkeys do not trigger on background screens', async ({ page }) 
   const repo = await createTempGitRepo();
   try {
     await gotoHome(page);
-    await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
+    await setWorkingDirectory(page, repo.path);
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent\//);
@@ -125,8 +125,8 @@ test('dictation transcribes fixture via real STT', async ({ page }) => {
   const repo = await createTempGitRepo();
   try {
     await gotoHome(page);
-    await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
+    await setWorkingDirectory(page, repo.path);
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent\//);
@@ -152,8 +152,8 @@ test('cancel stops mic even if recorder is already inactive', async ({ page }) =
   const repo = await createTempGitRepo();
   try {
     await gotoHome(page);
-    await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
+    await setWorkingDirectory(page, repo.path);
     await createAgent(page, 'Respond with exactly: Hello');
 
     await expect(page).toHaveURL(/\/agent\//);

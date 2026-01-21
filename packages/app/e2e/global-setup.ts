@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import { Buffer } from 'node:buffer';
+import { createRelayServer, type RelayServer } from '@paseo/relay/node';
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -40,13 +42,51 @@ async function waitForServer(port: number, timeout = 15000): Promise<void> {
 
 let daemonProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
+let relayServer: RelayServer | null = null;
+
+type OfferPayload = {
+  sessionId: string;
+  daemonPublicKeyB64: string;
+  endpoints: string[];
+};
+
+function stripAnsi(input: string): string {
+  return input.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function decodeOfferFromFragmentUrl(url: string): OfferPayload {
+  const marker = '#offer=';
+  const idx = url.indexOf(marker);
+  if (idx === -1) {
+    throw new Error(`missing ${marker} fragment: ${url}`);
+  }
+  const encoded = url.slice(idx + marker.length);
+  const json = Buffer.from(encoded, 'base64url').toString('utf8');
+  const offer = JSON.parse(json) as Partial<OfferPayload>;
+  if (!offer.sessionId) throw new Error('offer.sessionId missing');
+  if (!offer.daemonPublicKeyB64) throw new Error('offer.daemonPublicKeyB64 missing');
+  if (!Array.isArray(offer.endpoints) || offer.endpoints.length === 0) {
+    throw new Error('offer.endpoints missing');
+  }
+  return offer as OfferPayload;
+}
 
 export default async function globalSetup() {
   const port = await getAvailablePort();
+  const relayPort = await getAvailablePort();
   paseoHome = await mkdtemp(path.join(tmpdir(), 'paseo-e2e-home-'));
+
+  relayServer = createRelayServer({ port: relayPort, host: '127.0.0.1' });
+  await relayServer.start();
 
   const serverDir = path.resolve(__dirname, '../../..', 'packages/server');
   const tsxBin = execSync('which tsx').toString().trim();
+
+  let offerPayload: OfferPayload | null = null;
+  let offerResolve: (() => void) | null = null;
+  const offerPromise = new Promise<void>((resolve) => {
+    offerResolve = resolve;
+  });
 
   daemonProcess = spawn(tsxBin, ['src/server/index.ts'], {
     cwd: serverDir,
@@ -54,6 +94,7 @@ export default async function globalSetup() {
       ...process.env,
       PASEO_HOME: paseoHome,
       PASEO_LISTEN: `0.0.0.0:${port}`,
+      PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: 'http://localhost:8081',
       NODE_ENV: 'development',
     },
@@ -61,8 +102,36 @@ export default async function globalSetup() {
     detached: false,
   });
 
+  let stdoutBuffer = '';
   daemonProcess.stdout?.on('data', (data: Buffer) => {
-    console.log(`[daemon] ${data.toString().trim()}`);
+    stdoutBuffer += data.toString('utf8');
+    const lines = stdoutBuffer.split('\n');
+    stdoutBuffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (!offerPayload) {
+        const clean = stripAnsi(trimmed);
+        try {
+          const obj = JSON.parse(clean) as { msg?: string; url?: string };
+          if (obj.msg === 'pairing_offer' && typeof obj.url === 'string') {
+            offerPayload = decodeOfferFromFragmentUrl(obj.url);
+            offerResolve?.();
+          }
+        } catch {
+          const match = clean.match(/https?:\/\/[^\s"]+#offer=[A-Za-z0-9_-]+/);
+          if (match && clean.includes('pairing_offer')) {
+            try {
+              offerPayload = decodeOfferFromFragmentUrl(match[0]);
+              offerResolve?.();
+            } catch {
+              // ignore parsing failures
+            }
+          }
+        }
+      }
+      console.log(`[daemon] ${trimmed}`);
+    }
   });
 
   daemonProcess.stderr?.on('data', (data: Buffer) => {
@@ -71,13 +140,31 @@ export default async function globalSetup() {
 
   await waitForServer(port);
 
+  // Wait for daemon to emit a pairing offer (includes relay session ID).
+  await Promise.race([
+    offerPromise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timed out waiting for pairing_offer log')), 15000)
+    ),
+  ]);
+  if (!offerPayload) {
+    throw new Error('pairing_offer was not parsed from daemon logs');
+  }
+  const offer = offerPayload as OfferPayload;
+
   process.env.E2E_DAEMON_PORT = String(port);
+  process.env.E2E_RELAY_PORT = String(relayPort);
+  process.env.E2E_RELAY_SESSION_ID = offer.sessionId;
   console.log(`[e2e] Test daemon started on port ${port}, home: ${paseoHome}`);
 
   return async () => {
     if (daemonProcess) {
       daemonProcess.kill('SIGTERM');
       daemonProcess = null;
+    }
+    if (relayServer) {
+      await relayServer.stop();
+      relayServer = null;
     }
     if (paseoHome) {
       await rm(paseoHome, { recursive: true, force: true });

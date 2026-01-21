@@ -10,6 +10,19 @@ test.beforeEach(async ({ page }) => {
         'Ensure Playwright `globalSetup` starts the e2e daemon and exports E2E_DAEMON_PORT.'
     );
   }
+  if (daemonPort === '6767') {
+    throw new Error(
+      'E2E_DAEMON_PORT is 6767. Refusing to run e2e against the default local daemon. ' +
+        'Fix Playwright globalSetup to start an isolated test daemon and export its port.'
+    );
+  }
+
+  // Hard guardrail: never allow tests to hit the developer's default daemon.
+  // This blocks both HTTP and WS attempts to :6767 (before any navigation).
+  await page.route(/:(6767)\b/, (route) => route.abort());
+  await page.routeWebSocket(/:(6767)\b/, async (ws) => {
+    await ws.close({ code: 1008, reason: 'Blocked connection to localhost:6767 during e2e.' });
+  });
 
   const entries: string[] = [];
   consoleEntries.set(page, entries);
@@ -26,8 +39,9 @@ test.beforeEach(async ({ page }) => {
   const testDaemon = {
     id: 'e2e-test-daemon',
     label: 'localhost',
-    wsUrl: `ws://localhost:${daemonPort}/ws`,
-    restUrl: `http://localhost:${daemonPort}/`,
+    endpoints: [`127.0.0.1:${daemonPort}`],
+    relay: null,
+    metadata: null,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -45,6 +59,17 @@ test.beforeEach(async ({ page }) => {
 
   await page.addInitScript(
     ({ daemon, preferences }) => {
+      // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
+      // override storage and reload; they can opt out of seeding for the *next* navigation by
+      // setting this flag before the reload.
+      const disableOnceKey = '@paseo:e2e-disable-default-seed-once';
+      if (localStorage.getItem(disableOnceKey)) {
+        localStorage.removeItem(disableOnceKey);
+        return;
+      }
+
+      localStorage.setItem('@paseo:e2e', '1');
+
       // Hard-reset anything that could point to a developer's real daemon.
       localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
       localStorage.removeItem('@paseo:settings');

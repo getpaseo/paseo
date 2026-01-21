@@ -12,7 +12,6 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { Plus, Settings } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
-import { useSessionStore } from "@/stores/session-store";
 import { AgentList } from "./agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
@@ -23,30 +22,6 @@ const SIDEBAR_AGENT_LIMIT = 15;
 
 interface SlidingSidebarProps {
   selectedAgentId?: string;
-}
-
-function buildCreateAgentRouteFromSelectedAgentKey(selectedAgentKey?: string) {
-  if (!selectedAgentKey) {
-    return { pathname: "/" as const, params: {} as Record<string, string> };
-  }
-
-  const [serverId, agentId] = selectedAgentKey.split(":", 2);
-  if (!serverId || !agentId) {
-    return { pathname: "/" as const, params: {} as Record<string, string> };
-  }
-
-  const state = useSessionStore.getState();
-  const agent = state.sessions[serverId]?.agents.get(agentId);
-  if (!agent) {
-    return { pathname: "/" as const, params: {} as Record<string, string> };
-  }
-
-  const params: Record<string, string> = { serverId: agent.serverId };
-  if (agent.provider) params.provider = agent.provider;
-  if (agent.currentModeId) params.modeId = agent.currentModeId;
-  if (agent.model) params.model = agent.model;
-  if (agent.cwd) params.workingDir = agent.cwd;
-  return { pathname: "/" as const, params };
 }
 
 export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
@@ -106,20 +81,20 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     closeToAgent();
   }, [closeToAgent]);
 
-  const handleCreateAgent = useCallback(() => {
-    router.push(buildCreateAgentRouteFromSelectedAgentKey(selectedAgentId));
-  }, [selectedAgentId]);
+  const handleCreateAgentClean = useCallback(() => {
+    router.push("/");
+  }, []);
 
   // Mobile: close sidebar and navigate
-  const handleCreateAgentMobile = useCallback(() => {
+  const handleCreateAgentCleanMobile = useCallback(() => {
     closeToAgent();
-    handleCreateAgent();
-  }, [closeToAgent, handleCreateAgent]);
+    handleCreateAgentClean();
+  }, [closeToAgent, handleCreateAgentClean]);
 
   // Desktop: just navigate, don't close
-  const handleCreateAgentDesktop = useCallback(() => {
-    handleCreateAgent();
-  }, [handleCreateAgent]);
+  const handleCreateAgentCleanDesktop = useCallback(() => {
+    handleCreateAgentClean();
+  }, [handleCreateAgentClean]);
 
   // Mobile: close sidebar and navigate
   const handleSettingsMobile = useCallback(() => {
@@ -240,7 +215,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                     hovered && styles.newAgentButtonHovered,
                   ]}
                   testID="sidebar-new-agent"
-                  onPress={handleCreateAgentMobile}
+                  onPress={handleCreateAgentCleanMobile}
                 >
                   <Plus size={18} color={theme.colors.foreground} />
                   <Text style={styles.newAgentButtonText}>New Agent</Text>
@@ -292,7 +267,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             hovered && styles.newAgentButtonHovered,
           ]}
           testID="sidebar-new-agent"
-          onPress={handleCreateAgentDesktop}
+          onPress={handleCreateAgentCleanDesktop}
         >
           <Plus size={18} color={theme.colors.foreground} />
           <Text style={styles.newAgentButtonText}>New Agent</Text>

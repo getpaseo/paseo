@@ -16,6 +16,7 @@ import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode, useMemo } from "react";
 import { Platform } from "react-native";
+import * as Linking from "expo-linking";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
 import { DownloadToast } from "@/components/download-toast";
 import { usePanelStore } from "@/stores/panel-store";
@@ -184,7 +185,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
 
 function ProvidersWrapper({ children }: { children: ReactNode }) {
   const { settings, isLoading: settingsLoading } = useAppSettings();
-  const { daemons, isLoading: registryLoading } = useDaemonRegistry();
+  const { daemons, isLoading: registryLoading, upsertDaemonFromOfferUrl } = useDaemonRegistry();
   const isLoading = settingsLoading || registryLoading;
 
   // Apply theme setting on mount and when it changes
@@ -202,11 +203,43 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
     return <LoadingView />;
   }
 
-  if (daemons.length === 0) {
-    return <MissingDaemonView />;
-  }
+  return (
+    <RealtimeProvider>
+      <OfferLinkListener upsertDaemonFromOfferUrl={upsertDaemonFromOfferUrl} />
+      {children}
+    </RealtimeProvider>
+  );
+}
 
-  return <RealtimeProvider>{children}</RealtimeProvider>;
+function OfferLinkListener({
+  upsertDaemonFromOfferUrl,
+}: {
+  upsertDaemonFromOfferUrl: (offerUrlOrFragment: string) => Promise<unknown>;
+}) {
+  useEffect(() => {
+    let cancelled = false;
+    const handleUrl = (url: string | null) => {
+      if (!url) return;
+      if (!url.includes("#offer=")) return;
+      void upsertDaemonFromOfferUrl(url).catch((error) => {
+        if (cancelled) return;
+        console.warn("[Linking] Failed to import pairing offer", error);
+      });
+    };
+
+    void Linking.getInitialURL().then(handleUrl).catch(() => undefined);
+
+    const subscription = Linking.addEventListener("url", (event) => {
+      handleUrl(event.url);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [upsertDaemonFromOfferUrl]);
+
+  return null;
 }
 
 function AppWithSidebar({ children }: { children: ReactNode }) {
