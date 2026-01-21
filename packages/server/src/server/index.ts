@@ -15,6 +15,10 @@ async function main() {
   const persistedConfig = loadPersistedConfig(paseoHome);
   const logger = createRootLogger(persistedConfig);
   const config = loadConfig(paseoHome);
+
+  if (process.argv.includes("--no-relay")) {
+    config.relayEnabled = false;
+  }
   const daemon = await createPaseoDaemon(config, logger);
 
   await daemon.start();

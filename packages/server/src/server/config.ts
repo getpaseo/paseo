@@ -7,6 +7,8 @@ import { loadPersistedConfig } from "./persisted-config.js";
 
 const DEFAULT_LISTEN = "127.0.0.1:6767";
 const DEFAULT_AGENT_MCP_ROUTE = "/mcp/agents";
+const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
+const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
 
 function parseOpenAIConfig(env: NodeJS.ProcessEnv) {
   const apiKey = env.OPENAI_API_KEY;
@@ -84,6 +86,9 @@ export function loadConfig(
     agentRegistryPath: path.join(paseoHome, "agents.json"),
     staticDir: "public",
     agentClients: {},
+    relayEnabled: true,
+    relayEndpoint: env.PASEO_RELAY_ENDPOINT ?? DEFAULT_RELAY_ENDPOINT,
+    appBaseUrl: env.PASEO_APP_BASE_URL ?? DEFAULT_APP_BASE_URL,
     openai: parseOpenAIConfig(env),
   };
 }

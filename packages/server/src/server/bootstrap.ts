@@ -49,6 +49,11 @@ import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
+import {
+  buildOfferEndpoints,
+  createConnectionOfferV1,
+  encodeOfferToFragmentUrl,
+} from "./connection-offer.js";
 import type {
   AgentClient,
   AgentControlMcpConfig,
@@ -74,6 +79,9 @@ export type PaseoDaemonConfig = {
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentRegistryPath: string;
   agentControlMcp: AgentControlMcpConfig;
+  relayEnabled?: boolean;
+  relayEndpoint?: string;
+  appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
   downloadTokenTtlMs?: number;
 };
@@ -406,15 +414,37 @@ export async function createPaseoDaemon(
       };
       const onListening = () => {
         httpServer.off("error", onError);
-        if (listenTarget.type === "tcp") {
-          logger.info(
-            { host: listenTarget.host, port: listenTarget.port },
-            `Server listening on http://${listenTarget.host}:${listenTarget.port}`
-          );
-        } else {
-          logger.info({ path: listenTarget.path }, `Server listening on ${listenTarget.path}`);
-        }
-        resolve();
+        const logAndResolve = async () => {
+          if (listenTarget.type === "tcp") {
+            logger.info(
+              { host: listenTarget.host, port: listenTarget.port },
+              `Server listening on http://${listenTarget.host}:${listenTarget.port}`
+            );
+
+            const relayEnabled = config.relayEnabled ?? true;
+            const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+            const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
+
+            const endpoints = buildOfferEndpoints({
+              listenHost: listenTarget.host,
+              port: listenTarget.port,
+              relayEnabled,
+              relayEndpoint,
+            });
+
+            const offer = await createConnectionOfferV1({
+              sessionId: randomUUID(),
+              endpoints,
+            });
+
+            const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
+            logger.info({ url }, "pairing_offer");
+          } else {
+            logger.info({ path: listenTarget.path }, `Server listening on ${listenTarget.path}`);
+          }
+        };
+
+        logAndResolve().then(resolve, reject);
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);

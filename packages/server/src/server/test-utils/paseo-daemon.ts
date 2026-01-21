@@ -10,6 +10,7 @@ type TestPaseoDaemonOptions = {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
+  logger?: Parameters<typeof createPaseoDaemon>[1];
 };
 
 export type TestPaseoDaemon = {
@@ -62,11 +63,14 @@ export async function createTestPaseoDaemon(
       agentControlMcp: {
         url: `http://127.0.0.1:${port}/mcp/agents`,
       },
+      relayEnabled: true,
+      relayEndpoint: "relay.paseo.sh:443",
+      appBaseUrl: "https://app.paseo.sh",
       openai: openaiApiKey ? { apiKey: openaiApiKey } : undefined,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
     };
 
-    const logger = pino({ level: "silent" });
+    const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger);
     try {
       await daemon.start();
