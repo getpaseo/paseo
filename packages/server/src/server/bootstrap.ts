@@ -54,6 +54,7 @@ import {
   createConnectionOfferV1,
   encodeOfferToFragmentUrl,
 } from "./connection-offer.js";
+import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import type {
   AgentClient,
   AgentControlMcpConfig,
@@ -100,6 +101,8 @@ export async function createPaseoDaemon(
   rootLogger: Logger
 ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
+  const connectionSessionId = randomUUID();
+  let relayTransport: RelayTransportController | null = null;
 
   const agentMcpRoute = config.agentMcpRoute;
   const staticDir = config.staticDir;
@@ -433,12 +436,22 @@ export async function createPaseoDaemon(
             });
 
             const offer = await createConnectionOfferV1({
-              sessionId: randomUUID(),
+              sessionId: connectionSessionId,
               endpoints,
             });
 
             const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
             logger.info({ url }, "pairing_offer");
+
+            if (relayEnabled) {
+              relayTransport?.stop().catch(() => undefined);
+              relayTransport = startRelayTransport({
+                logger,
+                attachSocket: (ws) => wsServer.attachExternalSocket(ws),
+                relayEndpoint,
+                sessionId: connectionSessionId,
+              });
+            }
           } else {
             logger.info({ path: listenTarget.path }, `Server listening on ${listenTarget.path}`);
           }
@@ -465,6 +478,7 @@ export async function createPaseoDaemon(
     await closeAllAgents(logger, agentManager);
     await shutdownProviders(logger);
     terminalManager.killAll();
+    await relayTransport?.stop().catch(() => undefined);
     await wsServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());

@@ -77,6 +77,7 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
     const daemon = await createTestPaseoDaemon({
       listen: "0.0.0.0",
       logger,
+      relayEnabled: true,
     });
 
     try {

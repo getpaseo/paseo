@@ -75,9 +75,17 @@ export class VoiceAssistantWebSocketServer {
     this.bridge.broadcast(message);
   }
 
+  public async attachExternalSocket(ws: Parameters<WebSocketSessionBridge["attach"]>[0]): Promise<void> {
+    const fakeRequest = {
+      url: "/ws",
+      headers: {},
+      method: "GET",
+    } as unknown as Parameters<WebSocketSessionBridge["attach"]>[1];
+    await this.bridge.attach(ws, fakeRequest);
+  }
+
   public async close(): Promise<void> {
     await this.bridge.closeAll();
     this.wss.close();
   }
 }
-
