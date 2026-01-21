@@ -274,9 +274,9 @@ export class DaemonClientV2 {
     }
 
     const targetUrl = this.conversationId
-      ? `${this.config.url}?conversationId=${encodeURIComponent(
-          this.conversationId
-        )}`
+      ? `${this.config.url}${
+          this.config.url.includes("?") ? "&" : "?"
+        }conversationId=${encodeURIComponent(this.conversationId)}`
       : this.config.url;
 
     try {
