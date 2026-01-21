@@ -49,6 +49,7 @@ import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
+import { ThinkingSheetProvider } from "./thinking-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
@@ -532,62 +533,64 @@ export function AgentStreamView({
 
   return (
     <ToolCallSheetProvider>
-      <View style={stylesheet.container}>
-        <MessageOuterSpacingProvider disableOuterSpacing>
-          <FlatList
-            ref={flatListRef}
-            data={flatListData}
-            renderItem={renderStreamItem}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={{
-              paddingVertical: 0,
-              flexGrow: 1,
-            }}
-            style={stylesheet.list}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            ListEmptyComponent={
-              <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
-                <Text style={stylesheet.emptyStateText}>
-                  Start chatting with this agent...
-                </Text>
-              </View>
-            }
-            ListHeaderComponent={listHeaderComponent}
-            extraData={flatListExtraData}
-            maintainVisibleContentPosition={
-              // Disable when streaming and user is at bottom - we handle auto-scroll ourselves
-              agent.status === "running" && isNearBottom
-                ? undefined
-                : { minIndexForVisible: 0, autoscrollToTopThreshold: 40 }
-            }
-            initialNumToRender={12}
-            windowSize={10}
-            inverted
-          />
-        </MessageOuterSpacingProvider>
+      <ThinkingSheetProvider>
+        <View style={stylesheet.container}>
+          <MessageOuterSpacingProvider disableOuterSpacing>
+            <FlatList
+              ref={flatListRef}
+              data={flatListData}
+              renderItem={renderStreamItem}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={{
+                paddingVertical: 0,
+                flexGrow: 1,
+              }}
+              style={stylesheet.list}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              ListEmptyComponent={
+                <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+                  <Text style={stylesheet.emptyStateText}>
+                    Start chatting with this agent...
+                  </Text>
+                </View>
+              }
+              ListHeaderComponent={listHeaderComponent}
+              extraData={flatListExtraData}
+              maintainVisibleContentPosition={
+                // Disable when streaming and user is at bottom - we handle auto-scroll ourselves
+                agent.status === "running" && isNearBottom
+                  ? undefined
+                  : { minIndexForVisible: 0, autoscrollToTopThreshold: 40 }
+              }
+              initialNumToRender={12}
+              windowSize={10}
+              inverted
+            />
+          </MessageOuterSpacingProvider>
 
-        {/* Scroll to bottom button */}
-        {!isNearBottom && (
-          <Animated.View
-            style={stylesheet.scrollToBottomContainer}
-            entering={scrollIndicatorFadeIn}
-            exiting={scrollIndicatorFadeOut}
-          >
-            <View style={stylesheet.scrollToBottomInner}>
-              <Pressable
-                style={stylesheet.scrollToBottomButton}
-                onPress={scrollToBottom}
-              >
-                <ChevronDown
-                  size={24}
-                  color={stylesheet.scrollToBottomIcon.color}
-                />
-              </Pressable>
-            </View>
-          </Animated.View>
-        )}
-      </View>
+          {/* Scroll to bottom button */}
+          {!isNearBottom && (
+            <Animated.View
+              style={stylesheet.scrollToBottomContainer}
+              entering={scrollIndicatorFadeIn}
+              exiting={scrollIndicatorFadeOut}
+            >
+              <View style={stylesheet.scrollToBottomInner}>
+                <Pressable
+                  style={stylesheet.scrollToBottomButton}
+                  onPress={scrollToBottom}
+                >
+                  <ChevronDown
+                    size={24}
+                    color={stylesheet.scrollToBottomIcon.color}
+                  />
+                </Pressable>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+      </ThinkingSheetProvider>
     </ToolCallSheetProvider>
   );
 }

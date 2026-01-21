@@ -48,7 +48,6 @@ import {
 import { baseColors, theme } from "@/styles/theme";
 import {
   createMarkdownStyles,
-  createCompactMarkdownStyles,
 } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -57,6 +56,8 @@ import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
+import { useThinkingSheet } from "./thinking-sheet";
+import { AgentThoughtContent } from "./agent-thought-content";
 import {
   ToolCallDetailsContent,
   useToolCallDetails,
@@ -1194,172 +1195,41 @@ const ExpandableBadge = memo(function ExpandableBadge({
   );
 });
 
-const agentThoughtStylesheet = StyleSheet.create((theme) => ({
-  emptyText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontStyle: "italic" as const,
-  },
-}));
-
 export const AgentThoughtMessage = memo(function AgentThoughtMessage({
   message,
   status = "ready",
   isLastInSequence = false,
   disableOuterSpacing,
 }: AgentThoughtMessageProps) {
-  const { theme } = useUnistyles();
+  const { openThinking } = useThinkingSheet();
   const [isExpanded, setIsExpanded] = useState(false);
-  const markdownContent = useMemo(() => message?.trim() ?? "", [message]);
-  const markdownStyles = useMemo(
-    () => createCompactMarkdownStyles(theme),
-    [theme]
-  );
 
-  const toggle = useCallback(() => {
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" ||
+    UnistylesRuntime.breakpoint === "sm";
+
+  const handleToggle = useCallback(() => {
+    if (isMobile) {
+      openThinking({ message, status });
+      return;
+    }
     setIsExpanded((prev) => !prev);
-  }, []);
-
-  const markdownRules = useMemo(() => {
-    return {
-      text: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]}>
-          {node.content}
-        </Text>
-      ),
-      textgroup: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text
-          key={node.key}
-          style={[inheritedStyles, styles.textgroup]}
-        >
-          {children}
-        </Text>
-      ),
-      code_block: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text
-          key={node.key}
-          style={[inheritedStyles, styles.code_block]}
-        >
-          {node.content}
-        </Text>
-      ),
-      fence: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
-          {node.content}
-        </Text>
-      ),
-      code_inline: (
-        node: any,
-        _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {}
-      ) => (
-        <Text
-          key={node.key}
-          style={[inheritedStyles, styles.code_inline]}
-        >
-          {node.content}
-        </Text>
-      ),
-      bullet_list: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any
-      ) => (
-        <View key={node.key} style={styles.bullet_list}>
-          {children}
-        </View>
-      ),
-      ordered_list: (
-        node: any,
-        children: ReactNode[],
-        _parent: any,
-        styles: any
-      ) => (
-        <View key={node.key} style={styles.ordered_list}>
-          {children}
-        </View>
-      ),
-      list_item: (
-        node: any,
-        children: ReactNode[],
-        parent: any,
-        styles: any
-      ) => {
-        const isOrdered = parent?.type === "ordered_list";
-        const index = parent?.children?.indexOf(node) ?? 0;
-        const bullet = isOrdered ? `${index + 1}.` : "•";
-        const iconStyle = isOrdered
-          ? styles.ordered_list_icon
-          : styles.bullet_list_icon;
-        const contentStyle = isOrdered
-          ? styles.ordered_list_content
-          : styles.bullet_list_content;
-
-        return (
-          <View key={node.key} style={styles.list_item}>
-            <Text style={iconStyle}>{bullet}</Text>
-            <View
-              style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}
-            >
-              {children}
-            </View>
-          </View>
-        );
-      },
-    };
-  }, []);
+  }, [isMobile, openThinking, message, status]);
 
   const renderDetails = useCallback(() => {
-    if (!markdownContent) {
-      return (
-        <Text style={agentThoughtStylesheet.emptyText}>
-          No captured thinking
-        </Text>
-      );
-    }
-    return (
-      <Markdown style={markdownStyles} rules={markdownRules}>
-        {markdownContent}
-      </Markdown>
-    );
-  }, [markdownContent, markdownRules, markdownStyles]);
+    return <AgentThoughtContent message={message} />;
+  }, [message]);
 
   return (
     <ExpandableBadge
       label="Thinking"
       icon={status === "ready" ? Brain : undefined}
-      isExpanded={isExpanded}
-      onToggle={toggle}
-      renderDetails={renderDetails}
+      isExpanded={!isMobile && isExpanded}
+      onToggle={handleToggle}
+      renderDetails={isMobile ? () => null : renderDetails}
       isLoading={status !== "ready"}
       isLastInSequence={isLastInSequence}
+      style={isLastInSequence ? undefined : { marginBottom: theme.spacing[1] }}
       disableOuterSpacing={disableOuterSpacing}
     />
   );
