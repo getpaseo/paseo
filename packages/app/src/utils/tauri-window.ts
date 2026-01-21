@@ -4,12 +4,24 @@ import { getIsTauriMac, TAURI_TRAFFIC_LIGHT_WIDTH, TAURI_TRAFFIC_LIGHT_HEIGHT } 
 
 let tauriWindow: any = null;
 
+// Runtime check for Tauri environment
+function isTauriEnvironment(): boolean {
+  return typeof window !== "undefined" &&
+    (window as any).__TAURI__ !== undefined;
+}
+
 async function getTauriWindow() {
   if (tauriWindow) return tauriWindow;
-  if (!getIsTauriMac()) return null;
+
+  // Double-check: both environment check AND platform check
+  if (!isTauriEnvironment() || !getIsTauriMac()) {
+    return null;
+  }
 
   try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    // @metro-ignore tells Metro to skip bundling this import
+    // It will be resolved at runtime in Tauri's WebView
+    const { getCurrentWindow } = await import(/* @metro-ignore */ "@tauri-apps/api/window");
     tauriWindow = getCurrentWindow();
     return tauriWindow;
   } catch {
