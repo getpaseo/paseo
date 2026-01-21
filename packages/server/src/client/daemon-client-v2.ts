@@ -22,6 +22,7 @@ import type {
   GitRepoInfoResponse,
   HighlightedDiffResponse,
   ListCommandsResponse,
+  ExecuteCommandResponse,
   ListConversationsResponseMessage,
   ListProviderModelsResponseMessage,
   ListTerminalsResponse,
@@ -171,6 +172,7 @@ type FileExplorerPayload = FileExplorerResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
+type ExecuteCommandPayload = ExecuteCommandResponse["payload"];
 type TranscriptionResultPayload = TranscriptionResultMessage["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -1136,6 +1138,37 @@ export class DaemonClientV2 {
     const response = this.waitFor(
       (msg) => {
         if (msg.type !== "list_commands_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      30000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async executeCommand(
+    agentId: string,
+    commandName: string,
+    args?: string,
+    requestId?: string
+  ): Promise<ExecuteCommandPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "execute_command_request",
+      agentId,
+      commandName,
+      args,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "execute_command_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

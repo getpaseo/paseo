@@ -1,0 +1,19 @@
+name = "paseo-relay"
+account_id = "10ed39a1dbf316e30abd0c409bed40d6"
+main = "src/cloudflare-adapter.ts"
+compatibility_date = "2024-12-01"
+
+routes = [
+  { pattern = "relay.paseo.sh", custom_domain = true }
+]
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayDurableObject"]

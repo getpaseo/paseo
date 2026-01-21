@@ -518,6 +518,14 @@ export const ListCommandsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ExecuteCommandRequestSchema = z.object({
+  type: z.literal("execute_command_request"),
+  agentId: z.string(),
+  commandName: z.string(),
+  args: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const RegisterPushTokenMessageSchema = z.object({
   type: z.literal("register_push_token"),
   token: z.string(),
@@ -604,6 +612,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionMessageSchema,
   ClientHeartbeatMessageSchema,
   ListCommandsRequestSchema,
+  ExecuteCommandRequestSchema,
   RegisterPushTokenMessageSchema,
   ListTerminalsRequestSchema,
   CreateTerminalRequestSchema,
@@ -937,6 +946,22 @@ export const ListCommandsResponseSchema = z.object({
   }),
 });
 
+const AgentCommandResultSchema = z.object({
+  text: z.string(),
+  timeline: z.array(AgentTimelineItemPayloadSchema),
+  usage: AgentUsageSchema.optional(),
+});
+
+export const ExecuteCommandResponseSchema = z.object({
+  type: z.literal("execute_command_response"),
+  payload: z.object({
+    agentId: z.string(),
+    result: AgentCommandResultSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 // ============================================================================
 // Terminal Outbound Messages
 // ============================================================================
@@ -1037,6 +1062,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
   ListCommandsResponseSchema,
+  ExecuteCommandResponseSchema,
   ListTerminalsResponseSchema,
   CreateTerminalResponseSchema,
   SubscribeTerminalResponseSchema,
@@ -1104,6 +1130,8 @@ export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessa
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;
 export type ListCommandsRequest = z.infer<typeof ListCommandsRequestSchema>;
 export type ListCommandsResponse = z.infer<typeof ListCommandsResponseSchema>;
+export type ExecuteCommandRequest = z.infer<typeof ExecuteCommandRequestSchema>;
+export type ExecuteCommandResponse = z.infer<typeof ExecuteCommandResponseSchema>;
 export type RegisterPushTokenMessage = z.infer<typeof RegisterPushTokenMessageSchema>;
 
 // Terminal message types

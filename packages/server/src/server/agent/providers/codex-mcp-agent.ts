@@ -19,6 +19,7 @@ import type { Logger } from "pino";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentCommandResult,
   AgentMode,
   AgentModelDefinition,
   AgentPermissionRequest,
@@ -27,6 +28,7 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
   AgentRunResult,
+  AgentSlashCommand,
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
@@ -1932,6 +1934,249 @@ function normalizeCommand(command: Command): string {
   return typeof command === "string" ? command : command.join(" ");
 }
 
+function resolveCodexHomeDir(): string {
+  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+}
+
+function tokenizeCommandArgs(args: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const ch = args[i]!;
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      if (ch === "\\" && i + 1 < args.length) {
+        const next = args[i + 1]!;
+        if (next === quote || next === "\\" || next === "n" || next === "t") {
+          i += 1;
+          current += next === "n" ? "\n" : next === "t" ? "\t" : next;
+          continue;
+        }
+      }
+      current += ch;
+      continue;
+    }
+
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      continue;
+    }
+
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+function parseFrontMatter(markdown: string): {
+  frontMatter: Record<string, string>;
+  body: string;
+} {
+  const lines = markdown.split("\n");
+  if (lines[0]?.trim() !== "---") {
+    return { frontMatter: {}, body: markdown };
+  }
+  let end = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i]?.trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) {
+    return { frontMatter: {}, body: markdown };
+  }
+  const metaLines = lines.slice(1, end);
+  const body = lines.slice(end + 1).join("\n");
+  const frontMatter: Record<string, string> = {};
+  for (const line of metaLines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const idx = trimmed.indexOf(":");
+    if (idx <= 0) {
+      continue;
+    }
+    const key = trimmed.slice(0, idx).trim();
+    let value = trimmed.slice(idx + 1).trim();
+    value = value.replace(/^['"]/, "").replace(/['"]$/, "");
+    if (key && value) {
+      frontMatter[key] = value;
+    }
+  }
+  return { frontMatter, body };
+}
+
+async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
+  const codexHome = resolveCodexHomeDir();
+  const promptsDir = path.join(codexHome, "prompts");
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(promptsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const commands: AgentSlashCommand[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    if (!entry.name.endsWith(".md")) {
+      continue;
+    }
+    const name = entry.name.slice(0, -".md".length);
+    if (!name) {
+      continue;
+    }
+    const fullPath = path.join(promptsDir, entry.name);
+    let content: string;
+    try {
+      content = await fs.readFile(fullPath, "utf8");
+    } catch {
+      continue;
+    }
+    const parsed = parseFrontMatter(content);
+    const description =
+      parsed.frontMatter["description"] ?? "Custom prompt";
+    const argumentHint =
+      parsed.frontMatter["argument-hint"] ??
+      parsed.frontMatter["argument_hint"] ??
+      "";
+    commands.push({
+      name: `prompts:${name}`,
+      description,
+      argumentHint,
+    });
+  }
+  return commands.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function listCodexSkills(cwd: string): Promise<AgentSlashCommand[]> {
+  const candidates: string[] = [];
+  candidates.push(path.join(cwd, ".codex", "skills"));
+
+  const repoRoot = (() => {
+    try {
+      const output = execSync("git rev-parse --show-toplevel", {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const trimmed = output.trim();
+      return trimmed ? trimmed : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (repoRoot) {
+    candidates.push(path.join(path.dirname(cwd), ".codex", "skills"));
+    candidates.push(path.join(repoRoot, ".codex", "skills"));
+  }
+
+  candidates.push(path.join(resolveCodexHomeDir(), "skills"));
+
+  const commandsByName = new Map<string, AgentSlashCommand>();
+
+  for (const dir of candidates) {
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+        continue;
+      }
+      const skillDir = path.join(dir, entry.name);
+      const skillPath = path.join(skillDir, "SKILL.md");
+      let content: string;
+      try {
+        content = await fs.readFile(skillPath, "utf8");
+      } catch {
+        continue;
+      }
+      const { frontMatter } = parseFrontMatter(content);
+      const name = frontMatter["name"];
+      const description = frontMatter["description"];
+      if (!name || !description) {
+        continue;
+      }
+      if (!commandsByName.has(name)) {
+        commandsByName.set(name, {
+          name,
+          description,
+          argumentHint: "",
+        });
+      }
+    }
+  }
+
+  return Array.from(commandsByName.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expandCodexCustomPrompt(template: string, args: string | undefined): string {
+  const trimmedArgs = args ? args.trim() : "";
+  const tokens = trimmedArgs ? tokenizeCommandArgs(trimmedArgs) : [];
+  const named: Record<string, string> = {};
+  const positional: string[] = [];
+
+  for (const token of tokens) {
+    const idx = token.indexOf("=");
+    if (idx > 0) {
+      const key = token.slice(0, idx);
+      const value = token.slice(idx + 1);
+      if (key) {
+        named[key] = value;
+        continue;
+      }
+    }
+    positional.push(token);
+  }
+
+  const dollarPlaceholder = "__CODEX_DOLLAR_PLACEHOLDER__";
+  let out = template.split("$$").join(dollarPlaceholder);
+
+  out = out.split("$ARGUMENTS").join(trimmedArgs);
+
+  for (let i = 1; i <= 9; i += 1) {
+    const value = positional[i - 1] ?? "";
+    out = out.split(`$${i}`).join(value);
+  }
+
+  const namedKeys = Object.keys(named).sort((a, b) => b.length - a.length);
+  for (const key of namedKeys) {
+    const value = named[key] ?? "";
+    const re = new RegExp(`\\$${escapeRegExp(key)}\\b`, "g");
+    out = out.replace(re, value);
+  }
+
+  out = out.split(dollarPlaceholder).join("$");
+  return out;
+}
+
 function extractFileReadFromParsedCmd(parsedCmd: ParsedCmdItem[] | undefined): {
   path: string;
   name: string;
@@ -2598,14 +2843,21 @@ function isUnsupportedChatGptModelError(error: unknown): boolean {
   return message.includes("model is not supported when using Codex with a ChatGPT account");
 }
 
+function isMissingSessionForConversationOrThread(message: string): boolean {
+  return (
+    message.includes("Session not found for conversation_id") ||
+    message.includes("Session not found for thread_id")
+  );
+}
+
 function isMissingConversationIdError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Session not found for conversation_id");
+  return isMissingSessionForConversationOrThread(message);
 }
 
 function isMissingConversationIdResponse(response: unknown): boolean {
   const text = extractTextContent(response);
-  return !!text && text.includes("Session not found for conversation_id");
+  return !!text && isMissingSessionForConversationOrThread(text);
 }
 
 /**
@@ -2775,6 +3027,7 @@ class CodexMcpAgentSession implements AgentSession {
   private lockConversationId = false;
   private historyPending = false;
   private persistedHistory: AgentTimelineItem[] = [];
+  private resumeContextHistory: AgentTimelineItem[] = [];
   private pendingHistory: AgentTimelineItem[] = [];
   private turnState: TurnState | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
@@ -2898,6 +3151,7 @@ class CodexMcpAgentSession implements AgentSession {
     }, this.logger);
     if (timeline.length > 0) {
       this.persistedHistory = timeline;
+      this.resumeContextHistory = [...timeline];
       this.historyPending = true;
     }
   }
@@ -3266,6 +3520,31 @@ class CodexMcpAgentSession implements AgentSession {
 
   setManagedAgentId(agentId: string): void {
     this.managedAgentId = agentId;
+  }
+
+  async listCommands(): Promise<AgentSlashCommand[]> {
+    const [skills, prompts] = await Promise.all([
+      listCodexSkills(this.config.cwd),
+      listCodexCustomPrompts(),
+    ]);
+    return [...skills, ...prompts];
+  }
+
+  async executeCommand(commandName: string, args?: string): Promise<AgentCommandResult> {
+    if (commandName.startsWith("prompts:")) {
+      const promptName = commandName.slice("prompts:".length);
+      const codexHome = resolveCodexHomeDir();
+      const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
+      const raw = await fs.readFile(promptPath, "utf8");
+      const parsed = parseFrontMatter(raw);
+      const expanded = expandCodexCustomPrompt(parsed.body, args);
+      const result = await this.run(expanded);
+      return { text: result.finalText, timeline: result.timeline, usage: result.usage };
+    }
+
+    const skillPrompt = args ? `$${commandName} ${args}` : `$${commandName}`;
+    const result = await this.run(skillPrompt);
+    return { text: result.finalText, timeline: result.timeline, usage: result.usage };
   }
 
   private async forwardPrompt(
@@ -4145,7 +4424,9 @@ class CodexMcpAgentSession implements AgentSession {
 
   private buildResumePrompt(prompt: string): string {
     const historyLines: string[] = [];
-    for (const item of this.persistedHistory) {
+    // Use resumeContextHistory instead of persistedHistory because
+    // persistedHistory gets cleared by streamHistory() before the first message is sent
+    for (const item of this.resumeContextHistory) {
       if (item.type === "user_message") {
         historyLines.push(`User: ${item.text}`);
       }
@@ -4328,6 +4609,14 @@ export class CodexMcpAgentClient implements AgentClient {
     }
   }
 }
+
+export const __test__ = {
+  tokenizeCommandArgs,
+  parseFrontMatter,
+  expandCodexCustomPrompt,
+  isMissingConversationIdError,
+  isMissingConversationIdResponse,
+};
 
 // ============================================================================
 // Codex model listing helpers
