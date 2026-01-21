@@ -18,6 +18,9 @@ function tmpCwd(): string {
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_REASONING_EFFORT = "low";
 
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
 
@@ -29,7 +32,7 @@ describe("daemon E2E", () => {
     await ctx.cleanup();
   }, 60000);
 
-  describe("permission flow: Claude", () => {
+  (hasClaudeCredentials ? describe : describe.skip)("permission flow: Claude", () => {
     // Use isolated Claude config to ensure permission prompts are triggered
     // (user's real config may have allow rules that auto-approve commands)
     let restoreClaudeConfig: () => void;

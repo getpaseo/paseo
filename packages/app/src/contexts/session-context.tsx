@@ -803,10 +803,7 @@ export function SessionProvider({
         { serverId }
       );
       void client
-        .loadConversation(client.currentConversationId ?? undefined)
-        .catch((error) => {
-          console.warn("[Session] session_state request failed:", error);
-        });
+        .requestSessionState();
 
       if (sessionStateTimeoutRef.current) {
         clearTimeout(sessionStateTimeoutRef.current);
@@ -2242,11 +2239,11 @@ export function SessionProvider({
       console.warn("[Session] refreshSession skipped: daemon unavailable");
       return;
     }
-    void client
-      .loadConversation(client.currentConversationId ?? undefined)
-      .catch((error) => {
-        console.error("[Session] Failed to refresh session:", error);
-      });
+    try {
+      client.requestSessionState();
+    } catch (error: any) {
+      console.error("[Session] Failed to refresh session:", error);
+    }
   }, [client, serverId]);
 
   // Cleanup on unmount

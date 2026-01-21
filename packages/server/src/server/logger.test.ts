@@ -17,7 +17,7 @@ describe("resolveLogConfig", () => {
 
   it("returns defaults when no config or env vars", () => {
     const result = resolveLogConfig(undefined);
-    expect(result).toEqual({ level: "info", format: "pretty" });
+    expect(result).toEqual({ level: "debug", format: "pretty" });
   });
 
   it("uses config.json values over defaults", () => {
@@ -85,7 +85,7 @@ describe("resolveLogConfig", () => {
       },
     };
     const result = resolveLogConfig(config);
-    expect(result).toEqual({ level: "info", format: "json" });
+    expect(result).toEqual({ level: "debug", format: "json" });
   });
 
   it("handles empty log object in config", () => {
@@ -93,7 +93,7 @@ describe("resolveLogConfig", () => {
       log: {},
     };
     const result = resolveLogConfig(config);
-    expect(result).toEqual({ level: "info", format: "pretty" });
+    expect(result).toEqual({ level: "debug", format: "pretty" });
   });
 
   it("supports all log levels", () => {

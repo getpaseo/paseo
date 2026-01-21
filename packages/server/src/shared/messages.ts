@@ -279,20 +279,25 @@ export const AudioPlayedMessageSchema = z.object({
   id: z.string(),
 });
 
-export const LoadConversationRequestMessageSchema = z.object({
-  type: z.literal("load_conversation_request"),
-  conversationId: z.string(),
+export const RequestSessionStateMessageSchema = z.object({
+  type: z.literal("request_session_state"),
   requestId: z.string(),
 });
 
-export const ListConversationsRequestMessageSchema = z.object({
-  type: z.literal("list_conversations_request"),
+export const LoadVoiceConversationRequestMessageSchema = z.object({
+  type: z.literal("load_voice_conversation_request"),
+  voiceConversationId: z.string(),
   requestId: z.string(),
 });
 
-export const DeleteConversationRequestMessageSchema = z.object({
-  type: z.literal("delete_conversation_request"),
-  conversationId: z.string(),
+export const ListVoiceConversationsRequestMessageSchema = z.object({
+  type: z.literal("list_voice_conversations_request"),
+  requestId: z.string(),
+});
+
+export const DeleteVoiceConversationRequestMessageSchema = z.object({
+  type: z.literal("delete_voice_conversation_request"),
+  voiceConversationId: z.string(),
   requestId: z.string(),
 });
 
@@ -302,9 +307,10 @@ export const DeleteAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-export const SetRealtimeModeMessageSchema = z.object({
-  type: z.literal("set_realtime_mode"),
+export const SetVoiceConversationMessageSchema = z.object({
+  type: z.literal("set_voice_conversation"),
   enabled: z.boolean(),
+  voiceConversationId: z.string().optional(),
 });
 
 export const SendAgentMessageSchema = z.object({
@@ -588,11 +594,12 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RealtimeAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
-  LoadConversationRequestMessageSchema,
-  ListConversationsRequestMessageSchema,
-  DeleteConversationRequestMessageSchema,
+  RequestSessionStateMessageSchema,
+  LoadVoiceConversationRequestMessageSchema,
+  ListVoiceConversationsRequestMessageSchema,
+  DeleteVoiceConversationRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
-  SetRealtimeModeMessageSchema,
+  SetVoiceConversationMessageSchema,
   SendAgentMessageSchema,
   TranscribeAudioRequestSchema,
   CreateAgentRequestMessageSchema,
@@ -753,10 +760,10 @@ export const ArtifactMessageSchema = z.object({
   }),
 });
 
-export const ConversationLoadedMessageSchema = z.object({
-  type: z.literal("conversation_loaded"),
+export const VoiceConversationLoadedMessageSchema = z.object({
+  type: z.literal("voice_conversation_loaded"),
   payload: z.object({
-    conversationId: z.string(),
+    voiceConversationId: z.string(),
     messageCount: z.number(),
     requestId: z.string(),
   }),
@@ -805,8 +812,8 @@ export const SessionStateMessageSchema = z.object({
   }),
 });
 
-export const ListConversationsResponseMessageSchema = z.object({
-  type: z.literal("list_conversations_response"),
+export const ListVoiceConversationsResponseMessageSchema = z.object({
+  type: z.literal("list_voice_conversations_response"),
   payload: z.object({
     conversations: z.array(
       z.object({
@@ -819,10 +826,10 @@ export const ListConversationsResponseMessageSchema = z.object({
   }),
 });
 
-export const DeleteConversationResponseMessageSchema = z.object({
-  type: z.literal("delete_conversation_response"),
+export const DeleteVoiceConversationResponseMessageSchema = z.object({
+  type: z.literal("delete_voice_conversation_response"),
   payload: z.object({
-    conversationId: z.string(),
+    voiceConversationId: z.string(),
     success: z.boolean(),
     error: z.string().optional(),
     requestId: z.string(),
@@ -1044,14 +1051,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   StatusMessageSchema,
   InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
-  ConversationLoadedMessageSchema,
+  VoiceConversationLoadedMessageSchema,
   AgentStateMessageSchema,
   AgentStreamMessageSchema,
   AgentStreamSnapshotMessageSchema,
   AgentStatusMessageSchema,
   SessionStateMessageSchema,
-  ListConversationsResponseMessageSchema,
-  DeleteConversationResponseMessageSchema,
+  ListVoiceConversationsResponseMessageSchema,
+  DeleteVoiceConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
@@ -1081,7 +1088,9 @@ export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>;
 export type TranscriptionResultMessage = z.infer<typeof TranscriptionResultMessageSchema>;
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
-export type ConversationLoadedMessage = z.infer<typeof ConversationLoadedMessageSchema>;
+export type VoiceConversationLoadedMessage = z.infer<
+  typeof VoiceConversationLoadedMessageSchema
+>;
 export type AgentStateMessage = z.infer<typeof AgentStateMessageSchema>;
 export type AgentStreamMessage = z.infer<typeof AgentStreamMessageSchema>;
 export type AgentStreamSnapshotMessage = z.infer<
@@ -1089,8 +1098,12 @@ export type AgentStreamSnapshotMessage = z.infer<
 >;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
-export type ListConversationsResponseMessage = z.infer<typeof ListConversationsResponseMessageSchema>;
-export type DeleteConversationResponseMessage = z.infer<typeof DeleteConversationResponseMessageSchema>;
+export type ListVoiceConversationsResponseMessage = z.infer<
+  typeof ListVoiceConversationsResponseMessageSchema
+>;
+export type DeleteVoiceConversationResponseMessage = z.infer<
+  typeof DeleteVoiceConversationResponseMessageSchema
+>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
 export type AgentPermissionResolvedMessage = z.infer<typeof AgentPermissionResolvedMessageSchema>;
 export type AgentDeletedMessage = z.infer<typeof AgentDeletedMessageSchema>;

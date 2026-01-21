@@ -123,7 +123,7 @@ describe("daemon restart and agent resume", () => {
       cwd = tmpCwd();
 
       // Use a unique secret that we'll verify after restart
-      const secretPhrase = `DAEMON_RESTART_SECRET_${Date.now()}`;
+      const marker = `DAEMON_RESTART_MARKER_${Date.now()}`;
 
       // === PHASE 1: Start daemon and create Codex agent with secret ===
       currentDaemon = await startDaemon({ paseoHome, staticDir });
@@ -143,7 +143,7 @@ describe("daemon restart and agent resume", () => {
       // Ask the agent to remember the secret
       await currentDaemon.client.sendMessage(
         agent.id,
-        `Remember this secret phrase: "${secretPhrase}". Just confirm you've remembered it with a short reply.`
+        `Remember this marker string for a test: "${marker}". Just confirm you've remembered it with a short reply.`
       );
 
       const afterRemember = await currentDaemon.client.waitForAgentIdle(agent.id, 120000);
@@ -208,7 +208,7 @@ describe("daemon restart and agent resume", () => {
       currentDaemon.client.clearMessageQueue();
       await currentDaemon.client.sendMessage(
         resumedAgent.id,
-        "What was the secret phrase I asked you to remember earlier? Just reply with the exact phrase."
+        "What was the marker string I asked you to remember earlier? Just reply with the exact string."
       );
 
       const afterMessage = await currentDaemon.client.waitForAgentIdle(resumedAgent.id, 120000);
@@ -234,7 +234,7 @@ describe("daemon restart and agent resume", () => {
 
       // CRITICAL ASSERTION: The agent should remember the secret phrase from before daemon restart
       // This proves conversation context was properly restored via buildResumePrompt
-      expect(fullResponse).toContain(secretPhrase);
+      expect(fullResponse).toContain(marker);
 
       // Cleanup
       await currentDaemon.client.deleteAgent(resumedAgent.id);

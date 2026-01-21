@@ -1,19 +1,19 @@
 import type { IncomingMessage } from "http";
-import { parse as parseUrl } from "url";
 import type { WebSocket } from "ws";
+import { join } from "path";
 import {
   WSInboundMessageSchema,
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
 import { Session } from "./session.js";
-import { loadConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
+import { VoiceConversationStore } from "./voice-conversation-store.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -37,12 +37,14 @@ export class WebSocketSessionBridge {
   private readonly stt: OpenAISTT | null;
   private readonly tts: OpenAITTS | null;
   private readonly terminalManager: TerminalManager | null;
+  private readonly voiceConversationStore: VoiceConversationStore;
 
   constructor(
     logger: pino.Logger,
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     downloadTokenStore: DownloadTokenStore,
+    paseoHome: string,
     agentMcpConfig: AgentMcpClientConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
@@ -55,6 +57,9 @@ export class WebSocketSessionBridge {
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
+    this.voiceConversationStore = new VoiceConversationStore(
+      join(paseoHome, "voice-conversations")
+    );
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger);
@@ -69,27 +74,9 @@ export class WebSocketSessionBridge {
     return this.sessions.size;
   }
 
-  public async attach(ws: WebSocket, request: IncomingMessage): Promise<void> {
+  public async attach(ws: WebSocket, _request: IncomingMessage): Promise<void> {
     const clientId = `client-${++this.clientIdCounter}`;
     const connectionLogger = this.logger.child({ clientId });
-
-    const url = parseUrl(request.url || "", true);
-    const conversationId = url.query.conversationId as string | undefined;
-
-    let initialMessages = null;
-    if (conversationId) {
-      connectionLogger.debug({ conversationId }, "Client requesting conversation");
-      initialMessages = await loadConversation(connectionLogger, conversationId);
-
-      if (initialMessages) {
-        connectionLogger.debug(
-          { conversationId, messageCount: initialMessages.length },
-          "Loaded conversation"
-        );
-      } else {
-        connectionLogger.debug({ conversationId }, "Conversation not found, starting fresh");
-      }
-    }
 
     const session = new Session(
       clientId,
@@ -105,16 +92,13 @@ export class WebSocketSessionBridge {
       this.stt,
       this.tts,
       this.terminalManager,
-      {
-        conversationId,
-        initialMessages: initialMessages || undefined,
-      }
+      this.voiceConversationStore
     );
 
     this.sessions.set(ws, session);
 
     connectionLogger.info(
-      { clientId, conversationId: session.getConversationId(), totalSessions: this.sessions.size },
+      { clientId, totalSessions: this.sessions.size },
       "Client connected"
     );
 

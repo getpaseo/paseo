@@ -34,11 +34,7 @@ import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
-import {
-  saveConversation,
-  listConversations,
-  deleteConversation,
-} from "./persistence.js";
+import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
@@ -214,9 +210,10 @@ function toAgentPersistenceHandle(
  */
 export class Session {
   private readonly clientId: string;
-  private readonly conversationId: string;
+  private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
   private readonly sessionLogger: pino.Logger;
+  private readonly voiceConversationStore: VoiceConversationStore;
 
   // State machine
   private abortController: AbortController;
@@ -226,6 +223,7 @@ export class Session {
   // Realtime mode state
   private isRealtimeMode = false;
   private speechInProgress = false;
+  private voiceConversationId: string | null = null;
 
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
@@ -274,13 +272,10 @@ export class Session {
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
-    options?: {
-      conversationId?: string;
-      initialMessages?: ModelMessage[];
-    }
+    voiceConversationStore: VoiceConversationStore
   ) {
     this.clientId = clientId;
-    this.conversationId = options?.conversationId || uuidv4();
+    this.sessionId = uuidv4();
     this.onMessage = onMessage;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
@@ -288,39 +283,24 @@ export class Session {
     this.agentRegistry = agentRegistry;
     this.agentMcpConfig = agentMcpConfig;
     this.terminalManager = terminalManager;
+    this.voiceConversationStore = voiceConversationStore;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
-      conversationId: this.conversationId,
+      sessionId: this.sessionId,
     });
     this.providerRegistry = buildProviderRegistry(this.sessionLogger);
 
-    // Initialize conversation history
-    if (options?.initialMessages) {
-      this.messages = options.initialMessages;
-      this.sessionLogger.info(
-        { messageCount: this.messages.length },
-        `Restored conversation with ${this.messages.length} messages`
-      );
-    }
-
     // Initialize per-session managers
-    this.ttsManager = new TTSManager(this.conversationId, this.sessionLogger, tts);
-    this.sttManager = new STTManager(this.conversationId, this.sessionLogger, stt);
+    this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
+    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt);
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
     this.subscribeToAgentEvents();
 
     this.sessionLogger.info("Session created");
-  }
-
-  /**
-   * Get the conversation ID for this session
-   */
-  public getConversationId(): string {
-    return this.conversationId;
   }
 
   /**
@@ -759,24 +739,31 @@ export class Session {
           this.handleAudioPlayed(msg.id);
           break;
 
-        case "load_conversation_request":
-          await this.handleLoadConversation(msg.requestId);
+        case "request_session_state":
+          await this.sendSessionState();
           break;
 
-        case "list_conversations_request":
-          await this.handleListConversations(msg.requestId);
+        case "load_voice_conversation_request":
+          await this.handleLoadVoiceConversation(msg.voiceConversationId, msg.requestId);
           break;
 
-        case "delete_conversation_request":
-          await this.handleDeleteConversation(msg.conversationId, msg.requestId);
+        case "list_voice_conversations_request":
+          await this.handleListVoiceConversations(msg.requestId);
+          break;
+
+        case "delete_voice_conversation_request":
+          await this.handleDeleteVoiceConversation(
+            msg.voiceConversationId,
+            msg.requestId
+          );
           break;
 
         case "delete_agent_request":
           await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
           break;
 
-        case "set_realtime_mode":
-          this.handleSetRealtimeMode(msg.enabled);
+        case "set_voice_conversation":
+          await this.handleSetVoiceConversation(msg.enabled, msg.voiceConversationId);
           break;
 
         case "send_agent_message":
@@ -919,14 +906,24 @@ export class Session {
   }
 
   /**
-   * Load existing conversation
+   * Load a voice conversation into this session (best-effort).
    */
-  public async handleLoadConversation(requestId: string): Promise<void> {
-    // This is handled during construction, but we emit a confirmation message
+  public async handleLoadVoiceConversation(
+    voiceConversationId: string,
+    requestId: string
+  ): Promise<void> {
+    const loaded = await this.voiceConversationStore.load(
+      this.sessionLogger,
+      voiceConversationId
+    );
+
+    this.voiceConversationId = voiceConversationId;
+    this.messages = loaded ?? [];
+
     this.emit({
-      type: "conversation_loaded",
+      type: "voice_conversation_loaded",
       payload: {
-        conversationId: this.conversationId,
+        voiceConversationId,
         messageCount: this.messages.length,
         requestId,
       },
@@ -937,13 +934,13 @@ export class Session {
   }
 
   /**
-   * List all conversations
+   * List all voice conversations
    */
-  public async handleListConversations(requestId: string): Promise<void> {
+  public async handleListVoiceConversations(requestId: string): Promise<void> {
     try {
-      const conversations = await listConversations(this.sessionLogger);
+      const conversations = await this.voiceConversationStore.list(this.sessionLogger);
       this.emit({
-        type: "list_conversations_response",
+        type: "list_voice_conversations_response",
         payload: {
           conversations: conversations.map((conv) => ({
             id: conv.id,
@@ -956,7 +953,7 @@ export class Session {
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error },
-        "Failed to list conversations"
+        "Failed to list voice conversations"
       );
       this.emit({
         type: "activity_log",
@@ -964,42 +961,42 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to list conversations: ${error.message}`,
+          content: `Failed to list voice conversations: ${error.message}`,
         },
       });
     }
   }
 
   /**
-   * Delete a conversation
+   * Delete a voice conversation
    */
-  public async handleDeleteConversation(
-    conversationId: string,
+  public async handleDeleteVoiceConversation(
+    voiceConversationId: string,
     requestId: string
   ): Promise<void> {
     try {
-      await deleteConversation(this.sessionLogger, conversationId);
+      await this.voiceConversationStore.delete(this.sessionLogger, voiceConversationId);
       this.emit({
-        type: "delete_conversation_response",
+        type: "delete_voice_conversation_response",
         payload: {
-          conversationId,
+          voiceConversationId,
           success: true,
           requestId,
         },
       });
       this.sessionLogger.info(
-        { conversationId },
-        `Deleted conversation ${conversationId}`
+        { voiceConversationId },
+        `Deleted voice conversation ${voiceConversationId}`
       );
     } catch (error: any) {
       this.sessionLogger.error(
-        { err: error, conversationId },
-        `Failed to delete conversation ${conversationId}`
+        { err: error, voiceConversationId },
+        `Failed to delete voice conversation ${voiceConversationId}`
       );
       this.emit({
-        type: "delete_conversation_response",
+        type: "delete_voice_conversation_response",
         payload: {
-          conversationId,
+          voiceConversationId,
           success: false,
           error: error.message,
           requestId,
@@ -1087,12 +1084,47 @@ export class Session {
   /**
    * Handle realtime mode toggle
    */
-  private handleSetRealtimeMode(enabled: boolean): void {
-    this.isRealtimeMode = enabled;
-    this.sessionLogger.info(
-      { enabled },
-      `Realtime mode ${enabled ? "enabled" : "disabled"}`
-    );
+  private async handleSetVoiceConversation(
+    enabled: boolean,
+    voiceConversationId?: string
+  ): Promise<void> {
+    if (enabled) {
+      if (!voiceConversationId || voiceConversationId.trim().length === 0) {
+        this.sessionLogger.warn("set_voice_conversation missing voiceConversationId; ignoring");
+        return;
+      }
+
+      this.isRealtimeMode = true;
+      this.voiceConversationId = voiceConversationId;
+
+      const loaded = await this.voiceConversationStore.load(
+        this.sessionLogger,
+        voiceConversationId
+      );
+      this.messages = loaded ?? [];
+
+      this.sessionLogger.info(
+        { voiceConversationId, messageCount: this.messages.length },
+        "Voice conversation enabled"
+      );
+      return;
+    }
+
+    this.isRealtimeMode = false;
+    const idToPersist = this.voiceConversationId;
+    if (idToPersist) {
+      try {
+        await this.voiceConversationStore.save(
+          this.sessionLogger,
+          idToPersist,
+          this.messages
+        );
+      } catch (error) {
+        this.sessionLogger.warn({ err: error }, "Failed to persist voice conversation");
+      }
+    }
+
+    this.sessionLogger.info({ voiceConversationId: idToPersist }, "Voice conversation disabled");
   }
 
   /**
@@ -3022,15 +3054,20 @@ export class Session {
             );
           }
 
-          // Persist conversation to disk
-          try {
-            await saveConversation(this.sessionLogger, this.conversationId, this.messages);
-          } catch (error) {
-            this.sessionLogger.error(
-              { err: error },
-              "Failed to persist conversation"
-            );
-            // Don't break conversation flow on persistence errors
+          // Persist voice conversation to disk (best-effort; voice-only)
+          if (enableTTS && this.voiceConversationId) {
+            try {
+              await this.voiceConversationStore.save(
+                this.sessionLogger,
+                this.voiceConversationId,
+                this.messages
+              );
+            } catch (error) {
+              this.sessionLogger.warn(
+                { err: error, voiceConversationId: this.voiceConversationId },
+                "Failed to persist voice conversation"
+              );
+            }
           }
         },
         onChunk: async ({ chunk }) => {
@@ -3458,11 +3495,12 @@ export class Session {
       const dumpDir = join(process.cwd(), ".debug.conversations");
       await mkdir(dumpDir, { recursive: true });
 
-      const filename = `${this.conversationId}-${this.turnIndex}.json`;
+      const filename = `${this.voiceConversationId ?? this.sessionId}-${this.turnIndex}.json`;
       const filepath = join(dumpDir, filename);
 
       const dump = {
-        conversationId: this.conversationId,
+        voiceConversationId: this.voiceConversationId,
+        sessionId: this.sessionId,
         turnIndex: this.turnIndex,
         timestamp: new Date().toISOString(),
         messages: this.messages,

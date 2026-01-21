@@ -1,0 +1,8 @@
+{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "cp \"$PASEO_ROOT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
+    ]
+  }
+}

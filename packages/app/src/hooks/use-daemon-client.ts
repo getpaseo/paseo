@@ -8,15 +8,14 @@ function runDaemonRequest(label: string, promise: Promise<unknown>): void {
   });
 }
 
-export function useDaemonClient(url: string, conversationId?: string | null): DaemonClientV2 {
+export function useDaemonClient(url: string): DaemonClientV2 {
   const client = useMemo(
     () =>
       new DaemonClientV2({
         url,
-        conversationId: conversationId ?? null,
         suppressSendErrors: true,
       }),
-    [url, conversationId]
+    [url]
   );
 
   useEffect(() => {

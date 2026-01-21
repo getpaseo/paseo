@@ -38,6 +38,9 @@ import { createAgentMcpServer } from "../mcp-server.js";
 
 const createHTTPServer = createServer;
 
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
   try {
@@ -224,7 +227,9 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   };
 }
 
-describe("ClaudeAgentClient (SDK integration)", () => {
+(hasClaudeCredentials ? describe : describe.skip)(
+  "ClaudeAgentClient (SDK integration)",
+  () => {
   const logger = createTestLogger();
   let agentMcpServer: AgentMcpServerHandle;
   let restoreClaudeConfigDir: (() => void) | null = null;

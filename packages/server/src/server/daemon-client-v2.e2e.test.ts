@@ -82,19 +82,20 @@ describe("daemon client v2 E2E", () => {
       return unsubscribe;
     });
 
-    const loadResult = await ctx.client.loadConversation();
-    expect(loadResult.conversationId).toBeTruthy();
+    const voiceConversationId = `voice-${Date.now()}`;
+    const loadResult = await ctx.client.loadVoiceConversation(voiceConversationId);
+    expect(loadResult.voiceConversationId).toBe(voiceConversationId);
     expect(typeof loadResult.messageCount).toBe("number");
 
     const sessionState = await sessionStatePromise;
     expect(Array.isArray(sessionState.payload.agents)).toBe(true);
 
-    const listResult = await ctx.client.listConversations();
+    const listResult = await ctx.client.listVoiceConversations();
     expect(Array.isArray(listResult.conversations)).toBe(true);
 
     const missingId = `missing-${Date.now()}`;
-    const deleteResult = await ctx.client.deleteConversation(missingId);
-    expect(deleteResult.conversationId).toBe(missingId);
+    const deleteResult = await ctx.client.deleteVoiceConversation(missingId);
+    expect(deleteResult.voiceConversationId).toBe(missingId);
     expect(deleteResult.success).toBe(false);
     expect(deleteResult.error).toBeTruthy();
   }, 30000);
@@ -104,8 +105,8 @@ describe("daemon client v2 E2E", () => {
     const secondRequestId = `list-${Date.now()}-b`;
 
     const [first, second] = await Promise.all([
-      ctx.client.listConversations(firstRequestId),
-      ctx.client.listConversations(secondRequestId),
+      ctx.client.listVoiceConversations(firstRequestId),
+      ctx.client.listVoiceConversations(secondRequestId),
     ]);
 
     expect(Array.isArray(first.conversations)).toBe(true);
@@ -289,15 +290,7 @@ describe("daemon client v2 E2E", () => {
       expect(sawAssistantMessage).toBe(true);
       expect(sawRawAssistantMessage).toBe(true);
 
-      await ctx.client.sendAgentAudio({
-        agentId: agent.id,
-        audio: Buffer.from("noop").toString("base64"),
-        format: "audio/wav",
-        isLast: false,
-        requestId: `audio-${Date.now()}`,
-      });
-
-      await ctx.client.setRealtimeMode(false);
+      await ctx.client.setVoiceConversation(false);
 
       await ctx.client.abortRequest();
       await ctx.client.audioPlayed("audio-1");
@@ -509,7 +502,7 @@ describe("daemon client v2 E2E", () => {
   test(
     "streams session activity logs and chunks",
     async () => {
-      await ctx.client.setRealtimeMode(false);
+      await ctx.client.setVoiceConversation(false);
 
       let sawAssistantChunk = false;
       let sawTranscriptLog = false;
@@ -558,7 +551,15 @@ describe("daemon client v2 E2E", () => {
   test(
     "streams audio output and transcription results in realtime mode",
     async () => {
-      await ctx.client.setRealtimeMode(true);
+      if (process.env.PASEO_E2E_AUDIO !== "1") {
+        // Requires OpenAI STT/TTS services and is inherently network-flaky.
+        return;
+      }
+      if (!process.env.OPENAI_API_KEY) {
+        return;
+      }
+
+      await ctx.client.setVoiceConversation(true, `voice-${Date.now()}`);
 
       const audioOutput = waitForSignal(90000, (resolve) => {
         const chunks: Array<{
@@ -624,7 +625,7 @@ describe("daemon client v2 E2E", () => {
         transcript === null || typeof transcript === "string"
       ).toBe(true);
 
-      await ctx.client.setRealtimeMode(false);
+      await ctx.client.setVoiceConversation(false);
     },
     180000
   );

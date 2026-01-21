@@ -12,9 +12,9 @@ import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
   AgentPermissionResolvedMessage,
-  ConversationLoadedMessage,
+  VoiceConversationLoadedMessage,
   CreateAgentRequestMessage,
-  DeleteConversationResponseMessage,
+  DeleteVoiceConversationResponseMessage,
   FileDownloadTokenResponse,
   FileExplorerResponse,
   GitDiffResponse,
@@ -23,7 +23,7 @@ import type {
   HighlightedDiffResponse,
   ListCommandsResponse,
   ExecuteCommandResponse,
-  ListConversationsResponseMessage,
+  ListVoiceConversationsResponseMessage,
   ListProviderModelsResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -128,7 +128,6 @@ export type DaemonEventHandler = (event: DaemonEvent) => void;
 export type DaemonClientV2Config = {
   url: string;
   authHeader?: string;
-  conversationId?: string | null;
   suppressSendErrors?: boolean;
   transportFactory?: DaemonTransportFactory;
   webSocketFactory?: WebSocketFactory;
@@ -162,9 +161,9 @@ export type CreateAgentRequestOptions = {
   requestId?: string;
 } & AgentConfigOverrides;
 
-type ConversationLoadedPayload = ConversationLoadedMessage["payload"];
-type ListConversationsPayload = ListConversationsResponseMessage["payload"];
-type DeleteConversationPayload = DeleteConversationResponseMessage["payload"];
+type VoiceConversationLoadedPayload = VoiceConversationLoadedMessage["payload"];
+type ListVoiceConversationsPayload = ListVoiceConversationsResponseMessage["payload"];
+type DeleteVoiceConversationPayload = DeleteVoiceConversationResponseMessage["payload"];
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type GitRepoInfoPayload = GitRepoInfoResponse["payload"];
@@ -221,7 +220,6 @@ export class DaemonClientV2 {
   private connectResolve: (() => void) | null = null;
   private connectReject: ((error: Error) => void) | null = null;
   private lastErrorValue: string | null = null;
-  private conversationId: string | null = null;
   private connectionState: ConnectionState = { status: "idle" };
   private messageQueueLimit: number | null;
   private agentIndex: Map<string, AgentSnapshotPayload> = new Map();
@@ -232,7 +230,6 @@ export class DaemonClientV2 {
       config.messageQueueLimit === undefined
         ? DEFAULT_MESSAGE_QUEUE_LIMIT
         : config.messageQueueLimit;
-    this.conversationId = config.conversationId ?? null;
     this.logger = config.logger ?? consoleLogger;
   }
 
@@ -273,12 +270,6 @@ export class DaemonClientV2 {
       headers["Authorization"] = this.config.authHeader;
     }
 
-    const targetUrl = this.conversationId
-      ? `${this.config.url}${
-          this.config.url.includes("?") ? "&" : "?"
-        }conversationId=${encodeURIComponent(this.conversationId)}`
-      : this.config.url;
-
     try {
       this.cleanupTransport();
       const transportFactory =
@@ -286,7 +277,7 @@ export class DaemonClientV2 {
         createWebSocketTransportFactory(
           this.config.webSocketFactory ?? defaultWebSocketFactory
         );
-      const transport = transportFactory({ url: targetUrl, headers });
+      const transport = transportFactory({ url: this.config.url, headers });
       this.transport = transport;
 
       this.updateConnectionState({
@@ -414,10 +405,6 @@ export class DaemonClientV2 {
     return this.lastErrorValue;
   }
 
-  get currentConversationId(): string | null {
-    return this.conversationId;
-  }
-
   // ============================================================================
   // Message Subscription
   // ============================================================================
@@ -503,22 +490,31 @@ export class DaemonClientV2 {
   }
 
   // ============================================================================
-  // Conversation / Session RPC
+  // Voice Conversation RPC
   // ============================================================================
 
-  async loadConversation(
-    conversationId?: string,
-    requestId?: string
-  ): Promise<ConversationLoadedPayload> {
+  requestSessionState(requestId?: string): void {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
-      type: "load_conversation_request",
-      conversationId: conversationId ?? "",
+      type: "request_session_state",
+      requestId: resolvedRequestId,
+    });
+    this.sendSessionMessage(message);
+  }
+
+  async loadVoiceConversation(
+    voiceConversationId: string,
+    requestId?: string
+  ): Promise<VoiceConversationLoadedPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "load_voice_conversation_request",
+      voiceConversationId,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
       (msg) => {
-        if (msg.type !== "conversation_loaded") {
+        if (msg.type !== "voice_conversation_loaded") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
@@ -533,15 +529,15 @@ export class DaemonClientV2 {
     return response;
   }
 
-  async listConversations(requestId?: string): Promise<ListConversationsPayload> {
+  async listVoiceConversations(requestId?: string): Promise<ListVoiceConversationsPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
-      type: "list_conversations_request",
+      type: "list_voice_conversations_request",
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
       (msg) => {
-        if (msg.type !== "list_conversations_response") {
+        if (msg.type !== "list_voice_conversations_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
@@ -556,19 +552,19 @@ export class DaemonClientV2 {
     return response;
   }
 
-  async deleteConversation(
-    conversationId: string,
+  async deleteVoiceConversation(
+    voiceConversationId: string,
     requestId?: string
-  ): Promise<DeleteConversationPayload> {
+  ): Promise<DeleteVoiceConversationPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
-      type: "delete_conversation_request",
-      conversationId,
+      type: "delete_voice_conversation_request",
+      voiceConversationId,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
       (msg) => {
-        if (msg.type !== "delete_conversation_response") {
+        if (msg.type !== "delete_voice_conversation_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
@@ -902,11 +898,11 @@ export class DaemonClientV2 {
   }
 
   // ============================================================================
-  // Audio / Realtime
+  // Audio / Voice
   // ============================================================================
 
-  async setRealtimeMode(enabled: boolean): Promise<void> {
-    this.sendSessionMessage({ type: "set_realtime_mode", enabled });
+  async setVoiceConversation(enabled: boolean, voiceConversationId?: string): Promise<void> {
+    this.sendSessionMessage({ type: "set_voice_conversation", enabled, voiceConversationId });
   }
 
   async sendRealtimeAudioChunk(
@@ -1692,10 +1688,6 @@ export class DaemonClientV2 {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    if (msg.type === "conversation_loaded") {
-      this.conversationId = msg.payload.conversationId;
-    }
-
     if (msg.type === "session_state") {
       this.agentIndex = new Map(
         msg.payload.agents.map((agent) => [agent.id, agent])

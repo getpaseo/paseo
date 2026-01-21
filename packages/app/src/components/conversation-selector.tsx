@@ -15,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StyleSheet } from "react-native-unistyles";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 
-const STORAGE_KEY = "@paseo:conversation-id";
+const STORAGE_KEY = "@paseo:voice-conversation-id";
 
 interface Conversation {
   id: string;
@@ -24,14 +24,14 @@ interface Conversation {
 }
 
 interface ConversationSelectorProps {
-  currentConversationId: string | null;
-  onSelectConversation: (conversationId: string | null) => void;
+  currentVoiceConversationId: string | null;
+  onSelectVoiceConversation: (voiceConversationId: string | null) => void;
   client: DaemonClientV2 | null;
 }
 
 export function ConversationSelector({
-  currentConversationId,
-  onSelectConversation,
+  currentVoiceConversationId,
+  onSelectVoiceConversation,
   client,
 }: ConversationSelectorProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -49,7 +49,7 @@ export function ConversationSelector({
 
     try {
       console.log("[ConversationSelector] Fetching conversations");
-      const response = await client.listConversations();
+      const response = await client.listVoiceConversations();
       setConversations(response.conversations);
     } catch (error) {
       console.error(
@@ -88,10 +88,10 @@ export function ConversationSelector({
               console.log("[ConversationSelector] Deleting conversation:", id);
               void (async () => {
                 try {
-                  const response = await client.deleteConversation(id);
+                  const response = await client.deleteVoiceConversation(id);
                   if (response.success) {
                     await fetchConversations();
-                    if (response.conversationId === currentConversationId) {
+                    if (response.voiceConversationId === currentVoiceConversationId) {
                       await handleNewConversation();
                     }
                   } else {
@@ -113,7 +113,7 @@ export function ConversationSelector({
         ]
       );
     },
-    [currentConversationId, fetchConversations, handleNewConversation, client]
+    [currentVoiceConversationId, fetchConversations, handleNewConversation, client]
   );
 
   const handleClearAll = useCallback(() => {
@@ -136,7 +136,7 @@ export function ConversationSelector({
               setIsLoading(true);
               try {
                 for (const conv of conversations) {
-                  await client.deleteConversation(conv.id);
+                  await client.deleteVoiceConversation(conv.id);
                 }
                 setConversations([]);
                 await handleNewConversation();
@@ -161,7 +161,7 @@ export function ConversationSelector({
     try {
       // Save to AsyncStorage for persistence
       await AsyncStorage.setItem(STORAGE_KEY, id);
-      onSelectConversation(id);
+      onSelectVoiceConversation(id);
       setIsOpen(false);
     } catch (error) {
       console.error(
@@ -175,7 +175,7 @@ export function ConversationSelector({
     try {
       // Clear saved conversation ID
       await AsyncStorage.removeItem(STORAGE_KEY);
-      onSelectConversation(null);
+      onSelectVoiceConversation(null);
       setIsOpen(false);
     } catch (error) {
       console.error(
@@ -266,7 +266,7 @@ export function ConversationSelector({
                       key={conversation.id}
                       style={[
                         styles.conversationItem,
-                        conversation.id === currentConversationId &&
+                        conversation.id === currentVoiceConversationId &&
                           styles.conversationItemActive,
                       ]}
                     >

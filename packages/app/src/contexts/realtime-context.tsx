@@ -2,6 +2,10 @@ import { createContext, useContext, useState, ReactNode, useCallback, useEffect,
 import { useSpeechmaticsAudio } from "@/hooks/use-speechmatics-audio";
 import type { SessionState } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { randomUUID } from "expo-crypto";
+
+const VOICE_CONVERSATION_ID_STORAGE_KEY = "@paseo:voice-conversation-id";
 
 interface RealtimeContextValue {
   isRealtimeMode: boolean;
@@ -160,7 +164,16 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         console.log("[Realtime] Mode enabled");
 
         if (session?.client) {
-          await session.client.setRealtimeMode(true);
+          let voiceConversationId =
+            (await AsyncStorage.getItem(VOICE_CONVERSATION_ID_STORAGE_KEY)) ?? null;
+          if (!voiceConversationId) {
+            voiceConversationId = randomUUID();
+            await AsyncStorage.setItem(
+              VOICE_CONVERSATION_ID_STORAGE_KEY,
+              voiceConversationId
+            );
+          }
+          await session.client.setVoiceConversation(true, voiceConversationId);
         } else {
           console.warn("[Realtime] setRealtimeMode skipped: daemon unavailable");
         }
@@ -183,7 +196,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       console.log("[Realtime] Mode disabled");
 
       if (session?.client) {
-        await session.client.setRealtimeMode(false);
+        await session.client.setVoiceConversation(false);
       } else {
         console.warn("[Realtime] setRealtimeMode skipped: daemon unavailable");
       }

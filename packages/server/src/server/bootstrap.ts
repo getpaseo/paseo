@@ -41,7 +41,6 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { OpenAISTT, type STTConfig } from "./agent/stt-openai.js";
 import { OpenAITTS, type TTSConfig } from "./agent/tts-openai.js";
-import { listConversations, deleteConversation } from "./persistence.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
 import { initializeTitleGenerator } from "../services/agent-title-generator.js";
@@ -151,28 +150,6 @@ export async function createPaseoDaemon(
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // Conversation management endpoints
-  app.get("/api/conversations", async (_req, res) => {
-    try {
-      const conversations = await listConversations(logger);
-      res.json(conversations);
-    } catch (err) {
-      logger.error({ err }, "Failed to list conversations");
-      res.status(500).json({ error: "Failed to list conversations" });
-    }
-  });
-
-  app.delete("/api/conversations/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      await deleteConversation(logger, id);
-      res.json({ success: true });
-    } catch (err) {
-      logger.error({ err }, "Failed to delete conversation");
-      res.status(500).json({ error: "Failed to delete conversation" });
-    }
   });
 
   app.get("/api/files/download", async (req, res) => {
@@ -400,6 +377,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentRegistry,
     downloadTokenStore,
+    config.paseoHome,
     {
       agentMcpUrl: config.agentControlMcp.url,
       agentMcpHeaders: config.agentControlMcp.headers,

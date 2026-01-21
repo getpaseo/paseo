@@ -33,6 +33,7 @@ export class VoiceAssistantWebSocketServer {
     agentManager: AgentManager,
     agentRegistry: AgentRegistry,
     downloadTokenStore: DownloadTokenStore,
+    paseoHome: string,
     agentMcpConfig: AgentMcpClientConfig,
     wsConfig: WebSocketServerConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
@@ -44,6 +45,7 @@ export class VoiceAssistantWebSocketServer {
       agentManager,
       agentRegistry,
       downloadTokenStore,
+      paseoHome,
       agentMcpConfig,
       speech,
       terminalManager
