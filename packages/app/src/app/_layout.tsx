@@ -330,6 +330,7 @@ export default function RootLayout() {
                           <Stack.Screen name="agent/[serverId]/[agentId]" options={{ gestureEnabled: false }} />
                           <Stack.Screen name="settings" />
                           <Stack.Screen name="audio-test" />
+                          <Stack.Screen name="pair-scan" />
                         </Stack>
                       </AppWithSidebar>
                       </HorizontalScrollProvider>

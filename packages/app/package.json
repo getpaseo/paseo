@@ -42,6 +42,7 @@
     "expo-audio": "~1.0.13",
     "expo-av": "^16.0.7",
     "expo-build-properties": "^1.0.9",
+    "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.7",
     "expo-constants": "~18.0.9",
     "expo-crypto": "^15.0.8",

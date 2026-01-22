@@ -42,6 +42,8 @@ export default {
         "RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
+        "CAMERA",
+        "android.permission.CAMERA",
       ],
       // Base package - Gradle product flavors override this per variant
       package: "com.moboudra.paseo",
@@ -52,6 +54,12 @@ export default {
     },
     plugins: [
       "expo-router",
+      [
+        "expo-camera",
+        {
+          cameraPermission: "Allow $(PRODUCT_NAME) to access your camera to scan pairing QR codes.",
+        },
+      ],
       [
         "expo-splash-screen",
         {

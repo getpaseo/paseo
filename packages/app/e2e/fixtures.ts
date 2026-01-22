@@ -36,6 +36,7 @@ test.beforeEach(async ({ page }) => {
   });
 
   const nowIso = new Date().toISOString();
+  const seedNonce = Math.random().toString(36).slice(2);
   const testDaemon = {
     id: 'e2e-test-daemon',
     label: 'localhost',
@@ -58,24 +59,28 @@ test.beforeEach(async ({ page }) => {
   };
 
   await page.addInitScript(
-    ({ daemon, preferences }) => {
+    ({ daemon, preferences, seedNonce }) => {
       // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
       // override storage and reload; they can opt out of seeding for the *next* navigation by
       // setting this flag before the reload.
       const disableOnceKey = '@paseo:e2e-disable-default-seed-once';
-      if (localStorage.getItem(disableOnceKey)) {
+      const disableValue = localStorage.getItem(disableOnceKey);
+      if (disableValue) {
         localStorage.removeItem(disableOnceKey);
-        return;
+        if (disableValue === seedNonce) {
+          return;
+        }
       }
 
       localStorage.setItem('@paseo:e2e', '1');
+      localStorage.setItem('@paseo:e2e-seed-nonce', seedNonce);
 
       // Hard-reset anything that could point to a developer's real daemon.
       localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
       localStorage.removeItem('@paseo:settings');
       localStorage.setItem('@paseo:create-agent-preferences', JSON.stringify(preferences));
     },
-    { daemon: testDaemon, preferences: createAgentPreferences }
+    { daemon: testDaemon, preferences: createAgentPreferences, seedNonce }
   );
 });
 

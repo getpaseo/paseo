@@ -190,7 +190,8 @@ export const ensureHostSelected = async (page: Page) => {
       prefs.serverId = daemonId;
       localStorage.setItem('@paseo:create-agent-preferences', JSON.stringify(prefs));
       // Prevent the fixture's init-script from overwriting the corrected prefs on reload.
-      localStorage.setItem('@paseo:e2e-disable-default-seed-once', '1');
+      const nonce = localStorage.getItem('@paseo:e2e-seed-nonce') ?? '1';
+      localStorage.setItem('@paseo:e2e-disable-default-seed-once', nonce);
       return { ok: true } as const;
     });
 

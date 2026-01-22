@@ -392,6 +392,7 @@ export default function SettingsScreen() {
   const { connectionStates, updateConnectionStatus } = useDaemonConnections();
   const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
   const [daemonFormMode, setDaemonFormMode] = useState<"choose" | "manual" | "pair">("choose");
+  const [pairSubMode, setPairSubMode] = useState<"choose" | "paste">("choose");
   const [daemonForm, setDaemonForm] = useState<{
     id: string | null;
     label: string;
@@ -463,6 +464,7 @@ export default function SettingsScreen() {
   const handleOpenDaemonForm = useCallback((profile?: DaemonProfile) => {
     if (profile) {
       setDaemonFormMode("manual");
+      setPairSubMode("choose");
       setDaemonForm({
         id: profile.id,
         label: profile.label,
@@ -471,6 +473,7 @@ export default function SettingsScreen() {
       });
     } else {
       setDaemonFormMode("choose");
+      setPairSubMode("choose");
       setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
     }
     setIsDaemonFormVisible(true);
@@ -479,6 +482,7 @@ export default function SettingsScreen() {
   const handleCloseDaemonForm = useCallback(() => {
     setIsDaemonFormVisible(false);
     setDaemonFormMode("choose");
+    setPairSubMode("choose");
     setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
   }, []);
 
@@ -521,6 +525,10 @@ export default function SettingsScreen() {
     }
 
     if (daemonFormMode === "pair") {
+      if (pairSubMode !== "paste") {
+        Alert.alert("Choose a method", "Select Scan QR or Paste link to pair.");
+        return;
+      }
       const offer = daemonForm.offerUrl.trim();
       if (!offer) {
         Alert.alert("Offer required", "Paste the pairing link (…/#offer=...)");
@@ -541,7 +549,7 @@ export default function SettingsScreen() {
     }
 
     Alert.alert("Choose a method", "Select Pair or Manual to add a host.");
-  }, [daemonForm, daemonFormMode, addDaemon, updateDaemon, upsertDaemonFromOfferUrl, handleCloseDaemonForm]);
+  }, [daemonForm, daemonFormMode, pairSubMode, addDaemon, updateDaemon, upsertDaemonFromOfferUrl, handleCloseDaemonForm]);
 
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
@@ -740,7 +748,10 @@ export default function SettingsScreen() {
                   <View style={styles.formActionsRow}>
                     <Pressable
                       style={[styles.formButton, styles.formButtonPrimary]}
-                      onPress={() => setDaemonFormMode("pair")}
+                      onPress={() => {
+                        setDaemonFormMode("pair");
+                        setPairSubMode("choose");
+                      }}
                     >
                       <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Pair</Text>
                     </Pressable>
@@ -771,17 +782,39 @@ export default function SettingsScreen() {
 
                 {daemonFormMode === "pair" ? (
                   <View style={styles.formField}>
-                    <Text style={styles.label}>Pairing Link</Text>
-                    <TextInput
-                      style={[styles.input, styles.inputUrl]}
-                      value={daemonForm.offerUrl}
-                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, offerUrl: text }))}
-                      placeholder="https://app.paseo.sh/#offer=..."
-                      placeholderTextColor={defaultTheme.colors.mutedForeground}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                    />
+                    <Text style={styles.label}>Pairing</Text>
+
+                    <View style={styles.formActionsRow}>
+                      <Pressable
+                        style={[styles.formButton, styles.formButtonPrimary]}
+                        onPress={() => {
+                          handleCloseDaemonForm();
+                          router.push("/pair-scan");
+                        }}
+                      >
+                        <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Scan QR</Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[styles.formButton, styles.formButtonPrimary]}
+                        onPress={() => setPairSubMode("paste")}
+                      >
+                        <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Paste link</Text>
+                      </Pressable>
+                    </View>
+
+                    {pairSubMode === "paste" ? (
+                      <TextInput
+                        style={[styles.input, styles.inputUrl, { marginTop: 12 }]}
+                        value={daemonForm.offerUrl}
+                        onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, offerUrl: text }))}
+                        placeholder="https://app.paseo.sh/#offer=..."
+                        placeholderTextColor={defaultTheme.colors.mutedForeground}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="url"
+                      />
+                    ) : null}
                   </View>
                 ) : null}
 
@@ -790,7 +823,13 @@ export default function SettingsScreen() {
                     <Text style={styles.formButtonText}>Cancel</Text>
                   </Pressable>
                   {!daemonForm.id && daemonFormMode !== "choose" ? (
-                    <Pressable style={styles.formButton} onPress={() => setDaemonFormMode("choose")}>
+                    <Pressable
+                      style={styles.formButton}
+                      onPress={() => {
+                        setDaemonFormMode("choose");
+                        setPairSubMode("choose");
+                      }}
+                    >
                       <Text style={styles.formButtonText}>Back</Text>
                     </Pressable>
                   ) : null}
