@@ -63,10 +63,6 @@ import {
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import {
-  generateAgentTitle,
-  isTitleGeneratorInitialized,
-} from "../services/agent-title-generator.js";
 import { createWorktree, slugify, validateBranchSlug } from "../utils/worktree.js";
 import {
   getCheckoutDiff,
@@ -86,7 +82,6 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
 };
-const ACTIVE_TITLE_GENERATIONS = new Set<string>();
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
@@ -249,7 +244,6 @@ export class Session {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
-  private agentTitleCache: Map<string, string | null> = new Map();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private clientActivity: {
     deviceType: "web" | "mobile";
@@ -529,12 +523,7 @@ export class Session {
           });
         }
 
-        if (
-          event.event.type === "timeline" ||
-          event.event.type === "turn_completed"
-        ) {
-          void this.maybeGenerateAgentTitle(event.agentId);
-        }
+        // Title updates are now handled by set_title MCP tool calls.
       },
       { replayState: false }
     );
@@ -646,14 +635,9 @@ export class Session {
   }
 
   private async getStoredAgentTitle(agentId: string): Promise<string | null> {
-    if (this.agentTitleCache.has(agentId)) {
-      return this.agentTitleCache.get(agentId) ?? null;
-    }
-
     try {
       const record = await this.agentRegistry.get(agentId);
       const title = record?.title ?? null;
-      this.agentTitleCache.set(agentId, title);
       return title;
     } catch (error) {
       this.sessionLogger.error(
@@ -661,59 +645,6 @@ export class Session {
         `Failed to load registry record for agent ${agentId}`
       );
       return null;
-    }
-  }
-
-  private setCachedTitle(agentId: string, title: string | null): void {
-    this.agentTitleCache.set(agentId, title);
-  }
-
-  private async maybeGenerateAgentTitle(agentId: string): Promise<void> {
-    if (!isTitleGeneratorInitialized()) {
-      return;
-    }
-
-    const existingTitle = await this.getStoredAgentTitle(agentId);
-    if (existingTitle) {
-      return;
-    }
-
-    if (ACTIVE_TITLE_GENERATIONS.has(agentId)) {
-      return;
-    }
-
-    const timeline = this.agentManager.getTimeline(agentId);
-    if (timeline.length === 0) {
-      return;
-    }
-
-    const snapshot = this.agentManager.getAgent(agentId);
-    if (!snapshot) {
-      return;
-    }
-
-    ACTIVE_TITLE_GENERATIONS.add(agentId);
-    try {
-      this.sessionLogger.debug(
-        { agentId },
-        `Generating title for agent ${agentId}`
-      );
-      const title = await generateAgentTitle(
-        this.sessionLogger.child({ module: "agent-title-generator" }),
-        timeline,
-        snapshot.cwd
-      );
-      await this.agentRegistry.setTitle(agentId, title);
-      this.setCachedTitle(agentId, title);
-      const latest = this.agentManager.getAgent(agentId) ?? snapshot;
-      await this.forwardAgentState(latest);
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId },
-        `Failed to generate title for agent ${agentId}`
-      );
-    } finally {
-      ACTIVE_TITLE_GENERATIONS.delete(agentId);
     }
   }
 
@@ -1071,7 +1002,6 @@ export class Session {
       );
     }
 
-    this.agentTitleCache.delete(agentId);
     this.emit({
       type: "agent_deleted",
       payload: {
@@ -1327,7 +1257,6 @@ export class Session {
         worktreeName
       );
       const snapshot = await this.agentManager.createAgent(sessionConfig);
-      this.setCachedTitle(snapshot.id, null);
       await this.forwardAgentState(snapshot);
 
       const trimmedPrompt = initialPrompt?.trim();
@@ -1424,7 +1353,6 @@ export class Session {
         handle,
         overrides
       );
-      this.setCachedTitle(snapshot.id, null);
       await this.agentManager.primeAgentHistory(snapshot.id);
       await this.forwardAgentState(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
@@ -1493,7 +1421,6 @@ export class Session {
           buildConfigOverrides(record),
           agentId
         );
-        this.setCachedTitle(agentId, null);
       }
       await this.agentManager.primeAgentHistory(agentId);
       await this.forwardAgentState(snapshot);

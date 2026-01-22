@@ -39,6 +39,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import { getSelfIdentificationInstructions } from "../self-identification-instructions.js";
 
 type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex" };
 
@@ -2757,6 +2758,7 @@ function buildCodexMcpConfig(
       developerInstructions = history;
     }
   }
+  const selfIdentificationInstructions = getSelfIdentificationInstructions();
 
   // Build MCP servers configuration
   const mcpServers: Record<string, CodexMcpServerConfig> = {};
@@ -2830,9 +2832,12 @@ function buildCodexMcpConfig(
   }
 
 
-  // Add developer instructions for session resume context
-  if (developerInstructions) {
-    configPayload["developer-instructions"] = developerInstructions;
+  const combinedDeveloperInstructions = [developerInstructions, selfIdentificationInstructions]
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (combinedDeveloperInstructions) {
+    configPayload["developer-instructions"] = combinedDeveloperInstructions;
   }
 
   return configPayload;

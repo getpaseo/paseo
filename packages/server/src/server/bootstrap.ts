@@ -43,7 +43,6 @@ import { OpenAISTT, type STTConfig } from "./agent/stt-openai.js";
 import { OpenAITTS, type TTSConfig } from "./agent/tts-openai.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentRegistry } from "./agent/agent-registry.js";
-import { initializeTitleGenerator } from "../services/agent-title-generator.js";
 import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
@@ -367,7 +366,6 @@ export async function createPaseoDaemon(
       );
     }
 
-    initializeTitleGenerator(logger.child({ module: "agent-title-generator" }), openaiApiKey);
   } else {
     logger.warn("OPENAI_API_KEY not set - LLM, STT, and TTS features will not work");
   }

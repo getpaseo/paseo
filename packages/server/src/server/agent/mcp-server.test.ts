@@ -101,4 +101,26 @@ describe("create_agent MCP tool", () => {
       })
     );
   });
+
+  it("set_title trims and persists titles for caller agent", async () => {
+    const { agentManager, agentRegistry, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "agent-1",
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentRegistry,
+      logger,
+      callerAgentId: "agent-1",
+    });
+    const tool = (server as any)._registeredTools["set_title"];
+
+    await tool.callback({ title: "  Fix auth  " });
+
+    expect(spies.agentRegistry.setTitle).toHaveBeenCalledWith(
+      "agent-1",
+      "Fix auth"
+    );
+  });
 });

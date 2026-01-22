@@ -35,6 +35,13 @@ export interface PaseoWorktreeInfo {
   head?: string;
 }
 
+export type PaseoWorktreeOwnership = {
+  allowed: boolean;
+  repoRoot?: string;
+  worktreeRoot?: string;
+  worktreePath?: string;
+};
+
 interface CreateWorktreeOptions {
   branchName: string;
   cwd: string;
@@ -99,26 +106,26 @@ export async function detectRepoInfo(cwd: string): Promise<RepoInfo> {
     }
   }
 
-  // Check if we're in a normal git repository
-  const gitDirPath = join(cwd, ".git");
-  if (existsSync(gitDirPath)) {
-    try {
-      const { stdout } = await execAsync("git rev-parse --show-toplevel", {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
-      const repoRoot = stdout.trim();
-      return {
-        type: "normal",
-        path: repoRoot,
-        name: basename(repoRoot),
-      };
-    } catch (error) {
-      throw new Error("Failed to determine git repository root");
+  // Fallback: allow running from any subdirectory inside a git checkout/worktree.
+  // Use git's common dir (shared .git) to find the repo root even when cwd has no .git entry.
+  try {
+    const { stdout } = await execAsync(
+      "git rev-parse --path-format=absolute --git-common-dir",
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const commonDir = stdout.trim();
+    if (!commonDir) {
+      throw new Error("git-common-dir was empty");
     }
+    const repoRoot = basename(commonDir) === ".git" ? dirname(commonDir) : dirname(commonDir);
+    return {
+      type: "normal",
+      path: repoRoot,
+      name: basename(repoRoot),
+    };
+  } catch {
+    throw new Error("Not in a git repository");
   }
-
-  throw new Error("Not in a git repository");
 }
 
 /**
@@ -193,6 +200,36 @@ function generateWorktreeSlug(): string {
 
 function getPaseoWorktreesRoot(repoRoot: string): string {
   return join(repoRoot, ".paseo", "worktrees");
+}
+
+export async function isPaseoOwnedWorktreeCwd(
+  cwd: string
+): Promise<PaseoWorktreeOwnership> {
+  const repoInfo = await detectRepoInfo(cwd);
+  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
+  const resolvedRoot = resolve(worktreesRoot) + sep;
+  const resolvedCwd = resolve(cwd);
+
+  if (!resolvedCwd.startsWith(resolvedRoot)) {
+    return {
+      allowed: false,
+      repoRoot: repoInfo.path,
+      worktreeRoot: worktreesRoot,
+      worktreePath: resolvedCwd,
+    };
+  }
+
+  const worktrees = await listPaseoWorktrees({ cwd: repoInfo.path });
+  const allowed = worktrees.some((entry) => {
+    const worktreePath = resolve(entry.path);
+    return resolvedCwd === worktreePath || resolvedCwd.startsWith(worktreePath + sep);
+  });
+  return {
+    allowed,
+    repoRoot: repoInfo.path,
+    worktreeRoot: worktreesRoot,
+    worktreePath: resolvedCwd,
+  };
 }
 
 function ensurePaseoIgnoredForRepo(repoInfo: RepoInfo): {

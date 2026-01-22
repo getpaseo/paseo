@@ -13,6 +13,7 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
 
 export class NotGitRepoError extends Error {
   readonly cwd: string;
+  readonly code = "NOT_GIT_REPO";
 
   constructor(cwd: string) {
     super(`Not a git repository: ${cwd}`);
@@ -94,6 +95,25 @@ async function getCurrentBranch(cwd: string): Promise<string | null> {
   });
   const branch = stdout.trim();
   return branch.length > 0 ? branch : null;
+}
+
+export async function renameCurrentBranch(
+  cwd: string,
+  newName: string
+): Promise<{ previousBranch: string | null; currentBranch: string | null }> {
+  await requireRepoInfo(cwd);
+
+  const previousBranch = await getCurrentBranch(cwd);
+  if (!previousBranch || previousBranch === "HEAD") {
+    throw new Error("Cannot rename branch in detached HEAD state");
+  }
+
+  await execAsync(`git branch -m "${newName}"`, {
+    cwd,
+  });
+
+  const currentBranch = await getCurrentBranch(cwd);
+  return { previousBranch, currentBranch };
 }
 
 async function isWorkingTreeDirty(cwd: string, repoType: "bare" | "normal"): Promise<boolean> {
