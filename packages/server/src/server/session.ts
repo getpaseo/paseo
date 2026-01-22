@@ -67,12 +67,12 @@ import {
   generateAgentTitle,
   isTitleGeneratorInitialized,
 } from "../services/agent-title-generator.js";
+import { createWorktree, slugify, validateBranchSlug } from "../utils/worktree.js";
 import {
-  createWorktree,
-  detectRepoInfo,
-  slugify,
-  validateBranchSlug,
-} from "../utils/worktree.js";
+  getCheckoutDiff,
+  getCheckoutStatus,
+  NotGitRepoError,
+} from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import type pino from "pino";
 
@@ -1617,16 +1617,16 @@ export class Session {
     const resolvedCwd = expandTilde(cwd);
 
     try {
-      const repoInfo = await detectRepoInfo(resolvedCwd);
+      const status = await getCheckoutStatus(resolvedCwd);
+      if (!status.isGit) {
+        throw new NotGitRepoError(resolvedCwd);
+      }
+      const repoRoot = status.repoRoot ?? resolvedCwd;
       const { stdout: branchesRaw } = await execAsync(
         "git branch --format='%(refname:short)'",
-        { cwd: repoInfo.path, env: READ_ONLY_GIT_ENV }
+        { cwd: repoRoot, env: READ_ONLY_GIT_ENV }
       );
-      const { stdout: currentRaw } = await execAsync(
-        "git rev-parse --abbrev-ref HEAD",
-        { cwd: resolvedCwd, env: READ_ONLY_GIT_ENV }
-      );
-      const currentBranch = currentRaw.trim();
+      const currentBranch = status.currentBranch ?? "";
       const branches = branchesRaw
         .split("\n")
         .map((line) => line.trim())
@@ -1636,13 +1636,13 @@ export class Session {
           isCurrent: name === currentBranch,
         }));
 
-      const isDirty = await this.isWorkingTreeDirty(resolvedCwd);
+      const isDirty = status.isDirty ?? false;
 
       this.emit({
         type: "git_repo_info_response",
         payload: {
           cwd: resolvedCwd,
-          repoRoot: repoInfo.path,
+          repoRoot,
           requestId,
           branches,
           currentBranch: currentBranch || null,
@@ -2140,40 +2140,8 @@ export class Session {
         return;
       }
 
-      // Get diff for tracked files
-      const { stdout: trackedDiff } = await execAsync("git diff HEAD", {
-        cwd: agent.cwd,
-      });
-
-      // Get diff for untracked files (new files not yet added to git)
-      // Using git diff --no-index /dev/null <file> to show new file content as additions
-      let untrackedDiff = "";
-      try {
-        const { stdout: untrackedFiles } = await execAsync(
-          "git ls-files --others --exclude-standard",
-          { cwd: agent.cwd }
-        );
-        const newFiles = untrackedFiles.trim().split("\n").filter(Boolean);
-
-        for (const file of newFiles) {
-          try {
-            // Use git diff with --no-index to generate diff for untracked file
-            const { stdout: fileDiff } = await execAsync(
-              `git diff --no-index /dev/null "${file}" || true`,
-              { cwd: agent.cwd }
-            );
-            if (fileDiff) {
-              untrackedDiff += fileDiff;
-            }
-          } catch {
-            // Ignore errors for individual files (binary files, etc.)
-          }
-        }
-      } catch {
-        // Ignore errors getting untracked files
-      }
-
-      const combinedDiff = trackedDiff + untrackedDiff;
+      const diffResult = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" });
+      const combinedDiff = diffResult.diff;
 
       this.emit({
         type: "git_diff_response",
