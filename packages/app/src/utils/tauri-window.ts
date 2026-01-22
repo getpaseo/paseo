@@ -19,9 +19,14 @@ async function getTauriWindow() {
   }
 
   try {
-    // @metro-ignore tells Metro to skip bundling this import
-    // It will be resolved at runtime in Tauri's WebView
-    const { getCurrentWindow } = await import(/* @metro-ignore */ "@tauri-apps/api/window");
+    // Avoid emitting `import()` syntax into the Hermes bundle (it fails to parse),
+    // while still loading the Tauri module at runtime in the WebView.
+    const dynamicImport = new Function(
+      "moduleName",
+      "return import(moduleName)"
+    ) as (moduleName: string) => Promise<any>;
+
+    const { getCurrentWindow } = await dynamicImport("@tauri-apps/api/window");
     tauriWindow = getCurrentWindow();
     return tauriWindow;
   } catch {

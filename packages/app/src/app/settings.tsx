@@ -545,6 +545,21 @@ export default function SettingsScreen() {
 
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
+      if (Platform.OS === "web") {
+        const hasBrowserConfirm =
+          typeof globalThis !== "undefined" &&
+          typeof (globalThis as any).confirm === "function";
+
+        const confirmed = hasBrowserConfirm ? (globalThis as any).confirm(`Remove ${profile.label}?`) : true;
+        if (!confirmed) return;
+
+        void removeDaemon(profile.id).catch((error) => {
+          console.error("[Settings] Failed to remove daemon", error);
+          Alert.alert("Error", "Unable to remove host");
+        });
+        return;
+      }
+
       Alert.alert(
         "Remove Host",
         `Remove ${profile.label}?`,
