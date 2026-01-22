@@ -22,8 +22,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
-import { DaemonClientV2 } from "@server/client/daemon-client-v2";
-import { buildDaemonWebSocketUrl, normalizeHostPort } from "@/utils/daemon-endpoints";
+import { normalizeHostPort } from "@/utils/daemon-endpoints";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -374,10 +373,6 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-type DaemonTestState = {
-  status: "idle" | "testing" | "success" | "error";
-  message?: string;
-};
 
 export default function SettingsScreen() {
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
@@ -400,7 +395,6 @@ export default function SettingsScreen() {
     offerUrl: string;
   }>({ id: null, label: "", endpoint: "", offerUrl: "" });
   const [isSavingDaemon, setIsSavingDaemon] = useState(false);
-  const [daemonTestStates, setDaemonTestStates] = useState<Map<string, DaemonTestState>>(() => new Map());
   const isLoading = settingsLoading || daemonLoading;
   const isMountedRef = useRef(true);
 
@@ -426,40 +420,6 @@ export default function SettingsScreen() {
     },
     []
   );
-
-  const testServerConnection = useCallback(async (url: string, timeoutMs = 5000) => {
-    const client = new DaemonClientV2({
-      url,
-      suppressSendErrors: true,
-      reconnect: { enabled: false },
-    });
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error("Connection timeout - server did not respond"));
-        }, timeoutMs);
-
-        client
-          .connect()
-          .then(resolve)
-          .catch((error) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Connection failed - check URL and network";
-            console.error("[Settings] Daemon test error", { url, message });
-            reject(new Error(message));
-          });
-      });
-    } finally {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
-      await client.close();
-    }
-  }, []);
 
   const handleOpenDaemonForm = useCallback((profile?: DaemonProfile) => {
     if (profile) {
@@ -591,37 +551,6 @@ export default function SettingsScreen() {
     [removeDaemon]
   );
 
-  const updateDaemonTestState = useCallback((daemonId: string, state: { status: "idle" | "testing" | "success" | "error"; message?: string }) => {
-    setDaemonTestStates((prev) => {
-      const next = new Map(prev);
-      next.set(daemonId, state);
-      return next;
-    });
-  }, []);
-
-  const handleTestDaemonConnection = useCallback(
-    async (profile: DaemonProfile) => {
-      const endpoint = profile.endpoints?.[0] ?? null;
-      if (!endpoint) {
-        Alert.alert("Missing host", "This host has no endpoints configured.");
-        return;
-      }
-      const url = buildDaemonWebSocketUrl(endpoint);
-      updateDaemonTestState(profile.id, { status: "testing" });
-      updateConnectionStatus(profile.id, { status: "connecting" });
-      try {
-        await testServerConnection(url, 4000);
-        updateDaemonTestState(profile.id, { status: "success", message: "Reachable" });
-        updateConnectionStatus(profile.id, { status: "online", lastOnlineAt: new Date().toISOString() });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Connection failed";
-        updateDaemonTestState(profile.id, { status: "error", message });
-        updateConnectionStatus(profile.id, { status: "offline", lastError: message });
-      }
-    },
-    [testServerConnection, updateConnectionStatus, updateDaemonTestState]
-  );
-
   const handleToggleUseSpeaker = useCallback(
     (value: boolean) => {
       void updateSettings({ ...settings, useSpeaker: value });
@@ -707,20 +636,16 @@ export default function SettingsScreen() {
                 const connection = connectionStates.get(daemon.id);
                 const connectionStatus = connection?.status ?? "idle";
                 const lastConnectionError = connection?.lastError ?? null;
-                const testState = daemonTestStates.get(daemon.id);
                 return (
                   <DaemonCard
                     key={daemon.id}
                     daemon={daemon}
                     connectionStatus={connectionStatus}
                     lastError={lastConnectionError}
-                    testState={testState}
-                    onTestConnection={handleTestDaemonConnection}
                     onEdit={handleOpenDaemonForm}
                     onRemove={handleRemoveDaemon}
                     restartConfirmationMessage={restartConfirmationMessage}
                     waitForCondition={waitForCondition}
-                    testServerConnection={testServerConnection}
                     isScreenMountedRef={isMountedRef}
                   />
                 );
@@ -969,13 +894,10 @@ interface DaemonCardProps {
   daemon: DaemonProfile;
   connectionStatus: ConnectionStatus;
   lastError: string | null;
-  testState?: DaemonTestState;
-  onTestConnection: (daemon: DaemonProfile) => void;
   onEdit: (daemon: DaemonProfile) => void;
   onRemove: (daemon: DaemonProfile) => void;
   restartConfirmationMessage: string;
   waitForCondition: (predicate: () => boolean, timeoutMs: number, intervalMs?: number) => Promise<boolean>;
-  testServerConnection: (url: string, timeoutMs?: number) => Promise<void>;
   isScreenMountedRef: MutableRefObject<boolean>;
 }
 
@@ -983,17 +905,13 @@ function DaemonCard({
   daemon,
   connectionStatus,
   lastError,
-  testState,
-  onTestConnection,
   onEdit,
   onRemove,
   restartConfirmationMessage,
   waitForCondition,
-  testServerConnection,
   isScreenMountedRef,
 }: DaemonCardProps) {
   const { theme } = useUnistyles();
-  const directWsUrl = buildDaemonWebSocketUrl(daemon.endpoints?.[0] ?? "localhost:6767");
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
   const statusColor =
@@ -1013,56 +931,33 @@ function DaemonCard({
   const [isRestarting, setIsRestarting] = useState(false);
   const isConnected = daemonConnection?.isConnected ?? false;
   const isConnectedRef = useRef(isConnected);
-  const isTesting = testState?.status === "testing";
 
   useEffect(() => {
     isConnectedRef.current = isConnected;
   }, [isConnected]);
 
   const waitForDaemonRestart = useCallback(async () => {
-    const maxAttempts = 12;
-    const retryDelayMs = 2500;
     const disconnectTimeoutMs = 7000;
-    const reconnectTimeoutMs = 10000;
+    const reconnectTimeoutMs = 30000;
 
+    // Wait for disconnect first
     if (isConnectedRef.current) {
       await waitForCondition(() => !isConnectedRef.current, disconnectTimeoutMs);
     }
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        await testServerConnection(directWsUrl);
-        const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
+    // Wait for auto-reconnect
+    const reconnected = await waitForCondition(() => isConnectedRef.current, reconnectTimeoutMs);
 
-        if (isScreenMountedRef.current) {
-          setIsRestarting(false);
-          if (!reconnected) {
-            Alert.alert(
-              "Host reachable",
-              `${daemon.label} came back online but Paseo has not reconnected yet.`
-            );
-          }
-        }
-        return;
-      } catch (error) {
-        console.warn(
-          `[Settings] Restart poll attempt ${attempt}/${maxAttempts} failed for ${daemon.label}`,
-          error
+    if (isScreenMountedRef.current) {
+      setIsRestarting(false);
+      if (!reconnected) {
+        Alert.alert(
+          "Unable to reconnect",
+          `${daemon.label} did not come back online. Please verify it restarted.`
         );
-        if (attempt === maxAttempts) {
-          if (isScreenMountedRef.current) {
-            setIsRestarting(false);
-            Alert.alert(
-              "Unable to reconnect",
-              `${daemon.label} did not come back online. Please verify it restarted.`
-            );
-          }
-          return;
-        }
-        await delay(retryDelayMs);
       }
     }
-  }, [daemon.label, directWsUrl, isScreenMountedRef, testServerConnection, waitForCondition]);
+  }, [daemon.label, isScreenMountedRef, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
     if (!restartServerFn) {
@@ -1141,13 +1036,6 @@ function DaemonCard({
           ? "rgba(248, 113, 113, 0.1)"
           : "rgba(161, 161, 170, 0.1)";
 
-  const testResultColor =
-    testState?.status === "success"
-      ? theme.colors.palette.green[400]
-      : testState?.status === "error"
-        ? theme.colors.palette.red[300]
-        : theme.colors.foregroundMuted;
-
   return (
     <View style={styles.hostCard}>
       <View style={styles.hostCardContent}>
@@ -1160,27 +1048,8 @@ function DaemonCard({
         </View>
         <Text style={styles.hostUrl}>{daemon.endpoints?.[0] ?? ""}</Text>
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
-        {testState && testState.status !== "idle" ? (
-          <Text style={[styles.testResultText, { color: testResultColor }]}>
-            {testState.message ?? (testState.status === "success" ? "Reachable" : "Testing...")}
-          </Text>
-        ) : null}
       </View>
       <View style={styles.hostActionsRow}>
-        <Pressable
-          style={[
-            styles.hostActionButton,
-            styles.hostActionPrimary,
-            isTesting && styles.hostActionDisabled,
-          ]}
-          onPress={() => onTestConnection(daemon)}
-          disabled={isTesting}
-        >
-          <Text style={[styles.hostActionText, styles.hostActionPrimaryText]}>
-            {isTesting ? "Testing..." : "Test"}
-          </Text>
-        </Pressable>
-        <View style={styles.hostActionSeparator} />
         <Pressable
           style={[styles.hostActionButton, isRestarting && styles.hostActionDisabled]}
           onPress={handleRestartPress}
