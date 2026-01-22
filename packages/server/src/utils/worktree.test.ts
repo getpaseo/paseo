@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createWorktree, slugify } from "./worktree";
+import {
+  createWorktree,
+  deletePaseoWorktree,
+  ensurePaseoIgnored,
+  listPaseoWorktrees,
+  slugify,
+} from "./worktree";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
@@ -35,7 +41,9 @@ describe("createWorktree", () => {
       worktreeSlug: "hello-world",
     });
 
-    expect(result.worktreePath).toBe(join(tempDir, "test-repo-hello-world"));
+    expect(result.worktreePath).toBe(
+      join(repoDir, ".paseo", "worktrees", "hello-world")
+    );
     expect(existsSync(result.worktreePath)).toBe(true);
     expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
   });
@@ -48,7 +56,9 @@ describe("createWorktree", () => {
       worktreeSlug: "my-feature",
     });
 
-    expect(result.worktreePath).toBe(join(tempDir, "test-repo-my-feature"));
+    expect(result.worktreePath).toBe(
+      join(repoDir, ".paseo", "worktrees", "my-feature")
+    );
     expect(existsSync(result.worktreePath)).toBe(true);
 
     // Verify branch was created
@@ -77,7 +87,9 @@ describe("createWorktree", () => {
     });
 
     // Should create branch "hello-1" since "hello" exists
-    expect(result.worktreePath).toBe(join(tempDir, "test-repo-hello"));
+    expect(result.worktreePath).toBe(
+      join(repoDir, ".paseo", "worktrees", "hello")
+    );
     expect(existsSync(result.worktreePath)).toBe(true);
 
     const branches = execSync("git branch", { cwd: repoDir }).toString();
@@ -140,7 +152,12 @@ describe("createWorktree", () => {
     writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
     execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", { cwd: repoDir });
 
-    const expectedWorktreePath = join(tempDir, "test-repo-fail-test");
+    const expectedWorktreePath = join(
+      repoDir,
+      ".paseo",
+      "worktrees",
+      "fail-test"
+    );
 
     await expect(
       createWorktree({
@@ -152,6 +169,61 @@ describe("createWorktree", () => {
 
     // Verify worktree was cleaned up
     expect(existsSync(expectedWorktreePath)).toBe(false);
+  });
+});
+
+describe("paseo worktree manager", () => {
+  let tempDir: string;
+  let repoDir: string;
+
+  beforeEach(() => {
+    tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-manager-test-")));
+    repoDir = join(tempDir, "test-repo");
+
+    execSync(`mkdir -p ${repoDir}`);
+    execSync("git init", { cwd: repoDir });
+    execSync("git config user.email 'test@test.com'", { cwd: repoDir });
+    execSync("git config user.name 'Test'", { cwd: repoDir });
+    execSync("echo 'hello' > file.txt", { cwd: repoDir });
+    execSync("git add .", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir });
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("lists and deletes paseo worktrees under .paseo/worktrees", async () => {
+    const first = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      worktreeSlug: "alpha",
+    });
+    const second = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      worktreeSlug: "beta",
+    });
+
+    const worktrees = await listPaseoWorktrees({ cwd: repoDir });
+    const paths = worktrees.map((worktree) => worktree.path).sort();
+    expect(paths).toEqual([first.worktreePath, second.worktreePath].sort());
+
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath });
+    expect(existsSync(first.worktreePath)).toBe(false);
+
+    const remaining = await listPaseoWorktrees({ cwd: repoDir });
+    expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
+  });
+
+  it("ensures .paseo is ignored in .gitignore", async () => {
+    await ensurePaseoIgnored(repoDir);
+    await ensurePaseoIgnored(repoDir);
+
+    const gitignorePath = join(repoDir, ".gitignore");
+    const gitignore = readFileSync(gitignorePath, "utf8");
+    const matches = gitignore.match(/^\.paseo\/?$/gm) ?? [];
+    expect(matches.length).toBe(1);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, readdirSync } from "fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import {
@@ -274,6 +274,53 @@ describe("daemon E2E", () => {
         rmSync(cwd, { recursive: true, force: true });
       },
       60000 // 1 minute timeout
+    );
+  });
+
+  describe("createAgent with worktree", () => {
+    test(
+      "creates agent in .paseo/worktrees when worktree is requested",
+      async () => {
+        const cwd = tmpCwd();
+
+        const { execSync } = await import("child_process");
+        execSync("git init", { cwd, stdio: "pipe" });
+        execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+        execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+
+        const testFile = path.join(cwd, "test.txt");
+        writeFileSync(testFile, "content\n");
+        execSync("git add test.txt", { cwd, stdio: "pipe" });
+        execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+          cwd,
+          stdio: "pipe",
+        });
+
+        const agent = await ctx.client.createAgent({
+          provider: "codex",
+          model: CODEX_TEST_MODEL,
+          reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+          cwd,
+          title: "Worktree Agent Test",
+          git: {
+            createWorktree: true,
+            createNewBranch: true,
+            newBranchName: "worktree-test",
+            worktreeSlug: "worktree-test",
+          },
+        });
+
+        expect(agent.id).toBeTruthy();
+        expect(agent.status).toBe("idle");
+        expect(realpathSync(agent.cwd)).toBe(
+          realpathSync(path.join(cwd, ".paseo", "worktrees", "worktree-test"))
+        );
+        expect(existsSync(agent.cwd)).toBe(true);
+
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      },
+      60000
     );
   });
 
