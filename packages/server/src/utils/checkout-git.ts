@@ -1,5 +1,6 @@
 import { exec, execFile } from "child_process";
 import { promisify } from "util";
+import { resolve } from "path";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseDiff } from "../server/utils/diff-highlighter.js";
 import { detectRepoInfo } from "./worktree.js";
@@ -267,12 +268,21 @@ export async function getCheckoutDiff(
   return { diff };
 }
 
-export async function commitAll(cwd: string, message: string): Promise<void> {
+export async function commitChanges(
+  cwd: string,
+  options: { message: string; addAll?: boolean }
+): Promise<void> {
   await requireRepoInfo(cwd);
-  await execFileAsync("git", ["add", "-A"], { cwd });
-  await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], {
+  if (options.addAll ?? true) {
+    await execFileAsync("git", ["add", "-A"], { cwd });
+  }
+  await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-m", options.message], {
     cwd,
   });
+}
+
+export async function commitAll(cwd: string, message: string): Promise<void> {
+  await commitChanges(cwd, { message, addAll: true });
 }
 
 export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {}): Promise<void> {
@@ -289,16 +299,22 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
     return;
   }
 
-  const originalBranch = currentBranch;
+  const operationCwd = repoInfo.path;
+  const isSameCheckout = resolve(operationCwd) === resolve(cwd);
+  const originalBranch = await getCurrentBranch(operationCwd);
   const mode = options.mode ?? "merge";
   try {
-    await execAsync(`git checkout ${baseRef}`, { cwd });
+    await execAsync(`git checkout ${baseRef}`, { cwd: operationCwd });
     if (mode === "squash") {
-      await execAsync(`git merge --squash ${originalBranch}`, { cwd });
-      const message = options.commitMessage ?? `Squash merge ${originalBranch} into ${baseRef}`;
-      await execFileAsync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], { cwd });
+      await execAsync(`git merge --squash ${currentBranch}`, { cwd: operationCwd });
+      const message = options.commitMessage ?? `Squash merge ${currentBranch} into ${baseRef}`;
+      await execFileAsync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", message],
+        { cwd: operationCwd }
+      );
     } else {
-      await execAsync(`git merge ${originalBranch}`, { cwd });
+      await execAsync(`git merge ${currentBranch}`, { cwd: operationCwd });
     }
   } catch (error) {
     const errorDetails =
@@ -307,9 +323,9 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
         : String(error);
     try {
       const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-        execAsync("git diff --name-only --diff-filter=U", { cwd }),
-        execAsync("git ls-files -u", { cwd }),
-        execAsync("git status --porcelain", { cwd }),
+        execAsync("git diff --name-only --diff-filter=U", { cwd: operationCwd }),
+        execAsync("git ls-files -u", { cwd: operationCwd }),
+        execAsync("git status --porcelain", { cwd: operationCwd }),
       ]);
       const statusConflicts = statusOutput.stdout
         .split("\n")
@@ -333,13 +349,13 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
         conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
       if (conflictDetected) {
         try {
-          await execAsync("git merge --abort", { cwd });
+          await execAsync("git merge --abort", { cwd: operationCwd });
         } catch {
           // ignore
         }
         throw new MergeConflictError({
           baseRef,
-          currentBranch: originalBranch,
+          currentBranch,
           conflictFiles: conflicts.length > 0 ? conflicts : [],
         });
       }
@@ -352,9 +368,9 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
 
     throw error;
   } finally {
-    if (originalBranch !== baseRef) {
+    if (isSameCheckout && originalBranch && originalBranch !== baseRef) {
       try {
-        await execAsync(`git checkout ${originalBranch}`, { cwd });
+        await execAsync(`git checkout ${originalBranch}`, { cwd: operationCwd });
       } catch {
         // ignore
       }
@@ -386,46 +402,115 @@ async function ensureGhAvailable(cwd: string): Promise<void> {
   }
 }
 
-export async function createPullRequest(cwd: string, options: CreatePullRequestOptions): Promise<{ url: string; number: number }> {
+async function resolveGitHubRepo(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync("git config --get remote.origin.url", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const url = stdout.trim();
+    if (!url) {
+      return null;
+    }
+    let cleaned = url;
+    if (cleaned.startsWith("git@github.com:")) {
+      cleaned = cleaned.slice("git@github.com:".length);
+    } else if (cleaned.startsWith("https://github.com/")) {
+      cleaned = cleaned.slice("https://github.com/".length);
+    } else if (cleaned.startsWith("http://github.com/")) {
+      cleaned = cleaned.slice("http://github.com/".length);
+    } else {
+      const marker = "github.com/";
+      const index = cleaned.indexOf(marker);
+      if (index !== -1) {
+        cleaned = cleaned.slice(index + marker.length);
+      } else {
+        return null;
+      }
+    }
+    if (cleaned.endsWith(".git")) {
+      cleaned = cleaned.slice(0, -".git".length);
+    }
+    if (!cleaned.includes("/")) {
+      return null;
+    }
+    return cleaned;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export async function createPullRequest(
+  cwd: string,
+  options: CreatePullRequestOptions
+): Promise<{ url: string; number: number }> {
   await requireRepoInfo(cwd);
   await ensureGhAvailable(cwd);
-  const args = ["pr", "create", "--json", "url,number", "--title", options.title];
+  const repo = await resolveGitHubRepo(cwd);
+  if (!repo) {
+    throw new Error("Unable to determine GitHub repo from git remote");
+  }
+
+  const repoInfo = await detectRepoInfo(cwd);
+  const head = options.head ?? (await getCurrentBranch(cwd));
+  const base = options.base ?? (await resolveBaseRef(repoInfo.path));
+  if (!head) {
+    throw new Error("Unable to determine head branch for PR");
+  }
+  if (!base) {
+    throw new Error("Unable to determine base branch for PR");
+  }
+
+  await execAsync(`git push -u origin ${head}`, { cwd });
+
+  const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];
+  args.push("-f", `head=${head}`);
+  args.push("-f", `base=${base}`);
   if (options.body) {
-    args.push("--body", options.body);
+    args.push("-f", `body=${options.body}`);
   }
-  if (options.base) {
-    args.push("--base", options.base);
-  }
-  if (options.head) {
-    args.push("--head", options.head);
-  }
-  if (options.draft) {
-    args.push("--draft");
-  }
-  const { stdout } = await execAsync(`gh ${args.map((arg) => `"${arg}"`).join(" ")}`, {
-    cwd,
-  });
+  const { stdout } = await execFileAsync("gh", args, { cwd });
   const parsed = JSON.parse(stdout.trim());
+  if (!parsed?.url || !parsed?.number) {
+    throw new Error("GitHub CLI did not return PR url/number");
+  }
   return { url: parsed.url, number: parsed.number };
 }
 
 export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatus | null> {
   await requireRepoInfo(cwd);
   await ensureGhAvailable(cwd);
-  const { stdout } = await execAsync(
-    "gh pr status --json url,title,state,baseRefName,headRefName",
+  const repo = await resolveGitHubRepo(cwd);
+  const head = await getCurrentBranch(cwd);
+  if (!repo || !head) {
+    return null;
+  }
+  const owner = repo.split("/")[0];
+  const { stdout } = await execFileAsync(
+    "gh",
+    [
+      "api",
+      `repos/${repo}/pulls`,
+      "-X",
+      "GET",
+      "-F",
+      `head=${owner}:${head}`,
+      "-F",
+      "state=open",
+    ],
     { cwd }
   );
   const parsed = JSON.parse(stdout.trim());
-  const current = parsed.currentBranch;
+  const current = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : null;
   if (!current) {
     return null;
   }
   return {
-    url: current.url,
+    url: current.html_url ?? current.url,
     title: current.title,
     state: current.state,
-    baseRefName: current.baseRefName,
-    headRefName: current.headRefName,
+    baseRefName: current.base?.ref ?? "",
+    headRefName: current.head?.ref ?? head,
   };
 }

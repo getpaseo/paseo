@@ -1971,8 +1971,6 @@ async function collectRecentClaudeSessions(root: string, limit: number): Promise
     .slice(0, limit);
 }
 
-const CLAUDE_PERSISTED_TIMELINE_LIMIT = 20;
-
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date
@@ -2047,7 +2045,7 @@ async function parseClaudeSessionDescriptor(
     title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
     lastActivityAt: mtime,
     persistence,
-    timeline: timeline.slice(0, CLAUDE_PERSISTED_TIMELINE_LIMIT),
+    timeline,
   };
 }
 

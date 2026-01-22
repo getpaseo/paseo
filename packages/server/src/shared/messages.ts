@@ -163,6 +163,11 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
       provider: AgentProviderSchema,
     }),
     z.object({
+      type: z.literal("provider_event"),
+      provider: AgentProviderSchema,
+      raw: z.unknown(),
+    }),
+    z.object({
       type: z.literal("turn_started"),
       provider: AgentProviderSchema,
     }),
@@ -430,6 +435,83 @@ export const GitDiffRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const CheckoutErrorCodeSchema = z.enum([
+  "NOT_GIT_REPO",
+  "NOT_ALLOWED",
+  "MERGE_CONFLICT",
+  "UNKNOWN",
+]);
+
+const CheckoutErrorSchema = z.object({
+  code: CheckoutErrorCodeSchema,
+  message: z.string(),
+});
+
+const CheckoutDiffCompareSchema = z.object({
+  mode: z.enum(["uncommitted", "base"]),
+  baseRef: z.string().optional(),
+});
+
+export const CheckoutStatusRequestSchema = z.object({
+  type: z.literal("checkout_status_request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const CheckoutDiffRequestSchema = z.object({
+  type: z.literal("checkout_diff_request"),
+  agentId: z.string(),
+  compare: CheckoutDiffCompareSchema,
+  requestId: z.string(),
+});
+
+export const CheckoutCommitRequestSchema = z.object({
+  type: z.literal("checkout_commit_request"),
+  agentId: z.string(),
+  message: z.string().optional(),
+  addAll: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const CheckoutMergeRequestSchema = z.object({
+  type: z.literal("checkout_merge_request"),
+  agentId: z.string(),
+  baseRef: z.string().optional(),
+  strategy: z.enum(["merge", "squash"]).optional(),
+  requireCleanTarget: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const CheckoutPrCreateRequestSchema = z.object({
+  type: z.literal("checkout_pr_create_request"),
+  agentId: z.string(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  baseRef: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const CheckoutPrStatusRequestSchema = z.object({
+  type: z.literal("checkout_pr_status_request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const PaseoWorktreeListRequestSchema = z.object({
+  type: z.literal("paseo_worktree_list_request"),
+  cwd: z.string().optional(),
+  repoRoot: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const PaseoWorktreeArchiveRequestSchema = z.object({
+  type: z.literal("paseo_worktree_archive_request"),
+  worktreePath: z.string().optional(),
+  repoRoot: z.string().optional(),
+  branchName: z.string().optional(),
+  requestId: z.string(),
+});
+
 // Highlighted diff token schema
 // Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
@@ -612,6 +694,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
+  CheckoutStatusRequestSchema,
+  CheckoutDiffRequestSchema,
+  CheckoutCommitRequestSchema,
+  CheckoutMergeRequestSchema,
+  CheckoutPrCreateRequestSchema,
+  CheckoutPrStatusRequestSchema,
+  PaseoWorktreeListRequestSchema,
+  PaseoWorktreeArchiveRequestSchema,
   HighlightedDiffRequestSchema,
   FileExplorerRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -871,6 +961,112 @@ export const GitDiffResponseSchema = z.object({
   }),
 });
 
+const AheadBehindSchema = z.object({
+  ahead: z.number(),
+  behind: z.number(),
+});
+
+export const CheckoutStatusResponseSchema = z.object({
+  type: z.literal("checkout_status_response"),
+  payload: z.object({
+    agentId: z.string(),
+    cwd: z.string(),
+    isGit: z.boolean(),
+    repoRoot: z.string().nullable().optional(),
+    currentBranch: z.string().nullable().optional(),
+    isDirty: z.boolean().nullable().optional(),
+    baseRef: z.string().nullable().optional(),
+    aheadBehind: AheadBehindSchema.nullable().optional(),
+    isPaseoOwnedWorktree: z.boolean().nullable().optional(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutDiffResponseSchema = z.object({
+  type: z.literal("checkout_diff_response"),
+  payload: z.object({
+    agentId: z.string(),
+    files: z.array(ParsedDiffFileSchema),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutCommitResponseSchema = z.object({
+  type: z.literal("checkout_commit_response"),
+  payload: z.object({
+    agentId: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutMergeResponseSchema = z.object({
+  type: z.literal("checkout_merge_response"),
+  payload: z.object({
+    agentId: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutPrCreateResponseSchema = z.object({
+  type: z.literal("checkout_pr_create_response"),
+  payload: z.object({
+    agentId: z.string(),
+    url: z.string().nullable(),
+    number: z.number().nullable(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+const CheckoutPrStatusSchema = z.object({
+  url: z.string(),
+  title: z.string(),
+  state: z.string(),
+  baseRefName: z.string(),
+  headRefName: z.string(),
+});
+
+export const CheckoutPrStatusResponseSchema = z.object({
+  type: z.literal("checkout_pr_status_response"),
+  payload: z.object({
+    agentId: z.string(),
+    status: CheckoutPrStatusSchema.nullable(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+const PaseoWorktreeSchema = z.object({
+  worktreePath: z.string(),
+  branchName: z.string().nullable().optional(),
+  head: z.string().nullable().optional(),
+});
+
+export const PaseoWorktreeListResponseSchema = z.object({
+  type: z.literal("paseo_worktree_list_response"),
+  payload: z.object({
+    worktrees: z.array(PaseoWorktreeSchema),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const PaseoWorktreeArchiveResponseSchema = z.object({
+  type: z.literal("paseo_worktree_archive_response"),
+  payload: z.object({
+    success: z.boolean(),
+    removedAgents: z.array(z.string()).optional(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const HighlightedDiffResponseSchema = z.object({
   type: z.literal("highlighted_diff_response"),
   payload: z.object({
@@ -1063,6 +1259,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
   GitDiffResponseSchema,
+  CheckoutStatusResponseSchema,
+  CheckoutDiffResponseSchema,
+  CheckoutCommitResponseSchema,
+  CheckoutMergeResponseSchema,
+  CheckoutPrCreateResponseSchema,
+  CheckoutPrStatusResponseSchema,
+  PaseoWorktreeListResponseSchema,
+  PaseoWorktreeArchiveResponseSchema,
   HighlightedDiffResponseSchema,
   FileExplorerResponseSchema,
   FileDownloadTokenResponseSchema,
@@ -1131,6 +1335,22 @@ export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
+export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
+export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
+export type CheckoutDiffRequest = z.infer<typeof CheckoutDiffRequestSchema>;
+export type CheckoutDiffResponse = z.infer<typeof CheckoutDiffResponseSchema>;
+export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;
+export type CheckoutCommitResponse = z.infer<typeof CheckoutCommitResponseSchema>;
+export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;
+export type CheckoutMergeResponse = z.infer<typeof CheckoutMergeResponseSchema>;
+export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
+export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
+export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
+export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
+export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSchema>;
+export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>;
+export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>;
+export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveResponseSchema>;
 export type HighlightedDiffRequest = z.infer<typeof HighlightedDiffRequestSchema>;
 export type HighlightedDiffResponse = z.infer<typeof HighlightedDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;

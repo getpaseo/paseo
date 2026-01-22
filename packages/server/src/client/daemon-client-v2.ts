@@ -21,6 +21,14 @@ import type {
   GitSetupOptions,
   GitRepoInfoResponse,
   HighlightedDiffResponse,
+  CheckoutStatusResponse,
+  CheckoutDiffResponse,
+  CheckoutCommitResponse,
+  CheckoutMergeResponse,
+  CheckoutPrCreateResponse,
+  CheckoutPrStatusResponse,
+  PaseoWorktreeListResponse,
+  PaseoWorktreeArchiveResponse,
   ListCommandsResponse,
   ExecuteCommandResponse,
   ListVoiceConversationsResponseMessage,
@@ -167,6 +175,14 @@ type DeleteVoiceConversationPayload = DeleteVoiceConversationResponseMessage["pa
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
 type GitRepoInfoPayload = GitRepoInfoResponse["payload"];
+type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
+type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
+type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
+type CheckoutMergePayload = CheckoutMergeResponse["payload"];
+type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
+type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
+type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
+type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
@@ -924,6 +940,238 @@ export class DaemonClientV2 {
   // ============================================================================
   // Git Operations
   // ============================================================================
+
+  async getCheckoutStatus(
+    agentId: string,
+    requestId?: string
+  ): Promise<CheckoutStatusPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_status_request",
+      agentId,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_status_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async getCheckoutDiff(
+    agentId: string,
+    compare: { mode: "uncommitted" | "base"; baseRef?: string },
+    requestId?: string
+  ): Promise<CheckoutDiffPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_diff_request",
+      agentId,
+      compare,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_diff_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutCommit(
+    agentId: string,
+    input: { message?: string; addAll?: boolean },
+    requestId?: string
+  ): Promise<CheckoutCommitPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_commit_request",
+      agentId,
+      message: input.message,
+      addAll: input.addAll,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_commit_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutMerge(
+    agentId: string,
+    input: { baseRef?: string; strategy?: "merge" | "squash"; requireCleanTarget?: boolean },
+    requestId?: string
+  ): Promise<CheckoutMergePayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_merge_request",
+      agentId,
+      baseRef: input.baseRef,
+      strategy: input.strategy,
+      requireCleanTarget: input.requireCleanTarget,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_merge_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutPrCreate(
+    agentId: string,
+    input: { title?: string; body?: string; baseRef?: string },
+    requestId?: string
+  ): Promise<CheckoutPrCreatePayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_pr_create_request",
+      agentId,
+      title: input.title,
+      body: input.body,
+      baseRef: input.baseRef,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_pr_create_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      30000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutPrStatus(
+    agentId: string,
+    requestId?: string
+  ): Promise<CheckoutPrStatusPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_pr_status_request",
+      agentId,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_pr_status_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      30000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async getPaseoWorktreeList(
+    input: { cwd?: string; repoRoot?: string },
+    requestId?: string
+  ): Promise<PaseoWorktreeListPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "paseo_worktree_list_request",
+      cwd: input.cwd,
+      repoRoot: input.repoRoot,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "paseo_worktree_list_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async archivePaseoWorktree(
+    input: { worktreePath?: string; repoRoot?: string; branchName?: string },
+    requestId?: string
+  ): Promise<PaseoWorktreeArchivePayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "paseo_worktree_archive_request",
+      worktreePath: input.worktreePath,
+      repoRoot: input.repoRoot,
+      branchName: input.branchName,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "paseo_worktree_archive_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      20000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
 
   async getGitDiff(
     agentId: string,

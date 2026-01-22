@@ -40,6 +40,7 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { getSelfIdentificationInstructions } from "../self-identification-instructions.js";
+import { curateAgentActivity } from "../activity-curator.js";
 
 type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex" };
 
@@ -3033,6 +3034,7 @@ class CodexMcpAgentSession implements AgentSession {
   private historyPending = false;
   private persistedHistory: AgentTimelineItem[] = [];
   private resumeContextHistory: AgentTimelineItem[] = [];
+  private previousCuratedHistory: string | null = null;
   private pendingHistory: AgentTimelineItem[] = [];
   private turnState: TurnState | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
@@ -3060,6 +3062,10 @@ class CodexMcpAgentSession implements AgentSession {
         const parsed = SessionIdentifiersSchema.parse(metadata);
         if (parsed.conversationId) {
           this.conversationId = parsed.conversationId;
+        }
+        // Extract curated history from previous session for cross-resume preservation
+        if (typeof (metadata as Record<string, unknown>).curatedHistory === "string") {
+          this.previousCuratedHistory = (metadata as Record<string, unknown>).curatedHistory as string;
         }
       }
       // Always lock conversation ID on resume to preserve the original
@@ -3452,6 +3458,7 @@ class CodexMcpAgentSession implements AgentSession {
   describePersistence(): AgentPersistenceHandle | null {
     if (this.persistence) {
       this.updatePersistenceConversationId();
+      this.updatePersistenceCuratedHistory();
       return this.persistence;
     }
     const persistenceId = this.sessionId ?? this.conversationId;
@@ -3474,6 +3481,7 @@ class CodexMcpAgentSession implements AgentSession {
       },
     };
     this.updatePersistenceConversationId();
+    this.updatePersistenceCuratedHistory();
     return this.persistence;
   }
 
@@ -3484,6 +3492,18 @@ class CodexMcpAgentSession implements AgentSession {
     }
     const metadata = this.persistence.metadata;
     metadata.conversationId = conversationId;
+  }
+
+  private updatePersistenceCuratedHistory(): void {
+    if (!this.persistence?.metadata) {
+      return;
+    }
+    // Store curated history in metadata so it survives across resume cycles
+    // This is essential for preserving conversation context when Codex creates new sessions
+    if (this.resumeContextHistory.length > 0) {
+      const metadata = this.persistence.metadata;
+      metadata.curatedHistory = curateAgentActivity(this.resumeContextHistory);
+    }
   }
 
   async close(): Promise<void> {
@@ -3740,6 +3760,9 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private recordHistory(item: AgentTimelineItem): void {
+    // Always accumulate in resumeContextHistory for proper history preservation
+    // across multiple resume cycles (buildResumePrompt uses this)
+    this.resumeContextHistory.push(item);
     if (this.sessionId) {
       this.persistedHistory.push(item);
       return;
@@ -4428,21 +4451,31 @@ class CodexMcpAgentSession implements AgentSession {
   }
 
   private buildResumePrompt(prompt: string): string {
-    const historyLines: string[] = [];
     // Use resumeContextHistory instead of persistedHistory because
     // persistedHistory gets cleared by streamHistory() before the first message is sent
-    for (const item of this.resumeContextHistory) {
-      if (item.type === "user_message") {
-        historyLines.push(`User: ${item.text}`);
-      }
-      if (item.type === "assistant_message") {
-        historyLines.push(`Assistant: ${item.text}`);
+
+    // Combine previous curated history (from earlier resume cycles) with current history
+    // This ensures conversation context survives across multiple resume cycles
+    const historyParts: string[] = [];
+
+    // Include history from previous resume cycles (stored in persistence metadata)
+    if (this.previousCuratedHistory && this.previousCuratedHistory !== "No activity to display.") {
+      historyParts.push(this.previousCuratedHistory);
+    }
+
+    // Include history from current session
+    if (this.resumeContextHistory.length > 0) {
+      const curatedHistory = curateAgentActivity(this.resumeContextHistory);
+      if (curatedHistory !== "No activity to display.") {
+        historyParts.push(curatedHistory);
       }
     }
-    if (historyLines.length === 0) {
+
+    if (historyParts.length === 0) {
       return prompt;
     }
-    return ["Previous conversation:", ...historyLines, "", `User: ${prompt}`].join("\n");
+
+    return `Previous conversation:\n${historyParts.join("\n\n")}\n\nUser: ${prompt}`;
   }
 
   private buildPermissionRequest(params: unknown): AgentPermissionRequest {
@@ -4806,7 +4839,6 @@ class CodexAppServerClient {
 // ============================================================================
 
 const MAX_ROLLOUT_SEARCH_DEPTH = 4;
-const PERSISTED_TIMELINE_LIMIT = 100;
 const CODEX_ROLLOUT_PREFIX = "rollout-";
 const CODEX_ROLLOUT_EXTENSIONS = [".jsonl", ".json"];
 
@@ -4861,35 +4893,50 @@ async function findRolloutFile(
   return null;
 }
 
-type RolloutEntry = {
-  type: "response_item" | "event_msg";
-  payload?: unknown;
-};
+const RolloutContentItemSchema = z.object({
+  type: z.string(),
+  text: z.string(),
+}).passthrough();
 
-type RolloutResponsePayload = {
-  type?: string;
-  role?: string;
-  content?: unknown;
-  name?: string;
-  call_id?: string;
-  arguments?: string;
-  output?: string;
-  summary?: Array<{ text?: string }>;
-  text?: string;
-};
+const RolloutContentArraySchema = z.array(RolloutContentItemSchema);
 
-type RolloutEventPayload = {
-  type?: string;
-  text?: string;
-};
-
-function isRolloutEntry(value: unknown): value is RolloutEntry {
-  if (!value || typeof value !== "object" || !("type" in value)) {
-    return false;
+function extractContentTextByType(content: unknown, itemType: string): string {
+  const parsed = RolloutContentArraySchema.safeParse(content);
+  if (!parsed.success) {
+    return "";
   }
-  const type = (value as { type?: unknown }).type;
-  return type === "response_item" || type === "event_msg";
+  return parsed.data
+    .filter((item) => item.type === itemType)
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
 }
+
+const RolloutResponsePayloadSchema = z.object({
+  type: z.string().optional(),
+  role: z.string().optional(),
+  content: z.unknown().optional(),
+  name: z.string().optional(),
+  call_id: z.string().optional(),
+  arguments: z.string().optional(),
+  output: z.string().optional(),
+  summary: z.array(z.object({ text: z.string().optional() })).optional(),
+  text: z.string().optional(),
+});
+
+const RolloutEventPayloadSchema = z.object({
+  type: z.string().optional(),
+  text: z.string().optional(),
+  message: z.string().optional(),
+});
+
+const RolloutEntrySchema = z.object({
+  type: z.enum(["response_item", "event_msg"]),
+  payload: z.unknown().optional(),
+});
+
+type RolloutEntry = z.infer<typeof RolloutEntrySchema>;
+type RolloutResponsePayload = z.infer<typeof RolloutResponsePayloadSchema>;
 
 function parseRolloutEntryFromLine(line: string): RolloutEntry | null {
   if (!line) {
@@ -4897,8 +4944,9 @@ function parseRolloutEntryFromLine(line: string): RolloutEntry | null {
   }
   try {
     const parsed = JSON.parse(line);
-    if (isRolloutEntry(parsed)) {
-      return parsed;
+    const result = RolloutEntrySchema.safeParse(parsed);
+    if (result.success) {
+      return result.data;
     }
     if (
       parsed &&
@@ -4966,6 +5014,11 @@ function extractReasoningText(payload: RolloutResponsePayload): string {
       return text;
     }
   }
+  // Handle content array with reasoning_text items
+  const contentText = extractContentTextByType(payload.content, "reasoning_text");
+  if (contentText) {
+    return contentText;
+  }
   if (typeof payload?.text === "string") {
     return payload.text;
   }
@@ -5015,7 +5068,7 @@ function parseJsonRolloutTimeline(
   return timeline;
 }
 
-async function parseRolloutFile(
+export async function parseRolloutFile(
   filePath: string
 ): Promise<AgentTimelineItem[]> {
   const content = await fs.readFile(filePath, "utf8");
@@ -5036,6 +5089,21 @@ async function parseRolloutFile(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+
+  // First pass: collect function_call_output entries by call_id
+  const outputsByCallId = new Map<string, string>();
+  for (const line of lines) {
+    const entry = parseRolloutEntryFromLine(line);
+    if (!entry || entry.type !== "response_item") continue;
+    const payloadResult = RolloutResponsePayloadSchema.safeParse(entry.payload);
+    if (!payloadResult.success) continue;
+    const payload = payloadResult.data;
+    if (payload.type === "function_call_output" && payload.call_id && payload.output) {
+      outputsByCallId.set(payload.call_id, payload.output);
+    }
+  }
+
+  // Second pass: build timeline
   const timeline: AgentTimelineItem[] = [];
 
   for (const line of lines) {
@@ -5043,8 +5111,9 @@ async function parseRolloutFile(
     if (!entry) continue;
 
     if (entry.type === "response_item") {
-      const payload = entry.payload as RolloutResponsePayload | undefined;
-      if (!payload || typeof payload !== "object") continue;
+      const payloadResult = RolloutResponsePayloadSchema.safeParse(entry.payload);
+      if (!payloadResult.success) continue;
+      const payload = payloadResult.data;
 
       switch (payload.type) {
         case "message": {
@@ -5067,18 +5136,75 @@ async function parseRolloutFile(
           }
           break;
         }
+        case "function_call":
+        case "custom_tool_call": {
+          const rawName = payload.name ?? "unknown";
+          const callId = payload.call_id;
+
+          // Skip internal polling calls
+          if (rawName === "write_stdin") {
+            break;
+          }
+
+          let input: unknown;
+          if (payload.arguments) {
+            try {
+              input = JSON.parse(payload.arguments);
+            } catch {
+              input = payload.arguments;
+            }
+          }
+
+          // Map exec_command and shell to Bash with normalized input
+          let name = rawName;
+          if (rawName === "exec_command" && input && typeof input === "object") {
+            const execInput = input as { cmd?: string };
+            if (execInput.cmd) {
+              name = "Bash";
+              input = { command: execInput.cmd };
+            }
+          } else if (rawName === "shell" && input && typeof input === "object") {
+            // Older format: { command: ["bash", "-lc", "actual cmd"], workdir: "..." }
+            const shellInput = input as { command?: string[] };
+            if (Array.isArray(shellInput.command) && shellInput.command.length >= 3) {
+              name = "Bash";
+              // command[2] is the actual shell command after "bash -lc"
+              input = { command: shellInput.command[2] };
+            }
+          }
+
+          // Attach output if available
+          const output = callId ? outputsByCallId.get(callId) : undefined;
+
+          timeline.push({
+            type: "tool_call",
+            name,
+            callId,
+            status: "completed",
+            input,
+            ...(output ? { output } : {}),
+          });
+          break;
+        }
+        case "function_call_output":
+          // Already processed in first pass
+          break;
         default:
           break;
       }
     } else if (entry.type === "event_msg") {
-      const payload = entry.payload as RolloutEventPayload | undefined;
-      if (
-        payload &&
-        typeof payload === "object" &&
-        payload.type === "agent_reasoning" &&
-        typeof payload.text === "string"
-      ) {
+      const payloadResult = RolloutEventPayloadSchema.safeParse(entry.payload);
+      if (!payloadResult.success) continue;
+      const payload = payloadResult.data;
+
+      if (payload.type === "agent_reasoning" && payload.text) {
         timeline.push({ type: "reasoning", text: payload.text });
+      } else if (payload.type === "agent_message" && payload.message) {
+        timeline.push({ type: "assistant_message", text: payload.message });
+      } else if (payload.type === "user_message" && payload.message) {
+        if (!isSyntheticRolloutUserMessage(payload.message)) {
+          timeline.push({ type: "user_message", text: payload.message });
+        }
       }
     }
   }
@@ -5091,7 +5217,7 @@ type CodexPersistedTimelineOptions = {
   rolloutPath?: string | null;
 };
 
-async function loadCodexPersistedTimeline(
+export async function loadCodexPersistedTimeline(
   sessionId: string,
   options?: CodexPersistedTimelineOptions,
   logger?: Logger
@@ -5103,7 +5229,7 @@ async function loadCodexPersistedTimeline(
       if (stat.isFile()) {
         const timeline = await parseRolloutFile(rolloutPath);
         if (timeline.length > 0) {
-          return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
+          return timeline;
         }
       }
     } catch {
@@ -5131,7 +5257,7 @@ async function loadCodexPersistedTimeline(
     }
 
     const timeline = await parseRolloutFile(rolloutFile);
-    return timeline.slice(0, PERSISTED_TIMELINE_LIMIT);
+    return timeline;
   } catch (error) {
     logger?.warn(
       { err: error, sessionId },
