@@ -18,7 +18,8 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
   // Override the default fixture seeding for this test.
   await page.goto('/settings');
   await page.evaluate(() => {
-    localStorage.setItem('@paseo:e2e-disable-default-seed-once', '1');
+    const nonce = localStorage.getItem('@paseo:e2e-seed-nonce') ?? '1';
+    localStorage.setItem('@paseo:e2e-disable-default-seed-once', nonce);
     localStorage.setItem('@paseo:daemon-registry', JSON.stringify([]));
     localStorage.removeItem('@paseo:settings');
   });
@@ -35,6 +36,7 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
 
   await page.getByText('+ Add Host', { exact: true }).click();
   await page.getByText('Pair', { exact: true }).click();
+  await page.getByText('Paste link', { exact: true }).click();
 
   const input = page.getByPlaceholder('https://app.paseo.sh/#offer=...');
   await expect(input).toBeVisible();

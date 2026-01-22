@@ -23,7 +23,8 @@ test('connects via relay when direct endpoints fail', async ({ page }) => {
   // Override the default fixture seeding for this test.
   await page.goto('/settings');
   await page.evaluate((daemon) => {
-    localStorage.setItem('@paseo:e2e-disable-default-seed-once', '1');
+    const nonce = localStorage.getItem('@paseo:e2e-seed-nonce') ?? '1';
+    localStorage.setItem('@paseo:e2e-disable-default-seed-once', nonce);
     localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
     localStorage.removeItem('@paseo:settings');
   }, host);

@@ -53,6 +53,7 @@ import {
   createConnectionOfferV1,
   encodeOfferToFragmentUrl,
 } from "./connection-offer.js";
+import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import type {
   AgentClient,
@@ -420,6 +421,7 @@ export async function createPaseoDaemon(
 
             const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
             logger.info({ url }, "pairing_offer");
+            void printPairingQrIfEnabled({ url, logger }).catch(() => undefined);
 
             if (relayEnabled) {
               relayTransport?.stop().catch(() => undefined);

@@ -42,7 +42,8 @@ test('new agent respects serverId in the URL', async ({ page }) => {
   await page.goto('/settings');
   await page.evaluate(
     ({ daemon, preferences }) => {
-      localStorage.setItem('@paseo:e2e-disable-default-seed-once', '1');
+      const nonce = localStorage.getItem('@paseo:e2e-seed-nonce') ?? '1';
+      localStorage.setItem('@paseo:e2e-disable-default-seed-once', nonce);
       localStorage.setItem('@paseo:daemon-registry', JSON.stringify([daemon]));
       localStorage.setItem('@paseo:create-agent-preferences', JSON.stringify(preferences));
       localStorage.removeItem('@paseo:settings');
