@@ -2,11 +2,12 @@ import { v4 as uuidv4 } from "uuid";
 import { readFile, mkdir, writeFile, stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify, inspect } from "util";
-import { join } from "path";
+import { join, resolve, sep } from "path";
 import invariant from "tiny-invariant";
 import { streamText, stepCountIs } from "ai";
 import type { ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { z } from "zod";
 import {
   createOpenRouter,
   OpenRouterProviderOptions,
@@ -45,6 +46,7 @@ import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
+import { getStructuredAgentResponse } from "./agent/agent-response-loop.js";
 import type {
   AgentPermissionResponse,
   AgentPromptContentBlock,
@@ -63,11 +65,23 @@ import {
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { createWorktree, slugify, validateBranchSlug } from "../utils/worktree.js";
+import {
+  createWorktree,
+  slugify,
+  validateBranchSlug,
+  listPaseoWorktrees,
+  deletePaseoWorktree,
+  isPaseoOwnedWorktreeCwd,
+} from "../utils/worktree.js";
 import {
   getCheckoutDiff,
   getCheckoutStatus,
   NotGitRepoError,
+  MergeConflictError,
+  commitChanges,
+  mergeToBase,
+  createPullRequest,
+  getPullRequestStatus,
 } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import type pino from "pino";
@@ -95,6 +109,13 @@ type NormalizedGitOptions = {
   newBranchName?: string;
   createWorktree: boolean;
   worktreeSlug?: string;
+};
+
+type CheckoutErrorCode = "NOT_GIT_REPO" | "NOT_ALLOWED" | "MERGE_CONFLICT" | "UNKNOWN";
+
+type CheckoutErrorPayload = {
+  code: CheckoutErrorCode;
+  message: string;
 };
 
 const PCM_SAMPLE_RATE = 16000;
@@ -750,6 +771,38 @@ export class Session {
           await this.handleGitDiffRequest(msg.agentId, msg.requestId);
           break;
 
+        case "checkout_status_request":
+          await this.handleCheckoutStatusRequest(msg);
+          break;
+
+        case "checkout_diff_request":
+          await this.handleCheckoutDiffRequest(msg);
+          break;
+
+        case "checkout_commit_request":
+          await this.handleCheckoutCommitRequest(msg);
+          break;
+
+        case "checkout_merge_request":
+          await this.handleCheckoutMergeRequest(msg);
+          break;
+
+        case "checkout_pr_create_request":
+          await this.handleCheckoutPrCreateRequest(msg);
+          break;
+
+        case "checkout_pr_status_request":
+          await this.handleCheckoutPrStatusRequest(msg);
+          break;
+
+        case "paseo_worktree_list_request":
+          await this.handlePaseoWorktreeListRequest(msg);
+          break;
+
+        case "paseo_worktree_archive_request":
+          await this.handlePaseoWorktreeArchiveRequest(msg);
+          break;
+
         case "highlighted_diff_request":
           await this.handleHighlightedDiffRequest(msg.agentId, msg.requestId);
           break;
@@ -978,7 +1031,6 @@ export class Session {
     agentId: string,
     requestId: string
   ): Promise<void> {
-    console.error(`[DELETE_AGENT] handleDeleteAgentRequest called for ${agentId} requestId=${requestId}`, new Error().stack);
     this.sessionLogger.info(
       { agentId },
       `Deleting agent ${agentId} from registry`
@@ -1693,6 +1745,86 @@ export class Session {
     }
   }
 
+  private toCheckoutError(error: unknown): CheckoutErrorPayload {
+    if (error instanceof NotGitRepoError) {
+      return { code: "NOT_GIT_REPO", message: error.message };
+    }
+    if (error instanceof MergeConflictError) {
+      return { code: "MERGE_CONFLICT", message: error.message };
+    }
+    if (error instanceof Error) {
+      return { code: "UNKNOWN", message: error.message };
+    }
+    return { code: "UNKNOWN", message: String(error) };
+  }
+
+  private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+    const resolvedRoot = resolve(rootPath);
+    const resolvedCandidate = resolve(candidatePath);
+    if (resolvedCandidate === resolvedRoot) {
+      return true;
+    }
+    return resolvedCandidate.startsWith(resolvedRoot + sep);
+  }
+
+  private async generateCommitMessage(agent: ManagedAgent): Promise<string> {
+    const diff = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" });
+    const schema = z.object({
+      message: z
+        .string()
+        .min(1)
+        .max(72)
+        .describe("Concise git commit message, imperative mood, no trailing period."),
+    });
+    const prompt = [
+      "Write a concise git commit message for the changes below.",
+      "Return JSON only with a single field 'message'.",
+      "",
+      diff.diff.length > 0 ? diff.diff : "(No diff available)",
+    ].join("\n");
+    const result = await getStructuredAgentResponse({
+      caller: async (nextPrompt) => {
+        const run = await this.agentManager.runAgent(agent.id, nextPrompt);
+        return run.finalText;
+      },
+      prompt,
+      schema,
+      schemaName: "CommitMessage",
+      maxRetries: 2,
+    });
+    return result.message;
+  }
+
+  private async generatePullRequestText(agent: ManagedAgent, baseRef?: string): Promise<{
+    title: string;
+    body: string;
+  }> {
+    const diff = await getCheckoutDiff(agent.cwd, {
+      mode: "base",
+      baseRef,
+    });
+    const schema = z.object({
+      title: z.string().min(1).max(72),
+      body: z.string().min(1),
+    });
+    const prompt = [
+      "Write a pull request title and body for the changes below.",
+      "Return JSON only with fields 'title' and 'body'.",
+      "",
+      diff.diff.length > 0 ? diff.diff : "(No diff available)",
+    ].join("\n");
+    return await getStructuredAgentResponse({
+      caller: async (nextPrompt) => {
+        const run = await this.agentManager.runAgent(agent.id, nextPrompt);
+        return run.finalText;
+      },
+      prompt,
+      schema,
+      schemaName: "PullRequest",
+      maxRetries: 2,
+    });
+  }
+
   private async ensureCleanWorkingTree(cwd: string): Promise<void> {
     const dirty = await this.isWorkingTreeDirty(cwd);
     if (dirty) {
@@ -2095,6 +2227,518 @@ export class Session {
           agentId,
           diff: "",
           error: error.message,
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutStatusRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_status_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_status_response",
+        payload: {
+          agentId,
+          cwd: "",
+          isGit: false,
+          repoRoot: null,
+          currentBranch: null,
+          isDirty: null,
+          baseRef: null,
+          aheadBehind: null,
+          isPaseoOwnedWorktree: null,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const status = await getCheckoutStatus(agent.cwd);
+      if (!status.isGit) {
+        this.emit({
+          type: "checkout_status_response",
+          payload: {
+            agentId,
+            cwd: agent.cwd,
+            isGit: false,
+            repoRoot: null,
+            currentBranch: null,
+            isDirty: null,
+            baseRef: null,
+            aheadBehind: null,
+            isPaseoOwnedWorktree: false,
+            error: null,
+            requestId,
+          },
+        });
+        return;
+      }
+
+      let isPaseoOwnedWorktree = false;
+      try {
+        const ownership = await isPaseoOwnedWorktreeCwd(agent.cwd);
+        isPaseoOwnedWorktree = ownership.allowed;
+      } catch {
+        isPaseoOwnedWorktree = false;
+      }
+
+      this.emit({
+        type: "checkout_status_response",
+        payload: {
+          agentId,
+          cwd: agent.cwd,
+          isGit: true,
+          repoRoot: status.repoRoot ?? null,
+          currentBranch: status.currentBranch ?? null,
+          isDirty: status.isDirty ?? null,
+          baseRef: status.baseRef ?? null,
+          aheadBehind: status.aheadBehind ?? null,
+          isPaseoOwnedWorktree,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_status_response",
+        payload: {
+          agentId,
+          cwd: agent.cwd,
+          isGit: false,
+          repoRoot: null,
+          currentBranch: null,
+          isDirty: null,
+          baseRef: null,
+          aheadBehind: null,
+          isPaseoOwnedWorktree: null,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutDiffRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_diff_request" }>
+  ): Promise<void> {
+    const { agentId, requestId, compare } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_diff_response",
+        payload: {
+          agentId,
+          files: [],
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const diffResult = await getCheckoutDiff(agent.cwd, {
+        mode: compare.mode,
+        baseRef: compare.baseRef,
+        includeStructured: true,
+      });
+      this.emit({
+        type: "checkout_diff_response",
+        payload: {
+          agentId,
+          files: diffResult.structured ?? [],
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_diff_response",
+        payload: {
+          agentId,
+          files: [],
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutCommitRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_commit_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_commit_response",
+        payload: {
+          agentId,
+          success: false,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      let message = msg.message?.trim() ?? "";
+      if (!message) {
+        message = await this.generateCommitMessage(agent);
+      }
+      if (!message) {
+        throw new Error("Commit message is required");
+      }
+
+      await commitChanges(agent.cwd, {
+        message,
+        addAll: msg.addAll ?? true,
+      });
+
+      this.emit({
+        type: "checkout_commit_response",
+        payload: {
+          agentId,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_commit_response",
+        payload: {
+          agentId,
+          success: false,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutMergeRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_merge_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_merge_response",
+        payload: {
+          agentId,
+          success: false,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const status = await getCheckoutStatus(agent.cwd);
+      if (!status.isGit) {
+        throw new NotGitRepoError(agent.cwd);
+      }
+      if (msg.requireCleanTarget && status.isDirty) {
+        throw new Error("Working directory has uncommitted changes.");
+      }
+
+      let baseRef = msg.baseRef ?? status.baseRef ?? null;
+      if (!baseRef) {
+        throw new Error("Base branch is required for merge");
+      }
+      if (baseRef.startsWith("origin/")) {
+        baseRef = baseRef.slice("origin/".length);
+      }
+
+      await mergeToBase(agent.cwd, {
+        baseRef,
+        mode: msg.strategy === "squash" ? "squash" : "merge",
+      });
+
+      this.emit({
+        type: "checkout_merge_response",
+        payload: {
+          agentId,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_merge_response",
+        payload: {
+          agentId,
+          success: false,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutPrCreateRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_pr_create_response",
+        payload: {
+          agentId,
+          url: null,
+          number: null,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      let title = msg.title?.trim() ?? "";
+      let body = msg.body?.trim() ?? "";
+      if (!title || !body) {
+        const generated = await this.generatePullRequestText(agent, msg.baseRef);
+        if (!title) {
+          title = generated.title;
+        }
+        if (!body) {
+          body = generated.body;
+        }
+      }
+      if (!title) {
+        throw new Error("Pull request title is required");
+      }
+
+      const result = await createPullRequest(agent.cwd, {
+        title,
+        body,
+        base: msg.baseRef,
+      });
+
+      this.emit({
+        type: "checkout_pr_create_response",
+        payload: {
+          agentId,
+          url: result.url ?? null,
+          number: result.number ?? null,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_pr_create_response",
+        payload: {
+          agentId,
+          url: null,
+          number: null,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutPrStatusRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_status_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_pr_status_response",
+        payload: {
+          agentId,
+          status: null,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const status = await getPullRequestStatus(agent.cwd);
+      this.emit({
+        type: "checkout_pr_status_response",
+        payload: {
+          agentId,
+          status,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_pr_status_response",
+        payload: {
+          agentId,
+          status: null,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handlePaseoWorktreeListRequest(
+    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>
+  ): Promise<void> {
+    const { requestId } = msg;
+    const cwd = msg.repoRoot ?? msg.cwd;
+    if (!cwd) {
+      this.emit({
+        type: "paseo_worktree_list_response",
+        payload: {
+          worktrees: [],
+          error: { code: "UNKNOWN", message: "cwd or repoRoot is required" },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const worktrees = await listPaseoWorktrees({ cwd });
+      this.emit({
+        type: "paseo_worktree_list_response",
+        payload: {
+          worktrees: worktrees.map((entry) => ({
+            worktreePath: entry.path,
+            branchName: entry.branchName ?? null,
+            head: entry.head ?? null,
+          })),
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "paseo_worktree_list_response",
+        payload: {
+          worktrees: [],
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handlePaseoWorktreeArchiveRequest(
+    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>
+  ): Promise<void> {
+    const { requestId } = msg;
+    let targetPath = msg.worktreePath;
+    let repoRoot = msg.repoRoot ?? null;
+
+    try {
+      if (!targetPath) {
+        if (!repoRoot || !msg.branchName) {
+          throw new Error("worktreePath or repoRoot+branchName is required");
+        }
+        const worktrees = await listPaseoWorktrees({ cwd: repoRoot });
+        const match = worktrees.find((entry) => entry.branchName === msg.branchName);
+        if (!match) {
+          throw new Error(`Paseo worktree not found for branch ${msg.branchName}`);
+        }
+        targetPath = match.path;
+      }
+
+      const ownership = await isPaseoOwnedWorktreeCwd(targetPath);
+      if (!ownership.allowed) {
+        this.emit({
+          type: "paseo_worktree_archive_response",
+          payload: {
+            success: false,
+            removedAgents: [],
+            error: {
+              code: "NOT_ALLOWED",
+              message: "Worktree is not a Paseo-owned worktree",
+            },
+            requestId,
+          },
+        });
+        return;
+      }
+
+      repoRoot = ownership.repoRoot ?? repoRoot ?? null;
+      if (!repoRoot) {
+        throw new Error("Unable to resolve repo root for worktree");
+      }
+
+      const removedAgents = new Set<string>();
+      const agents = this.agentManager.listAgents();
+      for (const agent of agents) {
+        if (this.isPathWithinRoot(targetPath, agent.cwd)) {
+          removedAgents.add(agent.id);
+          try {
+            await this.agentManager.closeAgent(agent.id);
+          } catch {
+            // ignore cleanup errors
+          }
+          try {
+            await this.agentRegistry.remove(agent.id);
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+      }
+
+      const registryRecords = await this.agentRegistry.list();
+      for (const record of registryRecords) {
+        if (this.isPathWithinRoot(targetPath, record.cwd)) {
+          removedAgents.add(record.id);
+          try {
+            await this.agentRegistry.remove(record.id);
+          } catch {
+            // ignore cleanup errors
+          }
+        }
+      }
+
+      await deletePaseoWorktree({
+        cwd: repoRoot,
+        worktreePath: targetPath,
+      });
+
+      for (const agentId of removedAgents) {
+        this.emit({
+          type: "agent_deleted",
+          payload: {
+            agentId,
+            requestId,
+          },
+        });
+      }
+
+      this.emit({
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: true,
+          removedAgents: Array.from(removedAgents),
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "paseo_worktree_archive_response",
+        payload: {
+          success: false,
+          removedAgents: [],
+          error: this.toCheckoutError(error),
           requestId,
         },
       });
