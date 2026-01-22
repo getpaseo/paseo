@@ -1,7 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, readFileSync, rmSync } from "fs";
-import { join, basename, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { join, basename, dirname, resolve, sep } from "path";
 import { createNameId } from "mnemonic-id";
 
 interface PaseoConfig {
@@ -27,6 +27,12 @@ interface WorktreeConfig {
   worktreePath: string;
   repoType: "bare" | "normal";
   repoPath: string;
+}
+
+export interface PaseoWorktreeInfo {
+  path: string;
+  branchName?: string;
+  head?: string;
 }
 
 interface CreateWorktreeOptions {
@@ -185,6 +191,133 @@ function generateWorktreeSlug(): string {
   return createNameId();
 }
 
+function getPaseoWorktreesRoot(repoRoot: string): string {
+  return join(repoRoot, ".paseo", "worktrees");
+}
+
+function ensurePaseoIgnoredForRepo(repoInfo: RepoInfo): {
+  updated: boolean;
+  skipped: boolean;
+  path?: string;
+} {
+  if (repoInfo.type === "bare") {
+    return { updated: false, skipped: true };
+  }
+
+  const gitignorePath = join(repoInfo.path, ".gitignore");
+  const existing = existsSync(gitignorePath)
+    ? readFileSync(gitignorePath, "utf8")
+    : "";
+  const hasEntry = /^\.paseo\/?$/m.test(existing);
+
+  if (hasEntry) {
+    return { updated: false, skipped: false, path: gitignorePath };
+  }
+
+  const needsNewline = existing.length > 0 && !existing.endsWith("\n");
+  const nextContents = `${existing}${needsNewline ? "\n" : ""}.paseo/\n`;
+  writeFileSync(gitignorePath, nextContents);
+  return { updated: true, skipped: false, path: gitignorePath };
+}
+
+export async function ensurePaseoIgnored(cwd: string): Promise<{
+  updated: boolean;
+  skipped: boolean;
+  path?: string;
+}> {
+  const repoInfo = await detectRepoInfo(cwd);
+  return ensurePaseoIgnoredForRepo(repoInfo);
+}
+
+function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
+  const entries: PaseoWorktreeInfo[] = [];
+  let current: PaseoWorktreeInfo | null = null;
+
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current?.path) {
+        entries.push(current);
+      }
+      current = { path: line.slice("worktree ".length).trim() };
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length).trim();
+      current.branchName = ref.startsWith("refs/heads/")
+        ? ref.slice("refs/heads/".length)
+        : ref;
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length).trim();
+    } else if (line.trim().length === 0) {
+      if (current.path) {
+        entries.push(current);
+      }
+      current = null;
+    }
+  }
+
+  if (current?.path) {
+    entries.push(current);
+  }
+
+  return entries;
+}
+
+export async function listPaseoWorktrees({
+  cwd,
+}: {
+  cwd: string;
+}): Promise<PaseoWorktreeInfo[]> {
+  const repoInfo = await detectRepoInfo(cwd);
+  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
+  const { stdout } = await execAsync("git worktree list --porcelain", {
+    cwd: repoInfo.path,
+    env: READ_ONLY_GIT_ENV,
+  });
+
+  const rootPrefix = resolve(worktreesRoot) + sep;
+  return parseWorktreeList(stdout).filter((entry) =>
+    resolve(entry.path).startsWith(rootPrefix)
+  );
+}
+
+export async function deletePaseoWorktree({
+  cwd,
+  worktreePath,
+  worktreeSlug,
+}: {
+  cwd: string;
+  worktreePath?: string;
+  worktreeSlug?: string;
+}): Promise<void> {
+  if (!worktreePath && !worktreeSlug) {
+    throw new Error("worktreePath or worktreeSlug is required");
+  }
+
+  const repoInfo = await detectRepoInfo(cwd);
+  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
+  const targetPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
+  const resolvedRoot = resolve(worktreesRoot) + sep;
+  const resolvedTarget = resolve(targetPath);
+
+  if (!resolvedTarget.startsWith(resolvedRoot)) {
+    throw new Error("Refusing to delete non-Paseo worktree");
+  }
+
+  await execAsync(`git worktree remove "${targetPath}" --force`, {
+    cwd: repoInfo.path,
+  });
+
+  if (existsSync(targetPath)) {
+    rmSync(targetPath, { recursive: true, force: true });
+  }
+}
+
 
 /**
  * Create a git worktree with proper naming conventions
@@ -204,17 +337,15 @@ export async function createWorktree({
   // Detect repository info
   const repoInfo = await detectRepoInfo(cwd);
 
+  // Ensure .paseo exists and is ignored
+  ensurePaseoIgnoredForRepo(repoInfo);
+
   // Determine worktree directory based on repo type
   let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
 
-  if (repoInfo.type === "bare") {
-    worktreePath = join(repoInfo.path, desiredSlug);
-  } else {
-    const parentDir = dirname(repoInfo.path);
-    const worktreeName = `${repoInfo.name}-${desiredSlug}`;
-    worktreePath = join(parentDir, worktreeName);
-  }
+  worktreePath = join(getPaseoWorktreesRoot(repoInfo.path), desiredSlug);
+  mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Check if branch already exists
   let branchExists = false;
@@ -264,7 +395,7 @@ export async function createWorktree({
   worktreePath = finalWorktreePath;
 
   // Run setup commands from paseo.json if present (look in source worktree, not bare repo)
-  const paseoConfigPath = join(cwd, "paseo.json");
+  const paseoConfigPath = join(repoInfo.path, "paseo.json");
   if (existsSync(paseoConfigPath)) {
     let config: PaseoConfig;
     try {
@@ -277,7 +408,7 @@ export async function createWorktree({
     if (setupCommands && setupCommands.length > 0) {
       const setupEnv = {
         ...process.env,
-        PASEO_ROOT_PATH: cwd,
+        PASEO_ROOT_PATH: repoInfo.path,
         PASEO_WORKTREE_PATH: worktreePath,
         PASEO_BRANCH_NAME: newBranchName,
       };
