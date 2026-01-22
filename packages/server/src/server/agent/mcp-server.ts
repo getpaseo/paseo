@@ -281,9 +281,9 @@ export async function createAgentMcpServer(
       .string()
       .trim()
       .min(1, "Title is required")
-      .max(40, "Title must be 40 characters or fewer")
+      .max(60, "Title must be 60 characters or fewer")
       .describe(
-        "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
+        "Short descriptive title (<= 60 chars) summarizing the agent's focus."
       ),
     agentType: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'."
@@ -313,9 +313,9 @@ export async function createAgentMcpServer(
       .string()
       .trim()
       .min(1, "Title is required")
-      .max(40, "Title must be 40 characters or fewer")
+      .max(60, "Title must be 60 characters or fewer")
       .describe(
-        "Short descriptive title (<= 40 chars) summarizing the agent's focus. Use a single concise sentence that fits on mobile."
+        "Short descriptive title (<= 60 chars) summarizing the agent's focus."
       ),
     agentType: AgentProviderEnum.optional().describe(
       "Optional agent implementation to spawn. Defaults to 'claude'."
@@ -906,8 +906,8 @@ export async function createAgentMcpServer(
         title: z
           .string()
           .min(1)
-          .max(40)
-          .describe("Short descriptive title (<= 40 chars)."),
+          .max(60)
+          .describe("Short descriptive title (<= 60 chars)."),
       },
       outputSchema: {
         success: z.boolean(),
@@ -931,10 +931,10 @@ export async function createAgentMcpServer(
       if (!normalizedTitle) {
         throw new AgentMcpToolError("NOT_ALLOWED", "Title cannot be empty");
       }
-      if (normalizedTitle.length > 40) {
+      if (normalizedTitle.length > 60) {
         throw new AgentMcpToolError(
           "NOT_ALLOWED",
-          "Title must be 40 characters or fewer"
+          "Title must be 60 characters or fewer"
         );
       }
 

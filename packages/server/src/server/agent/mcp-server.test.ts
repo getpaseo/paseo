@@ -48,7 +48,7 @@ function createTestDeps(): TestDeps {
 describe("create_agent MCP tool", () => {
   const logger = createTestLogger();
 
-  it("requires a concise title no longer than 40 characters", async () => {
+  it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentRegistry } = createTestDeps();
     const server = await createAgentMcpServer({ agentManager, agentRegistry, logger });
     const tool = (server as any)._registeredTools["create_agent"];
@@ -64,7 +64,7 @@ describe("create_agent MCP tool", () => {
     const tooLong = await tool.inputSchema.safeParseAsync({
       cwd: "/tmp/repo",
       initialMode: "default",
-      title: "x".repeat(41),
+      title: "x".repeat(61),
     });
     expect(tooLong.success).toBe(false);
     expect(tooLong.error.issues[0].path).toEqual(["title"]);

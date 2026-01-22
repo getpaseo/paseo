@@ -804,7 +804,7 @@ class ClaudeAgentSession implements AgentSession {
         preset: "claude_code",
         append: [
           getOrchestratorModeInstructions(),
-          this.currentMode === "plan" ? "" : getSelfIdentificationInstructions(),
+          this.currentMode === "plan" ? "" : getSelfIdentificationInstructions({ cwd: this.config.cwd }),
         ]
           .filter(Boolean)
           .join("\n"),

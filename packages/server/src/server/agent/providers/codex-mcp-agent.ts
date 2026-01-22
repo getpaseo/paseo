@@ -2759,7 +2759,7 @@ function buildCodexMcpConfig(
       developerInstructions = history;
     }
   }
-  const selfIdentificationInstructions = getSelfIdentificationInstructions();
+  const selfIdentificationInstructions = getSelfIdentificationInstructions({ cwd: config.cwd });
 
   // Build MCP servers configuration
   const mcpServers: Record<string, CodexMcpServerConfig> = {};
