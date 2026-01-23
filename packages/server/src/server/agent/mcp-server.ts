@@ -938,7 +938,7 @@ export async function createAgentMcpServer(
         );
       }
 
-      await agentRegistry.setTitle(agent.id, normalizedTitle);
+      await agentManager.setTitle(agent.id, normalizedTitle);
       return {
         content: [],
         structuredContent: ensureValidJson({

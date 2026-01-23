@@ -20,6 +20,7 @@ function createTestDeps(): TestDeps {
     waitForAgentEvent: vi.fn(),
     recordUserMessage: vi.fn(),
     setAgentMode: vi.fn(),
+    setTitle: vi.fn().mockResolvedValue(undefined),
     getAgent: vi.fn(),
     streamAgent: vi.fn(() => (async function* noop() {})()),
     respondToPermission: vi.fn(),
@@ -118,7 +119,7 @@ describe("create_agent MCP tool", () => {
 
     await tool.callback({ title: "  Fix auth  " });
 
-    expect(spies.agentRegistry.setTitle).toHaveBeenCalledWith(
+    expect(spies.agentManager.setTitle).toHaveBeenCalledWith(
       "agent-1",
       "Fix auth"
     );

@@ -395,6 +395,12 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  async setTitle(agentId: string, title: string): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    await this.registry?.setTitle(agentId, title);
+    this.emitState(agent);
+  }
+
   async clearAgentAttention(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     if (agent.attention.requiresAttention) {
