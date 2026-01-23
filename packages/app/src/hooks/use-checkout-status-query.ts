@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { useSessionStore } from "@/stores/session-store";
 import { usePanelStore } from "@/stores/panel-store";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
+import {
+  checkoutStatusRevalidationKey,
+  nextCheckoutStatusRefetchDecision,
+} from "./checkout-status-revalidation";
 
 const CHECKOUT_STATUS_STALE_TIME = 15_000;
 
@@ -48,12 +52,17 @@ export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQ
   });
 
   // Revalidate when sidebar is open with "changes" tab active.
+  const revalidationKey = useMemo(
+    () => checkoutStatusRevalidationKey({ serverId, agentId, isOpen, explorerTab }),
+    [serverId, agentId, isOpen, explorerTab]
+  );
+  const lastRevalidationKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!isOpen || explorerTab !== "changes" || !agentId) {
-      return;
-    }
+    const decision = nextCheckoutStatusRefetchDecision(lastRevalidationKey.current, revalidationKey);
+    lastRevalidationKey.current = decision.nextSeenKey;
+    if (!decision.shouldRefetch) return;
     void query.refetch();
-  }, [isOpen, explorerTab, agentId, query]);
+  }, [revalidationKey, query.refetch]);
 
   return {
     status: query.data ?? null,

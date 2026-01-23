@@ -227,6 +227,7 @@ export class DaemonClientV2 {
   > = new Map();
   private eventListeners: Set<DaemonEventHandler> = new Set();
   private waiters: Set<Waiter<any>> = new Set();
+  private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map();
   private connectionListeners: Set<(status: ConnectionState) => void> =
     new Set();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -945,27 +946,48 @@ export class DaemonClientV2 {
     agentId: string,
     requestId?: string
   ): Promise<CheckoutStatusPayload> {
+    if (!requestId) {
+      const existing = this.checkoutStatusInFlight.get(agentId);
+      if (existing) {
+        return existing;
+      }
+    }
+
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_status_request",
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
-        if (msg.type !== "checkout_status_response") {
-          return null;
+
+    const responsePromise = (async () => {
+      const response = this.waitFor(
+        (msg) => {
+          if (msg.type !== "checkout_status_response") {
+            return null;
+          }
+          if (msg.payload.requestId !== resolvedRequestId) {
+            return null;
+          }
+          return msg.payload;
+        },
+        60000,
+        { skipQueue: true }
+      );
+      this.sendSessionMessage(message);
+      return response;
+    })();
+
+    if (!requestId) {
+      this.checkoutStatusInFlight.set(agentId, responsePromise);
+      responsePromise.finally(() => {
+        if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
+          this.checkoutStatusInFlight.delete(agentId);
         }
-        if (msg.payload.requestId !== resolvedRequestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-      60000,
-      { skipQueue: true }
-    );
-    this.sendSessionMessage(message);
-    return response;
+      });
+    }
+
+    return responsePromise;
   }
 
   async getCheckoutDiff(
