@@ -18,7 +18,6 @@ interface DictationControlsProps {
   onRetry?: () => void;
   onDiscard?: () => void;
   disabled?: boolean;
-  retryStatusText?: string;
 }
 
 function formatDuration(seconds: number): string {
@@ -42,13 +41,11 @@ export function DictationControls({
   onRetry,
   onDiscard,
   disabled = false,
-  retryStatusText,
 }: DictationControlsProps) {
   const { theme } = useUnistyles();
-  const isRetrying = status === "retrying";
   const isFailed = status === "failed";
-  const showActiveState = isRecording || isProcessing || isRetrying || isFailed;
-  const actionsDisabled = isProcessing || isRetrying;
+  const showActiveState = isRecording || isProcessing || isFailed;
+  const actionsDisabled = isProcessing;
   const handleCancel = isFailed && onDiscard ? onDiscard : onCancel;
 
   if (!showActiveState) {
@@ -123,13 +120,6 @@ export function DictationControls({
           </>
         )}
       </View>
-      {retryStatusText && (isRetrying || isFailed) && (
-        <Text
-          style={[styles.statusLabel, { color: theme.colors.mutedForeground }]}
-        >
-          {retryStatusText}
-        </Text>
-      )}
     </View>
   );
 }
@@ -149,12 +139,11 @@ export function DictationOverlay({
   onAcceptAndSend,
   onRetry,
   onDiscard,
-}: Omit<DictationControlsProps, "onStart" | "disabled" | "retryStatusText">) {
+}: Omit<DictationControlsProps, "onStart" | "disabled">) {
   const { theme } = useUnistyles();
-  const isRetrying = status === "retrying";
   const isFailed = status === "failed";
-  const showActiveState = isRecording || isProcessing || isRetrying || isFailed;
-  const actionsDisabled = isProcessing || isRetrying;
+  const showActiveState = isRecording || isProcessing || isFailed;
+  const actionsDisabled = isProcessing;
   const handleCancel = isFailed && onDiscard ? onDiscard : onCancel;
 
   if (!showActiveState) {

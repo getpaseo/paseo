@@ -88,7 +88,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
       return;
     }
 
-    if (volume > 0.01) {
+    if (volume > 0.001) {
       // Active volume - animate heights based on volume
       const target1 = MIN_HEIGHT + (MAX_HEIGHT * volume * 1.2);
       const target2 = MIN_HEIGHT + (MAX_HEIGHT * volume * 1.05);
@@ -136,7 +136,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
     const volumeBoost = isMuted ? 0 : volume * 0.3;
     return {
-      height: line1Height.value * (isMuted || volume > 0.01 ? 1 : line1Pulse.value),
+      height: line1Height.value * (isMuted || volume > 0.001 ? 1 : line1Pulse.value),
       opacity: baseOpacity + volumeBoost,
     };
   });
@@ -146,7 +146,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
     const volumeBoost = isMuted ? 0 : volume * 0.3;
     return {
-      height: line2Height.value * (isMuted || volume > 0.01 ? 1 : line2Pulse.value),
+      height: line2Height.value * (isMuted || volume > 0.001 ? 1 : line2Pulse.value),
       opacity: baseOpacity + volumeBoost,
     };
   });
@@ -156,7 +156,7 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
     const volumeBoost = isMuted ? 0 : volume * 0.3;
     return {
-      height: line3Height.value * (isMuted || volume > 0.01 ? 1 : line3Pulse.value),
+      height: line3Height.value * (isMuted || volume > 0.001 ? 1 : line3Pulse.value),
       opacity: baseOpacity + volumeBoost,
     };
   });
