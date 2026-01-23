@@ -401,64 +401,64 @@ describe("daemon client v2 E2E", () => {
       });
 
       const permissionRequestPromise = waitForSignal(60000, (resolve) => {
-        const unsubscribe = ctx.client.on(
-          "agent_permission_request",
-          (message) => {
-            if (message.type !== "agent_permission_request") {
-              return;
-            }
-            if (message.payload.agentId !== agent.id) {
-              return;
-            }
-            resolve(message);
+        const unsubscribe = ctx.client.on("agent_permission_request", (message) => {
+          if (message.type !== "agent_permission_request") {
+            return;
           }
-        );
+          if (message.payload.agentId !== agent.id) {
+            return;
+          }
+          resolve(message);
+        });
         return unsubscribe;
       });
-
-      await ctx.client.sendMessage(
-        agent.id,
-        "Request approval to run the command `printf \"ok\" > permission.txt`."
-      );
-
-      const permission = await ctx.client.waitForPermission(agent.id, 60000);
-      expect(permission).toBeTruthy();
-      expect(permission.id).toBeTruthy();
-
-      const permissionRequest = await permissionRequestPromise;
-      expect(permissionRequest.payload.agentId).toBe(agent.id);
 
       const permissionResolvedPromise = waitForSignal(60000, (resolve) => {
-        const unsubscribe = ctx.client.on(
-          "agent_permission_resolved",
-          (message) => {
-            if (message.type !== "agent_permission_resolved") {
-              return;
-            }
-            if (message.payload.agentId !== agent.id) {
-              return;
-            }
-            if (message.payload.requestId !== permission.id) {
-              return;
-            }
-            resolve(message);
+        const unsubscribe = ctx.client.on("agent_permission_resolved", (message) => {
+          if (message.type !== "agent_permission_resolved") {
+            return;
           }
-        );
+          if (message.payload.agentId !== agent.id) {
+            return;
+          }
+          resolve(message);
+        });
         return unsubscribe;
       });
 
-      await ctx.client.respondToPermission(agent.id, permission.id, {
-        behavior: "allow",
-      });
-      const permissionResolved = await permissionResolvedPromise;
-      expect(permissionResolved.payload.requestId).toBe(permission.id);
+      try {
+        await ctx.client.sendMessage(
+          agent.id,
+          [
+            "Use your shell tool to run: `printf \"ok\" > permission.txt`.",
+            "This will require approval. Request permission and wait for approval before continuing.",
+          ].join("\n")
+        );
 
-      const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
-      expect(finalState.status).toBe("idle");
-      expect(existsSync(filePath)).toBe(true);
+        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        expect(permission).toBeTruthy();
+        expect(permission.id).toBeTruthy();
 
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(cwd, { recursive: true, force: true });
+        const permissionRequest = await permissionRequestPromise;
+        expect(permissionRequest.payload.agentId).toBe(agent.id);
+
+        await ctx.client.respondToPermission(agent.id, permission.id, {
+          behavior: "allow",
+        });
+
+        const permissionResolved = await permissionResolvedPromise;
+        expect(permissionResolved.payload.requestId).toBe(permission.id);
+
+        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        expect(finalState.status).toBe("idle");
+        expect(existsSync(filePath)).toBe(true);
+      } finally {
+        // Prevent unhandled rejections if the test fails before promises resolve.
+        await permissionRequestPromise.catch(() => {});
+        await permissionResolvedPromise.catch(() => {});
+        await ctx.client.deleteAgent(agent.id);
+        rmSync(cwd, { recursive: true, force: true });
+      }
     },
     180000
   );

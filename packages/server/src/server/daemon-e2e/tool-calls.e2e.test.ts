@@ -215,9 +215,16 @@ describe("daemon E2E", () => {
         expect(shellCall).toBeDefined();
         expect(shellCall?.name).toBe("shell");
         expect(shellCall?.input).toBeDefined();
-        // Command text should be in input.command
-        const shellInput = shellCall?.input as { command?: string } | undefined;
-        expect(shellInput?.command).toContain("echo");
+        // Command text should be in input.command (Codex may run setup commands like `pwd` first).
+        const shellCalls = toolCalls.filter(
+          (tc) => tc.type === "tool_call" && tc.name === "shell"
+        );
+        expect(shellCalls.length).toBeGreaterThan(0);
+        expect(
+          shellCalls.some((tc) =>
+            ((tc.input as { command?: string } | undefined)?.command ?? "").includes("echo")
+          )
+        ).toBe(true);
 
         await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });

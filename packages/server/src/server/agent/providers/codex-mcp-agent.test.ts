@@ -789,6 +789,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
         const prompt = [
+          "IMPORTANT: You must execute every step using the exact tool mentioned.",
+          "Do not skip steps, and do not claim completion without running the tools.",
           "1. Run the command `printf 'stdout-marker'` using your shell tool.",
           "2. Run the command `printf 'stderr-marker' 1>&2` using your shell tool.",
           "3. Use apply_patch to create a new file named tool-create.txt containing only the line 'alpha'.",

@@ -202,6 +202,14 @@ export type AgentSessionConfig = {
   webSearch?: boolean;
   reasoningEffort?: string;
   agentControlMcp?: AgentControlMcpConfig;
+  /**
+   * Paseo-owned instructions injected into the first user prompt via
+   * <paseo-instructions>...</paseo-instructions>.
+   *
+   * These MUST NOT be sent via provider system/developer instructions (those are
+   * reserved for provider/session behaviors like resuming).
+   */
+  paseoPromptInstructions?: string;
   extra?: {
     codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
