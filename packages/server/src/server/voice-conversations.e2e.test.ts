@@ -20,6 +20,30 @@ async function waitForFile(filepath: string, timeoutMs = 5000): Promise<void> {
   }
 }
 
+async function waitForJsonFile<T>(
+  filepath: string,
+  timeoutMs = 5000
+): Promise<T> {
+  const start = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (existsSync(filepath)) {
+      try {
+        const raw = readFileSync(filepath, "utf8");
+        if (raw.trim().length > 0) {
+          return JSON.parse(raw) as T;
+        }
+      } catch {
+        // File may exist but still be mid-write; retry.
+      }
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for valid JSON: ${filepath}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 describe("voice conversations - daemon E2E", () => {
   test(
     "two concurrent clients persist independently under paseoHome/voice-conversations",
@@ -57,16 +81,16 @@ describe("voice conversations - daemon E2E", () => {
         await waitForFile(fileA);
         await waitForFile(fileB);
 
-        const dataA = JSON.parse(readFileSync(fileA, "utf8")) as {
+        const dataA = await waitForJsonFile<{
           voiceConversationId: string;
           messageCount: number;
           messages: unknown[];
-        };
-        const dataB = JSON.parse(readFileSync(fileB, "utf8")) as {
+        }>(fileA);
+        const dataB = await waitForJsonFile<{
           voiceConversationId: string;
           messageCount: number;
           messages: unknown[];
-        };
+        }>(fileB);
 
         expect(dataA.voiceConversationId).toBe(voiceConversationIdA);
         expect(dataB.voiceConversationId).toBe(voiceConversationIdB);
@@ -121,4 +145,3 @@ describe("voice conversations - daemon E2E", () => {
     30000
   );
 });
-

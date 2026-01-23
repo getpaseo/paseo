@@ -14,7 +14,10 @@ import { ClaudeAgentClient } from "./claude-agent.js";
 import type { AgentSession, AgentSessionConfig, AgentSlashCommand } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
-describe("ClaudeAgentSession Commands", () => {
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
+(hasClaudeCredentials ? describe : describe.skip)("ClaudeAgentSession Commands", () => {
   let client: ClaudeAgentClient;
   let session: AgentSession;
 
