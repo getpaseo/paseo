@@ -142,6 +142,29 @@ describe("createWorktree", () => {
     expect(setupLog).toContain("branch=setup-test");
   });
 
+  it("does not run setup commands when runSetup=false", async () => {
+    const paseoConfig = {
+      worktree: {
+        setup: ['echo "setup ran" > setup.log'],
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    execSync(
+      "git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'",
+      { cwd: repoDir }
+    );
+
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      worktreeSlug: "no-setup-test",
+      runSetup: false,
+    });
+
+    expect(existsSync(result.worktreePath)).toBe(true);
+    expect(existsSync(join(result.worktreePath, "setup.log"))).toBe(false);
+  });
+
   it("cleans up worktree if setup command fails", async () => {
     // Create paseo.json with failing setup command
     const paseoConfig = {

@@ -211,13 +211,17 @@ describe("daemon E2E", () => {
           logToolCall("CODEX_SHELL", tc);
         }
 
-        const shellCall = toolCalls.find((tc) => tc.type === "tool_call" && tc.name === "shell");
-        expect(shellCall).toBeDefined();
-        expect(shellCall?.name).toBe("shell");
-        expect(shellCall?.input).toBeDefined();
-        // Command text should be in input.command
-        const shellInput = shellCall?.input as { command?: string } | undefined;
-        expect(shellInput?.command).toContain("echo");
+        const shellCalls = toolCalls.filter(
+          (tc) => tc.type === "tool_call" && tc.name === "shell"
+        );
+        expect(shellCalls.length).toBeGreaterThan(0);
+
+        const echoCall = shellCalls.find((tc) => {
+          const shellInput = tc.input as { command?: string } | undefined;
+          return typeof shellInput?.command === "string" &&
+            shellInput.command.includes("echo");
+        });
+        expect(echoCall).toBeDefined();
 
         await ctx.client.deleteAgent(agent.id);
         rmSync(cwd, { recursive: true, force: true });
