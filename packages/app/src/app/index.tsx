@@ -259,6 +259,7 @@ export default function HomeScreen() {
     retry: false,
   });
   const repoInfo = repoInfoQuery.data ?? null;
+  const refetchRepoInfo = repoInfoQuery.refetch;
   const repoRequestError = repoInfoQuery.error as Error | null;
   const repoRequestStatus: "idle" | "loading" | "success" | "error" =
     !shouldInspectRepo || repoAvailabilityError
@@ -358,8 +359,11 @@ export default function HomeScreen() {
       if (mode !== "attach") {
         setSelectedWorktreePath("");
       }
+      if (mode !== "none") {
+        refetchRepoInfo();
+      }
     },
-    [worktreeSlug]
+    [worktreeSlug, refetchRepoInfo]
   );
 
   const validateWorktreeName = useCallback(
