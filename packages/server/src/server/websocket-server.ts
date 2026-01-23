@@ -57,7 +57,13 @@ export class VoiceAssistantWebSocketServer {
       path: "/ws",
       verifyClient: ({ req }, callback) => {
         const origin = req.headers.origin;
-        if (!origin || allowedOrigins.has(origin)) {
+        const requestHost = typeof req.headers.host === "string" ? req.headers.host : null;
+        const sameOrigin =
+          !!origin &&
+          !!requestHost &&
+          (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
+
+        if (!origin || allowedOrigins.has(origin) || sameOrigin) {
           callback(true);
         } else {
           this.logger.warn({ origin }, "Rejected connection from origin");

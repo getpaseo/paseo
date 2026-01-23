@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Buffer } from "buffer";
 import {
   initialize,
   useMicrophonePermissions,
@@ -14,6 +15,8 @@ export interface SpeechmaticsAudioConfig {
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
   onError?: (error: Error) => void;
+  /** When true, stream microphone PCM continuously without VAD gating. */
+  enableContinuousStreaming?: boolean;
   volumeThreshold: number; // Volume threshold for speech detection (0-1)
   silenceDuration: number; // ms of silence before ending segment
   speechConfirmationDuration: number; // ms of sustained speech before confirming
@@ -33,11 +36,17 @@ export interface SpeechmaticsAudio {
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  // NOTE: This is performance-sensitive during continuous streaming.
+  // Buffer-backed base64 is significantly faster than manual string building.
+  try {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+  } catch {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
   }
-  return btoa(binary);
 }
 
 function concatenateUint8Arrays(arrays: Uint8Array[]): Uint8Array {
@@ -66,6 +75,8 @@ export function useSpeechmaticsAudio(
   const [volume, setVolume] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [segmentDuration, setSegmentDuration] = useState(0);
+
+  const enableContinuousStreaming = config.enableContinuousStreaming === true;
 
   const audioBufferRef = useRef<Uint8Array[]>([]);
   const silenceStartRef = useRef<number | null>(null);
@@ -136,6 +147,15 @@ export function useSpeechmaticsAudio(
 
         const pcmData: Uint8Array = event.data;
 
+        if (enableContinuousStreaming) {
+          audioBufferRef.current.push(pcmData);
+          bufferedBytesRef.current += pcmData.length;
+          if (bufferedBytesRef.current >= MIN_CHUNK_BYTES) {
+            flushBufferedAudio(false);
+          }
+          return;
+        }
+
         // Buffer the audio chunk if we're detecting or speaking
         // Start buffering from first spike to capture beginning of speech
         if (speechDetectionStartRef.current !== null || isSpeakingRef.current) {
@@ -150,7 +170,7 @@ export function useSpeechmaticsAudio(
           }
         }
       },
-      [isActive, isMuted, flushBufferedAudio, MIN_CHUNK_BYTES]
+      [enableContinuousStreaming, isActive, isMuted, flushBufferedAudio, MIN_CHUNK_BYTES]
     )
   );
 
@@ -165,6 +185,7 @@ export function useSpeechmaticsAudio(
         setVolume(volumeLevel);
 
         if (isMuted) return;
+        if (enableContinuousStreaming) return;
 
         const speechDetected = volumeLevel > VOLUME_THRESHOLD;
 
@@ -270,6 +291,7 @@ export function useSpeechmaticsAudio(
         }
       },
       [
+        enableContinuousStreaming,
         isActive,
         isMuted,
         VOLUME_THRESHOLD,
@@ -339,6 +361,10 @@ export function useSpeechmaticsAudio(
     // Stop recording
     if (isActive) {
       toggleRecording(false);
+    }
+
+    if (enableContinuousStreaming) {
+      flushBufferedAudio(true);
     }
 
     // Tear down audio session

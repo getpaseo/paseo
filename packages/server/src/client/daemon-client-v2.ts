@@ -42,7 +42,6 @@ import type {
   SendAgentMessage,
   SessionInboundMessage,
   SessionOutboundMessage,
-  TranscriptionResultMessage,
 } from "../shared/messages.js";
 import type {
   AgentPermissionRequest,
@@ -150,12 +149,6 @@ export type DaemonClientV2Config = {
 
 export type SendMessageOptions = Pick<SendAgentMessage, "messageId" | "images">;
 
-export type TranscribeAudioOptions = {
-  audio: string; // base64 encoded
-  format: string;
-  timeout?: number;
-};
-
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
 export type CreateAgentRequestOptions = {
@@ -188,7 +181,6 @@ type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ExecuteCommandPayload = ExecuteCommandResponse["payload"];
-type TranscriptionResultPayload = TranscriptionResultMessage["payload"];
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
@@ -473,7 +465,26 @@ export class DaemonClientV2 {
       throw new Error("Transport not connected");
     }
     const payload = SessionInboundMessageSchema.parse(message);
-    this.transport.send(JSON.stringify({ type: "session", message: payload }));
+    try {
+      this.transport.send(JSON.stringify({ type: "session", message: payload }));
+    } catch (error) {
+      if (this.config.suppressSendErrors) {
+        return;
+      }
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  private sendSessionMessageStrict(message: SessionInboundMessage): void {
+    if (!this.transport || this.connectionState.status !== "connected") {
+      throw new Error("Transport not connected");
+    }
+    const payload = SessionInboundMessageSchema.parse(message);
+    try {
+      this.transport.send(JSON.stringify({ type: "session", message: payload }));
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
   }
 
   sendUserMessage(text: string): void {
@@ -840,37 +851,6 @@ export class DaemonClientV2 {
     await this.sendAgentMessage(agentId, text, options);
   }
 
-  async transcribeAudio(
-    options: TranscribeAudioOptions
-  ): Promise<TranscriptionResultPayload> {
-    const requestId = this.createRequestId();
-    const timeout = options.timeout ?? 120000;
-
-    const responsePromise = this.waitFor(
-      (msg) => {
-        if (msg.type !== "transcription_result") {
-          return null;
-        }
-        if (msg.payload.requestId !== requestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-      timeout,
-      { skipQueue: true }
-    );
-
-    const message = SessionInboundMessageSchema.parse({
-      type: "transcribe_audio_request",
-      audio: options.audio,
-      format: options.format,
-      requestId,
-    });
-    this.sendSessionMessage(message);
-
-    return responsePromise;
-  }
-
   async cancelAgent(agentId: string): Promise<void> {
     this.sendSessionMessage({ type: "cancel_agent_request", agentId });
   }
@@ -928,6 +908,87 @@ export class DaemonClientV2 {
     isLast: boolean
   ): Promise<void> {
     this.sendSessionMessage({ type: "realtime_audio_chunk", audio, format, isLast });
+  }
+
+  startDictationStream(dictationId: string, format: string): Promise<void> {
+    const ackPromise = this.waitFor(
+      (msg) => {
+        if (msg.type !== "dictation_stream_ack") {
+          return null;
+        }
+        if (msg.payload.dictationId !== dictationId) {
+          return null;
+        }
+        if (msg.payload.ackSeq !== -1) {
+          return null;
+        }
+        return msg.payload;
+      },
+      30000,
+      { skipQueue: true }
+    ).then(() => undefined);
+
+    const errorPromise = this.waitFor(
+      (msg) => {
+        if (msg.type !== "dictation_stream_error") {
+          return null;
+        }
+        if (msg.payload.dictationId !== dictationId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      30000,
+      { skipQueue: true }
+    ).then((payload) => {
+      throw new Error(payload.error);
+    });
+
+    this.sendSessionMessageStrict({ type: "dictation_stream_start", dictationId, format });
+    return Promise.race([ackPromise, errorPromise]);
+  }
+
+  sendDictationStreamChunk(dictationId: string, seq: number, audio: string, format: string): void {
+    this.sendSessionMessageStrict({ type: "dictation_stream_chunk", dictationId, seq, audio, format });
+  }
+
+  finishDictationStream(dictationId: string, finalSeq: number): Promise<{ dictationId: string; text: string }> {
+    const finalPromise = this.waitFor(
+      (msg) => {
+        if (msg.type !== "dictation_stream_final") {
+          return null;
+        }
+        if (msg.payload.dictationId !== dictationId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      120000,
+      { skipQueue: true }
+    );
+
+    const errorPromise = this.waitFor(
+      (msg) => {
+        if (msg.type !== "dictation_stream_error") {
+          return null;
+        }
+        if (msg.payload.dictationId !== dictationId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      120000,
+      { skipQueue: true }
+    ).then((payload) => {
+      throw new Error(payload.error);
+    });
+
+    this.sendSessionMessageStrict({ type: "dictation_stream_finish", dictationId, finalSeq });
+    return Promise.race([finalPromise, errorPromise]);
+  }
+
+  cancelDictationStream(dictationId: string): void {
+    this.sendSessionMessageStrict({ type: "dictation_stream_cancel", dictationId });
   }
 
   async abortRequest(): Promise<void> {
@@ -2119,7 +2180,12 @@ function createWebSocketTransportFactory(
   return ({ url, headers }) => {
     const ws = factory(url, { headers });
     return {
-      send: (data) => ws.send(data),
+      send: (data) => {
+        if (typeof ws.readyState === "number" && ws.readyState !== 1) {
+          throw new Error(`WebSocket not open (readyState=${ws.readyState})`);
+        }
+        ws.send(data);
+      },
       close: (code?: number, reason?: string) => ws.close(code, reason),
       onOpen: (handler) => bindWsHandler(ws, "open", handler),
       onClose: (handler) => bindWsHandler(ws, "close", handler),

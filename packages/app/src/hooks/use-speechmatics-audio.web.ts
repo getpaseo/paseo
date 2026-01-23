@@ -5,6 +5,7 @@ export interface SpeechmaticsAudioConfig {
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
   onError?: (error: Error) => void;
+  enableContinuousStreaming?: boolean;
   volumeThreshold: number;
   silenceDuration: number;
   speechConfirmationDuration: number;
