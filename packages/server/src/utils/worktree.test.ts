@@ -3,9 +3,11 @@ import {
   createWorktree,
   deletePaseoWorktree,
   ensurePaseoIgnored,
+  isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
   slugify,
 } from "./worktree";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, existsSync, realpathSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
@@ -38,6 +40,7 @@ describe("createWorktree", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "hello-world",
     });
 
@@ -46,6 +49,41 @@ describe("createWorktree", () => {
     );
     expect(existsSync(result.worktreePath)).toBe(true);
     expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
+    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    expect(existsSync(metadataPath)).toBe(true);
+    const metadata = JSON.parse(
+      readFileSync(metadataPath, "utf8")
+    );
+    expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
+  });
+
+  it("detects paseo-owned worktrees across realpath differences (macOS /var vs /private/var)", async () => {
+    // Intentionally create repo using the non-realpath tmpdir() variant (often /var/... on macOS).
+    const varTempDir = mkdtempSync(join(tmpdir(), "worktree-realpath-test-"));
+    const privateTempDir = realpathSync(varTempDir);
+    const varRepoDir = join(varTempDir, "test-repo");
+    execSync(`mkdir -p ${varRepoDir}`);
+    execSync("git init -b main", { cwd: varRepoDir });
+    execSync("git config user.email 'test@test.com'", { cwd: varRepoDir });
+    execSync("git config user.name 'Test'", { cwd: varRepoDir });
+    execSync("echo 'hello' > file.txt", { cwd: varRepoDir });
+    execSync("git add .", { cwd: varRepoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: varRepoDir });
+
+    const result = await createWorktree({
+      branchName: "main",
+      cwd: varRepoDir,
+      baseBranch: "main",
+      worktreeSlug: "realpath-test",
+    });
+
+    const privateWorktreePath = join(privateTempDir, "test-repo", ".paseo", "worktrees", "realpath-test");
+    expect(existsSync(privateWorktreePath)).toBe(true);
+
+    const ownership = await isPaseoOwnedWorktreeCwd(privateWorktreePath);
+    expect(ownership.allowed).toBe(true);
+
+    rmSync(varTempDir, { recursive: true, force: true });
   });
 
   it("creates a worktree with a new branch", async () => {
@@ -64,6 +102,11 @@ describe("createWorktree", () => {
     // Verify branch was created
     const branches = execSync("git branch", { cwd: repoDir }).toString();
     expect(branches).toContain("feature-branch");
+    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadata = JSON.parse(
+      readFileSync(metadataPath, "utf8")
+    );
+    expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
   });
 
   it("fails with invalid branch name", async () => {
@@ -71,6 +114,7 @@ describe("createWorktree", () => {
       createWorktree({
         branchName: "INVALID_UPPERCASE",
         cwd: repoDir,
+        baseBranch: "main",
         worktreeSlug: "test",
       })
     ).rejects.toThrow("Invalid branch name");
@@ -83,6 +127,7 @@ describe("createWorktree", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "hello",
     });
 
@@ -104,6 +149,7 @@ describe("createWorktree", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "hello",
     });
 
@@ -130,6 +176,7 @@ describe("createWorktree", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "setup-test",
     });
 
@@ -157,6 +204,7 @@ describe("createWorktree", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "no-setup-test",
       runSetup: false,
     });
@@ -186,6 +234,7 @@ describe("createWorktree", () => {
       createWorktree({
         branchName: "main",
         cwd: repoDir,
+        baseBranch: "main",
         worktreeSlug: "fail-test",
       })
     ).rejects.toThrow("Worktree setup command failed");
@@ -220,11 +269,13 @@ describe("paseo worktree manager", () => {
     const first = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "alpha",
     });
     const second = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "beta",
     });
 

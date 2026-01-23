@@ -3,7 +3,8 @@ import { promisify } from "util";
 import { resolve } from "path";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
-import { detectRepoInfo } from "./worktree.js";
+import { detectRepoInfo, isPaseoOwnedWorktreeCwd } from "./worktree.js";
+import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -43,13 +44,32 @@ export interface AheadBehind {
 }
 
 export interface CheckoutStatus {
-  isGit: boolean;
-  repoRoot?: string;
-  currentBranch?: string | null;
-  isDirty?: boolean;
-  baseRef?: string | null;
-  aheadBehind?: AheadBehind | null;
+  isGit: false;
 }
+
+export type CheckoutStatusGitNonPaseo = {
+  isGit: true;
+  repoRoot: string;
+  currentBranch: string | null;
+  isDirty: boolean;
+  baseRef: string | null;
+  aheadBehind: AheadBehind | null;
+  isPaseoOwnedWorktree: false;
+};
+
+export type CheckoutStatusGitPaseo = {
+  isGit: true;
+  repoRoot: string;
+  currentBranch: string | null;
+  isDirty: boolean;
+  baseRef: string;
+  aheadBehind: AheadBehind | null;
+  isPaseoOwnedWorktree: true;
+};
+
+export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPaseo;
+
+export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
 export interface CheckoutDiffResult {
   diff: string;
@@ -179,6 +199,25 @@ export async function renameCurrentBranch(
   return { previousBranch, currentBranch };
 }
 
+type ConfiguredBaseRefForCwd =
+  | { baseRef: null; isPaseoOwnedWorktree: false }
+  | { baseRef: string; isPaseoOwnedWorktree: true };
+
+async function getConfiguredBaseRefForCwd(
+  cwd: string
+): Promise<ConfiguredBaseRefForCwd> {
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd);
+  if (!ownership.allowed) {
+    return { baseRef: null, isPaseoOwnedWorktree: false };
+  }
+
+  const worktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
+  return {
+    baseRef: requirePaseoWorktreeBaseRefName(worktreeRoot),
+    isPaseoOwnedWorktree: true,
+  };
+}
+
 async function isWorkingTreeDirty(cwd: string, repoType: "bare" | "normal"): Promise<boolean> {
   if (repoType === "bare") {
     return false;
@@ -198,7 +237,21 @@ async function resolveBaseRef(repoRoot: string): Promise<string | null> {
     });
     const ref = stdout.trim();
     if (ref) {
-      return ref.replace(/^refs\/remotes\//, "");
+      // Prefer a local branch name (e.g. "main") over the remote-tracking ref (e.g. "origin/main")
+      // so that status/diff/merge all operate against the same base ref.
+      const remoteShort = ref.replace(/^refs\/remotes\//, "");
+      const localName = remoteShort.startsWith("origin/")
+        ? remoteShort.slice("origin/".length)
+        : remoteShort;
+      try {
+        await execAsync(`git show-ref --verify --quiet refs/heads/${localName}`, {
+          cwd: repoRoot,
+          env: READ_ONLY_GIT_ENV,
+        });
+        return localName;
+      } catch {
+        return remoteShort;
+      }
     }
   } catch {
     // ignore
@@ -223,12 +276,17 @@ async function resolveBaseRef(repoRoot: string): Promise<string | null> {
   return null;
 }
 
+function normalizeLocalBranchRefName(input: string): string {
+  return input.startsWith("origin/") ? input.slice("origin/".length) : input;
+}
+
 async function getAheadBehind(cwd: string, baseRef: string, currentBranch: string): Promise<AheadBehind | null> {
-  if (!baseRef || !currentBranch || baseRef === currentBranch) {
+  const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+  if (!normalizedBaseRef || !currentBranch || normalizedBaseRef === currentBranch) {
     return null;
   }
   const { stdout } = await execAsync(
-    `git rev-list --left-right --count ${baseRef}...${currentBranch}`,
+    `git rev-list --left-right --count ${normalizedBaseRef}...${currentBranch}`,
     { cwd, env: READ_ONLY_GIT_ENV }
   );
   const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
@@ -268,7 +326,7 @@ async function getUntrackedDiff(cwd: string): Promise<string> {
   return untrackedDiff;
 }
 
-export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatus> {
+export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatusResult> {
   let repoInfo: Awaited<ReturnType<typeof detectRepoInfo>>;
   try {
     repoInfo = await detectRepoInfo(cwd);
@@ -281,10 +339,22 @@ export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatus> {
 
   const currentBranch = await getCurrentBranch(cwd);
   const isDirty = await isWorkingTreeDirty(cwd, repoInfo.type);
-  const baseRef = await resolveBaseRef(repoInfo.path);
-  const aheadBehind = baseRef && currentBranch
-    ? await getAheadBehind(cwd, baseRef, currentBranch)
-    : null;
+  const configured = await getConfiguredBaseRefForCwd(cwd);
+  const baseRef = configured.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  const aheadBehind =
+    baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
+
+  if (configured.isPaseoOwnedWorktree) {
+    return {
+      isGit: true,
+      repoRoot: repoInfo.path,
+      currentBranch,
+      isDirty,
+      baseRef: configured.baseRef,
+      aheadBehind,
+      isPaseoOwnedWorktree: true,
+    };
+  }
 
   return {
     isGit: true,
@@ -293,6 +363,7 @@ export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatus> {
     isDirty,
     baseRef,
     aheadBehind,
+    isPaseoOwnedWorktree: false,
   };
 }
 
@@ -311,12 +382,16 @@ export async function getCheckoutDiff(
     const untrackedDiff = await getUntrackedDiff(cwd);
     diff = trackedDiff + untrackedDiff;
   } else {
+    const configured = await getConfiguredBaseRefForCwd(cwd);
     const repoInfo = await detectRepoInfo(cwd);
-    const baseRef = compare.baseRef ?? (await resolveBaseRef(repoInfo.path));
+    const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(repoInfo.path));
     if (!baseRef) {
       diff = "";
+    } else if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
+      throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
     } else {
-      const { stdout } = await execAsync(`git diff ${baseRef}...HEAD`, {
+      const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+      const { stdout } = await execAsync(`git diff ${normalizedBaseRef}...HEAD`, {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });
@@ -350,17 +425,19 @@ export async function commitAll(cwd: string, message: string): Promise<void> {
 export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {}): Promise<void> {
   const repoInfo = await requireRepoInfo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
-  const baseRef = options.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  const configured = await getConfiguredBaseRefForCwd(cwd);
+  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(repoInfo.path));
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
+  }
+  if (configured.isPaseoOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
+    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
   }
   if (!currentBranch) {
     throw new Error("Unable to determine current branch for merge");
   }
   let normalizedBaseRef = baseRef;
-  if (normalizedBaseRef.startsWith("origin/")) {
-    normalizedBaseRef = normalizedBaseRef.slice("origin/".length);
-  }
+  normalizedBaseRef = normalizeLocalBranchRefName(normalizedBaseRef);
   if (normalizedBaseRef === currentBranch) {
     return;
   }
@@ -523,19 +600,24 @@ export async function createPullRequest(
 
   const repoInfo = await detectRepoInfo(cwd);
   const head = options.head ?? (await getCurrentBranch(cwd));
-  const base = options.base ?? (await resolveBaseRef(repoInfo.path));
+  const configured = await getConfiguredBaseRefForCwd(cwd);
+  const base = configured.baseRef ?? options.base ?? (await resolveBaseRef(repoInfo.path));
   if (!head) {
     throw new Error("Unable to determine head branch for PR");
   }
   if (!base) {
     throw new Error("Unable to determine base branch for PR");
   }
+  const normalizedBase = normalizeLocalBranchRefName(base);
+  if (configured.isPaseoOwnedWorktree && options.base && options.base !== base) {
+    throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
+  }
 
   await execAsync(`git push -u origin ${head}`, { cwd });
 
   const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];
   args.push("-f", `head=${head}`);
-  args.push("-f", `base=${base}`);
+  args.push("-f", `base=${normalizedBase}`);
   if (options.body) {
     args.push("-f", `body=${options.body}`);
   }

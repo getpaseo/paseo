@@ -108,7 +108,7 @@ async function createAgentAndWait(page: Page, message: string) {
 async function requestCwd(page: Page) {
   await sendPrompt(page, 'Run `pwd` and respond with exactly: CWD: <path>');
   const message = await waitForAssistantText(page, 'CWD:');
-  const content = await message.innerText();
+  const content = (await message.textContent()) ?? '';
   const match = content.match(/CWD:\s*(\S+)/);
   if (!match) {
     throw new Error(`Expected agent to respond with "CWD: <path>", got: ${content}`);
@@ -303,6 +303,8 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect(getChangesScope(page).getByText('No base changes')).toBeVisible({
       timeout: 60000,
     });
+    await refreshChangesTab(page);
+    await expect(getChangesActionLabel(page, 'Merge to base')).toHaveCount(0, { timeout: 30000 });
 
     await getChangesActionButton(page, 'Archive').click();
     // Archiving a worktree deletes agents and redirects to home
@@ -331,7 +333,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect(getChangesScope(page).getByTestId('changes-not-git')).toBeVisible();
     await expect(getChangesActionButton(page, 'Commit')).toHaveAttribute('aria-disabled', 'true');
     await expect(getChangesActionButton(page, 'Create PR')).toHaveAttribute('aria-disabled', 'true');
-    await expect(getChangesActionButton(page, 'Merge to base')).toHaveAttribute('aria-disabled', 'true');
+    await expect(getChangesActionLabel(page, 'Merge to base')).toHaveCount(0);
   } finally {
     await rm(nonGitDir, { recursive: true, force: true });
     await repo.cleanup();

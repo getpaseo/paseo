@@ -128,6 +128,7 @@ describe("self-identification MCP tools", () => {
       const worktree = await createWorktree({
         branchName: "self-ident",
         cwd: repoDir,
+        baseBranch: "main",
         worktreeSlug: "self-ident",
       });
 
@@ -176,6 +177,7 @@ describe("self-identification MCP tools", () => {
       const worktree = await createWorktree({
         branchName: "self-ident-subdir",
         cwd: repoDir,
+        baseBranch: "main",
         worktreeSlug: "self-ident-subdir",
       });
       const nestedDir = path.join(worktree.worktreePath, "nested");

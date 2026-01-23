@@ -128,7 +128,7 @@ describe("daemon E2E", () => {
 
         // Initialize git repo
         const { execSync } = await import("child_process");
-        execSync("git init", { cwd, stdio: "pipe" });
+        execSync("git init -b main", { cwd, stdio: "pipe" });
         execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
         execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
 
@@ -571,6 +571,7 @@ describe("daemon E2E", () => {
             createNewBranch: true,
             newBranchName: "worktree-test",
             worktreeSlug: "worktree-test",
+            baseBranch: "main",
           },
         });
 

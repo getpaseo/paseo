@@ -356,12 +356,13 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const [actionStatus, setActionStatus] = useState<string | null>(null);
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
     useCheckoutStatusQuery({ serverId, agentId });
-  const isGit = status?.isGit ?? false;
-  const notGit = Boolean(status) && !status?.isGit && !status?.error;
+  const gitStatus = status && status.isGit ? status : null;
+  const isGit = Boolean(gitStatus);
+  const notGit = status !== null && !status.isGit && !status.error;
   const statusErrorMessage =
     status?.error?.message ??
     (isStatusError && statusError instanceof Error ? statusError.message : null);
-  const baseRef = status?.baseRef ?? undefined;
+  const baseRef = gitStatus?.baseRef ?? undefined;
   const {
     files,
     payloadError: diffPayloadError,
@@ -593,17 +594,22 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     diffPayloadError?.message ??
     (isDiffError && diffError instanceof Error ? diffError.message : null);
   const prErrorMessage = prPayloadError?.message ?? null;
-  const branchLabel = status?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
+  const branchLabel =
+    gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
-  const hasUncommittedChanges = Boolean(status?.isDirty);
+  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const showCommitAction =
     !isGit || hasUncommittedChanges || (diffMode === "uncommitted" && hasChanges);
   const showCreatePrAction = !isGit || !prStatus;
+  const showMergeAction =
+    diffMode === "base" && isGit && (gitStatus?.aheadBehind?.ahead ?? 0) > 0;
   const commitDisabled = actionsDisabled || commitMutation.isPending;
   const prDisabled = actionsDisabled || prMutation.isPending;
   const mergeDisabled = actionsDisabled || mergeMutation.isPending;
   const archiveDisabled =
-    actionsDisabled || archiveMutation.isPending || !status?.isPaseoOwnedWorktree;
+    actionsDisabled ||
+    archiveMutation.isPending ||
+    !gitStatus?.isPaseoOwnedWorktree;
 
   let bodyContent: ReactElement;
 
@@ -745,18 +751,20 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
             )}
           </Pressable>
         ) : null}
-        <Pressable
-          testID="changes-action-merge"
-          style={[styles.actionButton, mergeDisabled && styles.actionButtonDisabled]}
-          onPress={() => mergeMutation.mutate()}
-          disabled={mergeDisabled}
-        >
-          {mergeMutation.isPending ? (
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
-          ) : (
-            <Text style={styles.actionButtonText}>Merge to base</Text>
-          )}
-        </Pressable>
+        {showMergeAction ? (
+          <Pressable
+            testID="changes-action-merge"
+            style={[styles.actionButton, mergeDisabled && styles.actionButtonDisabled]}
+            onPress={() => mergeMutation.mutate()}
+            disabled={mergeDisabled}
+          >
+            {mergeMutation.isPending ? (
+              <ActivityIndicator size="small" color={theme.colors.foreground} />
+            ) : (
+              <Text style={styles.actionButtonText}>Merge to base</Text>
+            )}
+          </Pressable>
+        ) : null}
         <Pressable
           testID="changes-action-archive"
           style={[styles.actionButton, archiveDisabled && styles.actionButtonDisabled]}
@@ -770,6 +778,11 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
           )}
         </Pressable>
       </View>
+
+      <Text style={styles.debugText} testID="changes-debug-state">
+        mode={diffMode} files={files.length} isGit={String(isGit)} ahead=
+        {gitStatus?.aheadBehind ? String(gitStatus.aheadBehind.ahead) : "null"}
+      </Text>
 
       {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
       {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
@@ -865,6 +878,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+  },
+  debugText: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   actionStatusText: {
     paddingHorizontal: theme.spacing[3],

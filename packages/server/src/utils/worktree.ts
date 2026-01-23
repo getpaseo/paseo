@@ -3,6 +3,7 @@ import { promisify } from "util";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import { createNameId } from "mnemonic-id";
+import { normalizeBaseRefName, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 interface PaseoConfig {
   worktree?: {
@@ -63,7 +64,7 @@ export type PaseoWorktreeOwnership = {
 interface CreateWorktreeOptions {
   branchName: string;
   cwd: string;
-  baseBranch?: string;
+  baseBranch: string;
   worktreeSlug?: string;
   runSetup?: boolean;
 }
@@ -494,6 +495,19 @@ export async function createWorktree({
   // Ensure .paseo exists and is ignored
   ensurePaseoIgnoredForRepo(repoInfo);
 
+  const normalizedBaseBranch = baseBranch ? normalizeBaseRefName(baseBranch) : "";
+  if (!normalizedBaseBranch) {
+    throw new Error("Base branch is required when creating a Paseo worktree");
+  }
+  if (normalizedBaseBranch === "HEAD") {
+    throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
+  }
+  try {
+    await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd: repoInfo.path });
+  } catch {
+    throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+  }
+
   // Determine worktree directory based on repo type
   let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
@@ -516,7 +530,7 @@ export async function createWorktree({
   // Always create a new branch for the worktree
   // If branchName already exists, use it as base and create worktree-slug as branch name
   // If branchName doesn't exist, create it from baseBranch
-  const base = branchExists ? branchName : (baseBranch ?? "HEAD");
+  const base = branchExists ? branchName : normalizedBaseBranch;
   const candidateBranch = branchExists ? desiredSlug : branchName;
 
   // Find unique branch name if collision
@@ -547,6 +561,8 @@ export async function createWorktree({
   const command = `git worktree add "${finalWorktreePath}" -b "${newBranchName}" "${base}"`;
   await execAsync(command, { cwd: repoInfo.path });
   worktreePath = finalWorktreePath;
+
+  writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
 
   if (runSetup) {
     await runWorktreeSetupCommands({

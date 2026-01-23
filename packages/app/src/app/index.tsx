@@ -416,8 +416,11 @@ export default function HomeScreen() {
   ]);
 
   const baseBranchError = useMemo(() => {
-    if (!isCreateWorktree || isNonGitDirectory || !baseBranch) {
+    if (!isCreateWorktree || isNonGitDirectory) {
       return null;
+    }
+    if (!baseBranch) {
+      return "Base branch is required";
     }
     const branches = repoInfo?.branches ?? [];
     if (branches.length === 0) {
@@ -441,6 +444,19 @@ export default function HomeScreen() {
     },
     [setWorkingDirFromUser]
   );
+
+  useEffect(() => {
+    if (!isCreateWorktree || isNonGitDirectory) {
+      return;
+    }
+    if (baseBranch) {
+      return;
+    }
+    const current = repoInfo?.currentBranch?.trim();
+    if (current) {
+      setBaseBranch(current);
+    }
+  }, [isCreateWorktree, isNonGitDirectory, baseBranch, repoInfo?.currentBranch]);
 
   useEffect(() => {
     if (isNonGitDirectory && worktreeMode !== "none") {
@@ -514,7 +530,7 @@ export default function HomeScreen() {
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
       };
-      const effectiveBaseBranch = baseBranch.trim() || repoInfo?.currentBranch || undefined;
+      const effectiveBaseBranch = baseBranch.trim();
       const effectiveWorktreeSlug =
         isCreateWorktree && !worktreeSlug ? createNameId() : worktreeSlug;
       if (isCreateWorktree && !worktreeSlug && effectiveWorktreeSlug) {

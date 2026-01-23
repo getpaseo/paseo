@@ -12,6 +12,7 @@ import {
   NotGitRepoError,
 } from "./checkout-git.js";
 import { createWorktree } from "./worktree.js";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
@@ -87,6 +88,7 @@ describe("checkout git utilities", () => {
     const result = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "alpha",
     });
 
@@ -117,6 +119,7 @@ describe("checkout git utilities", () => {
     const worktree = await createWorktree({
       branchName: "main",
       cwd: repoDir,
+      baseBranch: "main",
       worktreeSlug: "merge",
     });
 
@@ -137,6 +140,12 @@ describe("checkout git utilities", () => {
       stdio: "pipe",
     });
     expect(baseContainsFeature).toBeDefined();
+
+    const statusAfterMerge = await getCheckoutStatus(worktree.worktreePath);
+    expect(statusAfterMerge.isGit).toBe(true);
+    if (statusAfterMerge.isGit) {
+      expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
+    }
 
     const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
       cwd: worktree.worktreePath,
@@ -173,5 +182,97 @@ describe("checkout git utilities", () => {
     await expect(
       mergeToBase(repoDir, { baseRef: "main" })
     ).rejects.toBeInstanceOf(MergeConflictError);
+  });
+
+  it("uses stored baseRefName for Paseo worktrees (no heuristics)", async () => {
+    // Create a non-default base branch with a unique commit.
+    execSync("git checkout -b develop", { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "develop\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'develop change'", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    // Create a worktree/branch based on develop, but keep main as the repo default.
+    const worktree = await createWorktree({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "develop",
+      worktreeSlug: "feature",
+    });
+
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+
+    const status = await getCheckoutStatus(worktree.worktreePath);
+    expect(status.isGit).toBe(true);
+    expect(status.baseRef).toBe("develop");
+    expect(status.aheadBehind?.ahead).toBe(1);
+
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" });
+    expect(baseDiff.diff).toContain("feature.txt");
+    expect(baseDiff.diff).not.toContain("file.txt");
+  });
+
+  it("merges to stored baseRefName when baseRef is not provided", async () => {
+    // Create a non-default base branch with a unique commit.
+    execSync("git checkout -b develop", { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "develop\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'develop change'", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    // Create a Paseo worktree configured to use develop as base.
+    const worktree = await createWorktree({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "develop",
+      worktreeSlug: "merge-to-develop",
+    });
+
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+    const featureCommit = execSync("git rev-parse HEAD", { cwd: worktree.worktreePath })
+      .toString()
+      .trim();
+
+    // No baseRef passed: should merge into the configured base (develop), not default/main.
+    await mergeToBase(worktree.worktreePath);
+
+    execSync(`git merge-base --is-ancestor ${featureCommit} develop`, {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    expect(() =>
+      execSync(`git merge-base --is-ancestor ${featureCommit} main`, {
+        cwd: repoDir,
+        stdio: "pipe",
+      })
+    ).toThrow();
+  });
+
+  it("throws if Paseo worktree base metadata is missing", async () => {
+    const worktree = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "missing-metadata",
+    });
+
+    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    rmSync(metadataPath, { force: true });
+
+    await expect(getCheckoutStatus(worktree.worktreePath)).rejects.toThrow(
+      /base/i
+    );
+    await expect(getCheckoutDiff(worktree.worktreePath, { mode: "base" })).rejects.toThrow(
+      /base/i
+    );
+    await expect(mergeToBase(worktree.worktreePath)).rejects.toThrow(/base/i);
   });
 });

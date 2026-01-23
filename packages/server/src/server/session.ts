@@ -1587,9 +1587,7 @@ export class Session {
       const createdWorktree = await createWorktree({
         branchName: targetBranch,
         cwd,
-        baseBranch: normalized.createNewBranch
-          ? normalized.baseBranch
-          : undefined,
+        baseBranch: normalized.baseBranch!,
         worktreeSlug: normalized.worktreeSlug ?? targetBranch,
         runSetup: false,
       });
@@ -1598,7 +1596,7 @@ export class Session {
     } else if (normalized.createNewBranch) {
       await this.createBranchFromBase({
         cwd,
-        baseBranch: normalized.baseBranch ?? "HEAD",
+        baseBranch: normalized.baseBranch!,
         newBranchName: normalized.newBranchName!,
       });
     } else if (normalized.baseBranch) {
@@ -1820,6 +1818,13 @@ export class Session {
 
     if (baseBranch) {
       this.assertSafeGitRef(baseBranch, "base branch");
+    }
+
+    if (createWorktree && !baseBranch) {
+      throw new Error("Base branch is required when creating a worktree");
+    }
+    if (createNewBranch && !baseBranch) {
+      throw new Error("Base branch is required when creating a new branch");
     }
 
     if (createNewBranch) {
@@ -2382,7 +2387,7 @@ export class Session {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
-          isPaseoOwnedWorktree: null,
+          isPaseoOwnedWorktree: false,
           error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
           requestId,
         },
@@ -2412,12 +2417,24 @@ export class Session {
         return;
       }
 
-      let isPaseoOwnedWorktree = false;
-      try {
-        const ownership = await isPaseoOwnedWorktreeCwd(agent.cwd);
-        isPaseoOwnedWorktree = ownership.allowed;
-      } catch {
-        isPaseoOwnedWorktree = false;
+      if (status.isPaseoOwnedWorktree) {
+        this.emit({
+          type: "checkout_status_response",
+          payload: {
+            agentId,
+            cwd: agent.cwd,
+            isGit: true,
+            repoRoot: status.repoRoot ?? null,
+            currentBranch: status.currentBranch ?? null,
+            isDirty: status.isDirty ?? null,
+            baseRef: status.baseRef,
+            aheadBehind: status.aheadBehind ?? null,
+            isPaseoOwnedWorktree: true,
+            error: null,
+            requestId,
+          },
+        });
+        return;
       }
 
       this.emit({
@@ -2431,7 +2448,7 @@ export class Session {
           isDirty: status.isDirty ?? null,
           baseRef: status.baseRef ?? null,
           aheadBehind: status.aheadBehind ?? null,
-          isPaseoOwnedWorktree,
+          isPaseoOwnedWorktree: false,
           error: null,
           requestId,
         },
@@ -2448,7 +2465,7 @@ export class Session {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
-          isPaseoOwnedWorktree: null,
+          isPaseoOwnedWorktree: false,
           error: this.toCheckoutError(error),
           requestId,
         },
@@ -2577,13 +2594,35 @@ export class Session {
     try {
       const status = await getCheckoutStatus(agent.cwd);
       if (!status.isGit) {
-        throw new NotGitRepoError(agent.cwd);
-      }
-      if (msg.requireCleanTarget && status.isDirty) {
-        throw new Error("Working directory has uncommitted changes.");
+        // `getCheckoutStatus` can return `isGit=false` in transient situations (e.g. cwd lookup
+        // running during other git operations). Double-check with git directly before failing.
+        try {
+          await execAsync("git rev-parse --is-inside-work-tree", {
+            cwd: agent.cwd,
+            env: READ_ONLY_GIT_ENV,
+          });
+        } catch (error) {
+          const details =
+            typeof (error as any)?.stderr === "string"
+              ? String((error as any).stderr).trim()
+              : error instanceof Error
+                ? error.message
+                : String(error);
+          throw new Error(`Not a git repository: ${agent.cwd}\n${details}`.trim());
+        }
       }
 
-      let baseRef = msg.baseRef ?? status.baseRef ?? null;
+      if (msg.requireCleanTarget) {
+        const { stdout } = await execAsync("git status --porcelain", {
+          cwd: agent.cwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        if (stdout.trim().length > 0) {
+          throw new Error("Working directory has uncommitted changes.");
+        }
+      }
+
+      let baseRef = msg.baseRef ?? (status.isGit ? status.baseRef : null);
       if (!baseRef) {
         throw new Error("Base branch is required for merge");
       }

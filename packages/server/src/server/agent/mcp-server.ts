@@ -336,6 +336,12 @@ export async function createAgentMcpServer(
       .describe(
         "Optional git worktree branch name (lowercase alphanumerics + hyphen)."
       ),
+    baseBranch: z
+      .string()
+      .optional()
+      .describe(
+        "Required when worktreeName is set: the base branch to diff/merge against."
+      ),
     background: z
       .boolean()
       .optional()
@@ -422,21 +428,27 @@ export async function createAgentMcpServer(
           cwd: string;
           initialMode: string;
           worktreeName?: string;
+          baseBranch?: string;
           parentAgentId?: string;
         };
         const {
           cwd,
           initialMode,
           worktreeName,
+          baseBranch,
           parentAgentId,
         } = topLevelArgs;
 
         resolvedCwd = expandPath(cwd);
 
         if (worktreeName) {
+          if (!baseBranch) {
+            throw new Error("baseBranch is required when creating a worktree");
+          }
           const worktree = await createWorktree({
             branchName: worktreeName,
             cwd: resolvedCwd,
+            baseBranch,
             worktreeSlug: worktreeName,
           });
           resolvedCwd = worktree.worktreePath;

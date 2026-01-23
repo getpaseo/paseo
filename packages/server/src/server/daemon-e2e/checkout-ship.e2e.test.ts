@@ -194,6 +194,9 @@ describe("daemon checkout ship loop", () => {
         expect(status.isGit).toBe(true);
         expect(status.isPaseoOwnedWorktree).toBe(true);
         expect(status.repoRoot).toContain(repoDir);
+        if (status.isGit) {
+          expect(status.baseRef).toBe("main");
+        }
 
         mcpClient = await createMcpClient(ctx.daemon.port, agent.id);
         const renameResult = (await mcpClient.callTool({
@@ -260,6 +263,13 @@ describe("daemon checkout ship loop", () => {
         });
         expect(mergeResult.error).toBeNull();
         expect(mergeResult.success).toBe(true);
+
+        const statusAfterMerge = await ctx.client.getCheckoutStatus(agent.id);
+        expect(statusAfterMerge.isGit).toBe(true);
+        if (statusAfterMerge.isGit) {
+          expect(statusAfterMerge.baseRef).toBe("main");
+          expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
+        }
 
         const baseDiffAfterMerge = await ctx.client.getCheckoutDiff(agent.id, {
           mode: "base",

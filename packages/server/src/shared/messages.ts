@@ -966,21 +966,50 @@ const AheadBehindSchema = z.object({
   behind: z.number(),
 });
 
+const CheckoutStatusCommonSchema = z.object({
+  agentId: z.string(),
+  cwd: z.string(),
+  error: CheckoutErrorSchema.nullable(),
+  requestId: z.string(),
+});
+
+const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
+  isGit: z.literal(false),
+  isPaseoOwnedWorktree: z.literal(false),
+  repoRoot: z.null(),
+  currentBranch: z.null(),
+  isDirty: z.null(),
+  baseRef: z.null(),
+  aheadBehind: z.null(),
+});
+
+const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
+  isGit: z.literal(true),
+  isPaseoOwnedWorktree: z.literal(false),
+  repoRoot: z.string(),
+  currentBranch: z.string().nullable(),
+  isDirty: z.boolean(),
+  baseRef: z.string().nullable(),
+  aheadBehind: AheadBehindSchema.nullable(),
+});
+
+const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
+  isGit: z.literal(true),
+  isPaseoOwnedWorktree: z.literal(true),
+  repoRoot: z.string(),
+  currentBranch: z.string().nullable(),
+  isDirty: z.boolean(),
+  baseRef: z.string(),
+  aheadBehind: AheadBehindSchema.nullable(),
+});
+
 export const CheckoutStatusResponseSchema = z.object({
   type: z.literal("checkout_status_response"),
-  payload: z.object({
-    agentId: z.string(),
-    cwd: z.string(),
-    isGit: z.boolean(),
-    repoRoot: z.string().nullable().optional(),
-    currentBranch: z.string().nullable().optional(),
-    isDirty: z.boolean().nullable().optional(),
-    baseRef: z.string().nullable().optional(),
-    aheadBehind: AheadBehindSchema.nullable().optional(),
-    isPaseoOwnedWorktree: z.boolean().nullable().optional(),
-    error: CheckoutErrorSchema.nullable(),
-    requestId: z.string(),
-  }),
+  payload: z.union([
+    CheckoutStatusNotGitSchema,
+    CheckoutStatusGitNonPaseoSchema,
+    CheckoutStatusGitPaseoSchema,
+  ]),
 });
 
 export const CheckoutDiffResponseSchema = z.object({
