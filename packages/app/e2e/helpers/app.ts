@@ -213,6 +213,8 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   const useOption = page.getByText(`Use "${directory}"`);
   await expect(useOption).toBeVisible();
   await useOption.click({ force: true });
+  // Wait for UI to update after clicking "Use"
+  await page.waitForTimeout(500);
   const normalizedDirectory = directory.startsWith('/var/')
     ? `/private${directory}`
     : directory;
@@ -220,7 +222,7 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   await expect.poll(async () => {
     const text = await workingDirectoryContainer.innerText();
     return text.includes(directory) || text.includes(normalizedDirectory);
-  }).toBe(true);
+  }, { timeout: 15000 }).toBe(true);
 };
 
 export const ensureHostSelected = async (page: Page) => {

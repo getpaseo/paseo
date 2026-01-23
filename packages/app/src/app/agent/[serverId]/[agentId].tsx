@@ -562,7 +562,7 @@ function AgentScreenContent({
 
   if (!agent) {
     return (
-      <View style={styles.container}>
+      <View style={styles.container} testID="agent-not-found">
         <MenuHeader title="Agent" />
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Agent not found</Text>

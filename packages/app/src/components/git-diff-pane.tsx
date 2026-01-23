@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useId, useMemo, useRef, memo, type ReactElement } from "react";
+import { useRouter } from "expo-router";
 import {
   View,
   Text,
@@ -13,7 +14,6 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, GitBranch } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
 import { useSessionStore } from "@/stores/session-store";
 import {
   useCheckoutDiffQuery,
@@ -557,7 +557,6 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         predicate: (query) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
       });
-      // Archiving a worktree also archives all its agents, so navigate to new agent screen
       router.replace("/");
     },
     onError: (err) => {
