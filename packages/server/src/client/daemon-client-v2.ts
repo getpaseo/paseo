@@ -961,7 +961,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -990,7 +990,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -1020,7 +1020,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -1051,7 +1051,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -1082,7 +1082,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      30000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -1109,7 +1109,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      30000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
@@ -1137,7 +1137,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
+      60000,
       { skipQueue: true }
     );
     this.sendSessionMessage(message);
