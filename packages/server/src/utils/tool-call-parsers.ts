@@ -22,6 +22,9 @@ const PrincipalParamSchema = z.union([
   // Command as array (Codex sends this)
   z.object({ command: z.array(z.string()).nonempty() }).transform((d) => ({ type: "command" as const, value: d.command.join(" ") })),
   // Other text params
+  z.object({ title: z.string() }).transform((d) => ({ type: "text" as const, value: d.title })),
+  z.object({ name: z.string() }).transform((d) => ({ type: "text" as const, value: d.name })),
+  z.object({ branch: z.string() }).transform((d) => ({ type: "text" as const, value: d.branch })),
   z.object({ pattern: z.string() }).transform((d) => ({ type: "text" as const, value: d.pattern })),
   z.object({ query: z.string() }).transform((d) => ({ type: "text" as const, value: d.query })),
   z.object({ url: z.string() }).transform((d) => ({ type: "text" as const, value: d.url })),
