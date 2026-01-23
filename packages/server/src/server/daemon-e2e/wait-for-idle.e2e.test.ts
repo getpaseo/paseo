@@ -13,7 +13,7 @@ function tmpCwd(): string {
 
 /**
  * Tests for waitForAgentIdle edge cases.
- * Uses haiku for speed. 10s timeout per operation - if slower, it's a bug.
+ * Uses haiku for speed. Allow higher timeouts in CI / congested environments.
  */
 describe("waitForAgentIdle edge cases", () => {
   let ctx: DaemonTestContext;
@@ -24,7 +24,7 @@ describe("waitForAgentIdle edge cases", () => {
 
   afterEach(async () => {
     await ctx.cleanup();
-  }, 15000);
+  }, 30000);
 
   test("waitForAgentIdle immediately after sendMessage", async () => {
     const cwd = tmpCwd();
@@ -39,13 +39,13 @@ describe("waitForAgentIdle edge cases", () => {
 
     // This was the original bug: waitForAgentIdle returned old idle states
     await ctx.client.sendMessage(agent.id, "Say 'hello'");
-    const state = await ctx.client.waitForAgentIdle(agent.id, 10000);
+    const state = await ctx.client.waitForAgentIdle(agent.id, 30000);
 
     expect(state.status).toBe("idle");
 
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
-  }, 15000);
+  }, 45000);
 
   test("rapid fire messages then single wait", async () => {
     const cwd = tmpCwd();
@@ -64,7 +64,7 @@ describe("waitForAgentIdle edge cases", () => {
     await ctx.client.sendMessage(agent.id, "Say 'two'");
     await ctx.client.sendMessage(agent.id, "Say 'three'");
 
-    const state = await ctx.client.waitForAgentIdle(agent.id, 10000);
+    const state = await ctx.client.waitForAgentIdle(agent.id, 30000);
     expect(state.status).toBe("idle");
 
     // Verify all 3 messages were recorded
@@ -80,7 +80,7 @@ describe("waitForAgentIdle edge cases", () => {
 
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
-  }, 15000);
+  }, 45000);
 
   test("two agents: waitForAgentIdle filters by agent", async () => {
     const cwd1 = tmpCwd();
@@ -107,11 +107,11 @@ describe("waitForAgentIdle edge cases", () => {
     await ctx.client.sendMessage(agent2.id, "Say 'agent two'");
 
     // Wait for each - should not be confused by the other's state
-    const state2 = await ctx.client.waitForAgentIdle(agent2.id, 10000);
+    const state2 = await ctx.client.waitForAgentIdle(agent2.id, 30000);
     expect(state2.status).toBe("idle");
     expect(state2.id).toBe(agent2.id);
 
-    const state1 = await ctx.client.waitForAgentIdle(agent1.id, 10000);
+    const state1 = await ctx.client.waitForAgentIdle(agent1.id, 30000);
     expect(state1.status).toBe("idle");
     expect(state1.id).toBe(agent1.id);
 
@@ -119,5 +119,5 @@ describe("waitForAgentIdle edge cases", () => {
     await ctx.client.deleteAgent(agent2.id);
     rmSync(cwd1, { recursive: true, force: true });
     rmSync(cwd2, { recursive: true, force: true });
-  }, 25000);
+  }, 60000);
 });

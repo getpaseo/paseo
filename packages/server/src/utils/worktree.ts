@@ -22,11 +22,29 @@ interface RepoInfo {
   name: string;
 }
 
-interface WorktreeConfig {
+export interface WorktreeConfig {
   branchName: string;
   worktreePath: string;
   repoType: "bare" | "normal";
   repoPath: string;
+}
+
+export type WorktreeSetupCommandResult = {
+  command: string;
+  cwd: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+};
+
+export class WorktreeSetupError extends Error {
+  readonly results: WorktreeSetupCommandResult[];
+
+  constructor(message: string, results: WorktreeSetupCommandResult[]) {
+    super(message);
+    this.name = "WorktreeSetupError";
+    this.results = results;
+  }
 }
 
 export interface PaseoWorktreeInfo {
@@ -47,6 +65,104 @@ interface CreateWorktreeOptions {
   cwd: string;
   baseBranch?: string;
   worktreeSlug?: string;
+  runSetup?: boolean;
+}
+
+function readPaseoConfig(repoRoot: string): PaseoConfig | null {
+  const paseoConfigPath = join(repoRoot, "paseo.json");
+  if (!existsSync(paseoConfigPath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(paseoConfigPath, "utf8"));
+  } catch {
+    throw new Error(`Failed to parse paseo.json`);
+  }
+}
+
+export function getWorktreeSetupCommands(repoRoot: string): string[] {
+  const config = readPaseoConfig(repoRoot);
+  const setupCommands = config?.worktree?.setup;
+  if (!setupCommands || setupCommands.length === 0) {
+    return [];
+  }
+  return setupCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
+}
+
+async function execSetupCommand(
+  command: string,
+  options: { cwd: string; env: NodeJS.ProcessEnv }
+): Promise<WorktreeSetupCommandResult> {
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: "/bin/bash",
+    });
+    return {
+      command,
+      cwd: options.cwd,
+      stdout: stdout ?? "",
+      stderr: stderr ?? "",
+      exitCode: 0,
+    };
+  } catch (error: any) {
+    return {
+      command,
+      cwd: options.cwd,
+      stdout: error?.stdout ?? "",
+      stderr:
+        error?.stderr ??
+        (error instanceof Error ? error.message : String(error)),
+      exitCode: typeof error?.code === "number" ? error.code : null,
+    };
+  }
+}
+
+export async function runWorktreeSetupCommands(options: {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+  cleanupOnFailure: boolean;
+}): Promise<WorktreeSetupCommandResult[]> {
+  const setupCommands = getWorktreeSetupCommands(options.repoRoot);
+  if (setupCommands.length === 0) {
+    return [];
+  }
+
+  const setupEnv = {
+    ...process.env,
+    PASEO_ROOT_PATH: options.repoRoot,
+    PASEO_WORKTREE_PATH: options.worktreePath,
+    PASEO_BRANCH_NAME: options.branchName,
+  };
+
+  const results: WorktreeSetupCommandResult[] = [];
+  for (const cmd of setupCommands) {
+    const result = await execSetupCommand(cmd, {
+      cwd: options.worktreePath,
+      env: setupEnv,
+    });
+    results.push(result);
+
+    if (result.exitCode !== 0) {
+      if (options.cleanupOnFailure) {
+        try {
+          await execAsync(`git worktree remove "${options.worktreePath}" --force`, {
+            cwd: options.repoRoot,
+          });
+        } catch {
+          rmSync(options.worktreePath, { recursive: true, force: true });
+        }
+      }
+      throw new WorktreeSetupError(
+        `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
+        results
+      );
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -364,6 +480,7 @@ export async function createWorktree({
   cwd,
   baseBranch,
   worktreeSlug,
+  runSetup = true,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
   // Validate branch name
   const validation = validateBranchSlug(branchName);
@@ -431,48 +548,13 @@ export async function createWorktree({
   await execAsync(command, { cwd: repoInfo.path });
   worktreePath = finalWorktreePath;
 
-  // Run setup commands from paseo.json if present (look in source worktree, not bare repo)
-  const paseoConfigPath = join(repoInfo.path, "paseo.json");
-  if (existsSync(paseoConfigPath)) {
-    let config: PaseoConfig;
-    try {
-      config = JSON.parse(readFileSync(paseoConfigPath, "utf8"));
-    } catch {
-      throw new Error(`Failed to parse paseo.json`);
-    }
-
-    const setupCommands = config.worktree?.setup;
-    if (setupCommands && setupCommands.length > 0) {
-      const setupEnv = {
-        ...process.env,
-        PASEO_ROOT_PATH: repoInfo.path,
-        PASEO_WORKTREE_PATH: worktreePath,
-        PASEO_BRANCH_NAME: newBranchName,
-      };
-
-      for (const cmd of setupCommands) {
-        try {
-          await execAsync(cmd, {
-            cwd: worktreePath,
-            env: setupEnv,
-            shell: "/bin/bash",
-          });
-        } catch (error) {
-          // Cleanup worktree on setup failure
-          try {
-            await execAsync(`git worktree remove "${worktreePath}" --force`, {
-              cwd: repoInfo.path,
-            });
-          } catch {
-            // If git worktree remove fails, try rmSync
-            rmSync(worktreePath, { recursive: true, force: true });
-          }
-          throw new Error(
-            `Worktree setup command failed: ${cmd}\n${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }
-    }
+  if (runSetup) {
+    await runWorktreeSetupCommands({
+      repoRoot: repoInfo.path,
+      worktreePath,
+      branchName: newBranchName,
+      cleanupOnFailure: true,
+    });
   }
 
   return {

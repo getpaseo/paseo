@@ -235,15 +235,15 @@ type EnvDaemonConfig = {
 };
 
 function parseEnvDaemonDefaults(): HostProfile[] {
-  const envDaemons = (() => {
+  const envDaemons = ((): EnvDaemonConfig[] => {
     // Primary: allow a JSON array string like
     // EXPO_PUBLIC_DAEMONS='[{"label":"Host","endpoint":"10.0.0.1:6767"}]'
     const jsonList = process.env.EXPO_PUBLIC_DAEMONS;
     if (jsonList) {
       try {
-        const parsed = JSON.parse(jsonList) as EnvDaemonConfig[];
+        const parsed = JSON.parse(jsonList) as unknown;
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed as EnvDaemonConfig[];
         }
       } catch (error) {
         console.warn("[DaemonRegistry] Failed to parse EXPO_PUBLIC_DAEMONS:", error);

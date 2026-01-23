@@ -1161,6 +1161,7 @@ const TOOL_NAME_MAP: Record<string, string> = {
   Bash: "Shell",
   read_file: "Read",
   apply_patch: "Edit",
+  paseo_worktree_setup: "Setup",
   "agent-control.set_title": "Set title",
   "agent-control.set_branch": "Set branch",
   set_title: "Set title",

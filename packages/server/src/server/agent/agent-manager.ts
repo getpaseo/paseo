@@ -468,6 +468,18 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    agent.updatedAt = new Date();
+    this.recordTimeline(agent, item);
+    this.dispatchStream(agentId, {
+      type: "timeline",
+      item,
+      provider: agent.provider,
+    });
+    await this.persistSnapshot(agent);
+  }
+
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,
