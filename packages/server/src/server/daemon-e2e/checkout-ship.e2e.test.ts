@@ -19,6 +19,17 @@ function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
 }
 
+function hasGitHubCliAuth(): boolean {
+  try {
+    execSync("gh auth status -h github.com", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const testWithGitHubCliAuth = hasGitHubCliAuth() ? test : test.skip;
+
 type McpToolResult = {
   structuredContent?: Record<string, unknown>;
   content?: Array<{ structuredContent?: Record<string, unknown> } | Record<string, unknown>>;
@@ -137,7 +148,7 @@ describe("daemon checkout ship loop", () => {
     await ctx.cleanup();
   }, 60000);
 
-  test(
+  testWithGitHubCliAuth(
     "runs the full checkout ship loop via checkout RPCs",
     async () => {
       const repoDir = tmpCwd("checkout-ship-");

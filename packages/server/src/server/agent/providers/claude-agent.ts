@@ -48,7 +48,6 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
-import { getSelfIdentificationInstructions } from "../self-identification-instructions.js";
 
 const fsPromises = promises;
 
@@ -802,12 +801,7 @@ class ClaudeAgentSession implements AgentSession {
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: [
-          getOrchestratorModeInstructions(),
-          this.currentMode === "plan" ? "" : getSelfIdentificationInstructions({ cwd: this.config.cwd }),
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        append: [getOrchestratorModeInstructions()].filter(Boolean).join("\n"),
       },
       settingSources: ["user", "project"],
       stderr: (data: string) => {

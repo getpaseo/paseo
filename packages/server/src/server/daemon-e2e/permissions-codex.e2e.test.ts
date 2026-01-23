@@ -40,7 +40,7 @@ describe("daemon E2E", () => {
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
           cwd,
           title: "Codex Permission Test",
-          modeId: "auto",
+          modeId: "read-only",
         });
 
         expect(agent.id).toBeTruthy();
@@ -105,7 +105,7 @@ describe("daemon E2E", () => {
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
           cwd,
           title: "Codex Permission Deny Test",
-          modeId: "auto",
+          modeId: "read-only",
         });
 
         expect(agent.id).toBeTruthy();

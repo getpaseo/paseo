@@ -5,6 +5,7 @@ import {
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
 import type { Logger } from "pino";
+import { getSelfIdentificationInstructions } from "./self-identification-instructions.js";
 
 import type {
   AgentCapabilityFlags,
@@ -1104,6 +1105,15 @@ export class AgentManager {
 
     if (!normalized.agentControlMcp && this.agentControlMcp) {
       normalized.agentControlMcp = this.agentControlMcp;
+    }
+
+    if (
+      normalized.paseoPromptInstructions === undefined &&
+      normalized.agentControlMcp
+    ) {
+      normalized.paseoPromptInstructions = getSelfIdentificationInstructions({
+        cwd: normalized.cwd,
+      });
     }
 
     return normalized;

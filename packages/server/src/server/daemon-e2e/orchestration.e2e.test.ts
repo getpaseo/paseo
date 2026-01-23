@@ -120,11 +120,36 @@ describe("daemon E2E", () => {
           createAgentCall.type === "tool_call" &&
           createAgentCall.output
         ) {
-          // The output contains the agentId
-          const output = createAgentCall.output as { agentId?: string };
-          if (output.agentId) {
-            childAgentId = output.agentId;
-          }
+          const output = createAgentCall.output as unknown;
+          const tryExtract = (value: unknown): string | null => {
+            if (!value) return null;
+            if (typeof value === "string") {
+              try {
+                return tryExtract(JSON.parse(value));
+              } catch {
+                return null;
+              }
+            }
+            if (typeof value !== "object") return null;
+            const asObj = value as Record<string, unknown>;
+            const direct = asObj.agentId;
+            if (typeof direct === "string") return direct;
+            const structured = asObj.structuredContent;
+            if (structured && typeof structured === "object") {
+              const nested = (structured as Record<string, unknown>).agentId;
+              if (typeof nested === "string") return nested;
+            }
+            if (typeof structured === "string") {
+              try {
+                return tryExtract(JSON.parse(structured));
+              } catch {
+                return null;
+              }
+            }
+            return null;
+          };
+
+          childAgentId = tryExtract(output);
         }
 
         // Verify we found the child agent ID
