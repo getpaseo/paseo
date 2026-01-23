@@ -329,11 +329,33 @@ export const SendAgentMessageSchema = z.object({
   })).optional(),
 });
 
-export const TranscribeAudioRequestSchema = z.object({
-  type: z.literal("transcribe_audio_request"),
-  audio: z.string(), // base64 encoded
-  format: z.string(),
-  requestId: z.string(),
+// ============================================================================
+// Dictation Streaming (lossless, resumable)
+// ============================================================================
+
+export const DictationStreamStartMessageSchema = z.object({
+  type: z.literal("dictation_stream_start"),
+  dictationId: z.string(),
+  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
+});
+
+export const DictationStreamChunkMessageSchema = z.object({
+  type: z.literal("dictation_stream_chunk"),
+  dictationId: z.string(),
+  seq: z.number().int().nonnegative(),
+  audio: z.string(), // base64 encoded chunk
+  format: z.string(), // e.g. "audio/pcm;rate=16000;bits=16"
+});
+
+export const DictationStreamFinishMessageSchema = z.object({
+  type: z.literal("dictation_stream_finish"),
+  dictationId: z.string(),
+  finalSeq: z.number().int().nonnegative(),
+});
+
+export const DictationStreamCancelMessageSchema = z.object({
+  type: z.literal("dictation_stream_cancel"),
+  dictationId: z.string(),
 });
 
 const GitSetupOptionsSchema = z.object({
@@ -683,7 +705,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteAgentRequestMessageSchema,
   SetVoiceConversationMessageSchema,
   SendAgentMessageSchema,
-  TranscribeAudioRequestSchema,
+  DictationStreamStartMessageSchema,
+  DictationStreamChunkMessageSchema,
+  DictationStreamFinishMessageSchema,
+  DictationStreamCancelMessageSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
@@ -777,6 +802,31 @@ export const TranscriptionResultMessageSchema = z.object({
     byteLength: z.number().optional(),
     format: z.string().optional(),
     debugRecordingPath: z.string().optional(),
+  }),
+});
+
+export const DictationStreamAckMessageSchema = z.object({
+  type: z.literal("dictation_stream_ack"),
+  payload: z.object({
+    dictationId: z.string(),
+    ackSeq: z.number().int(),
+  }),
+});
+
+export const DictationStreamFinalMessageSchema = z.object({
+  type: z.literal("dictation_stream_final"),
+  payload: z.object({
+    dictationId: z.string(),
+    text: z.string(),
+  }),
+});
+
+export const DictationStreamErrorMessageSchema = z.object({
+  type: z.literal("dictation_stream_error"),
+  payload: z.object({
+    dictationId: z.string(),
+    error: z.string(),
+    retryable: z.boolean(),
   }),
 });
 
@@ -1273,6 +1323,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,
   TranscriptionResultMessageSchema,
+  DictationStreamAckMessageSchema,
+  DictationStreamFinalMessageSchema,
+  DictationStreamErrorMessageSchema,
   StatusMessageSchema,
   InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
@@ -1352,7 +1405,10 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
 export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessageSchema>;
 export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
-export type TranscribeAudioRequest = z.infer<typeof TranscribeAudioRequestSchema>;
+export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
+export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;
+export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishMessageSchema>;
+export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema

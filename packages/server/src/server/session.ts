@@ -35,6 +35,8 @@ import { TTSManager } from "./agent/tts-manager.js";
 import { STTManager } from "./agent/stt-manager.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
+import { OpenAIRealtimeTranscriptionSession } from "./agent/openai-realtime-transcription.js";
+import { Pcm16MonoResampler } from "./agent/pcm16-resampler.js";
 import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
   buildConfigOverrides,
@@ -136,6 +138,21 @@ const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
 const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS
 );
+
+const DICTATION_PCM_INPUT_RATE = 16000;
+const DICTATION_PCM_OUTPUT_RATE = 24000;
+const DICTATION_COMMIT_INTERVAL_MS = Number.parseInt(
+  process.env.OPENAI_REALTIME_DICTATION_COMMIT_MS ?? "5000",
+  10
+);
+const DICTATION_COMMIT_TARGET_BYTES = Math.round(
+  (DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_COMMIT_INTERVAL_MS) / 1000
+);
+const DICTATION_MIN_COMMIT_MS = 100;
+const DICTATION_MIN_COMMIT_BYTES = Math.round(
+  (DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_MIN_COMMIT_MS) / 1000
+);
+const DICTATION_FINAL_TIMEOUT_MS = 120000;
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 
 /**
@@ -249,6 +266,27 @@ export class Session {
   private isRealtimeMode = false;
   private speechInProgress = false;
   private voiceConversationId: string | null = null;
+
+  private dictationStreams = new Map<
+    string,
+    {
+      dictationId: string;
+      inputFormat: string;
+      openai: OpenAIRealtimeTranscriptionSession;
+      resampler: Pcm16MonoResampler;
+      receivedChunks: Map<number, Buffer>;
+      nextSeqToForward: number;
+      ackSeq: number;
+      bytesSinceCommit: number;
+      expectedCommits: number;
+      committedCount: number;
+      committedItemIds: string[];
+      transcriptsByItemId: Map<string, string>;
+      finishRequested: boolean;
+      finalSeq: number | null;
+      finalTimeout: ReturnType<typeof setTimeout> | null;
+    }
+  >();
 
   // Audio buffering for interruption handling
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
@@ -736,8 +774,20 @@ export class Session {
           );
           break;
 
-        case "transcribe_audio_request":
-          await this.handleTranscribeAudio(msg);
+        case "dictation_stream_start":
+          await this.handleDictationStreamStart(msg);
+          break;
+
+        case "dictation_stream_chunk":
+          await this.handleDictationStreamChunk(msg);
+          break;
+
+        case "dictation_stream_finish":
+          await this.handleDictationStreamFinish(msg);
+          break;
+
+        case "dictation_stream_cancel":
+          await this.handleDictationStreamCancel(msg);
           break;
 
         case "create_agent_request":
@@ -1178,56 +1228,279 @@ export class Session {
     this.startAgentStream(agentId, prompt);
   }
 
-  /**
-   * Handle audio transcription request
-   */
-  private async handleTranscribeAudio(
-    msg: Extract<SessionInboundMessage, { type: "transcribe_audio_request" }>
-  ): Promise<void> {
-    const { audio, format, requestId } = msg;
+  private emitDictationAck(dictationId: string, ackSeq: number): void {
+    this.emit({
+      type: "dictation_stream_ack",
+      payload: { dictationId, ackSeq },
+    });
+  }
 
-    const audioBuffer = Buffer.from(audio, "base64");
+  private failDictationStream(dictationId: string, error: string, retryable: boolean): void {
+    this.emit({
+      type: "dictation_stream_error",
+      payload: { dictationId, error, retryable },
+    });
+  }
 
-    this.sessionLogger.debug({ requestId }, "Transcribing audio");
-
-    try {
-      const result = await this.sttManager.transcribe(audioBuffer, format, {
-        requestId,
-        label: "dictation",
-      });
-
-      this.sessionLogger.info(
-        { requestId, textLength: result.text.length },
-        "Transcription complete"
-      );
-
-      this.emit({
-        type: "transcription_result",
-        payload: {
-          text: result.text,
-          language: result.language,
-          duration: result.duration,
-          requestId,
-          avgLogprob: result.avgLogprob,
-          isLowConfidence: result.isLowConfidence,
-          byteLength: result.byteLength,
-          format: result.format,
-          debugRecordingPath: result.debugRecordingPath,
-        },
-      });
-    } catch (error: any) {
-      this.sessionLogger.error({ err: error, requestId }, "Transcription failed");
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Transcription failed: ${error.message}`,
-        },
-      });
-      throw error;
+  private cleanupDictationStream(dictationId: string): void {
+    const state = this.dictationStreams.get(dictationId) ?? null;
+    if (!state) {
+      return;
     }
+    if (state.finalTimeout) {
+      clearTimeout(state.finalTimeout);
+    }
+    try {
+      state.openai.close();
+    } catch {
+      // no-op
+    }
+    this.dictationStreams.delete(dictationId);
+  }
+
+  private maybeFinalizeDictationStream(dictationId: string): void {
+    const state = this.dictationStreams.get(dictationId);
+    if (!state) {
+      return;
+    }
+
+    if (!state.finishRequested || state.finalSeq === null) {
+      return;
+    }
+    if (state.ackSeq < state.finalSeq) {
+      return;
+    }
+    if (state.committedCount < state.expectedCommits) {
+      return;
+    }
+
+    const allTranscriptsReady = state.committedItemIds.every((itemId) =>
+      state.transcriptsByItemId.has(itemId)
+    );
+    if (!allTranscriptsReady) {
+      return;
+    }
+
+    const orderedText = state.committedItemIds
+      .map((itemId) => state.transcriptsByItemId.get(itemId) ?? "")
+      .join(" ")
+      .trim();
+
+    this.emit({
+      type: "dictation_stream_final",
+      payload: { dictationId, text: orderedText },
+    });
+
+    this.cleanupDictationStream(dictationId);
+  }
+
+  private async handleDictationStreamStart(
+    msg: Extract<SessionInboundMessage, { type: "dictation_stream_start" }>
+  ): Promise<void> {
+    const dictationId = msg.dictationId;
+    this.cleanupDictationStream(dictationId);
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      this.failDictationStream(dictationId, "OPENAI_API_KEY not set", false);
+      return;
+    }
+
+    const transcriptionModel =
+      process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe";
+
+    const openai = new OpenAIRealtimeTranscriptionSession({
+      apiKey,
+      logger: this.sessionLogger.child({ dictationId }),
+      transcriptionModel,
+      language: "en",
+    });
+
+    openai.on("committed", ({ itemId }: { itemId: string }) => {
+      const state = this.dictationStreams.get(dictationId);
+      if (!state) {
+        return;
+      }
+      state.committedCount += 1;
+      state.committedItemIds.push(itemId);
+      this.maybeFinalizeDictationStream(dictationId);
+    });
+
+    openai.on("transcript", ({ itemId, transcript }: { itemId: string; transcript: string }) => {
+      const state = this.dictationStreams.get(dictationId);
+      if (!state) {
+        return;
+      }
+      state.transcriptsByItemId.set(itemId, transcript);
+      this.maybeFinalizeDictationStream(dictationId);
+    });
+
+    openai.on("error", (err) => {
+      const error = err instanceof Error ? err.message : String(err);
+      this.failDictationStream(dictationId, error, true);
+      this.cleanupDictationStream(dictationId);
+    });
+
+    await openai.connect();
+
+    this.dictationStreams.set(dictationId, {
+      dictationId,
+      inputFormat: msg.format,
+      openai,
+      resampler: new Pcm16MonoResampler({
+        inputRate: DICTATION_PCM_INPUT_RATE,
+        outputRate: DICTATION_PCM_OUTPUT_RATE,
+      }),
+      receivedChunks: new Map(),
+      nextSeqToForward: 0,
+      ackSeq: -1,
+      bytesSinceCommit: 0,
+      expectedCommits: 0,
+      committedCount: 0,
+      committedItemIds: [],
+      transcriptsByItemId: new Map(),
+      finishRequested: false,
+      finalSeq: null,
+      finalTimeout: null,
+    });
+
+    this.emitDictationAck(dictationId, -1);
+  }
+
+  private async handleDictationStreamChunk(
+    msg: Extract<SessionInboundMessage, { type: "dictation_stream_chunk" }>
+  ): Promise<void> {
+    const state = this.dictationStreams.get(msg.dictationId);
+    if (!state) {
+      this.failDictationStream(msg.dictationId, "Dictation stream not started", true);
+      return;
+    }
+
+    if (msg.format !== state.inputFormat) {
+      this.failDictationStream(
+        msg.dictationId,
+        `Mismatched dictation stream format: ${msg.format}`,
+        false
+      );
+      return;
+    }
+
+    if (msg.seq < state.nextSeqToForward) {
+      this.emitDictationAck(msg.dictationId, state.ackSeq);
+      return;
+    }
+
+    if (!state.receivedChunks.has(msg.seq)) {
+      state.receivedChunks.set(msg.seq, Buffer.from(msg.audio, "base64"));
+    }
+
+    while (state.receivedChunks.has(state.nextSeqToForward)) {
+      const seq = state.nextSeqToForward;
+      const pcm16 = state.receivedChunks.get(seq)!;
+      state.receivedChunks.delete(seq);
+
+      const resampled = state.resampler.processChunk(pcm16);
+      if (resampled.length > 0) {
+        state.openai.appendPcm16Base64(resampled.toString("base64"));
+        state.bytesSinceCommit += resampled.length;
+      }
+
+      state.nextSeqToForward += 1;
+      state.ackSeq = state.nextSeqToForward - 1;
+
+      if (state.bytesSinceCommit >= DICTATION_COMMIT_TARGET_BYTES) {
+        state.expectedCommits += 1;
+        state.openai.commit();
+        state.bytesSinceCommit = 0;
+      }
+    }
+
+    this.emitDictationAck(msg.dictationId, state.ackSeq);
+    this.maybeFinalizeDictationStream(msg.dictationId);
+  }
+
+  private async handleDictationStreamFinish(
+    msg: Extract<SessionInboundMessage, { type: "dictation_stream_finish" }>
+  ): Promise<void> {
+    const state = this.dictationStreams.get(msg.dictationId);
+    if (!state) {
+      this.failDictationStream(msg.dictationId, "Dictation stream not started", true);
+      return;
+    }
+
+    state.finishRequested = true;
+    state.finalSeq = msg.finalSeq;
+
+    // If the client claims it sent audio (finalSeq >= 0) but we haven't received any chunks at all,
+    // we should fail fast instead of hanging until DICTATION_FINAL_TIMEOUT_MS.
+    if (msg.finalSeq >= 0 && state.ackSeq < 0 && state.nextSeqToForward === 0 && state.receivedChunks.size === 0) {
+      this.sessionLogger.debug(
+        {
+          dictationId: msg.dictationId,
+          finalSeq: msg.finalSeq,
+          ackSeq: state.ackSeq,
+          nextSeqToForward: state.nextSeqToForward,
+          receivedChunks: state.receivedChunks.size,
+          expectedCommits: state.expectedCommits,
+          committedCount: state.committedCount,
+        },
+        "Dictation finish: no chunks received (failing fast)"
+      );
+      this.failDictationStream(
+        msg.dictationId,
+        `Dictation finished (finalSeq=${msg.finalSeq}) but no audio chunks were received`,
+        true
+      );
+      this.cleanupDictationStream(msg.dictationId);
+      return;
+    }
+
+    // Commit any remaining uncommitted audio.
+    // IMPORTANT: OpenAI requires at least ~100ms of audio in the buffer for a commit.
+    // Also, committing an empty buffer throws "buffer too small ... 0.00ms".
+    if (state.bytesSinceCommit > 0) {
+      this.sessionLogger.debug(
+        { dictationId: msg.dictationId, bytesSinceCommit: state.bytesSinceCommit },
+        "Dictation finish: committing pending audio"
+      );
+      if (state.bytesSinceCommit < DICTATION_MIN_COMMIT_BYTES) {
+        const padBytes = DICTATION_MIN_COMMIT_BYTES - state.bytesSinceCommit;
+        this.sessionLogger.debug(
+          { dictationId: msg.dictationId, padBytes },
+          "Dictation finish: padding to minimum commit size"
+        );
+        state.openai.appendPcm16Base64(Buffer.alloc(padBytes).toString("base64"));
+        state.bytesSinceCommit += padBytes;
+      }
+      state.expectedCommits += 1;
+      state.openai.commit();
+      state.bytesSinceCommit = 0;
+    } else {
+      this.sessionLogger.debug(
+        { dictationId: msg.dictationId },
+        "Dictation finish: no pending audio to commit"
+      );
+    }
+
+    if (state.finalTimeout) {
+      clearTimeout(state.finalTimeout);
+    }
+    state.finalTimeout = setTimeout(() => {
+      this.failDictationStream(
+        msg.dictationId,
+        "Timed out waiting for final transcription",
+        true
+      );
+      this.cleanupDictationStream(msg.dictationId);
+    }, DICTATION_FINAL_TIMEOUT_MS);
+
+    this.maybeFinalizeDictationStream(msg.dictationId);
+  }
+
+  private async handleDictationStreamCancel(
+    msg: Extract<SessionInboundMessage, { type: "dictation_stream_cancel" }>
+  ): Promise<void> {
+    this.cleanupDictationStream(msg.dictationId);
   }
 
   /**
@@ -4253,6 +4526,10 @@ export class Session {
     // Cleanup managers
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
+
+    for (const dictationId of this.dictationStreams.keys()) {
+      this.cleanupDictationStream(dictationId);
+    }
 
     // Close MCP clients
     if (this.agentMcpClient) {

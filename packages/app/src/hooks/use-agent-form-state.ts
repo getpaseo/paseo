@@ -251,6 +251,10 @@ export function useAgentFormState(
     model: "",
     workingDir: "",
   }));
+  const formStateRef = useRef(formState);
+  useEffect(() => {
+    formStateRef.current = formState;
+  }, [formState]);
 
   // Track if we've done initial resolution (to avoid flickering)
   const hasResolvedRef = useRef(false);
@@ -299,16 +303,16 @@ export function useAgentFormState(
       preferences,
       availableModels,
       userModified,
-      formState
+      formStateRef.current
     );
 
     // Only update if something changed
     if (
-      resolved.serverId !== formState.serverId ||
-      resolved.provider !== formState.provider ||
-      resolved.modeId !== formState.modeId ||
-      resolved.model !== formState.model ||
-      resolved.workingDir !== formState.workingDir
+      resolved.serverId !== formStateRef.current.serverId ||
+      resolved.provider !== formStateRef.current.provider ||
+      resolved.modeId !== formStateRef.current.modeId ||
+      resolved.model !== formStateRef.current.model ||
+      resolved.workingDir !== formStateRef.current.workingDir
     ) {
       setFormState(resolved);
     }
@@ -322,7 +326,6 @@ export function useAgentFormState(
     preferences,
     availableModels,
     userModified,
-    formState,
   ]);
 
   // Persist inferred serverId so reloads keep the selection (e.g. URL serverId or first-time load).

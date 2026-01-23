@@ -23,6 +23,9 @@ if (envPath) {
   dotenv.config({ path: envPath });
 }
 
+// Make dictation streaming commit frequently in tests so we exercise multi-commit assembly logic.
+process.env.OPENAI_REALTIME_DICTATION_COMMIT_MS ??= "1000";
+
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-v2-"));
 }
@@ -626,6 +629,216 @@ describe("daemon client v2 E2E", () => {
       ).toBe(true);
 
       await ctx.client.setVoiceConversation(false);
+    },
+    180000
+  );
+
+  test(
+    "streams dictation PCM and returns final transcript via OpenAI Realtime transcription",
+    async () => {
+      if (process.env.PASEO_E2E_DICTATION_REALTIME !== "1") {
+        // Requires OpenAI realtime transcription and is inherently network-flaky.
+        return;
+      }
+      if (!process.env.OPENAI_API_KEY) {
+        return;
+      }
+
+      const fixturePath = path.resolve(
+        process.cwd(),
+        "..",
+        "app",
+        "e2e",
+        "fixtures",
+        "recording.wav"
+      );
+      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+
+      const parsePcm16MonoWav = (buffer: Buffer): Buffer => {
+        if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+          throw new Error("Invalid WAV header");
+        }
+        let offset = 12;
+        let fmt: { audioFormat: number; channels: number; sampleRate: number; bitsPerSample: number } | null = null;
+        let dataChunk: Buffer | null = null;
+
+        while (offset + 8 <= buffer.length) {
+          const id = buffer.toString("ascii", offset, offset + 4);
+          const size = buffer.readUInt32LE(offset + 4);
+          const payloadStart = offset + 8;
+          const payloadEnd = payloadStart + size;
+          if (payloadEnd > buffer.length) {
+            break;
+          }
+
+          if (id === "fmt ") {
+            const audioFormat = buffer.readUInt16LE(payloadStart);
+            const channels = buffer.readUInt16LE(payloadStart + 2);
+            const sampleRate = buffer.readUInt32LE(payloadStart + 4);
+            const bitsPerSample = buffer.readUInt16LE(payloadStart + 14);
+            fmt = { audioFormat, channels, sampleRate, bitsPerSample };
+          } else if (id === "data") {
+            dataChunk = buffer.subarray(payloadStart, payloadEnd);
+          }
+
+          offset = payloadEnd + (size % 2);
+        }
+
+        if (!fmt || !dataChunk) {
+          throw new Error("Missing WAV fmt/data chunks");
+        }
+        if (fmt.audioFormat !== 1) {
+          throw new Error(`Unsupported WAV encoding (audioFormat=${fmt.audioFormat})`);
+        }
+        if (fmt.channels !== 1 || fmt.sampleRate !== 16000 || fmt.bitsPerSample !== 16) {
+          throw new Error(
+            `Unexpected WAV format: channels=${fmt.channels} rate=${fmt.sampleRate} bits=${fmt.bitsPerSample}`
+          );
+        }
+        if (dataChunk.length % 2 !== 0) {
+          throw new Error("WAV PCM16 data length must be even");
+        }
+        return dataChunk;
+      };
+
+      const pcm16 = parsePcm16MonoWav(wav);
+      const dictationId = `dict-${Date.now()}`;
+      const format = "audio/pcm;rate=16000;bits=16";
+
+      await ctx.client.startDictationStream(dictationId, format);
+
+      const chunkBytes = 3200; // ~100ms @ 16kHz mono PCM16 (1600 samples * 2 bytes)
+      let seq = 0;
+      for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
+        const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
+        ctx.client.sendDictationStreamChunk(dictationId, seq, chunk.toString("base64"), format);
+        seq += 1;
+      }
+
+      const finalSeq = seq - 1;
+      const result = await ctx.client.finishDictationStream(dictationId, finalSeq);
+
+      expect(result.dictationId).toBe(dictationId);
+      expect(result.text.toLowerCase()).toContain("voice note");
+    },
+    180000
+  );
+
+  test(
+    "does not commit an empty OpenAI realtime audio buffer on finish",
+    async () => {
+      if (process.env.PASEO_E2E_DICTATION_REALTIME !== "1") {
+        return;
+      }
+      if (!process.env.OPENAI_API_KEY) {
+        return;
+      }
+
+      const fixturePath = path.resolve(
+        process.cwd(),
+        "..",
+        "app",
+        "e2e",
+        "fixtures",
+        "recording.wav"
+      );
+      const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+
+      const parsePcm16MonoWav = (buffer: Buffer): Buffer => {
+        if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+          throw new Error("Invalid WAV header");
+        }
+        let offset = 12;
+        let fmt: { audioFormat: number; channels: number; sampleRate: number; bitsPerSample: number } | null = null;
+        let dataChunk: Buffer | null = null;
+
+        while (offset + 8 <= buffer.length) {
+          const id = buffer.toString("ascii", offset, offset + 4);
+          const size = buffer.readUInt32LE(offset + 4);
+          const payloadStart = offset + 8;
+          const payloadEnd = payloadStart + size;
+          if (payloadEnd > buffer.length) {
+            break;
+          }
+
+          if (id === "fmt ") {
+            const audioFormat = buffer.readUInt16LE(payloadStart);
+            const channels = buffer.readUInt16LE(payloadStart + 2);
+            const sampleRate = buffer.readUInt32LE(payloadStart + 4);
+            const bitsPerSample = buffer.readUInt16LE(payloadStart + 14);
+            fmt = { audioFormat, channels, sampleRate, bitsPerSample };
+          } else if (id === "data") {
+            dataChunk = buffer.subarray(payloadStart, payloadEnd);
+          }
+
+          offset = payloadEnd + (size % 2);
+        }
+
+        if (!fmt || !dataChunk) {
+          throw new Error("Missing WAV fmt/data chunks");
+        }
+        if (fmt.audioFormat !== 1) {
+          throw new Error(`Unsupported WAV encoding (audioFormat=${fmt.audioFormat})`);
+        }
+        if (fmt.channels !== 1 || fmt.sampleRate !== 16000 || fmt.bitsPerSample !== 16) {
+          throw new Error(
+            `Unexpected WAV format: channels=${fmt.channels} rate=${fmt.sampleRate} bits=${fmt.bitsPerSample}`
+          );
+        }
+        if (dataChunk.length % 2 !== 0) {
+          throw new Error("WAV PCM16 data length must be even");
+        }
+        return dataChunk;
+      };
+
+      const pcm16 = parsePcm16MonoWav(wav);
+      const dictationId = `dict-empty-commit-${Date.now()}`;
+      const format = "audio/pcm;rate=16000;bits=16";
+
+      await ctx.client.startDictationStream(dictationId, format);
+
+      // Send exactly 10x 100ms chunks. With OPENAI_REALTIME_DICTATION_COMMIT_MS=1000 in this test file,
+      // the server will auto-commit at the 1s boundary. Finishing immediately after that should not
+      // attempt an additional empty commit.
+      const chunkBytes = 3200; // 100ms @ 16kHz mono PCM16
+      const targetChunks = 10;
+      let seq = 0;
+      for (let i = 0; i < targetChunks; i += 1) {
+        const start = i * chunkBytes;
+        const end = Math.min(pcm16.length, start + chunkBytes);
+        const chunk = pcm16.subarray(start, end);
+        ctx.client.sendDictationStreamChunk(dictationId, seq, chunk.toString("base64"), format);
+        seq += 1;
+      }
+
+      const finalSeq = seq - 1;
+      const result = await ctx.client.finishDictationStream(dictationId, finalSeq);
+
+      expect(result.dictationId).toBe(dictationId);
+      expect(typeof result.text).toBe("string");
+    },
+    180000
+  );
+
+  test(
+    "fails fast if dictation finishes without sending required chunks",
+    async () => {
+      if (process.env.PASEO_E2E_DICTATION_REALTIME !== "1") {
+        return;
+      }
+      if (!process.env.OPENAI_API_KEY) {
+        return;
+      }
+
+      const dictationId = `dict-missing-chunks-${Date.now()}`;
+      const format = "audio/pcm;rate=16000;bits=16";
+
+      await ctx.client.startDictationStream(dictationId, format);
+
+      // Claim that we sent chunk 0, but actually send no chunks.
+      await expect(ctx.client.finishDictationStream(dictationId, 0)).rejects.toThrow(
+        /no audio chunks were received/i
+      );
     },
     180000
   );

@@ -210,7 +210,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   });
 
   useEffect(() => {
-    if (isDictating || isDictationProcessing || dictationStatus === "retrying") {
+    if (isDictating || isDictationProcessing) {
       return;
     }
     sendAfterTranscriptRef.current = false;
@@ -246,7 +246,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const showOverlay =
       isDictating ||
       isDictationProcessing ||
-      dictationStatus === "retrying" ||
       dictationStatus === "failed";
     overlayTransition.value = withTiming(showOverlay ? 1 : 0, {
       duration: 200,
