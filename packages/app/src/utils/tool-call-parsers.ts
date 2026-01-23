@@ -1161,6 +1161,12 @@ const TOOL_NAME_MAP: Record<string, string> = {
   Bash: "Shell",
   read_file: "Read",
   apply_patch: "Edit",
+  "agent-control.set_title": "Set title",
+  "agent-control.set_branch": "Set branch",
+  set_title: "Set title",
+  set_branch: "Set branch",
+  "mcp__agent-control__set_title": "Set title",
+  "mcp__agent-control__set_branch": "Set branch",
 };
 
 const ToolCallDisplaySchema = z

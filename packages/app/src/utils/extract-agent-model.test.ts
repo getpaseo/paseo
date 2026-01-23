@@ -11,12 +11,12 @@ describe("extractAgentModel", () => {
     expect(extractAgentModel(agent)).toBe("gpt-5.2-codex");
   });
 
-  it("returns null when runtime model missing even if config model is set", () => {
+  it("returns configured model when runtime model is missing", () => {
     const agent = {
       model: "gpt-5.1-codex",
       runtimeInfo: {},
     } as Partial<Agent> as Agent;
 
-    expect(extractAgentModel(agent)).toBeNull();
+    expect(extractAgentModel(agent)).toBe("gpt-5.1-codex");
   });
 });
