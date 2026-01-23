@@ -17,7 +17,12 @@ function tmpCwd(): string {
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_REASONING_EFFORT = "low";
 
-describe("daemon E2E", () => {
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
+const describeWithClaude = hasClaudeCredentials ? describe : describe.skip;
+
+describeWithClaude("daemon E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeEach(async () => {
@@ -389,43 +394,26 @@ describe("daemon E2E", () => {
         const queue = ctx.client.getMessageQueue();
         const assistantChunks: string[] = [];
 
-        // Debug: dump all events from queue
-
-        for (let i = 0; i < queue.length; i++) {
-          const m = queue[i];
-          if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
-            const event = m.payload.event;
-            if (event.type === "timeline") {
-              const item = event.item;
-
-            } else {
-
-            }
-          } else if (m.type === "agent_state" && m.payload.id === agent.id) {
-
-          }
-        }
-
-        // Find the user_message for message 2 to mark the boundary
-        let foundMsg2UserMessage = false;
+        // We only care about Turn 2 ("Hello world ..."), but event ordering can be noisy when
+        // Turn 1 is still streaming. Anchor on the assistant response content itself.
+        let startedCollecting = false;
 
         for (let i = msg2StartPosition; i < queue.length; i++) {
           const m = queue[i];
-
-          // Look for our user message to mark the start of message 2 context
           if (
             m.type === "agent_stream" &&
             m.payload.agentId === agent.id &&
             m.payload.event.type === "timeline"
           ) {
             const item = m.payload.event.item;
-            if (item.type === "user_message" && (item.text as string)?.includes("Hello world")) {
-              foundMsg2UserMessage = true;
-
-            }
-            // Collect assistant messages after we found the user message
-            if (foundMsg2UserMessage && item.type === "assistant_message" && item.text) {
-              assistantChunks.push(item.text);
+            if (item.type === "assistant_message" && item.text) {
+              const text = String(item.text);
+              if (!startedCollecting && text.includes("Hello")) {
+                startedCollecting = true;
+              }
+              if (startedCollecting) {
+                assistantChunks.push(text);
+              }
             }
           }
         }

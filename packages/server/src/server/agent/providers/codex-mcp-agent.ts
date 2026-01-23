@@ -39,7 +39,6 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { getSelfIdentificationInstructions } from "../self-identification-instructions.js";
 import { curateAgentActivity } from "../activity-curator.js";
 
 type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex" };
@@ -2759,7 +2758,6 @@ function buildCodexMcpConfig(
       developerInstructions = history;
     }
   }
-  const selfIdentificationInstructions = getSelfIdentificationInstructions({ cwd: config.cwd });
 
   // Build MCP servers configuration
   const mcpServers: Record<string, CodexMcpServerConfig> = {};
@@ -2833,7 +2831,7 @@ function buildCodexMcpConfig(
   }
 
 
-  const combinedDeveloperInstructions = [developerInstructions, selfIdentificationInstructions]
+  const combinedDeveloperInstructions = [developerInstructions]
     .filter(Boolean)
     .join("\n\n");
 
@@ -3227,7 +3225,7 @@ class CodexMcpAgentSession implements AgentSession {
     const abortController = new AbortController();
     this.currentAbortController = abortController;
 
-    const promptText = await toPromptText(prompt, this.logger);
+    let promptText = await toPromptText(prompt, this.logger);
     // NOTE: user_message is NOT emitted here because the agent-manager's
     // recordUserMessage() already handles emitting the user message timeline
     // event before calling stream(). Emitting here would cause duplicates.
@@ -4652,6 +4650,7 @@ export const __test__ = {
   tokenizeCommandArgs,
   parseFrontMatter,
   expandCodexCustomPrompt,
+  buildCodexMcpConfig,
   isMissingConversationIdError,
   isMissingConversationIdResponse,
 };
