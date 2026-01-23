@@ -2,7 +2,7 @@ import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import { resolve } from "path";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
-import { parseDiff } from "../server/utils/diff-highlighter.js";
+import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { detectRepoInfo } from "./worktree.js";
 
 const execAsync = promisify(exec);
@@ -325,7 +325,7 @@ export async function getCheckoutDiff(
   }
 
   if (compare.includeStructured) {
-    return { diff, structured: parseDiff(diff) };
+    return { diff, structured: await parseAndHighlightDiff(diff, cwd) };
   }
   return { diff };
 }
