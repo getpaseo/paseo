@@ -29,6 +29,12 @@ function getChangesActionButton(page: Page, label: string) {
   return getChangesActionLabel(page, label).locator('..');
 }
 
+async function openChangesOverflowMenu(page: Page) {
+  const menuButton = page.getByTestId('changes-overflow-menu').first();
+  await expect(menuButton).toBeVisible();
+  await menuButton.click();
+}
+
 async function openChangesPanel(page: Page, options?: { expectGit?: boolean }) {
   const changesHeader = getChangesHeader(page);
   if (!(await changesHeader.isVisible())) {
@@ -306,7 +312,9 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await refreshChangesTab(page);
     await expect(getChangesActionLabel(page, 'Merge to base')).toHaveCount(0, { timeout: 30000 });
 
-    await getChangesActionButton(page, 'Archive').click();
+    await openChangesOverflowMenu(page);
+    await expect(page.getByTestId('changes-menu-archive')).toBeVisible();
+    await page.getByTestId('changes-menu-archive').click();
     // Archiving a worktree deletes agents and redirects to home
     await expect(page).toHaveURL(/\/$/, { timeout: 30000 });
     await setWorkingDirectory(page, repo.path);
@@ -331,9 +339,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await waitForAssistantText(page, 'NON-GIT');
     await openChangesPanel(page, { expectGit: false });
     await expect(getChangesScope(page).getByTestId('changes-not-git')).toBeVisible();
-    await expect(getChangesActionButton(page, 'Commit')).toHaveAttribute('aria-disabled', 'true');
-    await expect(getChangesActionButton(page, 'Create PR')).toHaveAttribute('aria-disabled', 'true');
-    await expect(getChangesActionLabel(page, 'Merge to base')).toHaveCount(0);
+    await expect(getChangesScope(page).getByTestId('changes-toolbar')).toHaveCount(0);
   } finally {
     await rm(nonGitDir, { recursive: true, force: true });
     await repo.cleanup();

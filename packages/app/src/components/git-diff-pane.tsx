@@ -6,13 +6,16 @@ import {
   ActivityIndicator,
   Pressable,
   FlatList,
+  Modal,
+  useWindowDimensions,
+  type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type ListRenderItem,
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronRight, GitBranch } from "lucide-react-native";
+import { ChevronRight, GitBranch, MoreVertical, RotateCcw } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -348,12 +351,16 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
   const [diffMode, setDiffMode] = useState<"uncommitted" | "base">("uncommitted");
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [overflowVisible, setOverflowVisible] = useState(false);
+  const [overflowAnchor, setOverflowAnchor] = useState({ left: 0, top: 0 });
+  const [overflowHeight, setOverflowHeight] = useState(0);
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
     useCheckoutStatusQuery({ serverId, agentId });
   const gitStatus = status && status.isGit ? status : null;
@@ -420,6 +427,25 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     void refreshStatus();
     void refreshPrStatus();
   }, [refreshDiff, refreshStatus, refreshPrStatus]);
+
+  const handleOpenOverflowMenu = useCallback((event: any) => {
+    const { pageX, pageY } = event?.nativeEvent ?? {};
+    setOverflowAnchor({
+      left: typeof pageX === "number" ? pageX : 0,
+      top: typeof pageY === "number" ? pageY : 0,
+    });
+    setOverflowVisible(true);
+  }, []);
+
+  const handleCloseOverflowMenu = useCallback(() => {
+    setOverflowVisible(false);
+    setOverflowHeight(0);
+  }, []);
+
+  const handleOverflowLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setOverflowHeight((current) => (current === height ? current : height));
+  }, []);
 
   const handleToggleExpanded = useCallback((path: string) => {
     setExpandedByPath((prev) => ({
@@ -672,6 +698,88 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     );
   }
 
+  type PrimaryAction = {
+    key: "commit" | "create_pr" | "merge";
+    label: string;
+    testID: string;
+    disabled: boolean;
+    isPending: boolean;
+    onPress: () => void;
+  };
+
+  const primaryAction: PrimaryAction | null = useMemo(() => {
+    if (!isGit) {
+      return null;
+    }
+    if (showCommitAction) {
+      return {
+        key: "commit",
+        label: "Commit",
+        testID: "changes-primary-commit",
+        disabled: commitDisabled,
+        isPending: commitMutation.isPending,
+        onPress: () => commitMutation.mutate(),
+      };
+    }
+    if (showCreatePrAction) {
+      return {
+        key: "create_pr",
+        label: "Create PR",
+        testID: "changes-primary-create-pr",
+        disabled: prDisabled,
+        isPending: prMutation.isPending,
+        onPress: () => prMutation.mutate(),
+      };
+    }
+    if (showMergeAction) {
+      return {
+        key: "merge",
+        label: "Merge to base",
+        testID: "changes-primary-merge",
+        disabled: mergeDisabled,
+        isPending: mergeMutation.isPending,
+        onPress: () => mergeMutation.mutate(),
+      };
+    }
+    return null;
+  }, [
+    commitDisabled,
+    commitMutation,
+    isGit,
+    mergeDisabled,
+    mergeMutation,
+    prDisabled,
+    prMutation,
+    showCommitAction,
+    showCreatePrAction,
+    showMergeAction,
+  ]);
+
+  const overflowPosition = useMemo(() => {
+    if (!overflowVisible) {
+      return null;
+    }
+    const menuWidth = 220;
+    const horizontalPadding = theme.spacing[2];
+    const verticalPadding = theme.spacing[2];
+    const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
+    const maxTop = Math.max(verticalPadding, windowHeight - overflowHeight - verticalPadding);
+    const left = Math.min(
+      Math.max(overflowAnchor.left - menuWidth + horizontalPadding, horizontalPadding),
+      maxLeft
+    );
+    const top = Math.min(Math.max(overflowAnchor.top + verticalPadding, verticalPadding), maxTop);
+    return { top, left, width: menuWidth };
+  }, [
+    overflowAnchor.left,
+    overflowAnchor.top,
+    overflowHeight,
+    overflowVisible,
+    theme.spacing,
+    windowHeight,
+    windowWidth,
+  ]);
+
   return (
     <View style={styles.container}>
       <View style={styles.header} testID="changes-header">
@@ -722,67 +830,43 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         </View>
       </View>
 
-      <View style={styles.actionsRow}>
-        {showCommitAction ? (
-          <Pressable
-            testID="changes-action-commit"
-            style={[styles.actionButton, commitDisabled && styles.actionButtonDisabled]}
-            onPress={() => commitMutation.mutate()}
-            disabled={commitDisabled}
-          >
-            {commitMutation.isPending ? (
-              <ActivityIndicator size="small" color={theme.colors.foreground} />
+      {isGit ? (
+        <View style={styles.toolbarRow} testID="changes-toolbar">
+          <View style={styles.toolbarPrimary}>
+            {primaryAction ? (
+              <Pressable
+                testID={primaryAction.testID}
+                style={[
+                  styles.primaryActionButton,
+                  primaryAction.disabled && styles.primaryActionButtonDisabled,
+                ]}
+                onPress={primaryAction.onPress}
+                disabled={primaryAction.disabled}
+              >
+                {primaryAction.isPending ? (
+                  <ActivityIndicator size="small" color={theme.colors.foreground} />
+                ) : (
+                  <Text style={styles.primaryActionText}>{primaryAction.label}</Text>
+                )}
+              </Pressable>
             ) : (
-              <Text style={styles.actionButtonText}>Commit</Text>
+              <View style={styles.toolbarPrimarySpacer} />
             )}
-          </Pressable>
-        ) : null}
-        {showCreatePrAction ? (
-          <Pressable
-            testID="changes-action-create-pr"
-            style={[styles.actionButton, prDisabled && styles.actionButtonDisabled]}
-            onPress={() => prMutation.mutate()}
-            disabled={prDisabled}
-          >
-            {prMutation.isPending ? (
-              <ActivityIndicator size="small" color={theme.colors.foreground} />
-            ) : (
-              <Text style={styles.actionButtonText}>Create PR</Text>
-            )}
-          </Pressable>
-        ) : null}
-        {showMergeAction ? (
-          <Pressable
-            testID="changes-action-merge"
-            style={[styles.actionButton, mergeDisabled && styles.actionButtonDisabled]}
-            onPress={() => mergeMutation.mutate()}
-            disabled={mergeDisabled}
-          >
-            {mergeMutation.isPending ? (
-              <ActivityIndicator size="small" color={theme.colors.foreground} />
-            ) : (
-              <Text style={styles.actionButtonText}>Merge to base</Text>
-            )}
-          </Pressable>
-        ) : null}
-        <Pressable
-          testID="changes-action-archive"
-          style={[styles.actionButton, archiveDisabled && styles.actionButtonDisabled]}
-          onPress={() => archiveMutation.mutate()}
-          disabled={archiveDisabled}
-        >
-          {archiveMutation.isPending ? (
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
-          ) : (
-            <Text style={styles.actionButtonText}>Archive</Text>
-          )}
-        </Pressable>
-      </View>
-
-      <Text style={styles.debugText} testID="changes-debug-state">
-        mode={diffMode} files={files.length} isGit={String(isGit)} ahead=
-        {gitStatus?.aheadBehind ? String(gitStatus.aheadBehind.ahead) : "null"}
-      </Text>
+          </View>
+          <View style={styles.toolbarRight}>
+            <Pressable
+              testID="changes-overflow-menu"
+              onPress={handleOpenOverflowMenu}
+              hitSlop={8}
+              style={styles.iconButton}
+              accessibilityRole="button"
+              accessibilityLabel="More actions"
+            >
+              <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
       {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
@@ -799,6 +883,121 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
       ) : null}
 
       <View style={styles.diffContainer}>{bodyContent}</View>
+
+      <Modal
+        visible={overflowVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseOverflowMenu}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Overflow menu backdrop"
+            style={styles.menuBackdrop}
+            onPress={handleCloseOverflowMenu}
+          />
+          {overflowPosition ? (
+            <View
+              style={[
+                styles.dropdownMenu,
+                {
+                  position: "absolute",
+                  top: overflowPosition.top,
+                  left: overflowPosition.left,
+                  width: overflowPosition.width,
+                },
+              ]}
+              onLayout={handleOverflowLayout}
+            >
+              <Pressable
+                testID="changes-menu-refresh"
+                style={styles.menuItem}
+                onPress={() => {
+                  handleCloseOverflowMenu();
+                  handleRefresh();
+                }}
+                accessibilityRole="button"
+              >
+                <RotateCcw size={16} color={theme.colors.foreground} />
+                <Text style={styles.menuItemText}>Refresh</Text>
+              </Pressable>
+
+              <View style={styles.menuDivider} />
+
+              {showCommitAction && primaryAction?.key !== "commit" ? (
+                <Pressable
+                  testID="changes-menu-commit"
+                  style={[styles.menuItem, commitDisabled && styles.menuItemDisabled]}
+                  onPress={() => {
+                    if (commitDisabled) return;
+                    handleCloseOverflowMenu();
+                    commitMutation.mutate();
+                  }}
+                  disabled={commitDisabled}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.menuItemText}>Commit</Text>
+                </Pressable>
+              ) : null}
+
+              {showCreatePrAction && primaryAction?.key !== "create_pr" ? (
+                <Pressable
+                  testID="changes-menu-create-pr"
+                  style={[styles.menuItem, prDisabled && styles.menuItemDisabled]}
+                  onPress={() => {
+                    if (prDisabled) return;
+                    handleCloseOverflowMenu();
+                    prMutation.mutate();
+                  }}
+                  disabled={prDisabled}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.menuItemText}>Create PR</Text>
+                </Pressable>
+              ) : null}
+
+              {showMergeAction && primaryAction?.key !== "merge" ? (
+                <Pressable
+                  testID="changes-menu-merge"
+                  style={[styles.menuItem, mergeDisabled && styles.menuItemDisabled]}
+                  onPress={() => {
+                    if (mergeDisabled) return;
+                    handleCloseOverflowMenu();
+                    mergeMutation.mutate();
+                  }}
+                  disabled={mergeDisabled}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.menuItemText}>Merge to base</Text>
+                </Pressable>
+              ) : null}
+
+              <View style={styles.menuDivider} />
+
+              <Pressable
+                testID="changes-menu-archive"
+                style={[
+                  styles.menuItem,
+                  styles.menuItemDestructive,
+                  archiveDisabled && styles.menuItemDisabled,
+                ]}
+                onPress={() => {
+                  if (archiveDisabled) return;
+                  handleCloseOverflowMenu();
+                  archiveMutation.mutate();
+                }}
+                disabled={archiveDisabled}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.menuItemText, styles.menuItemTextDestructive]}>
+                  Archive worktree
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -855,35 +1054,97 @@ const styles = StyleSheet.create((theme) => ({
   modeToggleTextActive: {
     color: theme.colors.foreground,
   },
-  actionsRow: {
+  toolbarRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
+    alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[1],
   },
-  actionButton: {
+  toolbarPrimary: {
+    flex: 1,
+    minWidth: 0,
+  },
+  toolbarPrimarySpacer: {
+    height: 32,
+  },
+  toolbarRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  primaryActionButton: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
+    alignSelf: "flex-start",
   },
-  actionButtonDisabled: {
+  primaryActionButtonDisabled: {
     opacity: 0.5,
   },
-  actionButtonText: {
+  primaryActionText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
   },
-  debugText: {
+  iconButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  menuOverlay: {
+    flex: 1,
+  },
+  menuBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  dropdownMenu: {
+    backgroundColor: theme.colors.surface0,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.lg,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[1],
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
+    paddingVertical: theme.spacing[2],
+  },
+  menuItemDisabled: {
+    opacity: 0.5,
+  },
+  menuItemText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+  },
+  menuItemDestructive: {
+    backgroundColor: "rgba(248, 81, 73, 0.08)",
+  },
+  menuItemTextDestructive: {
+    color: theme.colors.destructive,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
   },
   actionStatusText: {
     paddingHorizontal: theme.spacing[3],
