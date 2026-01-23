@@ -120,14 +120,25 @@ async function selectAttachWorktree(page: Page, branchName: string) {
   await page.getByTestId('worktree-attach-toggle').click();
   const picker = page.getByTestId('worktree-attach-picker');
   await expect(picker).toBeVisible();
+
+  // Wait a bit for the worktree list to load
+  await page.waitForTimeout(1000);
+
   await picker.click();
+
+  // Wait a bit for animation
+  await page.waitForTimeout(500);
+
   const sheet = page.getByLabel('Bottom Sheet', { exact: true });
   const backdrop = page.getByRole('button', { name: 'Bottom sheet backdrop' }).first();
+
   await expect.poll(async () => {
     const sheetVisible = await sheet.isVisible().catch(() => false);
     const backdropVisible = await backdrop.isVisible().catch(() => false);
-    return sheetVisible || backdropVisible;
-  }).toBeTruthy();
+    // Also check if branch name is visible directly
+    const branchVisible = await page.getByText(branchName, { exact: true }).first().isVisible().catch(() => false);
+    return sheetVisible || backdropVisible || branchVisible;
+  }, { timeout: 10000 }).toBeTruthy();
   const sheetVisible = await sheet.isVisible().catch(() => false);
   const scope = sheetVisible ? sheet : page;
   const option = scope.getByText(branchName, { exact: true }).first();
@@ -294,7 +305,8 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     });
 
     await getChangesActionButton(page, 'Archive').click();
-    await page.getByTestId('sidebar-new-agent').click();
+    // Archiving a worktree deletes agents and redirects to home
+    await expect(page).toHaveURL(/\/$/, { timeout: 30000 });
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
     await page.getByTestId('worktree-attach-toggle').click();

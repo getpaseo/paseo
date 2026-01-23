@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useId, useMemo, useRef, memo, type ReactElement } from "react";
+import { useRouter } from "expo-router";
 import {
   View,
   Text,
@@ -345,6 +346,7 @@ interface GitDiffPaneProps {
 
 export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
@@ -555,6 +557,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         predicate: (query) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
       });
+      router.replace("/");
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to archive worktree";

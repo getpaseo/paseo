@@ -41,6 +41,7 @@ async function waitForServer(port: number, timeout = 15000): Promise<void> {
 }
 
 let daemonProcess: ChildProcess | null = null;
+let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
 let relayServer: RelayServer | null = null;
 
@@ -74,10 +75,34 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
 export default async function globalSetup() {
   const port = await getAvailablePort();
   const relayPort = await getAvailablePort();
+  const metroPort = await getAvailablePort();
   paseoHome = await mkdtemp(path.join(tmpdir(), 'paseo-e2e-home-'));
 
   relayServer = createRelayServer({ port: relayPort, host: '127.0.0.1' });
   await relayServer.start();
+
+  // Start Metro bundler on dynamic port
+  const appDir = path.resolve(__dirname, '..');
+  metroProcess = spawn('npx', ['expo', 'start', '--web', '--port', String(metroPort)], {
+    cwd: appDir,
+    env: {
+      ...process.env,
+      BROWSER: 'none', // Don't auto-open browser
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  metroProcess.stdout?.on('data', (data: Buffer) => {
+    const lines = data.toString().split('\n').filter((l) => l.trim());
+    for (const line of lines) {
+      console.log(`[metro] ${line}`);
+    }
+  });
+
+  metroProcess.stderr?.on('data', (data: Buffer) => {
+    console.error(`[metro] ${data.toString().trim()}`);
+  });
 
   const serverDir = path.resolve(__dirname, '../../..', 'packages/server');
   const tsxBin = execSync('which tsx').toString().trim();
@@ -95,7 +120,7 @@ export default async function globalSetup() {
       PASEO_HOME: paseoHome,
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
-      PASEO_CORS_ORIGINS: 'http://localhost:8081',
+      PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
       NODE_ENV: 'development',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -138,7 +163,11 @@ export default async function globalSetup() {
     console.error(`[daemon] ${data.toString().trim()}`);
   });
 
-  await waitForServer(port);
+  // Wait for both daemon and Metro to be ready
+  await Promise.all([
+    waitForServer(port),
+    waitForServer(metroPort, 120000), // Metro can take longer to start
+  ]);
 
   // Wait for daemon to emit a pairing offer (includes relay session ID).
   await Promise.race([
@@ -155,12 +184,17 @@ export default async function globalSetup() {
   process.env.E2E_DAEMON_PORT = String(port);
   process.env.E2E_RELAY_PORT = String(relayPort);
   process.env.E2E_RELAY_SESSION_ID = offer.sessionId;
-  console.log(`[e2e] Test daemon started on port ${port}, home: ${paseoHome}`);
+  process.env.E2E_METRO_PORT = String(metroPort);
+  console.log(`[e2e] Test daemon started on port ${port}, Metro on port ${metroPort}, home: ${paseoHome}`);
 
   return async () => {
     if (daemonProcess) {
       daemonProcess.kill('SIGTERM');
       daemonProcess = null;
+    }
+    if (metroProcess) {
+      metroProcess.kill('SIGTERM');
+      metroProcess = null;
     }
     if (relayServer) {
       await relayServer.stop();
