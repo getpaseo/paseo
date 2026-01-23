@@ -54,6 +54,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   parentAgentId: z.string().nullable().optional(),
+  internal: z.boolean().optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -129,15 +130,18 @@ export class AgentRegistry {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null }
+    options?: { title?: string | null; internal?: boolean }
   ): Promise<void> {
     await this.load();
     const existing = this.cache.get(agent.id);
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
+    const hasInternalOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     const record = toStoredAgentRecord(agent, {
       title: hasTitleOverride ? options?.title ?? null : existing?.title ?? null,
       createdAt: existing?.createdAt,
+      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
     });
     this.cache.set(agent.id, record);
     await this.flush();

@@ -208,6 +208,11 @@ export type AgentSessionConfig = {
   };
   mcpServers?: AgentMetadata;
   parentAgentId?: string;
+  /**
+   * Internal agents are hidden from listings and don't trigger notifications.
+   * They are used for ephemeral system tasks like commit/PR generation.
+   */
+  internal?: boolean;
 };
 
 export interface AgentSession {

@@ -21,6 +21,7 @@ export type { ManagedAgent };
 type ProjectionOptions = {
   title?: string | null;
   createdAt?: string;
+  internal?: boolean;
 };
 
 export function toStoredAgentRecord(
@@ -56,6 +57,7 @@ export function toStoredAgentRecord(
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
     parentAgentId: agent.parentAgentId ?? null,
+    internal: options?.internal,
   } satisfies StoredAgentRecord;
 }
 

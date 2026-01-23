@@ -202,4 +202,170 @@ describe("AgentManager", () => {
     const refreshed = manager.getAgent(snapshot.id);
     expect(refreshed?.runtimeInfo?.model).toBe("gpt-5.2-codex");
   });
+
+  test("listAgents excludes internal agents", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const registryPath = join(workdir, "agents.json");
+    const registry = new AgentRegistry(registryPath, logger);
+    let agentCounter = 0;
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry,
+      logger,
+      idFactory: () => `agent-${agentCounter++}`,
+    });
+
+    // Create a normal agent
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Normal Agent",
+    });
+
+    // Create an internal agent
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    });
+
+    const agents = manager.listAgents();
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.config.title).toBe("Normal Agent");
+  });
+
+  test("getAgent returns internal agents by ID", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const registryPath = join(workdir, "agents.json");
+    const registry = new AgentRegistry(registryPath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry,
+      logger,
+      idFactory: () => "internal-agent",
+    });
+
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    });
+
+    const agent = manager.getAgent("internal-agent");
+    expect(agent).not.toBeNull();
+    expect(agent?.internal).toBe(true);
+  });
+
+  test("subscribe does not emit state events for internal agents to global subscribers", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const registryPath = join(workdir, "agents.json");
+    const registry = new AgentRegistry(registryPath, logger);
+    let agentCounter = 0;
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry,
+      logger,
+      idFactory: () => `agent-${agentCounter++}`,
+    });
+
+    const receivedEvents: string[] = [];
+    manager.subscribe((event) => {
+      if (event.type === "agent_state") {
+        receivedEvents.push(event.agent.id);
+      }
+    });
+
+    // Create a normal agent - should emit
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Normal Agent",
+    });
+
+    // Create an internal agent - should NOT emit to global subscriber
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    });
+
+    // Should only have events from the normal agent
+    expect(receivedEvents.filter((id) => id === "agent-0").length).toBeGreaterThan(0);
+    expect(receivedEvents.filter((id) => id === "agent-1").length).toBe(0);
+  });
+
+  test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const registryPath = join(workdir, "agents.json");
+    const registry = new AgentRegistry(registryPath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry,
+      logger,
+      idFactory: () => "internal-agent",
+    });
+
+    const receivedEvents: string[] = [];
+    // Subscribe specifically to the internal agent
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") {
+          receivedEvents.push(event.agent.id);
+        }
+      },
+      { agentId: "internal-agent", replayState: false }
+    );
+
+    await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    });
+
+    // Should receive events when subscribed by specific agentId
+    expect(receivedEvents.filter((id) => id === "internal-agent").length).toBeGreaterThan(0);
+  });
+
+  test("onAgentAttention is not called for internal agents", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const registryPath = join(workdir, "agents.json");
+    const registry = new AgentRegistry(registryPath, logger);
+    const attentionCalls: string[] = [];
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry,
+      logger,
+      idFactory: () => "internal-agent",
+      onAgentAttention: ({ agentId }) => {
+        attentionCalls.push(agentId);
+      },
+    });
+
+    const agent = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    });
+
+    // Run and complete the agent (which normally triggers attention)
+    await manager.runAgent(agent.id, "hello");
+
+    // Should NOT have triggered attention callback for internal agent
+    expect(attentionCalls).toHaveLength(0);
+  });
 });

@@ -1877,6 +1877,7 @@ export class Session {
       cwd: agent.cwd,
       title,
       parentAgentId: agent.id,
+      internal: true,
     };
   }
 

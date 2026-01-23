@@ -101,6 +101,10 @@ type ManagedAgentBase = {
   lastError?: string;
   attention: AttentionState;
   parentAgentId?: string;
+  /**
+   * Internal agents are hidden from listings and don't trigger notifications.
+   */
+  internal?: boolean;
 };
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -230,7 +234,11 @@ export class AgentManager {
           });
         }
       } else {
+        // For global subscribers, skip internal agents during replay
         for (const agent of this.agents.values()) {
+          if (agent.internal) {
+            continue;
+          }
           callback({
             type: "agent_state",
             agent: { ...agent },
@@ -245,9 +253,11 @@ export class AgentManager {
   }
 
   listAgents(): ManagedAgent[] {
-    return Array.from(this.agents.values()).map((agent) => ({
-      ...agent,
-    }));
+    return Array.from(this.agents.values())
+      .filter((agent) => !agent.internal)
+      .map((agent) => ({
+        ...agent,
+      }));
   }
 
   async listPersistedAgents(
@@ -811,6 +821,7 @@ export class AgentManager {
       lastUserMessageAt: null,
       attention: { requiresAttention: false },
       parentAgentId: config.parentAgentId,
+      internal: config.internal ?? false,
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
@@ -831,7 +842,7 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null }
+    options?: { title?: string | null; internal?: boolean }
   ): Promise<void> {
     if (!this.registry) {
       return;
@@ -977,6 +988,11 @@ export class AgentManager {
     // Track the new status
     this.previousStatuses.set(agent.id, currentStatus);
 
+    // Skip attention tracking for internal agents
+    if (agent.internal) {
+      return;
+    }
+
     // Skip if already requires attention
     if (agent.attention.requiresAttention) {
       return;
@@ -1053,6 +1069,18 @@ export class AgentManager {
         subscriber.agentId !== event.agent.id
       ) {
         continue;
+      }
+      // Skip internal agents for global subscribers (those without a specific agentId)
+      if (!subscriber.agentId) {
+        if (event.type === "agent_state" && event.agent.internal) {
+          continue;
+        }
+        if (event.type === "agent_stream") {
+          const agent = this.agents.get(event.agentId);
+          if (agent?.internal) {
+            continue;
+          }
+        }
       }
       subscriber.callback(event);
     }

@@ -249,4 +249,64 @@ describe("AgentRegistry", () => {
     const sanitized = readFileSync(filePath, "utf8");
     expect(sanitized.includes("GARBAGE-TRAILING")).toBe(false);
   });
+
+  test("list returns all agents including internal ones", async () => {
+    // Create a normal agent
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "normal-agent",
+        cwd: "/tmp/project",
+      })
+    );
+
+    // Create an internal agent
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "internal-agent",
+        cwd: "/tmp/project",
+        config: { internal: true },
+      }),
+      { internal: true }
+    );
+
+    // Registry should return all agents - filtering is done at the manager level
+    const records = await registry.list();
+    expect(records).toHaveLength(2);
+  });
+
+  test("get returns internal agents by ID", async () => {
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "internal-agent",
+        cwd: "/tmp/project",
+        config: { internal: true },
+      }),
+      { internal: true }
+    );
+
+    const record = await registry.get("internal-agent");
+    expect(record).not.toBeNull();
+    expect(record?.internal).toBe(true);
+  });
+
+  test("internal flag is persisted and reloaded", async () => {
+    await registry.applySnapshot(
+      createManagedAgent({
+        id: "internal-agent",
+        cwd: "/tmp/project",
+        config: { internal: true },
+      }),
+      { internal: true }
+    );
+
+    // Reload the registry from disk
+    const reloaded = new AgentRegistry(filePath, logger);
+    const record = await reloaded.get("internal-agent");
+    expect(record?.internal).toBe(true);
+
+    // Registry returns all agents - filtering happens at manager level
+    const records = await reloaded.list();
+    expect(records).toHaveLength(1);
+    expect(records[0]?.internal).toBe(true);
+  });
 });
