@@ -59,6 +59,7 @@ import type {
   AgentStreamEvent,
   AgentProvider,
   AgentPersistenceHandle,
+  AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
 import { AgentRegistry, type StoredAgentRecord } from "./agent/agent-registry.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
@@ -71,6 +72,10 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
   createWorktree,
+  runWorktreeSetupCommands,
+  WorktreeSetupError,
+  type WorktreeConfig,
+  type WorktreeSetupCommandResult,
   slugify,
   validateBranchSlug,
   listPaseoWorktrees,
@@ -1307,7 +1312,7 @@ export class Session {
         throw statError;
       }
 
-      const sessionConfig = await this.buildAgentSessionConfig(
+      const { sessionConfig, worktreeConfig } = await this.buildAgentSessionConfig(
         config,
         git,
         worktreeName
@@ -1354,6 +1359,10 @@ export class Session {
             requestId,
           },
         });
+      }
+
+      if (worktreeConfig) {
+        void this.runAsyncWorktreeSetup(snapshot.id, worktreeConfig);
       }
 
       this.sessionLogger.info(
@@ -1534,14 +1543,17 @@ export class Session {
     config: AgentSessionConfig,
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string
-  ): Promise<AgentSessionConfig> {
+  ): Promise<{ sessionConfig: AgentSessionConfig; worktreeConfig?: WorktreeConfig }> {
     let cwd = expandTilde(config.cwd);
     const normalized = this.normalizeGitOptions(gitOptions, legacyWorktreeName);
+    let worktreeConfig: WorktreeConfig | undefined;
 
     if (!normalized) {
       return {
-        ...config,
-        cwd,
+        sessionConfig: {
+          ...config,
+          cwd,
+        },
       };
     }
 
@@ -1572,15 +1584,17 @@ export class Session {
         }' for branch ${targetBranch}`
       );
 
-      const worktreeConfig = await createWorktree({
+      const createdWorktree = await createWorktree({
         branchName: targetBranch,
         cwd,
         baseBranch: normalized.createNewBranch
           ? normalized.baseBranch
           : undefined,
         worktreeSlug: normalized.worktreeSlug ?? targetBranch,
+        runSetup: false,
       });
-      cwd = worktreeConfig.worktreePath;
+      cwd = createdWorktree.worktreePath;
+      worktreeConfig = createdWorktree;
     } else if (normalized.createNewBranch) {
       await this.createBranchFromBase({
         cwd,
@@ -1592,9 +1606,96 @@ export class Session {
     }
 
     return {
-      ...config,
-      cwd,
+      sessionConfig: {
+        ...config,
+        cwd,
+      },
+      worktreeConfig,
     };
+  }
+
+  private async runAsyncWorktreeSetup(
+    agentId: string,
+    worktree: WorktreeConfig
+  ): Promise<void> {
+    const callId = uuidv4();
+    let results: WorktreeSetupCommandResult[] = [];
+    try {
+      const started = await this.safeAppendTimelineItem(agentId, {
+        type: "tool_call",
+        name: "paseo_worktree_setup",
+        callId,
+        status: "running",
+        input: {
+          repoRoot: worktree.repoPath,
+          worktreePath: worktree.worktreePath,
+          branchName: worktree.branchName,
+        },
+      });
+      if (!started) {
+        return;
+      }
+
+      results = await runWorktreeSetupCommands({
+        repoRoot: worktree.repoPath,
+        worktreePath: worktree.worktreePath,
+        branchName: worktree.branchName,
+        cleanupOnFailure: false,
+      });
+
+      await this.safeAppendTimelineItem(agentId, {
+        type: "tool_call",
+        name: "paseo_worktree_setup",
+        callId,
+        status: "completed",
+        output: {
+          worktreePath: worktree.worktreePath,
+          commands: results.map((result) => ({
+            command: result.command,
+            cwd: result.cwd,
+            exitCode: result.exitCode,
+            output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
+          })),
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof WorktreeSetupError) {
+        results = error.results;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      await this.safeAppendTimelineItem(agentId, {
+        type: "tool_call",
+        name: "paseo_worktree_setup",
+        callId,
+        status: "failed",
+        output: {
+          worktreePath: worktree.worktreePath,
+          commands: results.map((result) => ({
+            command: result.command,
+            cwd: result.cwd,
+            exitCode: result.exitCode,
+            output: `${result.stdout ?? ""}${result.stderr ? `\n${result.stderr}` : ""}`.trim(),
+          })),
+        },
+        error: { message },
+      });
+    }
+  }
+
+  private async safeAppendTimelineItem(
+    agentId: string,
+    item: AgentTimelineItem
+  ): Promise<boolean> {
+    try {
+      await this.agentManager.appendTimelineItem(agentId, item);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Unknown agent")) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   private async handleGitRepoInfoRequest(
