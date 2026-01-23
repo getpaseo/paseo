@@ -13,6 +13,7 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, GitBranch } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { useSessionStore } from "@/stores/session-store";
 import {
   useCheckoutDiffQuery,
@@ -345,6 +346,7 @@ interface GitDiffPaneProps {
 
 export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
@@ -555,6 +557,8 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         predicate: (query) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
       });
+      // Archiving a worktree also archives all its agents, so navigate to new agent screen
+      router.replace("/");
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to archive worktree";
