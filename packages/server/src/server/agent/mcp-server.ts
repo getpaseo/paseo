@@ -32,6 +32,7 @@ import {
 } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { NotGitRepoError, renameCurrentBranch } from "../../utils/checkout-git.js";
+import { injectLeadingPaseoInstructionTag } from "./paseo-instructions-tag.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -456,8 +457,12 @@ export async function createAgentMcpServer(
       });
 
       if (initialPrompt) {
+        const initialPromptWithInstructions = injectLeadingPaseoInstructionTag(
+          initialPrompt,
+          snapshot.config.paseoPromptInstructions
+        );
         try {
-          agentManager.recordUserMessage(snapshot.id, initialPrompt);
+          agentManager.recordUserMessage(snapshot.id, initialPromptWithInstructions);
         } catch (error) {
           childLogger.error(
             { err: error, agentId: snapshot.id },
@@ -466,7 +471,7 @@ export async function createAgentMcpServer(
         }
 
         try {
-          startAgentRun(agentManager, snapshot.id, initialPrompt, childLogger);
+          startAgentRun(agentManager, snapshot.id, initialPromptWithInstructions, childLogger);
 
           // If not running in background, wait for completion
           if (!background) {

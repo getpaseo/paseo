@@ -45,6 +45,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
+import { injectLeadingPaseoInstructionTag } from "./agent/paseo-instructions-tag.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
 import {
   StructuredAgentResponseError,
@@ -1317,9 +1318,13 @@ export class Session {
       const trimmedPrompt = initialPrompt?.trim();
       if (trimmedPrompt) {
         try {
+          const initialPromptWithInstructions = injectLeadingPaseoInstructionTag(
+            trimmedPrompt,
+            snapshot.config.paseoPromptInstructions
+          );
           await this.handleSendAgentMessage(
             snapshot.id,
-            trimmedPrompt,
+            initialPromptWithInstructions,
             uuidv4(),
             images
           );
