@@ -1133,7 +1133,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         model: CODEX_TEST_MODEL,
         reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         cwd,
-        modeId: "auto",
+        modeId: "read-only",
         approvalPolicy: "on-request",
       } satisfies AgentSessionConfig;
       const filePath = path.join(cwd, "permission.txt");
