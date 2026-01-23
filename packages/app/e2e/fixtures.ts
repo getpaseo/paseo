@@ -1,9 +1,21 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
+
+// Extend base test to provide dynamic baseURL from global-setup
+const test = base.extend({
+  baseURL: async ({}, use) => {
+    const metroPort = process.env.E2E_METRO_PORT;
+    if (!metroPort) {
+      throw new Error('E2E_METRO_PORT not set - globalSetup must run first');
+    }
+    await use(`http://localhost:${metroPort}`);
+  },
+});
 
 const consoleEntries = new WeakMap<Page, string[]>();
 
 test.beforeEach(async ({ page }) => {
   const daemonPort = process.env.E2E_DAEMON_PORT;
+  const metroPort = process.env.E2E_METRO_PORT;
   if (!daemonPort) {
     throw new Error(
       'E2E_DAEMON_PORT is not set. Refusing to run e2e against the default daemon (e.g. localhost:6767). ' +
@@ -14,6 +26,11 @@ test.beforeEach(async ({ page }) => {
     throw new Error(
       'E2E_DAEMON_PORT is 6767. Refusing to run e2e against the default local daemon. ' +
         'Fix Playwright globalSetup to start an isolated test daemon and export its port.'
+    );
+  }
+  if (!metroPort) {
+    throw new Error(
+      'E2E_METRO_PORT is not set. Ensure Playwright `globalSetup` starts Metro and exports E2E_METRO_PORT.'
     );
   }
 
