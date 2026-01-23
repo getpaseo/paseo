@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useId, useMemo, useRef, memo } from "react";
+import { useState, useCallback, useEffect, useId, useMemo, useRef, memo, type ReactElement } from "react";
 import {
   View,
   Text,
@@ -11,14 +11,17 @@ import {
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronRight } from "lucide-react-native";
+import { ChevronRight, GitBranch } from "lucide-react-native";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  useHighlightedDiffQuery,
+  useCheckoutDiffQuery,
   type ParsedDiffFile,
   type DiffLine,
   type HighlightToken,
-} from "@/hooks/use-highlighted-diff-query";
+} from "@/hooks/use-checkout-diff-query";
+import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { Fonts } from "@/constants/theme";
@@ -260,6 +263,7 @@ const DiffFileSection = memo(function DiffFileSection({
   return (
     <View style={styles.fileSection} testID={testID}>
       <Pressable
+        testID={testID ? `${testID}-toggle` : undefined}
         style={({ pressed }) => [
           styles.fileHeader,
           pressed && styles.fileHeaderPressed,
@@ -341,9 +345,44 @@ interface GitDiffPaneProps {
 
 export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
-  const { files, isLoading, isFetching, isError, error, refresh } = useHighlightedDiffQuery({
+  const queryClient = useQueryClient();
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+  const [diffMode, setDiffMode] = useState<"uncommitted" | "base">("uncommitted");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
+    useCheckoutStatusQuery({ serverId, agentId });
+  const isGit = status?.isGit ?? false;
+  const notGit = Boolean(status) && !status?.isGit && !status?.error;
+  const statusErrorMessage =
+    status?.error?.message ??
+    (isStatusError && statusError instanceof Error ? statusError.message : null);
+  const baseRef = status?.baseRef ?? undefined;
+  const {
+    files,
+    payloadError: diffPayloadError,
+    isLoading: isDiffLoading,
+    isFetching: isDiffFetching,
+    isError: isDiffError,
+    error: diffError,
+    refresh: refreshDiff,
+  } = useCheckoutDiffQuery({
     serverId,
     agentId,
+    mode: diffMode,
+    baseRef,
+    enabled: isGit,
+  });
+  const {
+    status: prStatus,
+    payloadError: prPayloadError,
+    refresh: refreshPrStatus,
+  } = useCheckoutPrStatusQuery({
+    serverId,
+    agentId,
+    enabled: isGit,
   });
   // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
   const [isManualRefresh, setIsManualRefresh] = useState(false);
@@ -374,8 +413,10 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
 
   const handleRefresh = useCallback(() => {
     setIsManualRefresh(true);
-    refresh();
-  }, [refresh]);
+    void refreshDiff();
+    void refreshStatus();
+    void refreshPrStatus();
+  }, [refreshDiff, refreshStatus, refreshPrStatus]);
 
   const handleToggleExpanded = useCallback((path: string) => {
     setExpandedByPath((prev) => ({
@@ -386,10 +427,10 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
 
   // Reset manual refresh flag when fetch completes
   useEffect(() => {
-    if (!isFetching && isManualRefresh) {
+    if (!(isDiffFetching || isStatusFetching) && isManualRefresh) {
       setIsManualRefresh(false);
     }
-  }, [isFetching, isManualRefresh]);
+  }, [isDiffFetching, isStatusFetching, isManualRefresh]);
 
   useEffect(() => {
     if (!isPerfLoggingEnabled()) {
@@ -408,14 +449,119 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
       hunkCount: diffMetrics.hunkCount,
       lineCount: diffMetrics.lineCount,
       tokenCount: diffMetrics.tokenCount,
-      isLoading,
-      isFetching,
+      isLoading: isDiffLoading,
+      isFetching: isDiffFetching,
     });
-  }, [agentId, diffMetrics, isFetching, isLoading, serverId]);
+  }, [agentId, diffMetrics, isDiffFetching, isDiffLoading, serverId]);
 
   const agentExists = useSessionStore((state) =>
     state.sessions[serverId]?.agents?.has(agentId) ?? false
   );
+
+  const commitMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.checkoutCommit(agentId, { addAll: true });
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("Commit created.");
+      void refreshDiff();
+      void refreshStatus();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to commit";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
+
+  const prMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.checkoutPrCreate(agentId, {});
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("PR created.");
+      void refreshPrStatus();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to create PR";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
+
+  const mergeMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.checkoutMerge(agentId, {
+        baseRef,
+        strategy: "merge",
+        requireCleanTarget: true,
+      });
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("Merged to base.");
+      void refreshDiff();
+      void refreshStatus();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to merge";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const worktreePath = status?.cwd;
+      if (!worktreePath) {
+        throw new Error("Worktree path unavailable");
+      }
+      const payload = await client.archivePaseoWorktree({ worktreePath });
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("Worktree archived.");
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
+      });
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to archive worktree";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
 
   const renderFileSection: ListRenderItem<ParsedDiffFile> = useCallback(
     ({ item, index }) => (
@@ -440,58 +586,321 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   }
 
   const hasChanges = files.length > 0;
-  const errorMessage = isError && error instanceof Error ? error.message : null;
+  const diffErrorMessage =
+    diffPayloadError?.message ??
+    (isDiffError && diffError instanceof Error ? diffError.message : null);
+  const prErrorMessage = prPayloadError?.message ?? null;
+  const branchLabel = status?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
+  const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
+  const hasUncommittedChanges = Boolean(status?.isDirty);
+  const showCommitAction =
+    !isGit || hasUncommittedChanges || (diffMode === "uncommitted" && hasChanges);
+  const showCreatePrAction = !isGit || !prStatus;
+  const commitDisabled = actionsDisabled || commitMutation.isPending;
+  const prDisabled = actionsDisabled || prMutation.isPending;
+  const mergeDisabled = actionsDisabled || mergeMutation.isPending;
+  const archiveDisabled =
+    actionsDisabled || archiveMutation.isPending || !status?.isPaseoOwnedWorktree;
 
-  if (isLoading) {
-    return (
+  let bodyContent: ReactElement;
+
+  if (isStatusLoading) {
+    bodyContent = (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" />
+        <Text style={styles.loadingText}>Checking repository...</Text>
+      </View>
+    );
+  } else if (statusErrorMessage) {
+    bodyContent = (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{statusErrorMessage}</Text>
+      </View>
+    );
+  } else if (notGit) {
+    bodyContent = (
+      <View style={styles.emptyContainer} testID="changes-not-git">
+        <Text style={styles.emptyText}>Not a git repository</Text>
+      </View>
+    );
+  } else if (isDiffLoading) {
+    bodyContent = (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" />
         <Text style={styles.loadingText}>Loading changes...</Text>
       </View>
     );
-  }
-
-  if (isError) {
-    return (
+  } else if (diffErrorMessage) {
+    bodyContent = (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{errorMessage ?? "Failed to load changes"}</Text>
+        <Text style={styles.errorText}>{diffErrorMessage}</Text>
       </View>
     );
-  }
-
-  if (!hasChanges) {
-    return (
+  } else if (!hasChanges) {
+    bodyContent = (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>No changes</Text>
+        <Text style={styles.emptyText}>
+          {diffMode === "uncommitted" ? "No uncommitted changes" : "No base changes"}
+        </Text>
       </View>
+    );
+  } else {
+    bodyContent = (
+      <FlatList
+        data={files}
+        renderItem={renderFileSection}
+        keyExtractor={keyExtractor}
+        extraData={expandedByPath}
+        style={styles.scrollView}
+        contentContainerStyle={styles.contentContainer}
+        testID="git-diff-scroll"
+        onRefresh={handleRefresh}
+        refreshing={isManualRefresh && isDiffFetching}
+        initialNumToRender={3}
+        maxToRenderPerBatch={3}
+        windowSize={5}
+      />
     );
   }
 
   return (
-    <FlatList
-      data={files}
-      renderItem={renderFileSection}
-      keyExtractor={keyExtractor}
-      extraData={expandedByPath}
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      testID="git-diff-scroll"
-      onRefresh={handleRefresh}
-      refreshing={isManualRefresh && isFetching}
-      initialNumToRender={3}
-      maxToRenderPerBatch={3}
-      windowSize={5}
-    />
+    <View style={styles.container}>
+      <View style={styles.header} testID="changes-header">
+        <View style={styles.headerLeft}>
+          <GitBranch size={16} color={theme.colors.foregroundMuted} />
+          <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
+            {branchLabel}
+          </Text>
+          {isStatusFetching && (
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          )}
+        </View>
+        <View style={styles.modeToggle}>
+          <Pressable
+            testID="changes-mode-uncommitted"
+            onPress={() => setDiffMode("uncommitted")}
+            style={[
+              styles.modeToggleButton,
+              diffMode === "uncommitted" && styles.modeToggleButtonActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.modeToggleText,
+                diffMode === "uncommitted" && styles.modeToggleTextActive,
+              ]}
+            >
+              Uncommitted
+            </Text>
+          </Pressable>
+          <Pressable
+            testID="changes-mode-base"
+            onPress={() => setDiffMode("base")}
+            style={[
+              styles.modeToggleButton,
+              diffMode === "base" && styles.modeToggleButtonActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.modeToggleText,
+                diffMode === "base" && styles.modeToggleTextActive,
+              ]}
+            >
+              Base
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.actionsRow}>
+        {showCommitAction ? (
+          <Pressable
+            testID="changes-action-commit"
+            style={[styles.actionButton, commitDisabled && styles.actionButtonDisabled]}
+            onPress={() => commitMutation.mutate()}
+            disabled={commitDisabled}
+          >
+            {commitMutation.isPending ? (
+              <ActivityIndicator size="small" color={theme.colors.foreground} />
+            ) : (
+              <Text style={styles.actionButtonText}>Commit</Text>
+            )}
+          </Pressable>
+        ) : null}
+        {showCreatePrAction ? (
+          <Pressable
+            testID="changes-action-create-pr"
+            style={[styles.actionButton, prDisabled && styles.actionButtonDisabled]}
+            onPress={() => prMutation.mutate()}
+            disabled={prDisabled}
+          >
+            {prMutation.isPending ? (
+              <ActivityIndicator size="small" color={theme.colors.foreground} />
+            ) : (
+              <Text style={styles.actionButtonText}>Create PR</Text>
+            )}
+          </Pressable>
+        ) : null}
+        <Pressable
+          testID="changes-action-merge"
+          style={[styles.actionButton, mergeDisabled && styles.actionButtonDisabled]}
+          onPress={() => mergeMutation.mutate()}
+          disabled={mergeDisabled}
+        >
+          {mergeMutation.isPending ? (
+            <ActivityIndicator size="small" color={theme.colors.foreground} />
+          ) : (
+            <Text style={styles.actionButtonText}>Merge to base</Text>
+          )}
+        </Pressable>
+        <Pressable
+          testID="changes-action-archive"
+          style={[styles.actionButton, archiveDisabled && styles.actionButtonDisabled]}
+          onPress={() => archiveMutation.mutate()}
+          disabled={archiveDisabled}
+        >
+          {archiveMutation.isPending ? (
+            <ActivityIndicator size="small" color={theme.colors.foreground} />
+          ) : (
+            <Text style={styles.actionButtonText}>Archive</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
+      {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
+      {prStatus ? (
+        <View style={styles.prStatusRow} testID="changes-pr-status">
+          <Text style={styles.prStatusLabel}>PR</Text>
+          <Text style={styles.prStatusValue}>
+            {prStatus.state} {prStatus.url ? `· ${prStatus.url}` : ""}
+          </Text>
+        </View>
+      ) : null}
+      {prErrorMessage ? (
+        <Text style={styles.actionErrorText}>{prErrorMessage}</Text>
+      ) : null}
+
+      <View style={styles.diffContainer}>{bodyContent}</View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  container: {
+    flex: 1,
+    minHeight: 0,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flex: 1,
+    minWidth: 0,
+  },
+  branchLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+    flexShrink: 1,
+  },
+  modeToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[1],
+    gap: theme.spacing[1],
+  },
+  modeToggleButton: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+  },
+  modeToggleButtonActive: {
+    backgroundColor: theme.colors.surface0,
+  },
+  modeToggleText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
+  modeToggleTextActive: {
+    color: theme.colors.foreground,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  actionButton: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  actionButtonText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+  },
+  actionStatusText: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.success,
+  },
+  actionErrorText: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.destructive,
+  },
+  prStatusRow: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  prStatusLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  prStatusValue: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foreground,
+    flexShrink: 1,
+  },
+  diffContainer: {
+    flex: 1,
+    minHeight: 0,
+  },
   scrollView: {
     flex: 1,
   },
   contentContainer: {
-    paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[8],
   },
   loadingContainer: {
@@ -528,20 +937,18 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   fileSection: {
-    borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
     backgroundColor: theme.colors.surface2,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    marginBottom: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderAccent,
   },
   fileHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
   },
   fileHeaderPressed: {
     opacity: 0.7,
@@ -549,14 +956,14 @@ const styles = StyleSheet.create((theme) => ({
   fileHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
   },
   fileHeaderRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
     flexShrink: 0,
   },
   chevronContainer: {
@@ -569,7 +976,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
     flex: 1,
   },
   newBadge: {

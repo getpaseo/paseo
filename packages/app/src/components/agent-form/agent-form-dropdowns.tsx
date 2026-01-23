@@ -52,6 +52,7 @@ interface DropdownFieldProps {
   warningMessage?: string | null;
   helperText?: string | null;
   renderTrigger?: DropdownTriggerRenderer;
+  testID?: string;
 }
 
 export function DropdownField({
@@ -64,6 +65,7 @@ export function DropdownField({
   warningMessage,
   helperText,
   renderTrigger,
+  testID,
 }: DropdownFieldProps): ReactElement {
   if (renderTrigger) {
     return (
@@ -88,6 +90,7 @@ export function DropdownField({
       <Pressable
         onPress={onPress}
         disabled={disabled}
+        testID={testID}
         style={[styles.dropdownControl, disabled && styles.dropdownControlDisabled]}
       >
         <Text
@@ -117,6 +120,7 @@ interface SelectFieldProps {
   warningMessage?: string | null;
   helperText?: string | null;
   controlRef?: React.RefObject<View | null>;
+  testID?: string;
 }
 
 export function SelectField({
@@ -129,6 +133,7 @@ export function SelectField({
   warningMessage,
   helperText,
   controlRef,
+  testID,
 }: SelectFieldProps): ReactElement {
   return (
     <View style={styles.selectFieldContainer}>
@@ -136,6 +141,7 @@ export function SelectField({
         ref={controlRef}
         onPress={onPress}
         disabled={disabled}
+        testID={testID}
         style={[styles.selectFieldControl, disabled && styles.selectFieldControlDisabled]}
       >
         <View style={styles.selectFieldContent}>
@@ -1144,8 +1150,8 @@ export function ToggleRow({
 }
 
 export interface GitOptionsSectionProps {
-  useWorktree: boolean;
-  onUseWorktreeChange: (value: boolean) => void;
+  worktreeMode: "none" | "create" | "attach";
+  onWorktreeModeChange: (value: "none" | "create" | "attach") => void;
   worktreeSlug: string;
   currentBranch: string | null;
   baseBranch: string;
@@ -1155,11 +1161,17 @@ export interface GitOptionsSectionProps {
   repoError: string | null;
   gitValidationError: string | null;
   baseBranchError: string | null;
+  worktreeOptions: Array<{ path: string; label: string }>;
+  selectedWorktreePath: string;
+  worktreeOptionsStatus: "idle" | "loading" | "ready" | "error";
+  worktreeOptionsError: string | null;
+  attachWorktreeError: string | null;
+  onSelectWorktreePath: (path: string) => void;
 }
 
 export function GitOptionsSection({
-  useWorktree,
-  onUseWorktreeChange,
+  worktreeMode,
+  onWorktreeModeChange,
   worktreeSlug,
   currentBranch,
   baseBranch,
@@ -1169,11 +1181,20 @@ export function GitOptionsSection({
   repoError,
   gitValidationError,
   baseBranchError,
+  worktreeOptions,
+  selectedWorktreePath,
+  worktreeOptionsStatus,
+  worktreeOptionsError,
+  attachWorktreeError,
+  onSelectWorktreePath,
 }: GitOptionsSectionProps): ReactElement {
   const isLoading = status === "loading";
+  const isCreateMode = worktreeMode === "create";
+  const isAttachMode = worktreeMode === "attach";
   const [isEditingBranch, setIsEditingBranch] = useState(false);
   const [editedBranch, setEditedBranch] = useState(baseBranch);
   const inputRef = useRef<TextInput>(null);
+  const [isWorktreeSheetOpen, setIsWorktreeSheetOpen] = useState(false);
 
   useEffect(() => {
     setEditedBranch(baseBranch);
@@ -1204,24 +1225,35 @@ export function GitOptionsSection({
   }, [baseBranch]);
 
   const displayBranch = baseBranch || currentBranch || "HEAD";
+  const selectedWorktreeLabel =
+    worktreeOptions.find((option) => option.path === selectedWorktreePath)?.label ?? "";
+  const worktreeHelperText =
+    worktreeOptionsStatus === "loading"
+      ? "Loading worktrees..."
+      : worktreeOptions.length === 0
+        ? "No worktrees found"
+        : null;
 
   return (
     <View style={styles.gitOptionsContainer}>
       <Pressable
-        onPress={() => onUseWorktreeChange(!useWorktree)}
+        testID="worktree-create-toggle"
+        onPress={() =>
+          onWorktreeModeChange(isCreateMode ? "none" : "create")
+        }
         disabled={isLoading}
         style={[styles.worktreeToggle, isLoading && styles.worktreeToggleDisabled]}
       >
-        <View style={[styles.checkbox, useWorktree && styles.checkboxChecked]}>
-          {useWorktree ? <View style={styles.checkboxDot} /> : null}
+        <View style={[styles.checkbox, isCreateMode && styles.checkboxChecked]}>
+          {isCreateMode ? <View style={styles.checkboxDot} /> : null}
         </View>
         <View style={styles.worktreeToggleContent}>
           <Text style={styles.worktreeToggleLabel}>Create worktree</Text>
           <Text style={styles.worktreeToggleDescription}>
             {isLoading
               ? "Inspecting repository…"
-              : useWorktree && worktreeSlug
-                ? `Will create: ${worktreeSlug}`
+              : isCreateMode
+                ? `Will create: ${worktreeSlug || "preparing…"}`
                 : currentBranch
                   ? `Run isolated from ${currentBranch}`
                   : "Run in an isolated directory"}
@@ -1229,7 +1261,59 @@ export function GitOptionsSection({
         </View>
       </Pressable>
 
-      {useWorktree ? (
+      <Pressable
+        testID="worktree-attach-toggle"
+        onPress={() =>
+          onWorktreeModeChange(isAttachMode ? "none" : "attach")
+        }
+        disabled={isLoading}
+        style={[styles.worktreeToggle, isLoading && styles.worktreeToggleDisabled]}
+      >
+        <View style={[styles.checkbox, isAttachMode && styles.checkboxChecked]}>
+          {isAttachMode ? <View style={styles.checkboxDot} /> : null}
+        </View>
+        <View style={styles.worktreeToggleContent}>
+          <Text style={styles.worktreeToggleLabel}>Attach to existing worktree</Text>
+          <Text style={styles.worktreeToggleDescription}>
+            {isLoading ? "Inspecting repository…" : "Pick a Paseo worktree by branch"}
+          </Text>
+        </View>
+      </Pressable>
+
+      {isAttachMode ? (
+        <>
+          <SelectField
+            label="Worktree"
+            value={selectedWorktreeLabel}
+            placeholder="Select a worktree"
+            onPress={() => setIsWorktreeSheetOpen(true)}
+            disabled={isLoading || worktreeOptionsStatus === "loading"}
+            helperText={worktreeHelperText}
+            errorMessage={attachWorktreeError || worktreeOptionsError}
+            testID="worktree-attach-picker"
+          />
+          <DropdownSheet
+            title="Select worktree"
+            visible={isWorktreeSheetOpen}
+            onClose={() => setIsWorktreeSheetOpen(false)}
+          >
+            {worktreeOptions.map((option) => (
+              <Pressable
+                key={option.path}
+                style={styles.dropdownSheetOption}
+                onPress={() => {
+                  onSelectWorktreePath(option.path);
+                  setIsWorktreeSheetOpen(false);
+                }}
+              >
+                <Text style={styles.dropdownSheetOptionLabel}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </DropdownSheet>
+        </>
+      ) : null}
+
+      {isCreateMode ? (
         <View style={styles.baseBranchRow}>
           <Text style={styles.baseBranchLabel}>Base branch:</Text>
           {isEditingBranch ? (

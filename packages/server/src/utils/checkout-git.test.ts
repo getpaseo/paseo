@@ -113,16 +113,24 @@ describe("checkout git utilities", () => {
     expect(message).toBe("worktree update");
   });
 
-  it("merges the current branch into base", async () => {
-    writeFileSync(join(repoDir, "merge.txt"), "feature\n");
-    execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git add merge.txt", { cwd: repoDir });
-    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", { cwd: repoDir });
-    const featureCommit = execSync("git rev-parse HEAD", { cwd: repoDir })
+  it("merges the current branch into base from a worktree checkout", async () => {
+    const worktree = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      worktreeSlug: "merge",
+    });
+
+    writeFileSync(join(worktree.worktreePath, "merge.txt"), "feature\n");
+    execSync("git checkout -b feature", { cwd: worktree.worktreePath });
+    execSync("git add merge.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+    const featureCommit = execSync("git rev-parse HEAD", { cwd: worktree.worktreePath })
       .toString()
       .trim();
 
-    await mergeToBase(repoDir, { baseRef: "main" });
+    await mergeToBase(worktree.worktreePath, { baseRef: "main" });
 
     const baseContainsFeature = execSync(`git merge-base --is-ancestor ${featureCommit} main`, {
       cwd: repoDir,
@@ -130,7 +138,9 @@ describe("checkout git utilities", () => {
     });
     expect(baseContainsFeature).toBeDefined();
 
-    const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: repoDir })
+    const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: worktree.worktreePath,
+    })
       .toString()
       .trim();
     expect(currentBranch).toBe("feature");

@@ -151,17 +151,76 @@ export const openSettings = async (page: Page) => {
 export const setWorkingDirectory = async (page: Page, directory: string) => {
   const workingDirectoryLabel = page.getByText('WORKING DIRECTORY', { exact: true }).first();
   await expect(workingDirectoryLabel).toBeVisible();
-  await workingDirectoryLabel.click();
 
   const input = page.getByRole('textbox', { name: '/path/to/project' });
-  await expect(input).toBeVisible();
+  const worktreePicker = page.getByTestId('worktree-attach-picker');
+  const worktreeSheetTitle = page.getByText('Select worktree', { exact: true });
+  const closeBottomSheet = async () => {
+    const bottomSheetBackdrop = page
+      .getByRole('button', { name: 'Bottom sheet backdrop' })
+      .first();
+    const bottomSheetHandle = page
+      .getByRole('slider', { name: 'Bottom sheet handle' })
+      .first();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!(await bottomSheetBackdrop.isVisible())) {
+        return;
+      }
+      await bottomSheetBackdrop.click({ force: true });
+      await page.keyboard.press('Escape').catch(() => undefined);
+      await page.waitForTimeout(200);
+    }
+    if (await bottomSheetBackdrop.isVisible()) {
+      const box = await bottomSheetHandle.boundingBox();
+      if (box) {
+        const startX = box.x + box.width / 2;
+        const startY = box.y + box.height / 2;
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        await page.mouse.move(startX, startY + 400);
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+      }
+    }
+  };
+  const closeWorktreeSheetIfOpen = async () => {
+    if (!(await worktreeSheetTitle.isVisible()) && !(await worktreePicker.isVisible())) {
+      return;
+    }
+    const attachToggle = page.getByTestId('worktree-attach-toggle');
+    if (await attachToggle.isVisible()) {
+      await attachToggle.click({ force: true });
+      await page.waitForTimeout(200);
+    }
+    await closeBottomSheet();
+  };
+
+  await closeWorktreeSheetIfOpen();
+
+  if (!(await input.isVisible())) {
+    await closeBottomSheet();
+    await workingDirectoryLabel.click({ force: true });
+    if (!(await input.isVisible())) {
+      await closeBottomSheet();
+      await workingDirectoryLabel.click({ force: true });
+    }
+    await expect(input).toBeVisible();
+  }
+
   await input.fill(directory);
   await input.press('Enter');
 
   const useOption = page.getByText(`Use "${directory}"`);
   await expect(useOption).toBeVisible();
-  await useOption.click();
-  await expect(page.getByText(directory, { exact: true })).toBeVisible();
+  await useOption.click({ force: true });
+  const normalizedDirectory = directory.startsWith('/var/')
+    ? `/private${directory}`
+    : directory;
+  const workingDirectoryContainer = workingDirectoryLabel.locator('..');
+  await expect.poll(async () => {
+    const text = await workingDirectoryContainer.innerText();
+    return text.includes(directory) || text.includes(normalizedDirectory);
+  }).toBe(true);
 };
 
 export const ensureHostSelected = async (page: Page) => {

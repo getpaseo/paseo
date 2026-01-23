@@ -100,4 +100,4 @@ test.afterEach(async ({ page }, testInfo) => {
   });
 });
 
-export { test, expect };
+export { test, expect, type Page };

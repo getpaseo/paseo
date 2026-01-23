@@ -168,9 +168,10 @@ export default function HomeScreen() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
-  const [useWorktree, setUseWorktree] = useState(false);
+  const [worktreeMode, setWorktreeMode] = useState<"none" | "create" | "attach">("none");
   const [baseBranch, setBaseBranch] = useState("");
   const [worktreeSlug, setWorktreeSlug] = useState("");
+  const [selectedWorktreePath, setSelectedWorktreePath] = useState("");
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -293,13 +294,73 @@ export default function HomeScreen() {
   const gitHelperText = isNonGitDirectory
     ? "No git repository detected. Git options are disabled for this directory."
     : null;
+  const isCreateWorktree = worktreeMode === "create";
+  const isAttachWorktree = worktreeMode === "attach";
 
-  const handleUseWorktreeChange = useCallback((value: boolean) => {
-    setUseWorktree(value);
-    if (value && !worktreeSlug) {
-      setWorktreeSlug(createNameId());
-    }
-  }, [worktreeSlug]);
+  const worktreeListRoot = repoInfo?.repoRoot ?? trimmedWorkingDir;
+  const worktreeListQuery = useQuery({
+    queryKey: ["paseoWorktreeList", selectedServerId, worktreeListRoot],
+    queryFn: async () => {
+      const client = sessionClient;
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.getPaseoWorktreeList({
+        repoRoot: worktreeListRoot || undefined,
+        cwd: worktreeListRoot ? undefined : trimmedWorkingDir || undefined,
+      });
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload.worktrees ?? [];
+    },
+    enabled:
+      isAttachWorktree &&
+      Boolean(worktreeListRoot || trimmedWorkingDir) &&
+      !repoAvailabilityError &&
+      Boolean(sessionClient) &&
+      isConnected &&
+      !isNonGitDirectory,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const worktreeOptions = useMemo(() => {
+    return (worktreeListQuery.data ?? []).map((worktree) => ({
+      path: worktree.worktreePath,
+      label: worktree.branchName ?? worktree.head ?? "Unknown branch",
+    }));
+  }, [worktreeListQuery.data]);
+  const worktreeOptionsError =
+    worktreeListQuery.error instanceof Error ? worktreeListQuery.error.message : null;
+  const worktreeOptionsStatus: "idle" | "loading" | "ready" | "error" =
+    !isAttachWorktree
+      ? "idle"
+      : worktreeListQuery.isPending || worktreeListQuery.isFetching
+      ? "loading"
+      : worktreeListQuery.isError
+      ? "error"
+      : "ready";
+  const attachWorktreeError =
+    isAttachWorktree &&
+    worktreeOptionsStatus === "ready" &&
+    worktreeOptions.length > 0 &&
+    !selectedWorktreePath
+      ? "Select a worktree to attach"
+      : null;
+
+  const handleWorktreeModeChange = useCallback(
+    (mode: "none" | "create" | "attach") => {
+      setWorktreeMode(mode);
+      if (mode === "create" && !worktreeSlug) {
+        setWorktreeSlug(createNameId());
+      }
+      if (mode !== "attach") {
+        setSelectedWorktreePath("");
+      }
+    },
+    [worktreeSlug]
+  );
 
   const validateWorktreeName = useCallback(
     (name: string): { valid: boolean; error?: string } => {
@@ -330,7 +391,7 @@ export default function HomeScreen() {
   );
 
   const gitBlockingError = useMemo(() => {
-    if (!useWorktree || isNonGitDirectory) {
+    if (!isCreateWorktree || isNonGitDirectory) {
       return null;
     }
     if (!worktreeSlug) {
@@ -344,14 +405,14 @@ export default function HomeScreen() {
     }
     return null;
   }, [
-    useWorktree,
+    isCreateWorktree,
     isNonGitDirectory,
     worktreeSlug,
     validateWorktreeName,
   ]);
 
   const baseBranchError = useMemo(() => {
-    if (!useWorktree || isNonGitDirectory || !baseBranch) {
+    if (!isCreateWorktree || isNonGitDirectory || !baseBranch) {
       return null;
     }
     const branches = repoInfo?.branches ?? [];
@@ -363,17 +424,26 @@ export default function HomeScreen() {
       return `Branch "${baseBranch}" not found in repository`;
     }
     return null;
-  }, [useWorktree, isNonGitDirectory, baseBranch, repoInfo?.branches]);
+  }, [isCreateWorktree, isNonGitDirectory, baseBranch, repoInfo?.branches]);
 
   const handleBaseBranchChange = useCallback((value: string) => {
     setBaseBranch(value);
   }, []);
 
+  const handleSelectWorktreePath = useCallback(
+    (path: string) => {
+      setSelectedWorktreePath(path);
+      setWorkingDirFromUser(path);
+    },
+    [setWorkingDirFromUser]
+  );
+
   useEffect(() => {
-    if (isNonGitDirectory && useWorktree) {
-      setUseWorktree(false);
+    if (isNonGitDirectory && worktreeMode !== "none") {
+      setWorktreeMode("none");
+      setSelectedWorktreePath("");
     }
-  }, [isNonGitDirectory, useWorktree]);
+  }, [isNonGitDirectory, worktreeMode]);
 
   const sessionMethods = useSessionStore((state) =>
     selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
@@ -390,6 +460,10 @@ export default function HomeScreen() {
       setErrorMessage("");
       const trimmedPath = workingDir.trim();
       const trimmedPrompt = text.trim();
+      const resolvedWorkingDir =
+        isAttachWorktree && selectedWorktreePath
+          ? selectedWorktreePath
+          : trimmedPath;
       if (!trimmedPath) {
         setErrorMessage("Working directory is required");
         throw new Error("Working directory is required");
@@ -410,6 +484,11 @@ export default function HomeScreen() {
         setErrorMessage(gitBlockingError);
         throw new Error(gitBlockingError);
       }
+      if (isAttachWorktree && !selectedWorktreePath) {
+        const message = "Select a worktree to attach";
+        setErrorMessage(message);
+        throw new Error(message);
+      }
       if (baseBranchError) {
         setErrorMessage(baseBranchError);
         throw new Error(baseBranchError);
@@ -427,18 +506,26 @@ export default function HomeScreen() {
       const trimmedModel = selectedModel.trim();
       const config: AgentSessionConfig = {
         provider: selectedProvider,
-        cwd: trimmedPath,
+        cwd: resolvedWorkingDir,
         ...(modeId ? { modeId } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
       };
       const effectiveBaseBranch = baseBranch.trim() || repoInfo?.currentBranch || undefined;
-      const gitOptions = useWorktree && !isNonGitDirectory && worktreeSlug
-        ? {
-            createWorktree: true,
-            worktreeSlug,
-            baseBranch: effectiveBaseBranch,
-          }
-        : undefined;
+      const effectiveWorktreeSlug =
+        isCreateWorktree && !worktreeSlug ? createNameId() : worktreeSlug;
+      if (isCreateWorktree && !worktreeSlug && effectiveWorktreeSlug) {
+        setWorktreeSlug(effectiveWorktreeSlug);
+      }
+      const gitOptions =
+        isCreateWorktree && !isNonGitDirectory && effectiveWorktreeSlug
+          ? {
+              createWorktree: true,
+              createNewBranch: true,
+              newBranchName: effectiveWorktreeSlug,
+              worktreeSlug: effectiveWorktreeSlug,
+              baseBranch: effectiveBaseBranch,
+            }
+          : undefined;
 
       void persistFormPreferences();
       setIsLoading(true);
@@ -469,9 +556,10 @@ export default function HomeScreen() {
       }
     },
     [
-      useWorktree,
+      worktreeMode,
       baseBranch,
       worktreeSlug,
+      selectedWorktreePath,
       repoInfo?.currentBranch,
       gitBlockingError,
       baseBranchError,
@@ -544,8 +632,8 @@ export default function HomeScreen() {
             />
             {trimmedWorkingDir.length > 0 && !isNonGitDirectory ? (
               <GitOptionsSection
-                useWorktree={useWorktree}
-                onUseWorktreeChange={handleUseWorktreeChange}
+                worktreeMode={worktreeMode}
+                onWorktreeModeChange={handleWorktreeModeChange}
                 worktreeSlug={worktreeSlug}
                 currentBranch={repoInfo?.currentBranch ?? null}
                 baseBranch={baseBranch}
@@ -555,6 +643,12 @@ export default function HomeScreen() {
                 repoError={repoInfoError}
                 gitValidationError={gitBlockingError}
                 baseBranchError={baseBranchError}
+                worktreeOptions={worktreeOptions}
+                selectedWorktreePath={selectedWorktreePath}
+                worktreeOptionsStatus={worktreeOptionsStatus}
+                worktreeOptionsError={worktreeOptionsError}
+                attachWorktreeError={attachWorktreeError}
+                onSelectWorktreePath={handleSelectWorktreePath}
               />
             ) : null}
           </View>

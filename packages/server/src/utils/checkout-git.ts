@@ -98,6 +98,68 @@ async function getCurrentBranch(cwd: string): Promise<string | null> {
   return branch.length > 0 ? branch : null;
 }
 
+async function getWorktreeRoot(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(
+      "git rev-parse --path-format=absolute --show-toplevel",
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const root = stdout.trim();
+    return root.length > 0 ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+type GitWorktreeEntry = {
+  path: string;
+  branchRef?: string;
+};
+
+function parseWorktreeList(output: string): GitWorktreeEntry[] {
+  const entries: GitWorktreeEntry[] = [];
+  let current: GitWorktreeEntry | null = null;
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed.startsWith("worktree ")) {
+      if (current) {
+        entries.push(current);
+      }
+      current = { path: trimmed.slice("worktree ".length).trim() };
+      continue;
+    }
+    if (current && trimmed.startsWith("branch ")) {
+      current.branchRef = trimmed.slice("branch ".length).trim();
+    }
+  }
+  if (current) {
+    entries.push(current);
+  }
+  return entries;
+}
+
+async function getWorktreePathForBranch(
+  cwd: string,
+  branchName: string
+): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync("git worktree list --porcelain", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const entries = parseWorktreeList(stdout);
+    const ref = branchName.startsWith("refs/heads/")
+      ? branchName
+      : `refs/heads/${branchName}`;
+    return entries.find((entry) => entry.branchRef === ref)?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function renameCurrentBranch(
   cwd: string,
   newName: string
@@ -295,19 +357,26 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
   if (!currentBranch) {
     throw new Error("Unable to determine current branch for merge");
   }
-  if (baseRef === currentBranch) {
+  let normalizedBaseRef = baseRef;
+  if (normalizedBaseRef.startsWith("origin/")) {
+    normalizedBaseRef = normalizedBaseRef.slice("origin/".length);
+  }
+  if (normalizedBaseRef === currentBranch) {
     return;
   }
 
-  const operationCwd = repoInfo.path;
-  const isSameCheckout = resolve(operationCwd) === resolve(cwd);
+  const currentWorktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
+  const baseWorktree = await getWorktreePathForBranch(repoInfo.path, normalizedBaseRef);
+  const operationCwd = baseWorktree ?? currentWorktreeRoot;
+  const isSameCheckout = resolve(operationCwd) === resolve(currentWorktreeRoot);
   const originalBranch = await getCurrentBranch(operationCwd);
   const mode = options.mode ?? "merge";
   try {
-    await execAsync(`git checkout ${baseRef}`, { cwd: operationCwd });
+    await execAsync(`git checkout ${normalizedBaseRef}`, { cwd: operationCwd });
     if (mode === "squash") {
       await execAsync(`git merge --squash ${currentBranch}`, { cwd: operationCwd });
-      const message = options.commitMessage ?? `Squash merge ${currentBranch} into ${baseRef}`;
+      const message =
+        options.commitMessage ?? `Squash merge ${currentBranch} into ${normalizedBaseRef}`;
       await execFileAsync(
         "git",
         ["-c", "commit.gpgsign=false", "commit", "-m", message],
@@ -354,7 +423,7 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
           // ignore
         }
         throw new MergeConflictError({
-          baseRef,
+          baseRef: normalizedBaseRef,
           currentBranch,
           conflictFiles: conflicts.length > 0 ? conflicts : [],
         });
@@ -368,7 +437,7 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
 
     throw error;
   } finally {
-    if (isSameCheckout && originalBranch && originalBranch !== baseRef) {
+    if (isSameCheckout && originalBranch && originalBranch !== normalizedBaseRef) {
       try {
         await execAsync(`git checkout ${originalBranch}`, { cwd: operationCwd });
       } catch {
