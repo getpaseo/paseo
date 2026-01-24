@@ -14,7 +14,7 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
-import { ChevronDown, ChevronRight, GitBranch, MoreVertical, RotateCcw } from "lucide-react-native";
+import { ChevronDown, ChevronRight, GitBranch, MoreVertical } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -32,7 +32,6 @@ import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuHint,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -120,6 +119,7 @@ function HighlightedText({ tokens, lineType }: HighlightedTextProps) {
     </Text>
   );
 }
+
 
 interface DiffFileSectionProps {
   file: ParsedDiffFile;
@@ -824,67 +824,12 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
           <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
             {branchLabel}
           </Text>
-            {isStatusFetching && (
-              <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-            )}
+          {isStatusFetching && (
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          )}
         </View>
         {isGit ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              testID="changes-view-selector"
-              style={styles.viewSelector}
-              accessibilityRole="button"
-              accessibilityLabel="Change diff view"
-            >
-              <Text style={styles.viewSelectorText}>
-                {diffMode === "uncommitted" ? "Working" : "Base"}
-              </Text>
-              <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" width={180} testID="changes-view-menu">
-              <DropdownMenuItem
-                testID="changes-mode-uncommitted"
-                selected={diffMode === "uncommitted"}
-                onSelect={() => setDiffMode("uncommitted")}
-              >
-                Working
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                testID="changes-mode-base"
-                selected={diffMode === "base"}
-                onSelect={() => setDiffMode("base")}
-              >
-                Base
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-      </View>
-
-      {isGit ? (
-        <View style={styles.toolbarRow} testID="changes-toolbar">
-          <View style={styles.toolbarLeft}>
-            {canShowCommit ? (
-              <Pressable
-                testID="changes-action-commit"
-                style={[
-                  styles.secondaryActionButton,
-                  commitDisabled && styles.secondaryActionButtonDisabled,
-                ]}
-                onPress={() => commitMutation.mutate()}
-                disabled={commitDisabled}
-              >
-                {commitMutation.isPending ? (
-                  <ActivityIndicator size="small" color={theme.colors.foreground} />
-                ) : (
-                  <Text style={styles.secondaryActionText}>Commit…</Text>
-                )}
-              </Pressable>
-            ) : (
-              <View style={styles.toolbarLeftSpacer} />
-            )}
-          </View>
-          <View style={styles.toolbarRight}>
+          <View style={styles.headerRight}>
             {canShowShip ? (
               <View style={styles.shipSplitButton}>
                 <Pressable
@@ -917,14 +862,9 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                   {shipPrimaryPending ? (
                     <ActivityIndicator size="small" color={theme.colors.foreground} />
                   ) : (
-                    <>
-                      <Text style={styles.shipPrimaryText}>
-                        {resolvedShipPrimary === "merge" ? "Merge" : prActionLabel}
-                      </Text>
-                      <Text style={styles.shipSecondaryText} numberOfLines={1}>
-                        into {baseRefLabel}
-                      </Text>
-                    </>
+                    <Text style={styles.shipPrimaryText}>
+                      {resolvedShipPrimary === "merge" ? "Merge branch" : prActionLabel}
+                    </Text>
                   )}
                 </Pressable>
                 <DropdownMenu>
@@ -940,19 +880,15 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                     <DropdownMenuItem
                       testID="changes-ship-merge"
                       disabled={mergeDisabled}
+                      description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
                       onSelect={() => {
                         void persistShipDefault("merge");
                         mergeMutation.mutate();
                       }}
                     >
-                      Merge into {baseRefLabel}
+                      Merge branch
                     </DropdownMenuItem>
-                    {mergeDisabled && hasUncommittedChanges ? (
-                      <DropdownMenuHint>Requires a clean working tree.</DropdownMenuHint>
-                    ) : null}
-
                     <DropdownMenuSeparator />
-
                     <DropdownMenuItem
                       testID={hasPullRequest ? "changes-ship-open-pr" : "changes-ship-create-pr"}
                       disabled={prDisabled}
@@ -965,7 +901,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                         prMutation.mutate();
                       }}
                     >
-                      {hasPullRequest ? "Open PR" : `Create PR into ${baseRefLabel}`}
+                      {hasPullRequest ? "Open PR" : "Create PR"}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -982,35 +918,56 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                 <MoreVertical size={16} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
-                <DropdownMenuItem
-                  testID="changes-menu-refresh"
-                  leading={<RotateCcw size={16} color={theme.colors.foreground} />}
-                  onSelect={handleRefresh}
-                >
-                  Refresh
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
+                {canShowShip ? (
+                  <>
+                    {resolvedShipPrimary === "merge" ? (
+                      <DropdownMenuItem
+                        testID={hasPullRequest ? "changes-menu-open-pr" : "changes-menu-create-pr"}
+                        disabled={prDisabled}
+                        onSelect={() => {
+                          void persistShipDefault("pr");
+                          if (hasPullRequest && prStatus?.url) {
+                            void Linking.openURL(prStatus.url);
+                            return;
+                          }
+                          prMutation.mutate();
+                        }}
+                      >
+                        {hasPullRequest ? "Open PR" : "Create PR"}
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem
+                        testID="changes-menu-merge"
+                        disabled={mergeDisabled}
+                        description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
+                        onSelect={() => {
+                          void persistShipDefault("merge");
+                          mergeMutation.mutate();
+                        }}
+                      >
+                        Merge branch
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
                 <DropdownMenuItem
                   testID="changes-menu-merge-from-base"
                   disabled={mergeFromBaseDisabled}
+                  description={mergeFromBaseDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
                   onSelect={() => mergeFromBaseMutation.mutate()}
                 >
                   Merge from {baseRefLabel}
                 </DropdownMenuItem>
-                {mergeFromBaseDisabled && hasUncommittedChanges ? (
-                  <DropdownMenuHint>Requires a clean working tree.</DropdownMenuHint>
-                ) : null}
-
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   testID="changes-menu-push"
                   disabled={pushDisabled}
+                  description={pushDisabled && !(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
                   onSelect={() => pushMutation.mutate()}
                 >
                   Push branch
                 </DropdownMenuItem>
-                {pushDisabled && !(gitStatus?.hasRemote ?? false) ? (
-                  <DropdownMenuHint>Remote 'origin' is not configured.</DropdownMenuHint>
-                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   testID="changes-menu-archive"
@@ -1019,6 +976,63 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                   onSelect={() => archiveMutation.mutate()}
                 >
                   Archive worktree
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        ) : null}
+      </View>
+
+      {isGit ? (
+        <View style={styles.toolbarRow} testID="changes-toolbar">
+          <View style={styles.toolbarLeft}>
+            {canShowCommit ? (
+              <Pressable
+                testID="changes-action-commit"
+                style={[
+                  styles.secondaryActionButton,
+                  commitDisabled && styles.secondaryActionButtonDisabled,
+                ]}
+                onPress={() => commitMutation.mutate()}
+                disabled={commitDisabled}
+              >
+                {commitMutation.isPending ? (
+                  <ActivityIndicator size={12} color={theme.colors.foreground} style={styles.buttonSpinner} />
+                ) : (
+                  <Text style={styles.secondaryActionText}>Commit</Text>
+                )}
+              </Pressable>
+            ) : (
+              <View style={styles.toolbarLeftSpacer} />
+            )}
+          </View>
+          <View style={styles.toolbarRight}>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                testID="changes-view-selector"
+                style={styles.viewSelector}
+                accessibilityRole="button"
+                accessibilityLabel="Change diff view"
+              >
+                <Text style={styles.viewSelectorText}>
+                  {diffMode === "uncommitted" ? "Working" : "Base"}
+                </Text>
+                <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" width={180} testID="changes-view-menu">
+                <DropdownMenuItem
+                  testID="changes-mode-uncommitted"
+                  selected={diffMode === "uncommitted"}
+                  onSelect={() => setDiffMode("uncommitted")}
+                >
+                  Working
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="changes-mode-base"
+                  selected={diffMode === "base"}
+                  onSelect={() => setDiffMode("base")}
+                >
+                  Base
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1076,6 +1090,12 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
   branchLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
@@ -1104,7 +1124,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[1],
+    paddingBottom: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   toolbarLeft: {
     flex: 1,
@@ -1136,6 +1158,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
   },
+  buttonSpinner: {
+    height: theme.fontSize.xs * 1.4,
+  },
   shipSplitButton: {
     flexDirection: "row",
     alignItems: "stretch",
@@ -1148,7 +1173,7 @@ const styles = StyleSheet.create((theme) => ({
   shipPrimaryButton: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    minWidth: 140,
+    justifyContent: "center",
   },
   shipPrimaryButtonDisabled: {
     opacity: 0.6,
@@ -1157,11 +1182,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
-  },
-  shipSecondaryText: {
-    marginTop: 2,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
   },
   shipCaretButton: {
     width: 36,
@@ -1373,16 +1393,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.palette.red[500],
   },
   additions: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.green[400],
-    fontFamily: Fonts.mono,
   },
   deletions: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.palette.red[500],
-    fontFamily: Fonts.mono,
   },
   diffContent: {
     borderTopWidth: theme.borderWidth[1],

@@ -485,11 +485,13 @@ export async function getCheckoutDiff(
       throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
     } else {
       const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
-      const { stdout } = await execAsync(`git diff ${normalizedBaseRef}...HEAD`, {
+      // Diff base ref against working tree (includes uncommitted changes)
+      const { stdout: trackedDiff } = await execAsync(`git diff ${normalizedBaseRef}`, {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });
-      diff = stdout;
+      const untrackedDiff = await getUntrackedDiff(cwd);
+      diff = trackedDiff + untrackedDiff;
     }
   }
 
