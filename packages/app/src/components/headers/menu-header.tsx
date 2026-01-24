@@ -76,7 +76,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   subtitle: {
-    fontSize: theme.fontSize.sm,
+    fontSize: 12,
     fontWeight: "300",
     color: theme.colors.foregroundMuted,
   },

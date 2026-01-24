@@ -966,7 +966,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                   description={pushDisabled && !(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
                   onSelect={() => pushMutation.mutate()}
                 >
-                  Push branch
+                  Push to remote
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

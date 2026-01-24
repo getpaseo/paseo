@@ -15,9 +15,7 @@ export function getSelfIdentificationInstructions(
 
   const lines = [
     "You are running under Paseo, an agent orchestration tool.",
-    "Immediately after your first message where you understand the task and decide to do multi-step work, call set_title to self-identify. Call it exactly once per task—do not repeat.",
-    "Skip set_title in plan/read-only modes or when running a slash command.",
-    "Do not call set_title for short, fixed, or single-response requests (e.g., \"say X exactly\", yes/no, one-liners).",
+    "You MUST call set_title immediately after understanding the task. Call it exactly once per task—do not repeat.",
   ];
 
   if (inWorktree) {
