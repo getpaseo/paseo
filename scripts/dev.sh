@@ -28,7 +28,7 @@ echo "  Metro:   http://localhost:${METRO_PORT}"
 echo "══════════════════════════════════════════════════════"
 
 # Export for child processes (overrides .env values)
-export PASEO_LISTEN="127.0.0.1:${DAEMON_PORT}"
+export PASEO_LISTEN="0.0.0.0:${DAEMON_PORT}"
 export PASEO_CORS_ORIGINS="${CORS_ORIGINS}"
 
 # Run both with concurrently
