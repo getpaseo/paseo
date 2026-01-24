@@ -135,7 +135,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
 }
 
 export const gotoHome = async (page: Page) => {
-  await page.goto('/agent');
+  await page.goto('/');
   await ensureE2EStorageSeeded(page);
   await expect(page.getByText('New Agent', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeVisible();
@@ -314,7 +314,11 @@ export const createAgent = async (page: Page, message: string) => {
 
   // Expo Router navigations can be "same-document" updates, so avoid waiting for a full `load`.
   await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
-  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  const userBubble = page
+    .getByRole('button', { name: 'Copy message' })
+    .filter({ hasText: message })
+    .first();
+  await expect(userBubble).toBeVisible();
 };
 
 export interface AgentConfig {
