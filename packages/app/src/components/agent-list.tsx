@@ -5,15 +5,23 @@ import {
   Modal,
   RefreshControl,
   FlatList,
+  type ViewToken,
   type ListRenderItem,
 } from "react-native";
-import { useCallback, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useQueryClient } from "@tanstack/react-query";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  CHECKOUT_STATUS_STALE_TIME,
+  checkoutStatusQueryKey,
+  type CheckoutStatusPayload,
+  useCheckoutStatusCacheOnly,
+} from "@/hooks/use-checkout-status-query";
 import {
   buildAgentNavigationKey,
   startNavigationTiming,
@@ -38,6 +46,7 @@ export function AgentList({
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
+  const queryClient = useQueryClient();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
   // Get the methods for the specific server
@@ -102,17 +111,97 @@ export function AgentList({
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
-  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
-    ({ item: agent }) => {
+  const deriveBranchLabel = useCallback((checkout: CheckoutStatusPayload | null): string | null => {
+    if (!checkout || !checkout.isGit) {
+      return null;
+    }
+    const currentBranch: string | null = checkout.currentBranch ?? null;
+    const baseRef: string | null = checkout.baseRef ?? null;
+    if (!currentBranch) {
+      return null;
+    }
+    if (baseRef && currentBranch === baseRef) {
+      return null;
+    }
+    return currentBranch;
+  }, []);
+
+  const deriveProjectPath = useCallback(
+    (agent: AggregatedAgent, checkout: CheckoutStatusPayload | null): string => {
+      const basePath = checkout?.isGit ? (checkout.repoRoot ?? agent.cwd) : agent.cwd;
+      const worktreeMarker = ".paseo/worktrees/";
+      const idx = basePath.indexOf(worktreeMarker);
+      if (idx !== -1) {
+        const afterMarker = basePath.slice(idx + worktreeMarker.length);
+        const slashIdx = afterMarker.indexOf("/");
+        if (slashIdx !== -1) {
+          return afterMarker.slice(slashIdx + 1);
+        }
+        return afterMarker;
+      }
+      return basePath;
+    },
+    []
+  );
+
+  const viewabilityConfig = useMemo(
+    () => ({ itemVisiblePercentThreshold: 30 }),
+    []
+  );
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+      for (const token of viewableItems) {
+        const agent = token.item as AggregatedAgent | undefined;
+        if (!agent) {
+          continue;
+        }
+
+        const session = useSessionStore.getState().sessions[agent.serverId];
+        const client = session?.client ?? null;
+        const isConnected = session?.connection.isConnected ?? false;
+        if (!client || !isConnected) {
+          continue;
+        }
+
+        const queryKey = checkoutStatusQueryKey(agent.serverId, agent.id);
+        const queryState = queryClient.getQueryState(queryKey);
+        const isFetching = queryState?.fetchStatus === "fetching";
+        const isFresh =
+          typeof queryState?.dataUpdatedAt === "number" &&
+          Date.now() - queryState.dataUpdatedAt < CHECKOUT_STATUS_STALE_TIME;
+        if (isFetching || isFresh) {
+          continue;
+        }
+
+        void queryClient.prefetchQuery({
+          queryKey,
+          queryFn: async () => await client.getCheckoutStatus(agent.id),
+          staleTime: CHECKOUT_STATUS_STALE_TIME,
+        });
+      }
+    }
+  );
+
+  const AgentListRow = useCallback(
+    ({ agent }: { agent: AggregatedAgent }) => {
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
-      const isRunning = agent.status === "running";
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
+      const isRunning = agent.status === "running";
       const statusColor = isRunning
         ? theme.colors.palette.blue[500]
         : agent.requiresAttention
           ? theme.colors.success
           : null;
+
+      const checkoutQuery = useCheckoutStatusCacheOnly({
+        serverId: agent.serverId,
+        agentId: agent.id,
+      });
+      const checkout = checkoutQuery.data ?? null;
+      const projectPath = deriveProjectPath(agent, checkout);
+      const branchLabel = deriveBranchLabel(checkout);
 
       return (
         <Pressable
@@ -145,14 +234,28 @@ export function AgentList({
               </View>
 
               <Text style={styles.secondaryRow} numberOfLines={1}>
-                {shortenPath(agent.cwd)} · {timeAgo}
+                {shortenPath(projectPath)}
+                {branchLabel ? ` · ${branchLabel}` : ""} · {timeAgo}
               </Text>
             </View>
           )}
         </Pressable>
       );
     },
-    [handleAgentLongPress, handleAgentPress, selectedAgentId]
+    [
+      deriveBranchLabel,
+      deriveProjectPath,
+      handleAgentLongPress,
+      handleAgentPress,
+      selectedAgentId,
+      theme.colors.palette.blue,
+      theme.colors.success,
+    ]
+  );
+
+  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
+    ({ item: agent }) => <AgentListRow agent={agent} />,
+    [AgentListRow]
   );
 
   const keyExtractor = useCallback(
@@ -177,6 +280,8 @@ export function AgentList({
         updateCellsBatchingPeriod={16}
         removeClippedSubviews={true}
         ListFooterComponent={listFooterComponent}
+        onViewableItemsChanged={onViewableItemsChanged.current}
+        viewabilityConfig={viewabilityConfig}
         refreshControl={
           onRefresh ? (
             <RefreshControl

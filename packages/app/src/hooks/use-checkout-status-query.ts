@@ -9,9 +9,9 @@ import {
   nextCheckoutStatusRefetchDecision,
 } from "./checkout-status-revalidation";
 
-const CHECKOUT_STATUS_STALE_TIME = 15_000;
+export const CHECKOUT_STATUS_STALE_TIME = 15_000;
 
-function checkoutStatusQueryKey(serverId: string, agentId: string) {
+export function checkoutStatusQueryKey(serverId: string, agentId: string) {
   return ["checkoutStatus", serverId, agentId] as const;
 }
 
@@ -21,6 +21,13 @@ interface UseCheckoutStatusQueryOptions {
 }
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
+
+function fetchCheckoutStatus(
+  client: { getCheckoutStatus: (agentId: string) => Promise<CheckoutStatusPayload> },
+  agentId: string
+): Promise<CheckoutStatusPayload> {
+  return client.getCheckoutStatus(agentId);
+}
 
 export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQueryOptions) {
   const client = useSessionStore(
@@ -42,7 +49,7 @@ export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQ
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await client.getCheckoutStatus(agentId);
+      return await fetchCheckoutStatus(client, agentId);
     },
     enabled: !!client && isConnected && !!agentId,
     staleTime: CHECKOUT_STATUS_STALE_TIME,
@@ -72,4 +79,27 @@ export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQ
     error: query.error,
     refresh: query.refetch,
   };
+}
+
+/**
+ * Subscribe to checkout status updates from the React Query cache without
+ * initiating a fetch. Useful for list rows where a parent component prefetches
+ * only the visible agents.
+ */
+export function useCheckoutStatusCacheOnly({ serverId, agentId }: UseCheckoutStatusQueryOptions) {
+  const client = useSessionStore(
+    (state) => state.sessions[serverId]?.client ?? null
+  );
+
+  return useQuery({
+    queryKey: checkoutStatusQueryKey(serverId, agentId),
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client not available");
+      }
+      return await fetchCheckoutStatus(client, agentId);
+    },
+    enabled: false,
+    staleTime: CHECKOUT_STATUS_STALE_TIME,
+  });
 }
