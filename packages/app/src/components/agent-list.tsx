@@ -174,6 +174,7 @@ export function AgentList({
           ]}
           onPress={() => handleAgentPress(agent.serverId, agent.id)}
           onLongPress={() => handleAgentLongPress(agent)}
+          testID={`agent-row-${agent.serverId}-${agent.id}`}
         >
           {({ hovered }) => (
             <View style={styles.agentContent}>
@@ -278,6 +279,7 @@ export function AgentList({
               disabled={!deleteAgent || isActionDaemonUnavailable}
               style={[styles.sheetButton, styles.sheetDeleteButton]}
               onPress={handleDeleteAgent}
+              testID="agent-action-delete"
             >
               <Text
                 style={[
@@ -292,6 +294,7 @@ export function AgentList({
             <Pressable
               style={[styles.sheetButton, styles.sheetCancelButton]}
               onPress={handleCloseActionSheet}
+              testID="agent-action-cancel"
             >
               <Text style={styles.sheetCancelText}>Cancel</Text>
             </Pressable>
