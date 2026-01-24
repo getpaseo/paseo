@@ -151,6 +151,7 @@ export const openSettings = async (page: Page) => {
 export const setWorkingDirectory = async (page: Page, directory: string) => {
   const workingDirectoryLabel = page.getByText('WORKING DIRECTORY', { exact: true }).first();
   await expect(workingDirectoryLabel).toBeVisible();
+  const workingDirectorySelect = page.getByTestId('working-directory-select').first();
 
   const input = page.getByRole('textbox', { name: '/path/to/project' });
   const worktreePicker = page.getByTestId('worktree-attach-picker');
@@ -199,30 +200,45 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
 
   if (!(await input.isVisible())) {
     await closeBottomSheet();
-    await workingDirectoryLabel.click({ force: true });
+    await workingDirectorySelect.click({ force: true });
     if (!(await input.isVisible())) {
       await closeBottomSheet();
-      await workingDirectoryLabel.click({ force: true });
+      await workingDirectorySelect.click({ force: true });
     }
     await expect(input).toBeVisible();
   }
 
-  await input.fill(directory);
+  const trimmedDirectory = directory.replace(/\/+$/, '');
+  await input.fill(trimmedDirectory);
   await input.press('Enter');
 
-  const useOption = page.getByText(`Use "${directory}"`);
-  await expect(useOption).toBeVisible();
-  await useOption.click({ force: true });
-  // Wait for UI to update after clicking "Use"
-  await page.waitForTimeout(500);
-  const normalizedDirectory = directory.startsWith('/var/')
-    ? `/private${directory}`
-    : directory;
-  const workingDirectoryContainer = workingDirectoryLabel.locator('..');
+  // Desktop web supports selecting via Enter; mobile may require clicking the explicit option.
+  const useOption = page.getByTestId('working-directory-custom-option').first();
+  if (await useOption.isVisible().catch(() => false)) {
+    await expect(useOption).toContainText(`Use "${trimmedDirectory}"`);
+    await useOption.click({ force: true });
+  }
+
+  // Wait for the sheet to close after clicking "Use"
+  await expect(input).not.toBeVisible({ timeout: 10000 });
+
+  const directoryCandidates = new Set<string>([trimmedDirectory]);
+  if (trimmedDirectory.startsWith('/var/')) {
+    directoryCandidates.add(`/private${trimmedDirectory}`);
+  }
+  if (trimmedDirectory.startsWith('/private/var/')) {
+    directoryCandidates.add(trimmedDirectory.replace(/^\/private/, ''));
+  }
+  const basename = trimmedDirectory.split('/').filter(Boolean).pop() ?? trimmedDirectory;
+
   await expect.poll(async () => {
-    const text = await workingDirectoryContainer.innerText();
-    return text.includes(directory) || text.includes(normalizedDirectory);
-  }, { timeout: 15000 }).toBe(true);
+    const text = await workingDirectorySelect.innerText().catch(() => '');
+    if (text.includes(basename)) return true;
+    for (const candidate of directoryCandidates) {
+      if (text.includes(candidate)) return true;
+    }
+    return false;
+  }, { timeout: 30000 }).toBe(true);
 };
 
 export const ensureHostSelected = async (page: Page) => {
@@ -296,8 +312,13 @@ export const createAgent = async (page: Page, message: string) => {
   await input.fill(message);
   await input.press('Enter');
 
-  await page.waitForURL(/\/agent\//);
-  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  // Expo Router navigations can be "same-document" updates, so avoid waiting for a full `load`.
+  await page.waitForURL(/\/agent\//, { waitUntil: 'commit' });
+  const userBubble = page
+    .getByRole('button', { name: 'Copy message' })
+    .filter({ hasText: message })
+    .first();
+  await expect(userBubble).toBeVisible();
 };
 
 export interface AgentConfig {

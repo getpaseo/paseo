@@ -15,7 +15,7 @@ test('sidebar New Agent opens a fresh create screen', async ({ page }) => {
 
     // Click sidebar New Agent and assert it does not carry over agent settings via URL.
     await page.getByTestId('sidebar-new-agent').click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/agent\/?$/);
     await expect(page).not.toHaveURL(new RegExp(encodeURIComponent(repoA.path)));
   } finally {
     await repoA.cleanup();

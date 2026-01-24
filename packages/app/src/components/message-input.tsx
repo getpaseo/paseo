@@ -70,6 +70,7 @@ export interface MessageInputProps {
 
 export interface MessageInputRef {
   focus: () => void;
+  blur: () => void;
 }
 
 const MIN_INPUT_HEIGHT = 30;
@@ -118,14 +119,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   ) {
     const { theme } = useUnistyles();
     const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
-    const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
-    const textInputRef = useRef<
-      TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
-    >(null);
+  const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
+  const textInputRef = useRef<
+    TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
+  >(null);
+  const isInputFocusedRef = useRef(false);
 
     useImperativeHandle(ref, () => ({
       focus: () => {
         textInputRef.current?.focus();
+      },
+      blur: () => {
+        textInputRef.current?.blur?.();
       },
     }));
     const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
@@ -210,6 +215,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     enableDuration: true,
   });
 
+  const isDictatingRef = useRef(isDictating);
+  useEffect(() => {
+    isDictatingRef.current = isDictating;
+  }, [isDictating]);
+
   useEffect(() => {
     if (isDictating || isDictationProcessing) {
       return;
@@ -219,12 +229,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
   // Cmd+D to start/submit dictation, Escape to cancel
   useEffect(() => {
-    if (!IS_WEB || !isScreenFocused) return;
+    if (!IS_WEB) return;
+    const resolveNativeInput = (): unknown => {
+      const current = textInputRef.current as any;
+      if (!current) return null;
+      if (typeof current.getNativeRef === "function") {
+        return current.getNativeRef();
+      }
+      return current;
+    };
     function handleKeyDown(event: KeyboardEvent) {
+      const nativeInput = resolveNativeInput();
+      const isFromInput = Boolean(nativeInput && event.target === nativeInput);
+      if (!isScreenFocused && !isInputFocusedRef.current && !isFromInput) {
+        return;
+      }
+      const dictating = isDictatingRef.current;
       // Cmd+D: start dictation or submit if already dictating
-      if ((event.metaKey || event.ctrlKey) && event.key === "d") {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === "KeyD" || event.key.toLowerCase() === "d")
+      ) {
         event.preventDefault();
-        if (isDictating) {
+        if (dictating) {
           sendAfterTranscriptRef.current = true;
           confirmDictation();
         } else {
@@ -233,14 +260,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         return;
       }
       // Escape: cancel dictation
-      if (event.key === "Escape" && isDictating) {
+      if (event.key === "Escape" && dictating) {
         event.preventDefault();
         cancelDictation();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isDictating, cancelDictation, confirmDictation, startDictation]);
+  }, [cancelDictation, confirmDictation, isScreenFocused, startDictation]);
 
   // Animate overlay
   useEffect(() => {
@@ -400,15 +427,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
 
+    const key = event.nativeEvent.key.toLowerCase();
+
     // Cmd+B or Ctrl+B: toggle sidebar
-    if ((metaKey || ctrlKey) && event.nativeEvent.key === "b") {
+    if ((metaKey || ctrlKey) && key === "b") {
       event.preventDefault();
       toggleAgentList();
       return;
     }
 
     // Cmd+D or Ctrl+D: start dictation or submit if already dictating
-    if ((metaKey || ctrlKey) && event.nativeEvent.key === "d") {
+    if ((metaKey || ctrlKey) && key === "d") {
       event.preventDefault();
       if (isDictating) {
         sendAfterTranscriptRef.current = true;
@@ -502,6 +531,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.mutedForeground}
+          onFocus={() => {
+            isInputFocusedRef.current = true;
+          }}
+          onBlur={() => {
+            isInputFocusedRef.current = false;
+          }}
           style={[
             styles.textInput,
             IS_WEB

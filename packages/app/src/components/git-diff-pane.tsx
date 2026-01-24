@@ -657,7 +657,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
         predicate: (query) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
       });
-      router.replace("/");
+      router.replace("/agent" as any);
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to archive worktree";

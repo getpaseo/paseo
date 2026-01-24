@@ -84,13 +84,7 @@ export function AgentList({
 
       onAgentSelect?.();
 
-      navigate({
-        pathname: "/agent/[serverId]/[agentId]",
-        params: {
-          serverId,
-          agentId,
-        },
-      });
+      navigate(`/agent/${serverId}/${agentId}` as any);
     },
     [isActionSheetVisible, pathname, onAgentSelect]
   );
