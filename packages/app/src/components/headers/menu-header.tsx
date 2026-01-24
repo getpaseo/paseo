@@ -30,7 +30,7 @@ export function MenuHeader({ title, subtitle, rightContent }: MenuHeaderProps) {
       left={
         <>
           <Pressable onPress={toggleAgentList} style={styles.menuButton}>
-            <MenuIcon size={16} color={menuIconColor} />
+            <MenuIcon size={isMobile ? 20 : 16} color={menuIconColor} />
           </Pressable>
           {title && (
             <View style={styles.titleContainer}>
