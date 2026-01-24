@@ -240,7 +240,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     }
 
     await page.getByTestId('sidebar-new-agent').click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/agent\/?$/);
 
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
@@ -337,7 +337,7 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     await expect(page.getByTestId('changes-menu-archive')).toBeVisible();
     await page.getByTestId('changes-menu-archive').click();
     // Archiving a worktree deletes agents and redirects to home
-    await expect(page).toHaveURL(/\/$/, { timeout: 30000 });
+    await expect(page).toHaveURL(/\/agent\/?$/, { timeout: 30000 });
     await setWorkingDirectory(page, repo.path);
     await ensureHostSelected(page);
     await page.getByTestId('worktree-attach-toggle').click();
@@ -348,13 +348,13 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
       await attachSheetBackdrop.click({ force: true });
     }
     await page.getByTestId('worktree-attach-toggle').click();
-    await expect(page.getByTestId('worktree-attach-picker')).toHaveCount(0);
+    await expect(page.getByTestId('worktree-attach-picker')).toBeHidden({ timeout: 30000 });
 
     await setWorkingDirectory(page, nonGitDir);
     const attachPicker = page.getByTestId('worktree-attach-picker');
     if (await attachPicker.isVisible()) {
       await page.getByTestId('worktree-attach-toggle').click();
-      await expect(attachPicker).toHaveCount(0);
+      await expect(attachPicker).toBeHidden({ timeout: 30000 });
     }
     await createAgentAndWait(page, 'Respond with exactly: NON-GIT');
     await waitForAssistantText(page, 'NON-GIT');

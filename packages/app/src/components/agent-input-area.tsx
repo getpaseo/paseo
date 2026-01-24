@@ -46,6 +46,8 @@ interface AgentInputAreaProps {
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  /** When true, blurs the input immediately when submitting. */
+  blurOnSubmit?: boolean;
   value?: string;
   onChangeText?: (text: string) => void;
   /** When true, auto-focuses the text input on web. */
@@ -70,6 +72,7 @@ export function AgentInputArea({
   serverId,
   onSubmitMessage,
   isSubmitLoading = false,
+  blurOnSubmit = false,
   value,
   onChangeText,
   autoFocus = false,
@@ -219,10 +222,13 @@ export function AgentInputArea({
     forceSend?: boolean
   ) {
     const socketConnected = isConnected;
-    if (!message.trim() || !socketConnected) return;
-    if (!sendAgentMessage && !onSubmitMessageRef.current) return;
-
     const trimmedMessage = message.trim();
+    if (!trimmedMessage) return;
+    // When the parent controls submission (e.g. draft agent creation), let it
+    // decide what to do even if the socket is currently disconnected (so we
+    // don't no-op and lose deterministic error handling in the UI/tests).
+    if (!onSubmitMessageRef.current && !socketConnected) return;
+    if (!sendAgentMessage && !onSubmitMessageRef.current) return;
 
     if (agent?.status === "running" && !forceSend) {
       queueMessage(trimmedMessage, imageAttachments);
@@ -257,6 +263,9 @@ export function AgentInputArea({
   }
 
   function handleSubmit(payload: MessagePayload) {
+    if (blurOnSubmit) {
+      messageInputRef.current?.blur();
+    }
     void sendMessageWithContent(
       payload.text,
       payload.images,
@@ -569,7 +578,7 @@ export function AgentInputArea({
             client={client}
             placeholder="Message agent..."
             autoFocus={autoFocus}
-            disabled={isRealtimeMode}
+            disabled={isRealtimeMode || isSubmitLoading}
             isScreenFocused={isScreenFocused}
             leftContent={leftContent}
             rightContent={rightContent}
