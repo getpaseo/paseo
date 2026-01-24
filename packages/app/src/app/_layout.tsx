@@ -347,7 +347,6 @@ export default function RootLayout() {
                             >
                               <Stack.Screen name="index" />
                               <Stack.Screen name="agents" />
-                              <Stack.Screen name="orchestrator" />
                               <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
                               <Stack.Screen name="agent/[serverId]/[agentId]" options={{ gestureEnabled: false }} />
                               <Stack.Screen name="settings" />
