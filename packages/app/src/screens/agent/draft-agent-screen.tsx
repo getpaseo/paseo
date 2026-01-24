@@ -31,6 +31,7 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
+import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { WelcomeScreen } from "@/components/welcome-screen";
 import type { Agent } from "@/contexts/session-context";
@@ -197,6 +198,9 @@ export function DraftAgentScreen({
   const [worktreeSlug, setWorktreeSlug] = useState("");
   const [selectedWorktreePath, setSelectedWorktreePath] = useState("");
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
+  const setPendingCreateAttempt = useCreateFlowStore((state) => state.setPending);
+  const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);
+  const clearPendingCreateAttempt = useCreateFlowStore((state) => state.clear);
 
   type CreateAttempt = {
     messageId: string;
@@ -544,8 +548,7 @@ export function DraftAgentScreen({
     selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
   );
 
-  const promptValue =
-    machine.tag === "draft" ? machine.promptText : machine.attempt.text;
+  const promptValue = machine.tag === "draft" ? machine.promptText : "";
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
   const isSubmitting = machine.tag === "creating";
 
@@ -671,6 +674,13 @@ export function DraftAgentScreen({
         text: trimmedPrompt,
         timestamp: new Date(),
       };
+      setPendingCreateAttempt({
+        serverId: selectedServerId,
+        agentId: null,
+        messageId: attempt.messageId,
+        text: attempt.text,
+        timestamp: attempt.timestamp.getTime(),
+      });
       const modeId =
         modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
       const trimmedModel = selectedModel.trim();
@@ -715,10 +725,8 @@ export function DraftAgentScreen({
 
         const agentId = (result as { id?: string })?.id;
         if (agentId && selectedServerId) {
-          router.replace({
-            pathname: "/agent/[[...route]]",
-            params: { route: [selectedServerId, agentId] },
-          });
+          updatePendingAgentId(agentId);
+          router.replace(`/agent/${selectedServerId}/${agentId}` as any);
           return;
         }
 
@@ -727,11 +735,13 @@ export function DraftAgentScreen({
           message: "Failed to create agent",
         });
         onCreateFlowActiveChange?.(false);
+        clearPendingCreateAttempt();
         throw new Error("Failed to create agent");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to create agent";
         dispatch({ type: "CREATE_FAILED", message });
         onCreateFlowActiveChange?.(false);
+        clearPendingCreateAttempt();
         throw error; // Re-throw so AgentInputArea knows it failed
       }
     },
@@ -753,6 +763,9 @@ export function DraftAgentScreen({
       selectedProvider,
       selectedServerId,
       sessionMethods,
+      setPendingCreateAttempt,
+      updatePendingAgentId,
+      clearPendingCreateAttempt,
       workingDir,
       isAttachWorktree,
       isSubmitting,

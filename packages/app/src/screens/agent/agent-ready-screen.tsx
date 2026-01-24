@@ -45,6 +45,8 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import type { ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
+import { useCreateFlowStore } from "@/stores/create-flow-store";
+import type { Agent } from "@/contexts/session-context";
 import type { StreamItem } from "@/types/stream";
 import {
   buildAgentNavigationKey,
@@ -118,7 +120,7 @@ export function AgentReadyScreen({
         targetMs: 300,
       });
     }
-    router.replace({ pathname: "/agent/[[...route]]" });
+    router.replace("/agent" as any);
   }, [resolvedAgentId, resolvedServerId, router]);
 
   const focusServerId = resolvedServerId;
@@ -300,11 +302,17 @@ function AgentScreenContent({
   );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
 
+  const pendingCreate = useCreateFlowStore((state) => state.pending);
+  const clearPendingCreate = useCreateFlowStore((state) => state.clear);
+  const isPendingCreateForRoute =
+    Boolean(pendingCreate) &&
+    pendingCreate?.serverId === serverId &&
+    pendingCreate?.agentId === resolvedAgentId;
+
   // Select only the specific initializing state
   const isInitializingFromMap = useSessionStore((state) =>
     resolvedAgentId
-      ? state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ??
-        false
+      ? state.sessions[serverId]?.initializingAgents?.get(resolvedAgentId) ?? false
       : false
   );
 
@@ -410,9 +418,97 @@ function AgentScreenContent({
     };
   }, [resolvedAgentId, setFocusedAgentId]);
 
-  const isInitializing = resolvedAgentId
-    ? isInitializingFromMap !== false
-    : false;
+  const isInitializing = resolvedAgentId ? isInitializingFromMap !== false : false;
+
+  const optimisticStreamItems = useMemo<StreamItem[]>(() => {
+    if (!isPendingCreateForRoute || !pendingCreate) {
+      return EMPTY_STREAM_ITEMS;
+    }
+    return [
+      {
+        kind: "user_message",
+        id: pendingCreate.messageId,
+        text: pendingCreate.text,
+        timestamp: new Date(pendingCreate.timestamp),
+      },
+    ];
+  }, [isPendingCreateForRoute, pendingCreate]);
+
+  const mergedStreamItems = useMemo<StreamItem[]>(() => {
+    if (optimisticStreamItems.length === 0) {
+      return streamItems;
+    }
+    const optimistic = optimisticStreamItems[0];
+    if (!optimistic) {
+      return streamItems;
+    }
+    const alreadyHasOptimistic = streamItems.some(
+      (item) => item.kind === "user_message" && item.id === optimistic.id
+    );
+    return alreadyHasOptimistic ? streamItems : [...optimisticStreamItems, ...streamItems];
+  }, [optimisticStreamItems, streamItems]);
+
+  const shouldUseOptimisticStream = isPendingCreateForRoute && optimisticStreamItems.length > 0;
+
+  const placeholderAgent: Agent | null = useMemo(() => {
+    if (!shouldUseOptimisticStream || !resolvedAgentId) {
+      return null;
+    }
+    const now = new Date();
+    return {
+      serverId,
+      id: resolvedAgentId,
+      provider: "claude",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+      lastUserMessageAt: now,
+      lastActivityAt: now,
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: false,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      runtimeInfo: {
+        provider: "claude",
+        sessionId: null,
+        model: null,
+        modeId: null,
+      },
+      title: "Agent",
+      cwd: ".",
+      model: null,
+    };
+  }, [resolvedAgentId, serverId, shouldUseOptimisticStream]);
+
+  const effectiveAgent = agent ?? placeholderAgent;
+
+  useEffect(() => {
+    if (!isPendingCreateForRoute || !pendingCreate) {
+      return;
+    }
+    const hasUserMessage = streamItems.some(
+      (item) =>
+        item.kind === "user_message" &&
+        (item.id === pendingCreate.messageId || item.text === pendingCreate.text)
+    );
+    if (agent && hasUserMessage) {
+      clearPendingCreate();
+    }
+  }, [
+    agent,
+    clearPendingCreate,
+    isPendingCreateForRoute,
+    pendingCreate,
+    streamItems,
+  ]);
 
   // Get ensureAgentIsInitialized from methods
   const ensureAgentIsInitialized = methods?.ensureAgentIsInitialized;
@@ -482,7 +578,7 @@ function AgentScreenContent({
     refreshAgent({ agentId: resolvedAgentId });
   }, [resolvedAgentId, refreshAgent]);
 
-  if (!agent) {
+  if (!effectiveAgent) {
     return (
       <View style={styles.container} testID="agent-not-found">
         <MenuHeader title="Agent" />
@@ -499,7 +595,7 @@ function AgentScreenContent({
       <View style={styles.container}>
         {/* Header */}
         <MenuHeader
-          title={agent.title || "Agent"}
+          title={effectiveAgent.title || "Agent"}
           rightContent={
             <View style={styles.headerRightContent}>
               <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
@@ -542,7 +638,7 @@ function AgentScreenContent({
                         numberOfLines={2}
                         ellipsizeMode="middle"
                       >
-                        {shortenPath(agent.cwd)}
+                        {shortenPath(effectiveAgent.cwd)}
                       </Text>
                     </View>
 
@@ -625,7 +721,7 @@ function AgentScreenContent({
             <ReanimatedAnimated.View
               style={[styles.content, animatedKeyboardStyle]}
             >
-              {isInitializing ? (
+              {isInitializing && !shouldUseOptimisticStream ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator
                     size="large"
@@ -635,10 +731,10 @@ function AgentScreenContent({
                 </View>
               ) : (
                 <AgentStreamView
-                  agentId={agent.id}
+                  agentId={effectiveAgent.id}
                   serverId={serverId}
-                  agent={agent}
-                  streamItems={streamItems}
+                  agent={effectiveAgent}
+                  streamItems={shouldUseOptimisticStream ? mergedStreamItems : streamItems}
                   pendingPermissions={pendingPermissions}
                 />
               )}
