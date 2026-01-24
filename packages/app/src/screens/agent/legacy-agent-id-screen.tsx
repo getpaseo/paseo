@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BackHeader } from "@/components/headers/back-header";
 import { useSessionDirectory } from "@/hooks/use-session-directory";
@@ -14,16 +14,15 @@ type AgentMatch = {
   agent: Agent;
 };
 
-export default function LegacyAgentRedirectScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
   const router = useRouter();
   const { theme } = useUnistyles();
   const { connectionStates } = useDaemonConnections();
   const sessionDirectory = useSessionDirectory();
-  const agentId = typeof id === "string" ? id.trim() : undefined;
+  const resolvedAgentId = typeof agentId === "string" ? agentId.trim() : undefined;
 
   const matches = useMemo<AgentMatch[]>(() => {
-    if (!agentId) {
+    if (!resolvedAgentId) {
       return [];
     }
 
@@ -32,7 +31,7 @@ export default function LegacyAgentRedirectScreen() {
       if (!session) {
         return;
       }
-      const agent = session.agents.get(agentId);
+      const agent = session.agents.get(resolvedAgentId);
       if (!agent) {
         return;
       }
@@ -41,10 +40,10 @@ export default function LegacyAgentRedirectScreen() {
     });
 
     return results;
-  }, [agentId, sessionDirectory, connectionStates]);
+  }, [resolvedAgentId, sessionDirectory, connectionStates]);
 
   const hasSessions = sessionDirectory.size > 0;
-  const isRedirecting = Boolean(agentId && matches.length === 1);
+  const isRedirecting = Boolean(resolvedAgentId && matches.length === 1);
 
   useEffect(() => {
     if (!isRedirecting) {
@@ -52,26 +51,20 @@ export default function LegacyAgentRedirectScreen() {
     }
     const match = matches[0];
     router.replace({
-      pathname: "/agent/[serverId]/[agentId]",
-      params: {
-        serverId: match.serverId,
-        agentId: match.agent.id,
-      },
+      pathname: "/agent/[...route]",
+      params: { route: [match.serverId, match.agent.id] },
     });
   }, [isRedirecting, matches, router]);
 
-  const handleGoHome = useCallback(() => {
-    router.replace("/");
+  const handleGoDraft = useCallback(() => {
+    router.replace("/agent");
   }, [router]);
 
   const handleSelectMatch = useCallback(
     (match: AgentMatch) => {
       router.replace({
-        pathname: "/agent/[serverId]/[agentId]",
-        params: {
-          serverId: match.serverId,
-          agentId: match.agent.id,
-        },
+        pathname: "/agent/[...route]",
+        params: { route: [match.serverId, match.agent.id] },
       });
     },
     [router]
@@ -79,15 +72,15 @@ export default function LegacyAgentRedirectScreen() {
 
   let body: ReactNode = null;
 
-  if (!agentId) {
+  if (!resolvedAgentId) {
     body = (
       <View style={styles.centerState}>
         <Text style={styles.title}>Missing agent</Text>
         <Text style={styles.subtitle}>
           This link is missing an agent id. Go back to the Agents screen to pick one.
         </Text>
-        <Pressable style={styles.primaryButton} onPress={handleGoHome}>
-          <Text style={styles.primaryButtonText}>Go Home</Text>
+        <Pressable style={styles.primaryButton} onPress={handleGoDraft}>
+          <Text style={styles.primaryButtonText}>New Agent</Text>
         </Pressable>
       </View>
     );
@@ -105,11 +98,11 @@ export default function LegacyAgentRedirectScreen() {
         <View style={styles.centerState}>
           <Text style={styles.title}>Agent not found</Text>
           <Text style={styles.subtitle}>
-            We could not find {agentId} on any host right now. Hosts reconnect automatically—open it
+            We could not find {resolvedAgentId} on any host right now. Hosts reconnect automatically—open it
             again from the Agents screen after it comes back online.
           </Text>
-          <Pressable style={styles.primaryButton} onPress={handleGoHome}>
-            <Text style={styles.primaryButtonText}>Go Home</Text>
+          <Pressable style={styles.primaryButton} onPress={handleGoDraft}>
+            <Text style={styles.primaryButtonText}>New Agent</Text>
           </Pressable>
       </View>
     );
@@ -140,7 +133,7 @@ export default function LegacyAgentRedirectScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title="Agent" onBack={handleGoHome} />
+      <BackHeader title="Agent" onBack={handleGoDraft} />
       <View style={styles.content}>{body}</View>
     </View>
   );

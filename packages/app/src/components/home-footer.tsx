@@ -123,7 +123,7 @@ export function HomeFooter() {
           {/* Action menu */}
           <View style={styles.actionButtonContainer}>
             <Pressable
-              onPress={() => router.push("/")}
+              onPress={() => router.push("/agents")}
               style={({ pressed }) => [
                 styles.footerButton,
                 pressed && styles.buttonPressed,
@@ -142,7 +142,7 @@ export function HomeFooter() {
             <Pressable
               onPress={() => {
                 console.log("[HomeFooter] New Agent button pressed");
-                router.push("/");
+                router.push("/agent");
               }}
               style={({ pressed }) => [
                 styles.footerButton,

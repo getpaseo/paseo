@@ -127,6 +127,7 @@ interface SelectFieldProps {
   warningMessage?: string | null;
   helperText?: string | null;
   controlRef?: React.RefObject<View | null>;
+  valueEllipsizeMode?: "head" | "middle" | "tail" | "clip";
   testID?: string;
 }
 
@@ -140,6 +141,7 @@ export function SelectField({
   warningMessage,
   helperText,
   controlRef,
+  valueEllipsizeMode,
   testID,
 }: SelectFieldProps): ReactElement {
   return (
@@ -156,6 +158,7 @@ export function SelectField({
           <Text
             style={value ? styles.selectFieldValue : styles.selectFieldPlaceholder}
             numberOfLines={1}
+            ellipsizeMode={valueEllipsizeMode ?? "tail"}
           >
             {value || placeholder || "Select..."}
           </Text>
@@ -1045,6 +1048,13 @@ export function WorkingDirectoryDropdown({
     [handleClose, onSelectPath]
   );
 
+  const handleSubmitSearch = useCallback(() => {
+    if (!showCustomOption) {
+      return;
+    }
+    handleSelect(sanitizedSearchValue);
+  }, [handleSelect, sanitizedSearchValue, showCustomOption]);
+
   return (
     <>
       <SelectField
@@ -1054,7 +1064,9 @@ export function WorkingDirectoryDropdown({
         onPress={handleOpen}
         disabled={disabled}
         errorMessage={errorMessage || undefined}
+        valueEllipsizeMode="middle"
         controlRef={anchorRef}
+        testID="working-directory-select"
       />
       <AdaptiveSelect
         title="Working Directory"
@@ -1072,6 +1084,7 @@ export function WorkingDirectoryDropdown({
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
+            onSubmitEditing={handleSubmitSearch}
           />
         ) : (
           <BottomSheetTextInput
@@ -1083,6 +1096,7 @@ export function WorkingDirectoryDropdown({
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
+            onSubmitEditing={handleSubmitSearch}
           />
         )}
         {!hasSuggestedPaths && !showCustomOption ? (
@@ -1094,6 +1108,7 @@ export function WorkingDirectoryDropdown({
           <View style={styles.dropdownSheetList}>
             <Pressable
               key="working-dir-custom-option"
+              testID="working-directory-custom-option"
               style={styles.dropdownSheetOption}
               onPress={() => handleSelect(sanitizedSearchValue)}
             >

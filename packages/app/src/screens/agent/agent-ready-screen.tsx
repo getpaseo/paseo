@@ -8,7 +8,7 @@ import {
   Platform,
   BackHandler,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
@@ -69,14 +69,16 @@ const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
 type BranchStatus = "idle" | "loading" | "ready" | "error";
 
-export default function AgentScreen() {
+export function AgentReadyScreen({
+  serverId,
+  agentId,
+}: {
+  serverId: string;
+  agentId: string;
+}) {
   const router = useRouter();
-  const { serverId, agentId } = useLocalSearchParams<{
-    serverId: string;
-    agentId: string;
-  }>();
-  const resolvedAgentId = typeof agentId === "string" ? agentId : undefined;
-  const resolvedServerId = typeof serverId === "string" ? serverId : undefined;
+  const resolvedAgentId = agentId?.trim() || undefined;
+  const resolvedServerId = serverId?.trim() || undefined;
   const { connectionStates } = useDaemonConnections();
 
   // Check if session exists for this serverId
@@ -116,7 +118,7 @@ export default function AgentScreen() {
         targetMs: 300,
       });
     }
-    router.replace("/");
+    router.replace("/agent");
   }, [resolvedAgentId, resolvedServerId, router]);
 
   const focusServerId = resolvedServerId;

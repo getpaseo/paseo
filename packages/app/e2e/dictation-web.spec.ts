@@ -203,7 +203,7 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
     const newAgentButton = page.getByText('New Agent', { exact: true }).first();
     await expect(newAgentButton).toBeVisible();
     await newAgentButton.click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/agent\/?$/);
 
     await page.waitForTimeout(10_000);
 
