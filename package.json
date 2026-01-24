@@ -10,7 +10,8 @@
     "packages/desktop"
   ],
   "scripts": {
-    "dev": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
+    "dev": "./scripts/dev.sh",
+    "dev:server": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
     "dev:app": "npm run start --workspace=@paseo/app",
     "dev:website": "npm run dev --workspace=@paseo/website",
     "build": "npm run build --workspaces --if-present",
@@ -27,6 +28,8 @@
     "postinstall": "patch-package"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
+    "get-port-cli": "^3.0.0",
     "patch-package": "^8.0.1",
     "typescript": "^5.9.3"
   },
