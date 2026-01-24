@@ -1,8 +1,6 @@
 // App name and package ID are controlled by Gradle product flavors (dev/production)
 // See plugins/with-android-product-flavors.js for flavor configuration
 
-const withAndroidProductFlavors = require("./plugins/with-android-product-flavors");
-
 export default {
   expo: {
     name: "Paseo",
@@ -91,7 +89,7 @@ export default {
           },
         },
       ],
-      withAndroidProductFlavors,
+      "./plugins/with-android-product-flavors",
     ],
     experiments: {
       typedRoutes: true,
