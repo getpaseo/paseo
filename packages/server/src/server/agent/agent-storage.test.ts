@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
@@ -279,5 +280,68 @@ describe("AgentStorage", () => {
     const records = await reloaded.list();
     expect(records).toHaveLength(1);
     expect(records[0]?.internal).toBe(true);
+  });
+
+  test("remove deletes all duplicate record files across project directories", async () => {
+    const agentId = "agent-duplicate";
+
+    // Create a valid record file in two different project directories to simulate
+    // storage migrations/duplication. Only one copy will be referenced in-memory,
+    // but deletion should remove *all* copies on disk.
+    const recordA = await (async () => {
+      await storage.applySnapshot(
+        createManagedAgent({
+          id: agentId,
+          cwd: "/tmp/project-a",
+          provider: "codex",
+        })
+      );
+      const record = await storage.get(agentId);
+      expect(record).not.toBeNull();
+      return record!;
+    })();
+
+    const projectDirB = path.join(storagePath, "tmp-project-b");
+    await fs.mkdir(projectDirB, { recursive: true });
+    const duplicatePathB = path.join(projectDirB, `${agentId}.json`);
+    await fs.writeFile(
+      duplicatePathB,
+      JSON.stringify({ ...recordA, cwd: "/tmp/project-b" }, null, 2),
+      "utf8"
+    );
+
+    // Force a reload so the registry has to discover from disk (and may choose either copy).
+    const reloaded = new AgentStorage(storagePath, logger);
+    const before = await reloaded.list();
+    expect(before.map((r) => r.id)).toContain(agentId);
+
+    await reloaded.remove(agentId);
+
+    const hasAnyRecordFile = async () => {
+      try {
+        const projects = await fs.readdir(storagePath, { withFileTypes: true });
+        for (const project of projects) {
+          if (!project.isDirectory()) {
+            continue;
+          }
+          const candidate = path.join(storagePath, project.name, `${agentId}.json`);
+          try {
+            await fs.access(candidate);
+            return true;
+          } catch {
+            // not here
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+
+    expect(await hasAnyRecordFile()).toBe(false);
+
+    const afterReload = new AgentStorage(storagePath, logger);
+    const after = await afterReload.list();
+    expect(after.some((r) => r.id === agentId)).toBe(false);
   });
 });

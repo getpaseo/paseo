@@ -514,6 +514,57 @@ export async function listPaseoWorktrees({
     .filter((entry) => entry.path.startsWith(rootPrefix));
 }
 
+export async function resolvePaseoWorktreeRootForCwd(
+  cwd: string,
+  options?: { paseoHome?: string }
+): Promise<{ repoRoot: string; worktreeRoot: string; worktreePath: string } | null> {
+  let repoInfo: RepoInfo;
+  try {
+    repoInfo = await detectRepoInfo(cwd);
+  } catch {
+    return null;
+  }
+
+  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, options?.paseoHome);
+  const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
+
+  let worktreeRoot: string | null = null;
+  try {
+    const { stdout } = await execAsync(
+      "git rev-parse --path-format=absolute --show-toplevel",
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const trimmed = stdout.trim();
+    worktreeRoot = trimmed.length > 0 ? trimmed : null;
+  } catch {
+    worktreeRoot = null;
+  }
+
+  if (!worktreeRoot) {
+    return null;
+  }
+
+  const resolvedWorktreeRoot = normalizePathForOwnership(worktreeRoot);
+  if (!resolvedWorktreeRoot.startsWith(resolvedRoot)) {
+    return null;
+  }
+
+  const knownWorktrees = await listPaseoWorktrees({
+    cwd: repoInfo.path,
+    paseoHome: options?.paseoHome,
+  });
+  const match = knownWorktrees.find((entry) => entry.path === resolvedWorktreeRoot);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    repoRoot: repoInfo.path,
+    worktreeRoot: worktreesRoot,
+    worktreePath: match.path,
+  };
+}
+
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
@@ -531,21 +582,23 @@ export async function deletePaseoWorktree({
 
   const repoInfo = await detectRepoInfo(cwd);
   const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, paseoHome);
-  const targetPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
-  const resolvedTarget = normalizePathForOwnership(targetPath);
+  const requestedPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
+  const resolvedRequested = normalizePathForOwnership(requestedPath);
+  const resolvedWorktree =
+    (await resolvePaseoWorktreeRootForCwd(requestedPath, { paseoHome }))?.worktreePath ??
+    resolvedRequested;
 
-  if (!resolvedTarget.startsWith(resolvedRoot)) {
+  if (!resolvedWorktree.startsWith(resolvedRoot)) {
     throw new Error("Refusing to delete non-Paseo worktree");
   }
 
-  const canonicalTargetPath = normalizePathForOwnership(targetPath);
-  await execAsync(`git worktree remove "${canonicalTargetPath}" --force`, {
+  await execAsync(`git worktree remove "${resolvedWorktree}" --force`, {
     cwd: repoInfo.path,
   });
 
-  if (existsSync(canonicalTargetPath)) {
-    rmSync(canonicalTargetPath, { recursive: true, force: true });
+  if (existsSync(resolvedWorktree)) {
+    rmSync(resolvedWorktree, { recursive: true, force: true });
   }
 }
 

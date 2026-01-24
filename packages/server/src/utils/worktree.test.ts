@@ -305,6 +305,25 @@ describe("paseo worktree manager", () => {
     expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
   });
 
+  it("deletes a paseo worktree even when given a subdirectory path", async () => {
+    const created = await createWorktree({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "alpha",
+      paseoHome,
+    });
+
+    const nestedDir = join(created.worktreePath, "nested", "dir");
+    execSync(`mkdir -p ${nestedDir}`);
+
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
+    expect(existsSync(created.worktreePath)).toBe(false);
+
+    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    expect(remaining.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
+  });
+
   it("ensures .paseo is ignored in .gitignore", async () => {
     await ensurePaseoIgnored(repoDir);
     await ensurePaseoIgnored(repoDir);
