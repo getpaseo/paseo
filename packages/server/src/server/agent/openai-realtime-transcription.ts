@@ -2,6 +2,21 @@ import type pino from "pino";
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 
+type OpenAITurnDetection =
+  | null
+  | {
+      type: "server_vad";
+      create_response?: boolean;
+      threshold?: number;
+      prefix_padding_ms?: number;
+      silence_duration_ms?: number;
+    }
+  | {
+      type: "semantic_vad";
+      create_response?: boolean;
+      eagerness?: "low" | "medium" | "high";
+    };
+
 type OpenAIClientEvent =
   | {
       type: "session.update";
@@ -15,7 +30,7 @@ type OpenAIClientEvent =
               language?: string;
               prompt?: string;
             };
-            turn_detection: null;
+            turn_detection: OpenAITurnDetection;
           };
         };
       };
@@ -31,6 +46,13 @@ type OpenAIServerEvent =
       item_id: string;
       previous_item_id: string | null;
     }
+  | { type: "input_audio_buffer.speech_started" }
+  | { type: "input_audio_buffer.speech_stopped" }
+  | {
+      type: "conversation.item.input_audio_transcription.delta";
+      item_id: string;
+      delta: string;
+    }
   | {
       type: "conversation.item.input_audio_transcription.completed";
       item_id: string;
@@ -43,22 +65,29 @@ export class OpenAIRealtimeTranscriptionSession extends EventEmitter {
   private readonly logger: pino.Logger;
   private readonly transcriptionModel: string;
   private readonly language?: string;
+  private readonly prompt?: string;
+  private readonly turnDetection: OpenAITurnDetection;
 
   private ws: WebSocket | null = null;
   private ready: Promise<void> | null = null;
   private closing = false;
+  private partialByItemId = new Map<string, string>();
 
   constructor(params: {
     apiKey: string;
     logger: pino.Logger;
     transcriptionModel: string;
     language?: string;
+    prompt?: string;
+    turnDetection?: OpenAITurnDetection;
   }) {
     super();
     this.apiKey = params.apiKey;
     this.logger = params.logger.child({ provider: "openai", component: "realtime-transcription" });
     this.transcriptionModel = params.transcriptionModel;
     this.language = params.language;
+    this.prompt = params.prompt;
+    this.turnDetection = params.turnDetection ?? null;
   }
 
   public async connect(): Promise<void> {
@@ -99,9 +128,9 @@ export class OpenAIRealtimeTranscriptionSession extends EventEmitter {
                 transcription: {
                   model: this.transcriptionModel,
                   ...(this.language ? { language: this.language } : {}),
+                  ...(this.prompt ? { prompt: this.prompt } : {}),
                 },
-                // We commit periodically ourselves; no server-side VAD for dictation.
-                turn_detection: null,
+                turn_detection: this.turnDetection,
               },
             },
           },
@@ -138,8 +167,28 @@ export class OpenAIRealtimeTranscriptionSession extends EventEmitter {
           return;
         }
 
+        if (event.type === "input_audio_buffer.speech_started") {
+          this.emit("speech_started");
+          return;
+        }
+
+        if (event.type === "input_audio_buffer.speech_stopped") {
+          this.emit("speech_stopped");
+          return;
+        }
+
+        if (event.type === "conversation.item.input_audio_transcription.delta") {
+          const replaceDelta = this.transcriptionModel === "whisper-1";
+          const prev = this.partialByItemId.get(event.item_id) ?? "";
+          const next = replaceDelta ? event.delta : prev + event.delta;
+          this.partialByItemId.set(event.item_id, next);
+          this.emit("transcript", { itemId: event.item_id, transcript: next, isFinal: false });
+          return;
+        }
+
         if (event.type === "conversation.item.input_audio_transcription.completed") {
-          this.emit("transcript", { itemId: event.item_id, transcript: event.transcript });
+          this.partialByItemId.set(event.item_id, event.transcript);
+          this.emit("transcript", { itemId: event.item_id, transcript: event.transcript, isFinal: true });
           return;
         }
 

@@ -813,6 +813,14 @@ export const DictationStreamAckMessageSchema = z.object({
   }),
 });
 
+export const DictationStreamPartialMessageSchema = z.object({
+  type: z.literal("dictation_stream_partial"),
+  payload: z.object({
+    dictationId: z.string(),
+    text: z.string(),
+  }),
+});
+
 export const DictationStreamFinalMessageSchema = z.object({
   type: z.literal("dictation_stream_final"),
   payload: z.object({
@@ -1324,6 +1332,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AudioOutputMessageSchema,
   TranscriptionResultMessageSchema,
   DictationStreamAckMessageSchema,
+  DictationStreamPartialMessageSchema,
   DictationStreamFinalMessageSchema,
   DictationStreamErrorMessageSchema,
   StatusMessageSchema,

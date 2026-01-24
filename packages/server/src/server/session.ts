@@ -141,19 +141,62 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
 
 const DICTATION_PCM_INPUT_RATE = 16000;
 const DICTATION_PCM_OUTPUT_RATE = 24000;
-const DICTATION_COMMIT_INTERVAL_MS = Number.parseInt(
-  process.env.OPENAI_REALTIME_DICTATION_COMMIT_MS ?? "5000",
+const DICTATION_FINAL_TIMEOUT_MS = 120000;
+const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
+  process.env.OPENAI_REALTIME_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10
 );
-const DICTATION_COMMIT_TARGET_BYTES = Math.round(
-  (DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_COMMIT_INTERVAL_MS) / 1000
+const DICTATION_TURN_DETECTION = (process.env.OPENAI_REALTIME_DICTATION_TURN_DETECTION ?? "semantic_vad").trim();
+const DICTATION_SEMANTIC_VAD_EAGERNESS = (process.env.OPENAI_REALTIME_DICTATION_SEMANTIC_VAD_EAGERNESS ?? "medium").trim();
+const DICTATION_FLUSH_SILENCE_MS = Number.parseInt(
+  process.env.OPENAI_REALTIME_DICTATION_FLUSH_SILENCE_MS ?? "800",
+  10
 );
-const DICTATION_MIN_COMMIT_MS = 100;
-const DICTATION_MIN_COMMIT_BYTES = Math.round(
-  (DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_MIN_COMMIT_MS) / 1000
-);
-const DICTATION_FINAL_TIMEOUT_MS = 120000;
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
+
+function pcm16lePeakAbs(pcm16le: Buffer): number {
+  if (pcm16le.length === 0) {
+    return 0;
+  }
+  if (pcm16le.length % 2 !== 0) {
+    throw new Error(`PCM16 chunk byteLength must be even, got ${pcm16le.length}`);
+  }
+  const samples = new Int16Array(
+    pcm16le.buffer,
+    pcm16le.byteOffset,
+    pcm16le.byteLength / 2
+  );
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const v = samples[i]!;
+    const abs = v < 0 ? -v : v;
+    if (abs > peak) {
+      peak = abs;
+      if (peak >= 32767) {
+        break;
+      }
+    }
+  }
+  return peak;
+}
+
+function parseDictationTurnDetection():
+  | null
+  | { type: "server_vad"; create_response: false; threshold?: number; prefix_padding_ms?: number; silence_duration_ms?: number }
+  | { type: "semantic_vad"; create_response: false; eagerness?: "low" | "medium" | "high" } {
+  if (!DICTATION_TURN_DETECTION || DICTATION_TURN_DETECTION === "none" || DICTATION_TURN_DETECTION === "null") {
+    return null;
+  }
+  if (DICTATION_TURN_DETECTION === "server_vad") {
+    return { type: "server_vad", create_response: false };
+  }
+  const eagerness =
+    DICTATION_SEMANTIC_VAD_EAGERNESS === "low" ||
+    DICTATION_SEMANTIC_VAD_EAGERNESS === "high"
+      ? (DICTATION_SEMANTIC_VAD_EAGERNESS as "low" | "high")
+      : ("medium" as const);
+  return { type: "semantic_vad", create_response: false, eagerness };
+}
 
 /**
  * Type for present_artifact tool arguments
@@ -278,10 +321,11 @@ export class Session {
       nextSeqToForward: number;
       ackSeq: number;
       bytesSinceCommit: number;
-      expectedCommits: number;
-      committedCount: number;
+      peakSinceCommit: number;
       committedItemIds: string[];
       transcriptsByItemId: Map<string, string>;
+      finalTranscriptItemIds: Set<string>;
+      awaitingFinalCommit: boolean;
       finishRequested: boolean;
       finalSeq: number | null;
       finalTimeout: ReturnType<typeof setTimeout> | null;
@@ -1258,6 +1302,13 @@ export class Session {
     this.dictationStreams.delete(dictationId);
   }
 
+  private emitDictationPartial(dictationId: string, text: string): void {
+    this.emit({
+      type: "dictation_stream_partial",
+      payload: { dictationId, text },
+    });
+  }
+
   private maybeFinalizeDictationStream(dictationId: string): void {
     const state = this.dictationStreams.get(dictationId);
     if (!state) {
@@ -1270,12 +1321,16 @@ export class Session {
     if (state.ackSeq < state.finalSeq) {
       return;
     }
-    if (state.committedCount < state.expectedCommits) {
+    if (state.awaitingFinalCommit) {
+      return;
+    }
+
+    if (state.committedItemIds.length === 0) {
       return;
     }
 
     const allTranscriptsReady = state.committedItemIds.every((itemId) =>
-      state.transcriptsByItemId.has(itemId)
+      state.finalTranscriptItemIds.has(itemId)
     );
     if (!allTranscriptsReady) {
       return;
@@ -1308,12 +1363,17 @@ export class Session {
 
     const transcriptionModel =
       process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe";
+    const transcriptionPrompt =
+      process.env.OPENAI_REALTIME_DICTATION_TRANSCRIPTION_PROMPT ??
+      "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
 
     const openai = new OpenAIRealtimeTranscriptionSession({
       apiKey,
       logger: this.sessionLogger.child({ dictationId }),
       transcriptionModel,
       language: "en",
+      prompt: transcriptionPrompt,
+      turnDetection: parseDictationTurnDetection(),
     });
 
     openai.on("committed", ({ itemId }: { itemId: string }) => {
@@ -1321,23 +1381,46 @@ export class Session {
       if (!state) {
         return;
       }
-      state.committedCount += 1;
       state.committedItemIds.push(itemId);
+      state.bytesSinceCommit = 0;
+      state.peakSinceCommit = 0;
+
+      // When finishing, we require at least one commit after finish if we flushed pending audio.
+      if (state.finishRequested && state.awaitingFinalCommit) {
+        state.awaitingFinalCommit = false;
+      }
+
       this.maybeFinalizeDictationStream(dictationId);
     });
 
-    openai.on("transcript", ({ itemId, transcript }: { itemId: string; transcript: string }) => {
-      const state = this.dictationStreams.get(dictationId);
-      if (!state) {
-        return;
+    openai.on(
+      "transcript",
+      ({ itemId, transcript, isFinal }: { itemId: string; transcript: string; isFinal: boolean }) => {
+        const state = this.dictationStreams.get(dictationId);
+        if (!state) {
+          return;
+        }
+        state.transcriptsByItemId.set(itemId, transcript);
+        if (isFinal) {
+          state.finalTranscriptItemIds.add(itemId);
+        }
+
+        const orderedIds = state.committedItemIds.includes(itemId)
+          ? state.committedItemIds
+          : [...state.committedItemIds, itemId];
+        const partialText = orderedIds
+          .map((id) => state.transcriptsByItemId.get(id) ?? "")
+          .join(" ")
+          .trim();
+        this.emitDictationPartial(dictationId, partialText);
+
+        this.maybeFinalizeDictationStream(dictationId);
       }
-      state.transcriptsByItemId.set(itemId, transcript);
-      this.maybeFinalizeDictationStream(dictationId);
-    });
+    );
 
     openai.on("error", (err) => {
-      const error = err instanceof Error ? err.message : String(err);
-      this.failDictationStream(dictationId, error, true);
+      const message = err instanceof Error ? err.message : String(err);
+      this.failDictationStream(dictationId, message, true);
       this.cleanupDictationStream(dictationId);
     });
 
@@ -1355,10 +1438,11 @@ export class Session {
       nextSeqToForward: 0,
       ackSeq: -1,
       bytesSinceCommit: 0,
-      expectedCommits: 0,
-      committedCount: 0,
+      peakSinceCommit: 0,
       committedItemIds: [],
       transcriptsByItemId: new Map(),
+      finalTranscriptItemIds: new Set(),
+      awaitingFinalCommit: false,
       finishRequested: false,
       finalSeq: null,
       finalTimeout: null,
@@ -1403,20 +1487,14 @@ export class Session {
       if (resampled.length > 0) {
         state.openai.appendPcm16Base64(resampled.toString("base64"));
         state.bytesSinceCommit += resampled.length;
+        state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
       }
 
       state.nextSeqToForward += 1;
       state.ackSeq = state.nextSeqToForward - 1;
-
-      if (state.bytesSinceCommit >= DICTATION_COMMIT_TARGET_BYTES) {
-        state.expectedCommits += 1;
-        state.openai.commit();
-        state.bytesSinceCommit = 0;
-      }
     }
 
     this.emitDictationAck(msg.dictationId, state.ackSeq);
-    this.maybeFinalizeDictationStream(msg.dictationId);
   }
 
   private async handleDictationStreamFinish(
@@ -1441,8 +1519,7 @@ export class Session {
           ackSeq: state.ackSeq,
           nextSeqToForward: state.nextSeqToForward,
           receivedChunks: state.receivedChunks.size,
-          expectedCommits: state.expectedCommits,
-          committedCount: state.committedCount,
+          bytesSinceCommit: state.bytesSinceCommit,
         },
         "Dictation finish: no chunks received (failing fast)"
       );
@@ -1455,31 +1532,41 @@ export class Session {
       return;
     }
 
-    // Commit any remaining uncommitted audio.
-    // IMPORTANT: OpenAI requires at least ~100ms of audio in the buffer for a commit.
-    // Also, committing an empty buffer throws "buffer too small ... 0.00ms".
+    // Force-flush any remaining audio so we get a final transcription even if VAD hasn't committed yet.
     if (state.bytesSinceCommit > 0) {
-      this.sessionLogger.debug(
-        { dictationId: msg.dictationId, bytesSinceCommit: state.bytesSinceCommit },
-        "Dictation finish: committing pending audio"
-      );
-      if (state.bytesSinceCommit < DICTATION_MIN_COMMIT_BYTES) {
-        const padBytes = DICTATION_MIN_COMMIT_BYTES - state.bytesSinceCommit;
+      if (state.peakSinceCommit < DICTATION_SILENCE_PEAK_THRESHOLD) {
         this.sessionLogger.debug(
-          { dictationId: msg.dictationId, padBytes },
-          "Dictation finish: padding to minimum commit size"
+          {
+            dictationId: msg.dictationId,
+            bytesSinceCommit: state.bytesSinceCommit,
+            peakSinceCommit: state.peakSinceCommit,
+          },
+          "Dictation finish: clearing silence-only tail (skip final commit)"
         );
-        state.openai.appendPcm16Base64(Buffer.alloc(padBytes).toString("base64"));
-        state.bytesSinceCommit += padBytes;
+        state.openai.clear();
+        state.bytesSinceCommit = 0;
+        state.peakSinceCommit = 0;
+        state.awaitingFinalCommit = false;
+      } else {
+        // We do not manually commit for dictation (to avoid chopping words). Instead we rely on
+        // OpenAI semantic VAD to commit utterances. When the user presses OK, we append a short
+        // silence tail so VAD has enough silence to close out the final utterance promptly.
+        const silenceBytes = Math.max(
+          0,
+          Math.round((DICTATION_PCM_OUTPUT_RATE * 2 * DICTATION_FLUSH_SILENCE_MS) / 1000)
+        );
+        if (silenceBytes > 0) {
+          this.sessionLogger.debug(
+            { dictationId: msg.dictationId, silenceMs: DICTATION_FLUSH_SILENCE_MS, silenceBytes },
+            "Dictation finish: appending silence tail for semantic VAD flush"
+          );
+          state.openai.appendPcm16Base64(Buffer.alloc(silenceBytes).toString("base64"));
+          state.bytesSinceCommit += silenceBytes;
+        }
+        state.awaitingFinalCommit = true;
       }
-      state.expectedCommits += 1;
-      state.openai.commit();
-      state.bytesSinceCommit = 0;
     } else {
-      this.sessionLogger.debug(
-        { dictationId: msg.dictationId },
-        "Dictation finish: no pending audio to commit"
-      );
+      state.awaitingFinalCommit = false;
     }
 
     if (state.finalTimeout) {
