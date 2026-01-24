@@ -2175,12 +2175,15 @@ export class DaemonClientV2 {
       }
     }
 
+    // Capture stack trace at call site, not inside setTimeout
+    const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
+
     return new Promise((resolve, reject) => {
       const timeoutHandle =
         timeout > 0
           ? setTimeout(() => {
               this.waiters.delete(waiter);
-              reject(new Error(`Timeout waiting for message (${timeout}ms)`));
+              reject(timeoutError);
             }, timeout)
           : null;
 
