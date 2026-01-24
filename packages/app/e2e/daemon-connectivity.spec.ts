@@ -11,5 +11,5 @@ test('daemon is connected in settings', async ({ page }) => {
   await openSettings(page);
 
   await expect(page.getByText(`127.0.0.1:${daemonPort}`)).toBeVisible();
-  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId('daemon-card-e2e-test-daemon').getByText('Online', { exact: true })).toBeVisible();
 });

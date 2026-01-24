@@ -156,8 +156,8 @@ export default function PairScanScreen() {
 
       try {
         setIsPairing(true);
-        await upsertDaemonFromOfferUrl(offerUrl);
-        router.replace("/settings");
+        const profile = await upsertDaemonFromOfferUrl(offerUrl);
+        router.replace({ pathname: "/", params: { serverId: profile.id } });
       } catch (error) {
         lastScannedRef.current = null;
         const message = error instanceof Error ? error.message : "Unable to pair host";

@@ -59,6 +59,7 @@ interface AppContainerProps {
 
 function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const { theme } = useUnistyles();
+  const { daemons } = useDaemonRegistry();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const openAgentList = usePanelStore((state) => state.openAgentList);
@@ -67,10 +68,16 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
 
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
+  const chromeEnabled = daemons.length > 0;
+  const isOpen = chromeEnabled
+    ? isMobile
+      ? mobileView === "agent-list"
+      : desktopAgentListOpen
+    : false;
 
   // Cmd+B to toggle sidebar (web only)
   useEffect(() => {
+    if (!chromeEnabled) return;
     if (Platform.OS !== "web") return;
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key === "b") {
@@ -80,7 +87,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleAgentList]);
+  }, [chromeEnabled, toggleAgentList]);
   const {
     translateX,
     backdropOpacity,
@@ -98,7 +105,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const openGesture = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(isMobile && !isOpen)
+        .enabled(chromeEnabled && isMobile && !isOpen)
         .manualActivation(true)
         // Fail if 10px vertical movement happens first (allow vertical scroll)
         .failOffsetY([-10, 10])
@@ -153,7 +160,20 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
         .onFinalize(() => {
           isGesturing.value = false;
         }),
-    [isMobile, isOpen, windowWidth, translateX, backdropOpacity, animateToOpen, animateToClose, openAgentList, isGesturing, horizontalScroll?.isAnyScrolledRight, touchStartX]
+    [
+      chromeEnabled,
+      isMobile,
+      isOpen,
+      windowWidth,
+      translateX,
+      backdropOpacity,
+      animateToOpen,
+      animateToClose,
+      openAgentList,
+      isGesturing,
+      horizontalScroll?.isAnyScrolledRight,
+      touchStartX,
+    ]
   );
 
   // When sidebar is collapsed on desktop Tauri macOS, add left padding for traffic lights
@@ -163,12 +183,12 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
   const content = (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
-        {!isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+        {!isMobile && chromeEnabled && <SlidingSidebar selectedAgentId={selectedAgentId} />}
         <View style={{ flex: 1, paddingLeft: needsTrafficLightPadding ? trafficLightPadding.left : 0 }}>
           {children}
         </View>
       </View>
-      {isMobile && <SlidingSidebar selectedAgentId={selectedAgentId} />}
+      {isMobile && chromeEnabled && <SlidingSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
     </View>
   );

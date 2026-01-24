@@ -14,16 +14,16 @@ test('manual host add accepts host:port only and persists endpoints', async ({ p
   await page.goto('/settings');
 
   await page.getByText('+ Add Host', { exact: true }).click();
-  await page.getByText('Manual', { exact: true }).click();
+  await page.getByText('Direct connection', { exact: true }).click();
 
-  const input = page.getByPlaceholder('localhost:6767');
+  const input = page.getByPlaceholder('host:6767');
   await expect(input).toBeVisible();
   await input.fill(`127.0.0.1:${daemonPort}`);
 
-  await page.getByText('Add', { exact: true }).click();
+  await page.getByText('Connect & Save', { exact: true }).click();
 
-  await expect(page.getByText(`127.0.0.1:${daemonPort}`, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Online', { exact: true }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
+  await expect(page.getByText('Online', { exact: true })).toBeVisible({ timeout: 15000 });
 
   await page.waitForFunction(
     (port) => {

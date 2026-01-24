@@ -35,8 +35,7 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
   const offerUrl = `https://app.paseo.sh/#offer=${encodeBase64Url(JSON.stringify(offer))}`;
 
   await page.getByText('+ Add Host', { exact: true }).click();
-  await page.getByText('Pair', { exact: true }).click();
-  await page.getByText('Paste link', { exact: true }).click();
+  await page.getByText('Paste pairing link', { exact: true }).click();
 
   const input = page.getByPlaceholder('https://app.paseo.sh/#offer=...');
   await expect(input).toBeVisible();
@@ -44,7 +43,7 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
 
   await page.getByText('Pair', { exact: true }).click();
 
-  await expect(page.getByText(`127.0.0.1:${daemonPort}`, { exact: true })).toBeVisible();
+  await expect(page.getByTestId('sidebar-new-agent')).toBeVisible();
 
   await page.waitForFunction(
     ({ expected }) => {

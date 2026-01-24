@@ -26,9 +26,11 @@ import { FileDropZone } from "@/components/file-drop-zone";
 import { useQuery } from "@tanstack/react-query";
 import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { WelcomeScreen } from "@/components/welcome-screen";
 import type {
   AgentProvider,
   AgentSessionConfig,
@@ -90,6 +92,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { connectionStates } = useDaemonConnections();
+  const { daemons } = useDaemonRegistry();
   const params = useLocalSearchParams<DraftAgentParams>();
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -598,6 +601,16 @@ export default function HomeScreen() {
     ]
   );
 
+  if (daemons.length === 0) {
+    return (
+      <WelcomeScreen
+        onHostAdded={(profile) => {
+          setSelectedServerIdFromUser(profile.id);
+        }}
+      />
+    );
+  }
+
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
@@ -617,6 +630,9 @@ export default function HomeScreen() {
                     hostEntry?.status === "online" && styles.hostStatusDotOnline,
                   ]}
                 />
+                {hostStatus ? (
+                  <Text style={styles.hostBadgeStatus}>{hostStatus}</Text>
+                ) : null}
               </Pressable>
             }
           />
@@ -841,6 +857,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
+  },
+  hostBadgeStatus: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
   },
   hostStatusDot: {
     width: 6,

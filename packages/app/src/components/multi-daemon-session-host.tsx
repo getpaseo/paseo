@@ -58,12 +58,15 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
 
   const candidates = useMemo(() => buildCandidateUrls(daemon), [daemon]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const activeUrl = candidates[activeIndex] ?? candidates[0] ?? buildDaemonWebSocketUrl("localhost:6767");
+  const activeUrl = candidates[activeIndex] ?? candidates[0] ?? null;
 
   const lastAttemptedUrlRef = useRef<string | null>(null);
   const pendingMetadataWriteRef = useRef(false);
 
   useEffect(() => {
+    if (!activeUrl) {
+      return;
+    }
     // If the active URL fell out of the candidate set (e.g. endpoints updated), snap back.
     const idx = candidates.indexOf(activeUrl);
     if (idx === -1) {
@@ -71,6 +74,10 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidates.join("|")]);
+
+  if (!activeUrl) {
+    return null;
+  }
 
   const connection = connectionStates.get(daemon.id);
   const status = connection?.status ?? "idle";

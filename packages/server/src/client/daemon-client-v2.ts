@@ -223,6 +223,7 @@ export class DaemonClientV2 {
   private connectionListeners: Set<(status: ConnectionState) => void> =
     new Set();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private shouldReconnect = true;
   private connectPromise: Promise<void> | null = null;
@@ -296,12 +297,20 @@ export class DaemonClientV2 {
 
       this.transportCleanup = [
         transport.onOpen(() => {
+          if (this.pendingGenericTransportErrorTimeout) {
+            clearTimeout(this.pendingGenericTransportErrorTimeout);
+            this.pendingGenericTransportErrorTimeout = null;
+          }
           this.lastErrorValue = null;
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" });
           this.resolveConnect();
         }),
         transport.onClose((event) => {
+          if (this.pendingGenericTransportErrorTimeout) {
+            clearTimeout(this.pendingGenericTransportErrorTimeout);
+            this.pendingGenericTransportErrorTimeout = null;
+          }
           const reason = describeTransportClose(event);
           if (reason) {
             this.lastErrorValue = reason;
@@ -314,11 +323,34 @@ export class DaemonClientV2 {
         }),
         transport.onError((event) => {
           const reason = describeTransportError(event);
+          const isGeneric = reason === "Transport error";
+          // Browser WebSocket.onerror often provides no useful details and is followed
+          // by a close event (often with code 1006). Prefer surfacing the close details
+          // instead of immediately disconnecting with a generic "Transport error".
+          if (isGeneric) {
+            this.lastErrorValue ??= reason;
+            if (!this.pendingGenericTransportErrorTimeout) {
+              this.pendingGenericTransportErrorTimeout = setTimeout(() => {
+                this.pendingGenericTransportErrorTimeout = null;
+                if (
+                  this.connectionState.status === "connected" ||
+                  this.connectionState.status === "connecting"
+                ) {
+                  this.lastErrorValue = reason;
+                  this.updateConnectionState({ status: "disconnected", reason });
+                  this.scheduleReconnect(reason);
+                }
+              }, 250);
+            }
+            return;
+          }
+
+          if (this.pendingGenericTransportErrorTimeout) {
+            clearTimeout(this.pendingGenericTransportErrorTimeout);
+            this.pendingGenericTransportErrorTimeout = null;
+          }
           this.lastErrorValue = reason;
-          this.updateConnectionState({
-            status: "disconnected",
-            reason,
-          });
+          this.updateConnectionState({ status: "disconnected", reason });
           this.scheduleReconnect(reason);
         }),
         transport.onMessage((data) => this.handleTransportMessage(data)),
@@ -1928,6 +1960,10 @@ export class DaemonClientV2 {
   }
 
   private cleanupTransport(): void {
+    if (this.pendingGenericTransportErrorTimeout) {
+      clearTimeout(this.pendingGenericTransportErrorTimeout);
+      this.pendingGenericTransportErrorTimeout = null;
+    }
     for (const cleanup of this.transportCleanup) {
       try {
         cleanup();
