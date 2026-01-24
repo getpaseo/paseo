@@ -1,9 +1,10 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import { createNameId } from "mnemonic-id";
 import { normalizeBaseRefName, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
+import { resolvePaseoHome } from "../server/paseo-home.js";
 
 interface PaseoConfig {
   worktree?: {
@@ -67,6 +68,7 @@ interface CreateWorktreeOptions {
   baseBranch: string;
   worktreeSlug?: string;
   runSetup?: boolean;
+  paseoHome?: string;
 }
 
 function readPaseoConfig(repoRoot: string): PaseoConfig | null {
@@ -315,17 +317,87 @@ function generateWorktreeSlug(): string {
   return createNameId();
 }
 
-function getPaseoWorktreesRoot(repoRoot: string): string {
-  return join(repoRoot, ".paseo", "worktrees");
+function tryParseGitRemote(remoteUrl: string): { host?: string; path: string } | null {
+  const cleaned = remoteUrl.trim().replace(/\.git$/i, "");
+  if (!cleaned) {
+    return null;
+  }
+
+  if (cleaned.includes("://")) {
+    try {
+      const url = new URL(cleaned);
+      return { host: url.hostname, path: url.pathname.replace(/^\/+/, "") };
+    } catch {
+      // fall through
+    }
+  }
+
+  // Support scp-like syntax: git@github.com:owner/repo
+  const scpMatch = cleaned.match(/^(?:.+@)?([^:]+):(.+)$/);
+  if (scpMatch?.[2]) {
+    return { host: scpMatch[1], path: scpMatch[2].replace(/^\/+/, "") };
+  }
+
+  return { path: cleaned.replace(/^\/+/, "") };
+}
+
+function inferProjectNameFromRemote(remoteUrl: string): string | null {
+  const parsed = tryParseGitRemote(remoteUrl);
+  if (!parsed?.path) {
+    return null;
+  }
+  const segments = parsed.path.split("/").filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
+    return null;
+  }
+  return segments[segments.length - 1] ?? null;
+}
+
+async function detectWorktreeProject(repoRoot: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync("git config --get remote.origin.url", {
+      cwd: repoRoot,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const remote = stdout.trim();
+    if (remote) {
+      const inferred = inferProjectNameFromRemote(remote);
+      if (inferred) {
+        const projected = slugify(inferred);
+        if (projected) {
+          return projected;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return slugify(basename(repoRoot));
+}
+
+async function getPaseoWorktreesRoot(repoRoot: string, paseoHome?: string): Promise<string> {
+  const home = paseoHome ? resolve(paseoHome) : resolvePaseoHome();
+  const project = await detectWorktreeProject(repoRoot);
+  return join(home, "worktrees", project);
+}
+
+function normalizePathForOwnership(input: string): string {
+  try {
+    return realpathSync(input);
+  } catch {
+    return resolve(input);
+  }
 }
 
 export async function isPaseoOwnedWorktreeCwd(
-  cwd: string
+  cwd: string,
+  options?: { paseoHome?: string }
 ): Promise<PaseoWorktreeOwnership> {
   const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
-  const resolvedRoot = resolve(worktreesRoot) + sep;
-  const resolvedCwd = resolve(cwd);
+  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, options?.paseoHome);
+  const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
+  const resolvedCwd = normalizePathForOwnership(cwd);
 
   if (!resolvedCwd.startsWith(resolvedRoot)) {
     return {
@@ -336,7 +408,7 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
 
-  const worktrees = await listPaseoWorktrees({ cwd: repoInfo.path });
+  const worktrees = await listPaseoWorktrees({ cwd: repoInfo.path, paseoHome: options?.paseoHome });
   const allowed = worktrees.some((entry) => {
     const worktreePath = resolve(entry.path);
     return resolvedCwd === worktreePath || resolvedCwd.startsWith(worktreePath + sep);
@@ -424,51 +496,56 @@ function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
 
 export async function listPaseoWorktrees({
   cwd,
+  paseoHome,
 }: {
   cwd: string;
+  paseoHome?: string;
 }): Promise<PaseoWorktreeInfo[]> {
   const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
+  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, paseoHome);
   const { stdout } = await execAsync("git worktree list --porcelain", {
     cwd: repoInfo.path,
     env: READ_ONLY_GIT_ENV,
   });
 
-  const rootPrefix = resolve(worktreesRoot) + sep;
-  return parseWorktreeList(stdout).filter((entry) =>
-    resolve(entry.path).startsWith(rootPrefix)
-  );
+  const rootPrefix = normalizePathForOwnership(worktreesRoot) + sep;
+  return parseWorktreeList(stdout)
+    .map((entry) => ({ ...entry, path: normalizePathForOwnership(entry.path) }))
+    .filter((entry) => entry.path.startsWith(rootPrefix));
 }
 
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
   worktreeSlug,
+  paseoHome,
 }: {
   cwd: string;
   worktreePath?: string;
   worktreeSlug?: string;
+  paseoHome?: string;
 }): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
   }
 
   const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = getPaseoWorktreesRoot(repoInfo.path);
+  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, paseoHome);
   const targetPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
-  const resolvedRoot = resolve(worktreesRoot) + sep;
-  const resolvedTarget = resolve(targetPath);
+  const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
+  const resolvedTarget = normalizePathForOwnership(targetPath);
 
   if (!resolvedTarget.startsWith(resolvedRoot)) {
     throw new Error("Refusing to delete non-Paseo worktree");
   }
 
-  await execAsync(`git worktree remove "${targetPath}" --force`, {
+  const canonicalTargetPath = normalizePathForOwnership(targetPath);
+  await execAsync(`git worktree remove "${canonicalTargetPath}" --force`, {
     cwd: repoInfo.path,
   });
 
-  if (existsSync(targetPath)) {
-    rmSync(targetPath, { recursive: true, force: true });
+  if (existsSync(canonicalTargetPath)) {
+    rmSync(canonicalTargetPath, { recursive: true, force: true });
   }
 }
 
@@ -482,6 +559,7 @@ export async function createWorktree({
   baseBranch,
   worktreeSlug,
   runSetup = true,
+  paseoHome,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
   // Validate branch name
   const validation = validateBranchSlug(branchName);
@@ -512,7 +590,7 @@ export async function createWorktree({
   let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
 
-  worktreePath = join(getPaseoWorktreesRoot(repoInfo.path), desiredSlug);
+  worktreePath = join(await getPaseoWorktreesRoot(repoInfo.path, paseoHome), desiredSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Check if branch already exists
@@ -560,7 +638,7 @@ export async function createWorktree({
 
   const command = `git worktree add "${finalWorktreePath}" -b "${newBranchName}" "${base}"`;
   await execAsync(command, { cwd: repoInfo.path });
-  worktreePath = finalWorktreePath;
+  worktreePath = normalizePathForOwnership(finalWorktreePath);
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
 

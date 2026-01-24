@@ -16,11 +16,13 @@ import { tmpdir } from "os";
 describe("createWorktree", () => {
   let tempDir: string;
   let repoDir: string;
+  let paseoHome: string;
 
   beforeEach(() => {
     // Use realpathSync to resolve symlinks (e.g., /var -> /private/var on macOS)
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-test-")));
     repoDir = join(tempDir, "test-repo");
+    paseoHome = join(tempDir, "paseo-home");
 
     // Create a git repo with an initial commit
     execSync(`mkdir -p ${repoDir}`);
@@ -42,10 +44,11 @@ describe("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello-world",
+      paseoHome,
     });
 
     expect(result.worktreePath).toBe(
-      join(repoDir, ".paseo", "worktrees", "hello-world")
+      join(paseoHome, "worktrees", "test-repo", "hello-world")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
     expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
@@ -62,6 +65,7 @@ describe("createWorktree", () => {
     const varTempDir = mkdtempSync(join(tmpdir(), "worktree-realpath-test-"));
     const privateTempDir = realpathSync(varTempDir);
     const varRepoDir = join(varTempDir, "test-repo");
+    const varPaseoHome = join(varTempDir, "paseo-home");
     execSync(`mkdir -p ${varRepoDir}`);
     execSync("git init -b main", { cwd: varRepoDir });
     execSync("git config user.email 'test@test.com'", { cwd: varRepoDir });
@@ -75,12 +79,13 @@ describe("createWorktree", () => {
       cwd: varRepoDir,
       baseBranch: "main",
       worktreeSlug: "realpath-test",
+      paseoHome: varPaseoHome,
     });
 
-    const privateWorktreePath = join(privateTempDir, "test-repo", ".paseo", "worktrees", "realpath-test");
+    const privateWorktreePath = join(privateTempDir, "paseo-home", "worktrees", "test-repo", "realpath-test");
     expect(existsSync(privateWorktreePath)).toBe(true);
 
-    const ownership = await isPaseoOwnedWorktreeCwd(privateWorktreePath);
+    const ownership = await isPaseoOwnedWorktreeCwd(privateWorktreePath, { paseoHome: varPaseoHome });
     expect(ownership.allowed).toBe(true);
 
     rmSync(varTempDir, { recursive: true, force: true });
@@ -92,10 +97,11 @@ describe("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "my-feature",
+      paseoHome,
     });
 
     expect(result.worktreePath).toBe(
-      join(repoDir, ".paseo", "worktrees", "my-feature")
+      join(paseoHome, "worktrees", "test-repo", "my-feature")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
 
@@ -129,11 +135,12 @@ describe("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello",
+      paseoHome,
     });
 
     // Should create branch "hello-1" since "hello" exists
     expect(result.worktreePath).toBe(
-      join(repoDir, ".paseo", "worktrees", "hello")
+      join(paseoHome, "worktrees", "test-repo", "hello")
     );
     expect(existsSync(result.worktreePath)).toBe(true);
 
@@ -151,6 +158,7 @@ describe("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello",
+      paseoHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -178,6 +186,7 @@ describe("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "setup-test",
+      paseoHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -207,6 +216,7 @@ describe("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "no-setup-test",
       runSetup: false,
+      paseoHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -224,9 +234,9 @@ describe("createWorktree", () => {
     execSync("git add paseo.json && git -c commit.gpgsign=false commit -m 'add paseo.json'", { cwd: repoDir });
 
     const expectedWorktreePath = join(
-      repoDir,
-      ".paseo",
+      paseoHome,
       "worktrees",
+      "test-repo",
       "fail-test"
     );
 
@@ -236,6 +246,7 @@ describe("createWorktree", () => {
         cwd: repoDir,
         baseBranch: "main",
         worktreeSlug: "fail-test",
+        paseoHome,
       })
     ).rejects.toThrow("Worktree setup command failed");
 
@@ -247,10 +258,12 @@ describe("createWorktree", () => {
 describe("paseo worktree manager", () => {
   let tempDir: string;
   let repoDir: string;
+  let paseoHome: string;
 
   beforeEach(() => {
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-manager-test-")));
     repoDir = join(tempDir, "test-repo");
+    paseoHome = join(tempDir, "paseo-home");
 
     execSync(`mkdir -p ${repoDir}`);
     execSync("git init", { cwd: repoDir });
@@ -265,28 +278,30 @@ describe("paseo worktree manager", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("lists and deletes paseo worktrees under .paseo/worktrees", async () => {
+  it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{project}", async () => {
     const first = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
+      paseoHome,
     });
     const second = await createWorktree({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "beta",
+      paseoHome,
     });
 
-    const worktrees = await listPaseoWorktrees({ cwd: repoDir });
+    const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
     const paths = worktrees.map((worktree) => worktree.path).sort();
     expect(paths).toEqual([first.worktreePath, second.worktreePath].sort());
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath });
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath, paseoHome });
     expect(existsSync(first.worktreePath)).toBe(false);
 
-    const remaining = await listPaseoWorktrees({ cwd: repoDir });
+    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
     expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
   });
 

@@ -31,6 +31,7 @@ export class WebSocketSessionBridge {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly downloadTokenStore: DownloadTokenStore;
+  private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
   private readonly agentMcpConfig: AgentMcpClientConfig;
@@ -53,6 +54,7 @@ export class WebSocketSessionBridge {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
+    this.paseoHome = paseoHome;
     this.agentMcpConfig = agentMcpConfig;
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
@@ -86,6 +88,7 @@ export class WebSocketSessionBridge {
       connectionLogger.child({ module: "session" }),
       this.downloadTokenStore,
       this.pushTokenStore,
+      this.paseoHome,
       this.agentManager,
       this.agentStorage,
       this.agentMcpConfig,

@@ -1048,10 +1048,6 @@ export class AgentManager {
   }
 
   private dispatchStream(agentId: string, event: AgentStreamEvent): void {
-    const eventDesc = event.type === "timeline"
-      ? `timeline:${event.item.type}${event.item.type === "tool_call" ? `:${(event.item as any).name}` : ""}`
-      : event.type;
-    console.error(`[AGENT-MANAGER:dispatchStream] agentId=${agentId.substring(0, 8)} event=${eventDesc} t=${Date.now()}`);
     this.dispatch({ type: "agent_stream", agentId, event });
   }
 

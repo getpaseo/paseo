@@ -585,6 +585,56 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     },
   });
 
+  const mergeFromBaseMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.checkoutMergeFromBase(agentId, {
+        baseRef,
+        requireCleanTarget: true,
+      });
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("Merged from base.");
+      void refreshDiff();
+      void refreshStatus();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to merge from base";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
+
+  const pushMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.checkoutPush(agentId);
+      if (payload.error) {
+        throw new Error(payload.error.message);
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setActionStatus("Pushed branch.");
+      void refreshStatus();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Failed to push";
+      setActionStatus(null);
+      setActionError(message);
+    },
+  });
+
   const archiveMutation = useMutation({
     mutationFn: async () => {
       if (!client) {
@@ -658,6 +708,10 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const commitDisabled = actionsDisabled || commitMutation.isPending;
   const prDisabled = actionsDisabled || prMutation.isPending;
   const mergeDisabled = actionsDisabled || mergeMutation.isPending || hasUncommittedChanges;
+  const mergeFromBaseDisabled =
+    actionsDisabled || mergeFromBaseMutation.isPending || hasUncommittedChanges;
+  const pushDisabled =
+    actionsDisabled || pushMutation.isPending || !(gitStatus?.hasRemote ?? false);
   const archiveDisabled =
     actionsDisabled ||
     archiveMutation.isPending ||
@@ -935,6 +989,28 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
                 >
                   Refresh
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  testID="changes-menu-merge-from-base"
+                  disabled={mergeFromBaseDisabled}
+                  onSelect={() => mergeFromBaseMutation.mutate()}
+                >
+                  Merge from {baseRefLabel}
+                </DropdownMenuItem>
+                {mergeFromBaseDisabled && hasUncommittedChanges ? (
+                  <DropdownMenuHint>Requires a clean working tree.</DropdownMenuHint>
+                ) : null}
+
+                <DropdownMenuItem
+                  testID="changes-menu-push"
+                  disabled={pushDisabled}
+                  onSelect={() => pushMutation.mutate()}
+                >
+                  Push branch
+                </DropdownMenuItem>
+                {pushDisabled && !(gitStatus?.hasRemote ?? false) ? (
+                  <DropdownMenuHint>Remote 'origin' is not configured.</DropdownMenuHint>
+                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   testID="changes-menu-archive"

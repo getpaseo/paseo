@@ -232,14 +232,12 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     ]);
     const normalizedRepo = normalizeTmpPath(resolvedRepo);
     const normalizedCwd = normalizeTmpPath(resolvedCwd);
-    const expectedRoot = path.join(normalizedRepo, '.paseo', 'worktrees');
-    const expectedRootRaw = normalizeTmpPath(
-      path.join(repo.path, '.paseo', 'worktrees')
-    );
-    expect(
-      normalizedCwd.startsWith(expectedRoot) ||
-        normalizedCwd.startsWith(expectedRootRaw)
-    ).toBeTruthy();
+    const expectedMarker = `${path.sep}.paseo${path.sep}worktrees${path.sep}`;
+    expect(normalizedCwd.includes(expectedMarker)).toBeTruthy();
+    if (repo.name) {
+      const expectedProjectRoot = path.join('.paseo', 'worktrees', repo.name);
+      expect(normalizedCwd.includes(expectedProjectRoot)).toBeTruthy();
+    }
 
     await page.getByTestId('sidebar-new-agent').click();
     await expect(page).toHaveURL(/\/$/);

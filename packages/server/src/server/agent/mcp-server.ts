@@ -37,6 +37,7 @@ import { injectLeadingPaseoInstructionTag } from "./paseo-instructions-tag.js";
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  paseoHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
    * When set, create_agent will auto-inject this as parentAgentId.
@@ -450,6 +451,7 @@ export async function createAgentMcpServer(
             cwd: resolvedCwd,
             baseBranch,
             worktreeSlug: worktreeName,
+            paseoHome: options.paseoHome,
           });
           resolvedCwd = worktree.worktreePath;
         }
@@ -1006,7 +1008,7 @@ export async function createAgentMcpServer(
 
       let ownership;
       try {
-        ownership = await isPaseoOwnedWorktreeCwd(agent.cwd);
+        ownership = await isPaseoOwnedWorktreeCwd(agent.cwd, { paseoHome: options.paseoHome });
       } catch (error) {
         const notGitError =
           error instanceof NotGitRepoError

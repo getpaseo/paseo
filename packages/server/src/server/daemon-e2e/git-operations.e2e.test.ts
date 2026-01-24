@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { slugify } from "../../utils/worktree.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
@@ -543,7 +544,7 @@ describe("daemon E2E", () => {
 
   describe("createAgent with worktree", () => {
     test(
-      "creates agent in .paseo/worktrees when worktree is requested",
+      "creates agent in ~/.paseo/worktrees/{project} when worktree is requested",
       async () => {
         const cwd = tmpCwd();
 
@@ -578,7 +579,14 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
         expect(agent.status).toBe("idle");
         expect(realpathSync(agent.cwd)).toBe(
-          realpathSync(path.join(cwd, ".paseo", "worktrees", "worktree-test"))
+          realpathSync(
+            path.join(
+              ctx.daemon.paseoHome,
+              "worktrees",
+              slugify(path.basename(cwd)),
+              "worktree-test"
+            )
+          )
         );
         expect(existsSync(agent.cwd)).toBe(true);
 

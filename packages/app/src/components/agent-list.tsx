@@ -133,10 +133,6 @@ export function AgentList({
       const idx = basePath.indexOf(worktreeMarker);
       if (idx !== -1) {
         const afterMarker = basePath.slice(idx + worktreeMarker.length);
-        const slashIdx = afterMarker.indexOf("/");
-        if (slashIdx !== -1) {
-          return afterMarker.slice(slashIdx + 1);
-        }
         return afterMarker;
       }
       return basePath;

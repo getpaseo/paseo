@@ -101,6 +101,7 @@ describe("DaemonClientV2", () => {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
+          hasRemote: false,
         },
       },
     };

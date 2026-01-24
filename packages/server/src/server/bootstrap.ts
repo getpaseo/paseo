@@ -230,6 +230,7 @@ export async function createPaseoDaemon(
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      paseoHome: config.paseoHome,
       callerAgentId,
       logger,
     });

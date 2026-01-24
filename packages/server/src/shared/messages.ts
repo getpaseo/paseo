@@ -504,6 +504,20 @@ export const CheckoutMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutMergeFromBaseRequestSchema = z.object({
+  type: z.literal("checkout_merge_from_base_request"),
+  agentId: z.string(),
+  baseRef: z.string().optional(),
+  requireCleanTarget: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const CheckoutPushRequestSchema = z.object({
+  type: z.literal("checkout_push_request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
   agentId: z.string(),
@@ -723,6 +737,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutDiffRequestSchema,
   CheckoutCommitRequestSchema,
   CheckoutMergeRequestSchema,
+  CheckoutMergeFromBaseRequestSchema,
+  CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrStatusRequestSchema,
   PaseoWorktreeListRequestSchema,
@@ -1039,6 +1055,7 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.null(),
   baseRef: z.null(),
   aheadBehind: z.null(),
+  hasRemote: z.boolean(),
 });
 
 const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
@@ -1049,6 +1066,7 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.boolean(),
   baseRef: z.string().nullable(),
   aheadBehind: AheadBehindSchema.nullable(),
+  hasRemote: z.boolean(),
 });
 
 const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
@@ -1059,6 +1077,7 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   isDirty: z.boolean(),
   baseRef: z.string(),
   aheadBehind: AheadBehindSchema.nullable(),
+  hasRemote: z.boolean(),
 });
 
 export const CheckoutStatusResponseSchema = z.object({
@@ -1092,6 +1111,26 @@ export const CheckoutCommitResponseSchema = z.object({
 
 export const CheckoutMergeResponseSchema = z.object({
   type: z.literal("checkout_merge_response"),
+  payload: z.object({
+    agentId: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutMergeFromBaseResponseSchema = z.object({
+  type: z.literal("checkout_merge_from_base_response"),
+  payload: z.object({
+    agentId: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const CheckoutPushResponseSchema = z.object({
+  type: z.literal("checkout_push_response"),
   payload: z.object({
     agentId: z.string(),
     success: z.boolean(),
@@ -1354,6 +1393,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutDiffResponseSchema,
   CheckoutCommitResponseSchema,
   CheckoutMergeResponseSchema,
+  CheckoutMergeFromBaseResponseSchema,
+  CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrStatusResponseSchema,
   PaseoWorktreeListResponseSchema,
@@ -1437,6 +1478,10 @@ export type CheckoutCommitRequest = z.infer<typeof CheckoutCommitRequestSchema>;
 export type CheckoutCommitResponse = z.infer<typeof CheckoutCommitResponseSchema>;
 export type CheckoutMergeRequest = z.infer<typeof CheckoutMergeRequestSchema>;
 export type CheckoutMergeResponse = z.infer<typeof CheckoutMergeResponseSchema>;
+export type CheckoutMergeFromBaseRequest = z.infer<typeof CheckoutMergeFromBaseRequestSchema>;
+export type CheckoutMergeFromBaseResponse = z.infer<typeof CheckoutMergeFromBaseResponseSchema>;
+export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
+export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;

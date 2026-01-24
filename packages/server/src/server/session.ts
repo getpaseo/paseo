@@ -89,8 +89,11 @@ import {
   getCheckoutStatus,
   NotGitRepoError,
   MergeConflictError,
+  MergeFromBaseConflictError,
   commitChanges,
   mergeToBase,
+  mergeFromBase,
+  pushCurrentBranch,
   createPullRequest,
   getPullRequestStatus,
 } from "../utils/checkout-git.js";
@@ -299,6 +302,7 @@ export class Session {
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
   private readonly sessionLogger: pino.Logger;
   private readonly voiceConversationStore: VoiceConversationStore;
+  private readonly paseoHome: string;
 
   // State machine
   private abortController: AbortController;
@@ -372,6 +376,7 @@ export class Session {
     logger: pino.Logger,
     downloadTokenStore: DownloadTokenStore,
     pushTokenStore: PushTokenStore,
+    paseoHome: string,
     agentManager: AgentManager,
     agentStorage: AgentStorage,
     agentMcpConfig: AgentMcpClientConfig,
@@ -385,6 +390,7 @@ export class Session {
     this.onMessage = onMessage;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
+    this.paseoHome = paseoHome;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMcpConfig = agentMcpConfig;
@@ -606,11 +612,6 @@ export class Session {
           timestamp: new Date().toISOString(),
         } as const;
 
-        const itemType = event.event.type === "timeline" ? event.event.item.type : undefined;
-        this.sessionLogger.debug(
-          { timestamp: Date.now(), agentId: event.agentId, eventType: event.event.type, itemType },
-          "Agent stream event"
-        );
         this.emit({
           type: "agent_stream",
           payload,
@@ -886,13 +887,21 @@ export class Session {
           await this.handleCheckoutCommitRequest(msg);
           break;
 
-        case "checkout_merge_request":
-          await this.handleCheckoutMergeRequest(msg);
-          break;
+	        case "checkout_merge_request":
+	          await this.handleCheckoutMergeRequest(msg);
+	          break;
 
-        case "checkout_pr_create_request":
-          await this.handleCheckoutPrCreateRequest(msg);
-          break;
+	        case "checkout_merge_from_base_request":
+	          await this.handleCheckoutMergeFromBaseRequest(msg);
+	          break;
+
+	        case "checkout_push_request":
+	          await this.handleCheckoutPushRequest(msg);
+	          break;
+
+	        case "checkout_pr_create_request":
+	          await this.handleCheckoutPrCreateRequest(msg);
+	          break;
 
         case "checkout_pr_status_request":
           await this.handleCheckoutPrStatusRequest(msg);
@@ -1950,6 +1959,7 @@ export class Session {
         baseBranch: normalized.baseBranch!,
         worktreeSlug: normalized.worktreeSlug ?? targetBranch,
         runSetup: false,
+        paseoHome: this.paseoHome,
       });
       cwd = createdWorktree.worktreePath;
       worktreeConfig = createdWorktree;
@@ -2063,7 +2073,7 @@ export class Session {
     const resolvedCwd = expandTilde(cwd);
 
     try {
-      const status = await getCheckoutStatus(resolvedCwd);
+      const status = await getCheckoutStatus(resolvedCwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
         throw new NotGitRepoError(resolvedCwd);
       }
@@ -2226,6 +2236,9 @@ export class Session {
     if (error instanceof MergeConflictError) {
       return { code: "MERGE_CONFLICT", message: error.message };
     }
+    if (error instanceof MergeFromBaseConflictError) {
+      return { code: "MERGE_CONFLICT", message: error.message };
+    }
     if (error instanceof Error) {
       return { code: "UNKNOWN", message: error.message };
     }
@@ -2252,7 +2265,7 @@ export class Session {
   }
 
   private async generateCommitMessage(agent: ManagedAgent): Promise<string> {
-    const diff = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" });
+    const diff = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
     const schema = z.object({
       message: z
         .string()
@@ -2288,10 +2301,14 @@ export class Session {
     title: string;
     body: string;
   }> {
-    const diff = await getCheckoutDiff(agent.cwd, {
-      mode: "base",
-      baseRef,
-    });
+    const diff = await getCheckoutDiff(
+      agent.cwd,
+      {
+        mode: "base",
+        baseRef,
+      },
+      { paseoHome: this.paseoHome }
+    );
     const schema = z.object({
       title: z.string().min(1).max(72),
       body: z.string().min(1),
@@ -2696,7 +2713,7 @@ export class Session {
         return;
       }
 
-      const diffResult = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" });
+      const diffResult = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
       const combinedDiff = diffResult.diff;
 
       this.emit({
@@ -2747,6 +2764,7 @@ export class Session {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
+          hasRemote: false,
           isPaseoOwnedWorktree: false,
           error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
           requestId,
@@ -2756,7 +2774,7 @@ export class Session {
     }
 
     try {
-      const status = await getCheckoutStatus(agent.cwd);
+      const status = await getCheckoutStatus(agent.cwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
         this.emit({
           type: "checkout_status_response",
@@ -2769,6 +2787,7 @@ export class Session {
             isDirty: null,
             baseRef: null,
             aheadBehind: null,
+            hasRemote: false,
             isPaseoOwnedWorktree: false,
             error: null,
             requestId,
@@ -2789,6 +2808,7 @@ export class Session {
             isDirty: status.isDirty ?? null,
             baseRef: status.baseRef,
             aheadBehind: status.aheadBehind ?? null,
+            hasRemote: status.hasRemote,
             isPaseoOwnedWorktree: true,
             error: null,
             requestId,
@@ -2808,6 +2828,7 @@ export class Session {
           isDirty: status.isDirty ?? null,
           baseRef: status.baseRef ?? null,
           aheadBehind: status.aheadBehind ?? null,
+          hasRemote: status.hasRemote,
           isPaseoOwnedWorktree: false,
           error: null,
           requestId,
@@ -2825,6 +2846,7 @@ export class Session {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
+          hasRemote: false,
           isPaseoOwnedWorktree: false,
           error: this.toCheckoutError(error),
           requestId,
@@ -2852,11 +2874,15 @@ export class Session {
     }
 
     try {
-      const diffResult = await getCheckoutDiff(agent.cwd, {
-        mode: compare.mode,
-        baseRef: compare.baseRef,
-        includeStructured: true,
-      });
+      const diffResult = await getCheckoutDiff(
+        agent.cwd,
+        {
+          mode: compare.mode,
+          baseRef: compare.baseRef,
+          includeStructured: true,
+        },
+        { paseoHome: this.paseoHome }
+      );
       this.emit({
         type: "checkout_diff_response",
         payload: {
@@ -2952,7 +2978,7 @@ export class Session {
     }
 
     try {
-      const status = await getCheckoutStatus(agent.cwd);
+      const status = await getCheckoutStatus(agent.cwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
         // `getCheckoutStatus` can return `isGit=false` in transient situations (e.g. cwd lookup
         // running during other git operations). Double-check with git directly before failing.
@@ -2990,10 +3016,14 @@ export class Session {
         baseRef = baseRef.slice("origin/".length);
       }
 
-      await mergeToBase(agent.cwd, {
-        baseRef,
-        mode: msg.strategy === "squash" ? "squash" : "merge",
-      });
+      await mergeToBase(
+        agent.cwd,
+        {
+          baseRef,
+          mode: msg.strategy === "squash" ? "squash" : "merge",
+        },
+        { paseoHome: this.paseoHome }
+      );
 
       this.emit({
         type: "checkout_merge_response",
@@ -3007,6 +3037,107 @@ export class Session {
     } catch (error) {
       this.emit({
         type: "checkout_merge_response",
+        payload: {
+          agentId,
+          success: false,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutMergeFromBaseRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_merge_from_base_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_merge_from_base_response",
+        payload: {
+          agentId,
+          success: false,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      if (msg.requireCleanTarget ?? true) {
+        const { stdout } = await execAsync("git status --porcelain", {
+          cwd: agent.cwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        if (stdout.trim().length > 0) {
+          throw new Error("Working directory has uncommitted changes.");
+        }
+      }
+
+      await mergeFromBase(
+        agent.cwd,
+        {
+          baseRef: msg.baseRef,
+          requireCleanTarget: msg.requireCleanTarget ?? true,
+        },
+      );
+
+      this.emit({
+        type: "checkout_merge_from_base_response",
+        payload: {
+          agentId,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_merge_from_base_response",
+        payload: {
+          agentId,
+          success: false,
+          error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutPushRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout_push_request" }>
+  ): Promise<void> {
+    const { agentId, requestId } = msg;
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) {
+      this.emit({
+        type: "checkout_push_response",
+        payload: {
+          agentId,
+          success: false,
+          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      await pushCurrentBranch(agent.cwd);
+      this.emit({
+        type: "checkout_push_response",
+        payload: {
+          agentId,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_push_response",
         payload: {
           agentId,
           success: false,
@@ -3142,7 +3273,7 @@ export class Session {
     }
 
     try {
-      const worktrees = await listPaseoWorktrees({ cwd });
+      const worktrees = await listPaseoWorktrees({ cwd, paseoHome: this.paseoHome });
       this.emit({
         type: "paseo_worktree_list_response",
         payload: {
@@ -3179,7 +3310,7 @@ export class Session {
         if (!repoRoot || !msg.branchName) {
           throw new Error("worktreePath or repoRoot+branchName is required");
         }
-        const worktrees = await listPaseoWorktrees({ cwd: repoRoot });
+        const worktrees = await listPaseoWorktrees({ cwd: repoRoot, paseoHome: this.paseoHome });
         const match = worktrees.find((entry) => entry.branchName === msg.branchName);
         if (!match) {
           throw new Error(`Paseo worktree not found for branch ${msg.branchName}`);
@@ -3187,7 +3318,7 @@ export class Session {
         targetPath = match.path;
       }
 
-      const ownership = await isPaseoOwnedWorktreeCwd(targetPath);
+      const ownership = await isPaseoOwnedWorktreeCwd(targetPath, { paseoHome: this.paseoHome });
       if (!ownership.allowed) {
         this.emit({
           type: "paseo_worktree_archive_response",
@@ -3242,6 +3373,7 @@ export class Session {
       await deletePaseoWorktree({
         cwd: repoRoot,
         worktreePath: targetPath,
+        paseoHome: this.paseoHome,
       });
 
       for (const agentId of removedAgents) {
