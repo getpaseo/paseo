@@ -9,6 +9,7 @@ import type {
   AgentProvider,
 } from "@server/server/agent/agent-sdk-types";
 import { useSessionStore } from "@/stores/session-store";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { useFormPreferences, type FormPreferences } from "./use-form-preferences";
 
 // Explicit overrides from URL params or "New Agent" button
@@ -104,7 +105,8 @@ function resolveFormState(
   preferences: FormPreferences | null,
   availableModels: AgentModelDefinition[] | null,
   userModified: UserModifiedFields,
-  currentState: FormState
+  currentState: FormState,
+  validServerIds: Set<string>
 ): FormState {
   // Start with current state - we only update non-user-modified fields
   const result = { ...currentState };
@@ -177,10 +179,11 @@ function resolveFormState(
   }
 
   // 4. Resolve serverId (independent)
+  // Only use stored serverId if the host still exists in the registry
   if (!userModified.serverId) {
     if (initialValues?.serverId !== undefined) {
       result.serverId = initialValues.serverId;
-    } else if (preferences?.serverId) {
+    } else if (preferences?.serverId && validServerIds.has(preferences.serverId)) {
       result.serverId = preferences.serverId;
     }
     // else keep current
@@ -239,6 +242,14 @@ export function useAgentFormState(
     updatePreferences,
     updateProviderPreferences,
   } = useFormPreferences();
+
+  const { daemons } = useDaemonRegistry();
+
+  // Build a set of valid server IDs for preference validation
+  const validServerIds = useMemo(
+    () => new Set(daemons.map((d) => d.id)),
+    [daemons]
+  );
 
   // Track which fields the user has explicitly modified
   const [userModified, setUserModified] = useState<UserModifiedFields>(INITIAL_USER_MODIFIED);
@@ -303,7 +314,8 @@ export function useAgentFormState(
       preferences,
       availableModels,
       userModified,
-      formStateRef.current
+      formStateRef.current,
+      validServerIds
     );
 
     // Only update if something changed
@@ -326,6 +338,7 @@ export function useAgentFormState(
     preferences,
     availableModels,
     userModified,
+    validServerIds,
   ]);
 
   // Persist inferred serverId so reloads keep the selection (e.g. URL serverId or first-time load).
