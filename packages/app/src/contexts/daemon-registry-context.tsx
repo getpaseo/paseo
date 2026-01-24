@@ -13,10 +13,6 @@ import {
 
 const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
-const FALLBACK_DAEMON_ENDPOINT = "localhost:6767";
-const DEFAULT_HOSTS: Array<{ label: string; endpoint: string }> = [
-  { label: "localhost", endpoint: "localhost:6767" },
-];
 const DAEMON_REGISTRY_QUERY_KEY = ["daemon-registry"];
 
 export type HostRelayConfig = {
@@ -400,11 +396,8 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
       return envDefaults;
     }
 
-    const fallback = DEFAULT_HOSTS.length > 0
-      ? DEFAULT_HOSTS.map((entry) => createProfile(entry.label, entry.endpoint))
-      : [createProfile("Local Host", FALLBACK_DAEMON_ENDPOINT)];
-    await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(fallback));
-    return fallback;
+    // No implicit localhost fallback: a fresh install starts with zero hosts.
+    return [];
   } catch (error) {
     console.error("[DaemonRegistry] Failed to load daemon registry", error);
     throw error;
@@ -412,6 +405,9 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
 }
 
 export function buildDirectDaemonWsUrl(profile: HostProfile): string {
-  const endpoint = profile.endpoints[0] ?? FALLBACK_DAEMON_ENDPOINT;
+  const endpoint = profile.endpoints[0];
+  if (!endpoint) {
+    throw new Error("Host profile has no endpoints");
+  }
   return buildDaemonWebSocketUrl(endpoint);
 }

@@ -22,7 +22,10 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useSessionStore } from "@/stores/session-store";
-import { normalizeHostPort } from "@/utils/daemon-endpoints";
+import { AddHostMethodModal } from "@/components/add-host-method-modal";
+import { AddHostModal } from "@/components/add-host-modal";
+import { PairLinkModal } from "@/components/pair-link-modal";
+import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -379,22 +382,16 @@ export default function SettingsScreen() {
   const {
     daemons,
     isLoading: daemonLoading,
-    addDaemon,
     updateDaemon,
     removeDaemon,
-    upsertDaemonFromOfferUrl,
   } = useDaemonRegistry();
   const { connectionStates, updateConnectionStatus } = useDaemonConnections();
-  const [isDaemonFormVisible, setIsDaemonFormVisible] = useState(false);
-  const [daemonFormMode, setDaemonFormMode] = useState<"choose" | "manual" | "pair">("choose");
-  const [pairSubMode, setPairSubMode] = useState<"choose" | "paste">("choose");
-  const [daemonForm, setDaemonForm] = useState<{
-    id: string | null;
-    label: string;
-    endpoint: string;
-    offerUrl: string;
-  }>({ id: null, label: "", endpoint: "", offerUrl: "" });
-  const [isSavingDaemon, setIsSavingDaemon] = useState(false);
+  const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
+  const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
+  const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
+  const [editingDaemon, setEditingDaemon] = useState<DaemonProfile | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const isLoading = settingsLoading || daemonLoading;
   const isMountedRef = useRef(true);
 
@@ -421,95 +418,38 @@ export default function SettingsScreen() {
     []
   );
 
-  const handleOpenDaemonForm = useCallback((profile?: DaemonProfile) => {
-    if (profile) {
-      setDaemonFormMode("manual");
-      setPairSubMode("choose");
-      setDaemonForm({
-        id: profile.id,
-        label: profile.label,
-        endpoint: profile.endpoints?.[0] ?? "",
-        offerUrl: "",
-      });
-    } else {
-      setDaemonFormMode("choose");
-      setPairSubMode("choose");
-      setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
-    }
-    setIsDaemonFormVisible(true);
+  const handleEditDaemon = useCallback((profile: DaemonProfile) => {
+    setEditingDaemon(profile);
+    setEditLabel(profile.label ?? "");
   }, []);
 
-  const handleCloseDaemonForm = useCallback(() => {
-    setIsDaemonFormVisible(false);
-    setDaemonFormMode("choose");
-    setPairSubMode("choose");
-    setDaemonForm({ id: null, label: "", endpoint: "", offerUrl: "" });
-  }, []);
+  const handleCloseEditDaemon = useCallback(() => {
+    if (isSavingEdit) return;
+    setEditingDaemon(null);
+    setEditLabel("");
+  }, [isSavingEdit]);
 
-  const handleSubmitDaemonForm = useCallback(async () => {
-    if (daemonFormMode === "manual") {
-      const raw = daemonForm.endpoint.trim();
-      if (raw.includes("://") || raw.includes("/")) {
-        Alert.alert("Invalid host", "Manual hosts must be entered as host:port (no ws://, no /ws).");
-        return;
-      }
+  const handleSaveEditDaemon = useCallback(async () => {
+    if (!editingDaemon) return;
+    if (isSavingEdit) return;
 
-      let endpoint: string;
-      try {
-        endpoint = normalizeHostPort(raw);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid host:port";
-        Alert.alert("Invalid host", message);
-        return;
-      }
-
-      try {
-        setIsSavingDaemon(true);
-        const payload = {
-          label: daemonForm.label.trim(),
-          endpoints: [endpoint],
-        };
-        if (daemonForm.id) {
-          await updateDaemon(daemonForm.id, payload);
-        } else {
-          await addDaemon(payload);
-        }
-        handleCloseDaemonForm();
-      } catch (error) {
-        console.error("[Settings] Failed to save daemon", error);
-        Alert.alert("Error", "Unable to save host");
-      } finally {
-        setIsSavingDaemon(false);
-      }
+    const nextLabel = editLabel.trim();
+    if (!nextLabel) {
+      Alert.alert("Label required", "Enter a label for this host.");
       return;
     }
 
-    if (daemonFormMode === "pair") {
-      if (pairSubMode !== "paste") {
-        Alert.alert("Choose a method", "Select Scan QR or Paste link to pair.");
-        return;
-      }
-      const offer = daemonForm.offerUrl.trim();
-      if (!offer) {
-        Alert.alert("Offer required", "Paste the pairing link (…/#offer=...)");
-        return;
-      }
-      try {
-        setIsSavingDaemon(true);
-        await upsertDaemonFromOfferUrl(offer);
-        handleCloseDaemonForm();
-      } catch (error) {
-        console.error("[Settings] Failed to pair host", error);
-        const message = error instanceof Error ? error.message : "Unable to pair host";
-        Alert.alert("Error", message);
-      } finally {
-        setIsSavingDaemon(false);
-      }
-      return;
+    try {
+      setIsSavingEdit(true);
+      await updateDaemon(editingDaemon.id, { label: nextLabel });
+      handleCloseEditDaemon();
+    } catch (error) {
+      console.error("[Settings] Failed to rename host", error);
+      Alert.alert("Error", "Unable to save host");
+    } finally {
+      setIsSavingEdit(false);
     }
-
-    Alert.alert("Choose a method", "Select Pair or Manual to add a host.");
-  }, [daemonForm, daemonFormMode, pairSubMode, addDaemon, updateDaemon, upsertDaemonFromOfferUrl, handleCloseDaemonForm]);
+  }, [editLabel, editingDaemon, handleCloseEditDaemon, isSavingEdit, updateDaemon]);
 
   const handleRemoveDaemon = useCallback(
     (profile: DaemonProfile) => {
@@ -642,7 +582,7 @@ export default function SettingsScreen() {
                     daemon={daemon}
                     connectionStatus={connectionStatus}
                     lastError={lastConnectionError}
-                    onEdit={handleOpenDaemonForm}
+                    onEdit={handleEditDaemon}
                     onRemove={handleRemoveDaemon}
                     restartConfirmationMessage={restartConfirmationMessage}
                     waitForCondition={waitForCondition}
@@ -652,129 +592,74 @@ export default function SettingsScreen() {
               })
             )}
 
-            {isDaemonFormVisible ? (
-              <View style={styles.formCard}>
-                <Text style={styles.formTitle}>{daemonForm.id ? "Edit Host" : "Add Host"}</Text>
-
-                {daemonForm.id ? (
-                  <View style={styles.formField}>
-                    <Text style={styles.label}>Label</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={daemonForm.label}
-                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, label: text }))}
-                      placeholder="My Host"
-                      placeholderTextColor={defaultTheme.colors.mutedForeground}
-                    />
-                  </View>
-                ) : null}
-
-                {daemonForm.id ? null : daemonFormMode === "choose" ? (
-                  <View style={styles.formActionsRow}>
-                    <Pressable
-                      style={[styles.formButton, styles.formButtonPrimary]}
-                      onPress={() => {
-                        setDaemonFormMode("pair");
-                        setPairSubMode("choose");
-                      }}
-                    >
-                      <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Pair</Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.formButton, styles.formButtonPrimary]}
-                      onPress={() => setDaemonFormMode("manual")}
-                    >
-                      <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Manual</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-
-                {daemonFormMode === "manual" ? (
-                  <View style={styles.formField}>
-                    <Text style={styles.label}>Host</Text>
-                    <TextInput
-                      style={[styles.input, styles.inputUrl]}
-                      value={daemonForm.endpoint}
-                      onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, endpoint: text }))}
-                      placeholder="localhost:6767"
-                      placeholderTextColor={defaultTheme.colors.mutedForeground}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                    />
-                  </View>
-                ) : null}
-
-                {daemonFormMode === "pair" ? (
-                  <View style={styles.formField}>
-                    <Text style={styles.label}>Pairing</Text>
-
-                    <View style={styles.formActionsRow}>
-                      <Pressable
-                        style={[styles.formButton, styles.formButtonPrimary]}
-                        onPress={() => {
-                          handleCloseDaemonForm();
-                          router.push("/pair-scan");
-                        }}
-                      >
-                        <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Scan QR</Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={[styles.formButton, styles.formButtonPrimary]}
-                        onPress={() => setPairSubMode("paste")}
-                      >
-                        <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>Paste link</Text>
-                      </Pressable>
-                    </View>
-
-                    {pairSubMode === "paste" ? (
-                      <TextInput
-                        style={[styles.input, styles.inputUrl, { marginTop: 12 }]}
-                        value={daemonForm.offerUrl}
-                        onChangeText={(text) => setDaemonForm((prev) => ({ ...prev, offerUrl: text }))}
-                        placeholder="https://app.paseo.sh/#offer=..."
-                        placeholderTextColor={defaultTheme.colors.mutedForeground}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        keyboardType="url"
-                      />
-                    ) : null}
-                  </View>
-                ) : null}
-
-                <View style={styles.formActionsRow}>
-                  <Pressable style={styles.formButton} onPress={handleCloseDaemonForm}>
-                    <Text style={styles.formButtonText}>Cancel</Text>
-                  </Pressable>
-                  {!daemonForm.id && daemonFormMode !== "choose" ? (
-                    <Pressable
-                      style={styles.formButton}
-                      onPress={() => {
-                        setDaemonFormMode("choose");
-                        setPairSubMode("choose");
-                      }}
-                    >
-                      <Text style={styles.formButtonText}>Back</Text>
-                    </Pressable>
-                  ) : null}
-                  <Pressable
-                    style={[styles.formButton, styles.formButtonPrimary, isSavingDaemon && styles.hostActionDisabled]}
-                    onPress={handleSubmitDaemonForm}
-                    disabled={isSavingDaemon}
-                  >
-                    <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
-                      {isSavingDaemon ? "Saving..." : daemonForm.id ? "Save" : daemonFormMode === "pair" ? "Pair" : "Add"}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <Pressable style={styles.addButton} onPress={() => handleOpenDaemonForm()}>
-                <Text style={styles.addButtonText}>+ Add Host</Text>
-              </Pressable>
-            )}
+            <Pressable
+              style={styles.addButton}
+              onPress={() => setIsAddHostMethodVisible(true)}
+            >
+              <Text style={styles.addButtonText}>+ Add Host</Text>
+            </Pressable>
           </View>
+
+          <AddHostMethodModal
+            visible={isAddHostMethodVisible}
+            onClose={() => setIsAddHostMethodVisible(false)}
+            onDirectConnection={() => setIsDirectHostVisible(true)}
+            onPasteLink={() => setIsPasteLinkVisible(true)}
+            onScanQr={() => router.push("/pair-scan")}
+          />
+
+          <AddHostModal
+            visible={isDirectHostVisible}
+            onClose={() => setIsDirectHostVisible(false)}
+            onSaved={(profile) => {
+              router.replace({ pathname: "/", params: { serverId: profile.id } });
+            }}
+          />
+
+          <PairLinkModal
+            visible={isPasteLinkVisible}
+            onClose={() => setIsPasteLinkVisible(false)}
+            onSaved={(profile) => {
+              router.replace({ pathname: "/", params: { serverId: profile.id } });
+            }}
+          />
+
+          <AdaptiveModalSheet
+            title="Edit host"
+            visible={Boolean(editingDaemon)}
+            onClose={handleCloseEditDaemon}
+            testID="edit-host-modal"
+          >
+            <View style={styles.formField}>
+              <Text style={styles.label}>Label</Text>
+              <TextInput
+                style={styles.input}
+                value={editLabel}
+                onChangeText={setEditLabel}
+                placeholder="My Host"
+                placeholderTextColor={defaultTheme.colors.mutedForeground}
+              />
+            </View>
+
+            <View style={styles.formActionsRow}>
+              <Pressable
+                style={[styles.formButton, isSavingEdit && styles.hostActionDisabled]}
+                onPress={handleCloseEditDaemon}
+                disabled={isSavingEdit}
+              >
+                <Text style={styles.formButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.formButton, styles.formButtonPrimary, isSavingEdit && styles.hostActionDisabled]}
+                onPress={() => void handleSaveEditDaemon()}
+                disabled={isSavingEdit}
+              >
+                <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
+                  {isSavingEdit ? "Saving..." : "Save"}
+                </Text>
+              </Pressable>
+            </View>
+          </AdaptiveModalSheet>
 
           {/* Appearance */}
           <View style={styles.section}>
@@ -1037,7 +922,7 @@ function DaemonCard({
           : "rgba(161, 161, 170, 0.1)";
 
   return (
-    <View style={styles.hostCard}>
+    <View style={styles.hostCard} testID={`daemon-card-${daemon.id}`}>
       <View style={styles.hostCardContent}>
         <View style={styles.hostHeaderRow}>
           <Text style={styles.hostLabel}>{daemon.label}</Text>
