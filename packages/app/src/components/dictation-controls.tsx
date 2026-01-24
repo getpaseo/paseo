@@ -8,6 +8,7 @@ import type { DictationStatus } from "@/hooks/use-dictation";
 interface DictationControlsProps {
   volume: number;
   duration: number;
+  transcript?: string;
   isRecording: boolean;
   isProcessing: boolean;
   status: DictationStatus;
@@ -131,6 +132,7 @@ export function DictationControls({
 export function DictationOverlay({
   volume,
   duration,
+  transcript,
   isRecording,
   isProcessing,
   status,
@@ -169,21 +171,34 @@ export function DictationOverlay({
       </Pressable>
 
       <View style={overlayStyles.centerContainer}>
-        <VolumeMeter
-          volume={volume}
-          isMuted={false}
-          isDetecting
-          isSpeaking={false}
-          orientation="horizontal"
-        />
-        <Text
-          style={[
-            overlayStyles.timerText,
-            { color: theme.colors.palette.white },
-          ]}
-        >
-          {formatDuration(duration)}
-        </Text>
+        <View style={overlayStyles.meterRow}>
+          <VolumeMeter
+            volume={volume}
+            isMuted={false}
+            isDetecting
+            isSpeaking={false}
+            orientation="horizontal"
+          />
+          <Text
+            style={[
+              overlayStyles.timerText,
+              { color: theme.colors.palette.white },
+            ]}
+          >
+            {formatDuration(duration)}
+          </Text>
+        </View>
+        {!!transcript && (
+          <Text
+            numberOfLines={2}
+            style={[
+              overlayStyles.transcriptText,
+              { color: theme.colors.palette.white },
+            ]}
+          >
+            {transcript}
+          </Text>
+        )}
       </View>
 
       <View style={overlayStyles.actionButtonsContainer}>
@@ -334,6 +349,12 @@ const overlayStyles = StyleSheet.create((theme) => ({
   },
   centerContainer: {
     flex: 1,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+  },
+  meterRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -343,6 +364,13 @@ const overlayStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
+  },
+  transcriptText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    textAlign: "center",
+    paddingHorizontal: theme.spacing[2],
+    opacity: 0.9,
   },
   actionButtonsContainer: {
     flexDirection: "row",

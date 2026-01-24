@@ -3,6 +3,7 @@ export type DictationStatus = "idle" | "recording" | "uploading" | "failed";
 export type UseDictationOptions = {
   client: import("@server/client/daemon-client-v2").DaemonClientV2 | null;
   onTranscript: (text: string, meta: { requestId: string }) => void;
+  onPartialTranscript?: (text: string, meta: { requestId: string }) => void;
   onError?: (error: Error) => void;
   onPermanentFailure?: (error: Error, context: { requestId: string }) => void;
   canStart?: () => boolean;
@@ -14,6 +15,7 @@ export type UseDictationOptions = {
 export type UseDictationResult = {
   isRecording: boolean;
   isProcessing: boolean;
+  partialTranscript: string;
   volume: number;
   duration: number;
   error: string | null;

@@ -191,6 +191,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   const {
     isRecording: isDictating,
     isProcessing: isDictationProcessing,
+    partialTranscript: dictationPartialTranscript,
     volume: dictationVolume,
     duration: dictationDuration,
     status: dictationStatus,
@@ -591,6 +592,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <DictationOverlay
           volume={dictationVolume}
           duration={dictationDuration}
+          transcript={dictationPartialTranscript}
           isRecording={isDictating}
           isProcessing={isDictationProcessing}
           status={dictationStatus}

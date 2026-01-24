@@ -17,6 +17,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const {
     client,
     onTranscript,
+    onPartialTranscript,
     onError,
     onPermanentFailure,
     canStart,
@@ -27,6 +28,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [partialTranscript, setPartialTranscript] = useState("");
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<DictationStatus>("idle");
@@ -35,6 +37,11 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
   }, [onTranscript]);
+
+  const onPartialTranscriptRef = useRef(onPartialTranscript);
+  useEffect(() => {
+    onPartialTranscriptRef.current = onPartialTranscript;
+  }, [onPartialTranscript]);
 
   const onErrorRef = useRef(onError);
   useEffect(() => {
@@ -123,6 +130,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
+    setPartialTranscript("");
   }, []);
 
   const startNewStream = useCallback(
@@ -155,6 +163,27 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     });
   }, [client, startNewStream]);
 
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+    return client.on("dictation_stream_partial", (message) => {
+      if (message.type !== "dictation_stream_partial") {
+        return;
+      }
+      const activeDictationId = senderRef.current?.getDictationId();
+      if (!activeDictationId) {
+        return;
+      }
+      if (message.payload.dictationId !== activeDictationId) {
+        return;
+      }
+      const next = message.payload.text ?? "";
+      setPartialTranscript(next);
+      onPartialTranscriptRef.current?.(next, { requestId: generateMessageId() });
+    });
+  }, [client]);
+
   const audio = useDictationAudioSource({
     onPcmSegment: (audioData) => {
       senderRef.current?.enqueueSegment(audioData);
@@ -171,6 +200,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const handleStreamingTranscriptionSuccess = useCallback(
     (text: string, requestId: string) => {
       setIsProcessing(false);
+      setPartialTranscript("");
       setDuration(0);
       setStatus("idle");
 
@@ -219,6 +249,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
     actionGateRef.current.starting = true;
     setError(null);
+    setPartialTranscript("");
     setDuration(0);
     setIsProcessing(false);
     setStatus("recording");
@@ -434,6 +465,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   return {
     isRecording,
     isProcessing,
+    partialTranscript,
     volume: audio.volume,
     duration,
     error,

@@ -329,6 +329,14 @@ function migrateLegacyToHostProfile(legacy: LegacyDaemonProfile): HostProfile {
 
 async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
   try {
+    // When env vars define a default daemon, always reset to that daemon only.
+    // This ensures the app uses the configured daemon regardless of stored state.
+    const envDefaults = parseEnvDaemonDefaults();
+    if (envDefaults.length > 0) {
+      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(envDefaults));
+      return envDefaults;
+    }
+
     const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as unknown;
@@ -388,12 +396,6 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
         await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
-    }
-
-    const envDefaults = parseEnvDaemonDefaults();
-    if (envDefaults.length > 0) {
-      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(envDefaults));
-      return envDefaults;
     }
 
     // No implicit localhost fallback: a fresh install starts with zero hosts.
