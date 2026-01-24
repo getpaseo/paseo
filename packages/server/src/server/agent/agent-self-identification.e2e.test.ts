@@ -122,6 +122,7 @@ describe("self-identification MCP tools", () => {
 
   test("set_branch renames branch for Paseo worktree", async () => {
     const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-self-ident-"));
+    const paseoHome = path.join(repoDir, "paseo-home");
 
     try {
       initGitRepo(repoDir);
@@ -130,6 +131,7 @@ describe("self-identification MCP tools", () => {
         cwd: repoDir,
         baseBranch: "main",
         worktreeSlug: "self-ident",
+        paseoHome,
       });
 
       const storagePath = path.join(repoDir, "agents");
@@ -149,6 +151,7 @@ describe("self-identification MCP tools", () => {
       const server = await createAgentMcpServer({
         agentManager: manager,
         agentStorage: storage,
+        paseoHome,
         callerAgentId: agent.id,
         logger,
       });
@@ -171,6 +174,7 @@ describe("self-identification MCP tools", () => {
 
   test("set_branch allows agents running in a subdirectory of a Paseo worktree", async () => {
     const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-self-ident-"));
+    const paseoHome = path.join(repoDir, "paseo-home");
 
     try {
       initGitRepo(repoDir);
@@ -179,6 +183,7 @@ describe("self-identification MCP tools", () => {
         cwd: repoDir,
         baseBranch: "main",
         worktreeSlug: "self-ident-subdir",
+        paseoHome,
       });
       const nestedDir = path.join(worktree.worktreePath, "nested");
       execSync(`mkdir -p "${nestedDir}"`, { stdio: "ignore" });
@@ -200,6 +205,7 @@ describe("self-identification MCP tools", () => {
       const server = await createAgentMcpServer({
         agentManager: manager,
         agentStorage: storage,
+        paseoHome,
         callerAgentId: agent.id,
         logger,
       });

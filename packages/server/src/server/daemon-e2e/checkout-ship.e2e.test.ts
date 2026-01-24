@@ -148,9 +148,9 @@ describe("daemon checkout ship loop", () => {
     await ctx.cleanup();
   }, 60000);
 
-  testWithGitHubCliAuth(
-    "runs the full checkout ship loop via checkout RPCs",
-    async () => {
+	testWithGitHubCliAuth(
+		"runs the full checkout ship loop via checkout RPCs",
+		async () => {
       const repoDir = tmpCwd("checkout-ship-");
       let repoFullName: string | null = null;
       let mcpClient: McpClient | null = null;
@@ -179,6 +179,7 @@ describe("daemon checkout ship loop", () => {
           cwd: repoDir,
           baseBranch: "main",
           worktreeSlug: "ship-loop",
+          paseoHome: ctx.daemon.paseoHome,
         });
 
         const agent = await ctx.client.createAgent({
@@ -318,13 +319,98 @@ describe("daemon checkout ship loop", () => {
         rmSync(repoDir, { recursive: true, force: true });
       }
     },
-    180000
-  );
+		180000
+	);
 
-  test(
-    "checkout RPCs return NOT_GIT_REPO for non-git directories",
-    async () => {
-      const cwd = tmpCwd("checkout-ship-non-git-");
+	test(
+		"merge-from-base and push RPCs work with a local origin remote",
+		async () => {
+			const repoDir = tmpCwd("checkout-merge-from-base-");
+			let agentId: string | null = null;
+
+			try {
+				initGitRepo(repoDir);
+
+				const remoteDir = path.join(repoDir, "remote.git");
+				execSync(`git init --bare ${remoteDir}`, { stdio: "pipe" });
+				execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir, stdio: "pipe" });
+				execSync("git push -u origin main", { cwd: repoDir, stdio: "pipe" });
+
+				const worktree = await createWorktree({
+					branchName: "merge-from-base",
+					cwd: repoDir,
+					baseBranch: "main",
+					worktreeSlug: "merge-from-base",
+					paseoHome: ctx.daemon.paseoHome,
+				});
+
+				const agent = await ctx.client.createAgent({
+					provider: "codex",
+					model: CODEX_TEST_MODEL,
+					reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+					cwd: worktree.worktreePath,
+					title: "Merge From Base Test",
+				});
+				agentId = agent.id;
+
+				const status = await ctx.client.getCheckoutStatus(agent.id);
+				expect(status.isGit).toBe(true);
+				if (status.isGit) {
+					expect(status.hasRemote).toBe(true);
+					expect(status.baseRef).toBe("main");
+				}
+
+				// Advance local main, but leave the agent branch behind it.
+				execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
+				writeFileSync(path.join(repoDir, "base.txt"), "base update\n");
+				execSync("git add base.txt", { cwd: repoDir, stdio: "pipe" });
+				execSync("git -c commit.gpgsign=false commit -m 'base update'", {
+					cwd: repoDir,
+					stdio: "pipe",
+				});
+				const baseCommit = execSync("git rev-parse HEAD", { cwd: repoDir, stdio: "pipe" })
+					.toString()
+					.trim();
+
+				// Add a commit on the agent branch.
+				writeFileSync(path.join(worktree.worktreePath, "feature.txt"), "feature\n");
+				const commitResult = await ctx.client.checkoutCommit(agent.id, {
+					message: "feature commit",
+					addAll: true,
+				});
+				expect(commitResult.error).toBeNull();
+				expect(commitResult.success).toBe(true);
+
+				const mergeFromBase = await ctx.client.checkoutMergeFromBase(agent.id, {
+					baseRef: "main",
+					requireCleanTarget: true,
+				});
+				expect(mergeFromBase.error).toBeNull();
+				expect(mergeFromBase.success).toBe(true);
+
+				// Verify the agent branch now contains the base commit.
+				execSync(`git merge-base --is-ancestor ${baseCommit} HEAD`, {
+					cwd: worktree.worktreePath,
+					stdio: "pipe",
+				});
+
+				const pushResult = await ctx.client.checkoutPush(agent.id);
+				expect(pushResult.error).toBeNull();
+				expect(pushResult.success).toBe(true);
+			} finally {
+				if (agentId) {
+					await ctx.client.deleteAgent(agentId).catch(() => undefined);
+				}
+				rmSync(repoDir, { recursive: true, force: true });
+			}
+		},
+		90000
+	);
+
+	test(
+		"checkout RPCs return NOT_GIT_REPO for non-git directories",
+		async () => {
+			const cwd = tmpCwd("checkout-ship-non-git-");
       let agentId: string | null = null;
 
       try {

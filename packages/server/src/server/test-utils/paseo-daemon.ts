@@ -1,7 +1,7 @@
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 
 import pino from "pino";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
@@ -47,7 +47,9 @@ export async function createTestPaseoDaemon(
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const paseoHome = path.join(paseoHomeRoot, ".paseo");
+    await mkdir(paseoHome, { recursive: true });
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
     const port = await getAvailablePort();
 
@@ -80,7 +82,7 @@ export async function createTestPaseoDaemon(
       const close = async (): Promise<void> => {
         await daemon.stop().catch(() => undefined);
         await new Promise((r) => setTimeout(r, 200));
-        await rm(paseoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       };
 
@@ -95,7 +97,7 @@ export async function createTestPaseoDaemon(
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);
-      await rm(paseoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 
       if (!isAddressInUseError(error) || attempt === maxAttempts - 1) {

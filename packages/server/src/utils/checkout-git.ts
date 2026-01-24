@@ -38,6 +38,22 @@ export class MergeConflictError extends Error {
   }
 }
 
+export class MergeFromBaseConflictError extends Error {
+  readonly baseRef: string;
+  readonly currentBranch: string;
+  readonly conflictFiles: string[];
+
+  constructor(options: { baseRef: string; currentBranch: string; conflictFiles: string[] }) {
+    super(
+      `Merge conflict while merging ${options.baseRef} into ${options.currentBranch}. Please merge manually.`
+    );
+    this.name = "MergeFromBaseConflictError";
+    this.baseRef = options.baseRef;
+    this.currentBranch = options.currentBranch;
+    this.conflictFiles = options.conflictFiles;
+  }
+}
+
 export interface AheadBehind {
   ahead: number;
   behind: number;
@@ -54,6 +70,7 @@ export type CheckoutStatusGitNonPaseo = {
   isDirty: boolean;
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
+  hasRemote: boolean;
   isPaseoOwnedWorktree: false;
 };
 
@@ -64,6 +81,7 @@ export type CheckoutStatusGitPaseo = {
   isDirty: boolean;
   baseRef: string;
   aheadBehind: AheadBehind | null;
+  hasRemote: boolean;
   isPaseoOwnedWorktree: true;
 };
 
@@ -87,6 +105,15 @@ export interface MergeToBaseOptions {
   mode?: "merge" | "squash";
   commitMessage?: string;
 }
+
+export interface MergeFromBaseOptions {
+  baseRef?: string;
+  requireCleanTarget?: boolean;
+}
+
+export type CheckoutContext = {
+  paseoHome?: string;
+};
 
 function isGitError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -204,9 +231,10 @@ type ConfiguredBaseRefForCwd =
   | { baseRef: string; isPaseoOwnedWorktree: true };
 
 async function getConfiguredBaseRefForCwd(
-  cwd: string
+  cwd: string,
+  context?: CheckoutContext
 ): Promise<ConfiguredBaseRefForCwd> {
-  const ownership = await isPaseoOwnedWorktreeCwd(cwd);
+  const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
   if (!ownership.allowed) {
     return { baseRef: null, isPaseoOwnedWorktree: false };
   }
@@ -227,6 +255,18 @@ async function isWorkingTreeDirty(cwd: string, repoType: "bare" | "normal"): Pro
     env: READ_ONLY_GIT_ENV,
   });
   return stdout.trim().length > 0;
+}
+
+async function hasOriginRemote(cwd: string): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync("git config --get remote.origin.url", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveBaseRef(repoRoot: string): Promise<string | null> {
@@ -280,6 +320,53 @@ function normalizeLocalBranchRefName(input: string): string {
   return input.startsWith("origin/") ? input.slice("origin/".length) : input;
 }
 
+async function doesGitRefExist(cwd: string, fullRef: string): Promise<boolean> {
+  try {
+    await execAsync(`git show-ref --verify --quiet ${fullRef}`, {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveBestBaseRefForMerge(cwd: string, normalizedBaseRef: string): Promise<string> {
+  const [hasLocal, hasOrigin] = await Promise.all([
+    doesGitRefExist(cwd, `refs/heads/${normalizedBaseRef}`),
+    doesGitRefExist(cwd, `refs/remotes/origin/${normalizedBaseRef}`),
+  ]);
+
+  if (hasLocal && !hasOrigin) {
+    return normalizedBaseRef;
+  }
+  if (!hasLocal && hasOrigin) {
+    return `origin/${normalizedBaseRef}`;
+  }
+  if (!hasLocal && !hasOrigin) {
+    throw new Error(`Base branch not found locally or on origin: ${normalizedBaseRef}`);
+  }
+
+  // Both exist: choose the ref with more unique commits compared to the other.
+  try {
+    const { stdout } = await execAsync(
+      `git rev-list --left-right --count ${normalizedBaseRef}...origin/${normalizedBaseRef}`,
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const [localOnlyRaw, originOnlyRaw] = stdout.trim().split(/\s+/);
+    const localOnly = Number.parseInt(localOnlyRaw ?? "0", 10);
+    const originOnly = Number.parseInt(originOnlyRaw ?? "0", 10);
+    if (!Number.isNaN(localOnly) && !Number.isNaN(originOnly) && originOnly > localOnly) {
+      return `origin/${normalizedBaseRef}`;
+    }
+  } catch {
+    // ignore and fall back to local
+  }
+
+  return normalizedBaseRef;
+}
+
 async function getAheadBehind(cwd: string, baseRef: string, currentBranch: string): Promise<AheadBehind | null> {
   const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
   if (!normalizedBaseRef || !currentBranch || normalizedBaseRef === currentBranch) {
@@ -326,7 +413,10 @@ async function getUntrackedDiff(cwd: string): Promise<string> {
   return untrackedDiff;
 }
 
-export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatusResult> {
+export async function getCheckoutStatus(
+  cwd: string,
+  context?: CheckoutContext
+): Promise<CheckoutStatusResult> {
   let repoInfo: Awaited<ReturnType<typeof detectRepoInfo>>;
   try {
     repoInfo = await detectRepoInfo(cwd);
@@ -339,7 +429,8 @@ export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatusResu
 
   const currentBranch = await getCurrentBranch(cwd);
   const isDirty = await isWorkingTreeDirty(cwd, repoInfo.type);
-  const configured = await getConfiguredBaseRefForCwd(cwd);
+  const hasRemote = await hasOriginRemote(repoInfo.path);
+  const configured = await getConfiguredBaseRefForCwd(cwd, context);
   const baseRef = configured.baseRef ?? (await resolveBaseRef(repoInfo.path));
   const aheadBehind =
     baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
@@ -352,6 +443,7 @@ export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatusResu
       isDirty,
       baseRef: configured.baseRef,
       aheadBehind,
+      hasRemote,
       isPaseoOwnedWorktree: true,
     };
   }
@@ -363,13 +455,15 @@ export async function getCheckoutStatus(cwd: string): Promise<CheckoutStatusResu
     isDirty,
     baseRef,
     aheadBehind,
+    hasRemote,
     isPaseoOwnedWorktree: false,
   };
 }
 
 export async function getCheckoutDiff(
   cwd: string,
-  compare: CheckoutDiffCompare
+  compare: CheckoutDiffCompare,
+  context?: CheckoutContext
 ): Promise<CheckoutDiffResult> {
   await requireRepoInfo(cwd);
 
@@ -382,7 +476,7 @@ export async function getCheckoutDiff(
     const untrackedDiff = await getUntrackedDiff(cwd);
     diff = trackedDiff + untrackedDiff;
   } else {
-    const configured = await getConfiguredBaseRefForCwd(cwd);
+    const configured = await getConfiguredBaseRefForCwd(cwd, context);
     const repoInfo = await detectRepoInfo(cwd);
     const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(repoInfo.path));
     if (!baseRef) {
@@ -422,10 +516,14 @@ export async function commitAll(cwd: string, message: string): Promise<void> {
   await commitChanges(cwd, { message, addAll: true });
 }
 
-export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {}): Promise<void> {
+export async function mergeToBase(
+  cwd: string,
+  options: MergeToBaseOptions = {},
+  context?: CheckoutContext
+): Promise<void> {
   const repoInfo = await requireRepoInfo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
-  const configured = await getConfiguredBaseRefForCwd(cwd);
+  const configured = await getConfiguredBaseRefForCwd(cwd, context);
   const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(repoInfo.path));
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
@@ -522,6 +620,112 @@ export async function mergeToBase(cwd: string, options: MergeToBaseOptions = {})
       }
     }
   }
+}
+
+export async function mergeFromBase(
+  cwd: string,
+  options: MergeFromBaseOptions = {},
+  context?: CheckoutContext
+): Promise<void> {
+  const repoInfo = await requireRepoInfo(cwd);
+  const currentBranch = await getCurrentBranch(cwd);
+  if (!currentBranch || currentBranch === "HEAD") {
+    throw new Error("Unable to determine current branch for merge");
+  }
+
+  const configured = await getConfiguredBaseRefForCwd(cwd, context);
+  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  if (!baseRef) {
+    throw new Error("Unable to determine base branch for merge");
+  }
+  if (configured.isPaseoOwnedWorktree && options.baseRef && options.baseRef !== baseRef) {
+    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${options.baseRef}`);
+  }
+
+  const requireCleanTarget = options.requireCleanTarget ?? true;
+  if (requireCleanTarget) {
+    const { stdout } = await execAsync("git status --porcelain", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    if (stdout.trim().length > 0) {
+      throw new Error("Working directory has uncommitted changes.");
+    }
+  }
+
+  const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+  const bestBaseRef = await resolveBestBaseRefForMerge(cwd, normalizedBaseRef);
+  if (bestBaseRef === currentBranch) {
+    return;
+  }
+
+  try {
+    await execAsync(`git merge ${bestBaseRef}`, { cwd });
+  } catch (error) {
+    const errorDetails =
+      error instanceof Error
+        ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
+        : String(error);
+    try {
+      const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
+        execAsync("git diff --name-only --diff-filter=U", { cwd }),
+        execAsync("git ls-files -u", { cwd }),
+        execAsync("git status --porcelain", { cwd }),
+      ]);
+      const statusConflicts = statusOutput.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
+        .map((line) => line.slice(3).trim());
+      const conflicts = [
+        ...unmergedOutput.stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+        ...lsFilesOutput.stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => line.split("\t").pop() as string),
+        ...statusConflicts,
+      ].filter(Boolean);
+      const conflictDetected =
+        conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
+      if (conflictDetected) {
+        try {
+          await execAsync("git merge --abort", { cwd });
+        } catch {
+          // ignore
+        }
+        throw new MergeFromBaseConflictError({
+          baseRef: bestBaseRef,
+          currentBranch,
+          conflictFiles: conflicts.length > 0 ? conflicts : [],
+        });
+      }
+    } catch (innerError) {
+      if (innerError instanceof MergeFromBaseConflictError) {
+        throw innerError;
+      }
+      // ignore detection failures
+    }
+
+    throw error;
+  }
+}
+
+export async function pushCurrentBranch(cwd: string): Promise<void> {
+  await requireRepoInfo(cwd);
+  const currentBranch = await getCurrentBranch(cwd);
+  if (!currentBranch || currentBranch === "HEAD") {
+    throw new Error("Unable to determine current branch for push");
+  }
+  const hasRemote = await hasOriginRemote(cwd);
+  if (!hasRemote) {
+    throw new Error("Remote 'origin' is not configured.");
+  }
+  await execAsync(`git push -u origin ${currentBranch}`, { cwd });
 }
 
 export interface CreatePullRequestOptions {

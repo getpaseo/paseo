@@ -22,12 +22,14 @@ import type {
   GitRepoInfoResponse,
   HighlightedDiffResponse,
   CheckoutStatusResponse,
-  CheckoutDiffResponse,
-  CheckoutCommitResponse,
-  CheckoutMergeResponse,
-  CheckoutPrCreateResponse,
-  CheckoutPrStatusResponse,
-  PaseoWorktreeListResponse,
+	  CheckoutDiffResponse,
+	  CheckoutCommitResponse,
+	  CheckoutMergeResponse,
+	  CheckoutMergeFromBaseResponse,
+	  CheckoutPushResponse,
+	  CheckoutPrCreateResponse,
+	  CheckoutPrStatusResponse,
+	  PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ListCommandsResponse,
   ExecuteCommandResponse,
@@ -172,6 +174,8 @@ type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
+type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
+type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
@@ -1159,6 +1163,60 @@ export class DaemonClientV2 {
     const response = this.waitFor(
       (msg) => {
         if (msg.type !== "checkout_merge_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      60000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutMergeFromBase(
+    agentId: string,
+    input: { baseRef?: string; requireCleanTarget?: boolean },
+    requestId?: string
+  ): Promise<CheckoutMergeFromBasePayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_merge_from_base_request",
+      agentId,
+      baseRef: input.baseRef,
+      requireCleanTarget: input.requireCleanTarget,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_merge_from_base_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      60000,
+      { skipQueue: true }
+    );
+    this.sendSessionMessage(message);
+    return response;
+  }
+
+  async checkoutPush(agentId: string, requestId?: string): Promise<CheckoutPushPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "checkout_push_request",
+      agentId,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "checkout_push_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
