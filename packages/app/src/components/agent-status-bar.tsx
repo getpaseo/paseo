@@ -1,9 +1,14 @@
-import { View, Text, Pressable } from "react-native";
+import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
-import { useState } from "react";
-import { ModeSelectorModal } from "./mode-selector-modal";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface AgentStatusBarProps {
   agentId: string;
@@ -23,8 +28,6 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     (state) => state.sessions[serverId]?.methods?.setAgentMode
   );
 
-  const [showModeSelector, setShowModeSelector] = useState(false);
-
   if (!agent) {
     return null;
   }
@@ -39,30 +42,48 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     <View style={styles.container}>
       {/* Agent Mode Badge */}
       {agent.availableModes && agent.availableModes.length > 0 && (
-        <Pressable
-          onPress={() => setShowModeSelector(true)}
-          style={({ pressed }) => [
-            styles.modeBadge,
-            pressed && styles.modeBadgePressed,
-          ]}
-        >
-          <Text style={styles.modeBadgeText}>
-            {agent.availableModes?.find((m) => m.id === agent.currentModeId)
-              ?.label ||
-              agent.currentModeId ||
-              "default"}
-          </Text>
-          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-        </Pressable>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            style={({ pressed }) => [
+              styles.modeBadge,
+              pressed && styles.modeBadgePressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Select agent mode"
+            testID="agent-mode-selector"
+          >
+            <Text style={styles.modeBadgeText}>
+              {agent.availableModes?.find((m) => m.id === agent.currentModeId)
+                ?.label ||
+                agent.currentModeId ||
+                "default"}
+            </Text>
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side="top"
+            align="center"
+            fullWidth
+            testID="agent-mode-menu"
+          >
+            <DropdownMenuLabel>Mode</DropdownMenuLabel>
+            {agent.availableModes.map((mode) => {
+              const isActive = mode.id === agent.currentModeId;
+              return (
+                <DropdownMenuItem
+                  key={mode.id}
+                  selected={isActive}
+                  selectedVariant="accent"
+                  description={mode.description}
+                  onSelect={() => handleModeChange(mode.id)}
+                >
+                  {mode.label}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
-
-      {/* Mode selector modal */}
-      <ModeSelectorModal
-        visible={showModeSelector}
-        agent={agent}
-        onModeChange={handleModeChange}
-        onClose={() => setShowModeSelector(false)}
-      />
     </View>
   );
 }

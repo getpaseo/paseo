@@ -4,9 +4,6 @@ import {
   Text,
   ActivityIndicator,
   Pressable,
-  Modal,
-  useWindowDimensions,
-  LayoutChangeEvent,
   ScrollView,
   Platform,
   BackHandler,
@@ -58,6 +55,13 @@ import {
 import { extractAgentModel } from "@/utils/extract-agent-model";
 import { startPerfMonitor } from "@/utils/perf-monitor";
 import { shortenPath } from "@/utils/shorten-path";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -169,12 +173,7 @@ function AgentScreenContent({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
-  const [menuContentHeight, setMenuContentHeight] = useState(0);
-  const menuButtonRef = useRef<View>(null);
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
@@ -464,101 +463,22 @@ function AgentScreenContent({
     }
   }, [resolvedAgentId, agent?.status, client]);
 
-  const recalculateMenuPosition = useCallback(
-    (onMeasured?: () => void) => {
-      requestAnimationFrame(() => {
-        const anchor = menuButtonRef.current;
-
-        if (!anchor) {
-          if (onMeasured) {
-            onMeasured();
-          }
-          return;
-        }
-
-        anchor.measureInWindow((x, y, width, height) => {
-          const verticalOffset = 8;
-          const horizontalMargin = 16;
-          const desiredLeft = x + width - DROPDOWN_WIDTH;
-          const maxLeft = windowWidth - DROPDOWN_WIDTH - horizontalMargin;
-          const clampedLeft = Math.min(
-            Math.max(desiredLeft, horizontalMargin),
-            maxLeft
-          );
-
-          // Position menu below button using the raw coordinates from measureInWindow
-          const buttonBottom = y + height;
-          const top = buttonBottom + verticalOffset;
-
-          // If menu would go off screen, clamp to visible area
-          const bottomEdge = top + menuContentHeight;
-          const maxBottom = windowHeight - horizontalMargin;
-          const clampedTop =
-            bottomEdge > maxBottom
-              ? Math.max(verticalOffset, maxBottom - menuContentHeight)
-              : top;
-
-          setMenuPosition({
-            top: clampedTop,
-            left: clampedLeft,
-          });
-
-          if (onMeasured) {
-            onMeasured();
-          }
-        });
-      });
-    },
-    [menuContentHeight, windowHeight, windowWidth]
-  );
-
-  const handleOpenMenu = useCallback(() => {
-    if (agent?.cwd) {
-      refetchRepoInfo().catch(() => {});
-    }
-
-    recalculateMenuPosition(() => {
-      setMenuVisible(true);
-    });
-  }, [agent?.cwd, recalculateMenuPosition, refetchRepoInfo]);
-
-  const handleCloseMenu = useCallback(() => {
-    setMenuVisible(false);
-    setMenuContentHeight(0);
-  }, []);
-
-  useEffect(() => {
-    if (!menuVisible) {
-      return;
-    }
-
-    recalculateMenuPosition();
-  }, [menuVisible, recalculateMenuPosition]);
-
-  const handleMenuLayout = useCallback((event: LayoutChangeEvent) => {
-    const { height } = event.nativeEvent.layout;
-    setMenuContentHeight((current) => (current === height ? current : height));
-  }, []);
-
   const handleViewChanges = useCallback(() => {
-    handleCloseMenu();
     setExplorerTab("changes");
     openFileExplorer();
-  }, [handleCloseMenu, setExplorerTab, openFileExplorer]);
+  }, [setExplorerTab, openFileExplorer]);
 
   const handleBrowseFiles = useCallback(() => {
-    handleCloseMenu();
     setExplorerTab("files");
     openFileExplorer();
-  }, [handleCloseMenu, setExplorerTab, openFileExplorer]);
+  }, [setExplorerTab, openFileExplorer]);
 
   const handleRefreshAgent = useCallback(() => {
     if (!resolvedAgentId || !refreshAgent) {
       return;
     }
-    handleCloseMenu();
     refreshAgent({ agentId: resolvedAgentId });
-  }, [handleCloseMenu, resolvedAgentId, refreshAgent]);
+  }, [resolvedAgentId, refreshAgent]);
 
   if (!agent) {
     return (
@@ -601,11 +521,99 @@ function AgentScreenContent({
                   />
                 )}
               </Pressable>
-              <View ref={menuButtonRef} collapsable={false}>
-                <Pressable testID="agent-overflow-menu" onPress={handleOpenMenu} style={styles.menuButton}>
+              <DropdownMenu
+                onOpenChange={(open) => {
+                  if (open && agent?.cwd) {
+                    refetchRepoInfo().catch(() => {});
+                  }
+                }}
+              >
+                <DropdownMenuTrigger testID="agent-overflow-menu" style={styles.menuButton}>
                   <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-                </Pressable>
-              </View>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" width={DROPDOWN_WIDTH} testID="agent-overflow-content">
+                  <View style={styles.menuMetaContainer}>
+                    <View style={styles.menuMetaRow}>
+                      <Text style={styles.menuMetaLabel}>Directory</Text>
+                      <Text
+                        style={styles.menuMetaValue}
+                        numberOfLines={2}
+                        ellipsizeMode="middle"
+                      >
+                        {shortenPath(agent.cwd)}
+                      </Text>
+                    </View>
+
+                    <View style={styles.menuMetaRow}>
+                      <Text style={styles.menuMetaLabel}>Model</Text>
+                      <Text
+                        style={styles.menuMetaValue}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {modelDisplayValue}
+                      </Text>
+                    </View>
+
+                    <View style={styles.menuMetaRow}>
+                      <Text style={styles.menuMetaLabel}>Branch</Text>
+                      <View style={styles.menuMetaValueRow}>
+                        {branchStatus === "loading" ? (
+                          <>
+                            <ActivityIndicator
+                              size="small"
+                              color={theme.colors.foregroundMuted}
+                            />
+                            <Text style={styles.menuMetaPendingText}>Fetching…</Text>
+                          </>
+                        ) : (
+                          <Text
+                            style={[
+                              styles.menuMetaValue,
+                              branchStatus === "error" ? styles.menuMetaValueError : null,
+                            ]}
+                            numberOfLines={1}
+                            ellipsizeMode="middle"
+                          >
+                            {branchDisplayValue}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuItem
+                    leading={<GitBranch size={16} color={theme.colors.foreground} />}
+                    onSelect={handleViewChanges}
+                  >
+                    View Changes
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    leading={<Folder size={16} color={theme.colors.foreground} />}
+                    onSelect={handleBrowseFiles}
+                  >
+                    Browse Files
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    leading={<RotateCcw size={16} color={theme.colors.foreground} />}
+                    disabled={isInitializing}
+                    trailing={
+                      isInitializing ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={theme.colors.primary}
+                          style={styles.menuItemSpinner}
+                        />
+                      ) : null
+                    }
+                    onSelect={handleRefreshAgent}
+                  >
+                    {isInitializing ? "Refreshing..." : "Refresh"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </View>
           }
         />
@@ -640,114 +648,6 @@ function AgentScreenContent({
             <AgentInputArea agentId={resolvedAgentId} serverId={serverId} autoFocus onAddImages={handleAddImagesCallback} />
           )}
 
-        {/* Dropdown Menu */}
-        <Modal
-          visible={menuVisible}
-          animationType="fade"
-          transparent={true}
-          onRequestClose={handleCloseMenu}
-        >
-          <View style={styles.menuOverlay}>
-            <Pressable style={styles.menuBackdrop} onPress={handleCloseMenu} />
-            <View
-              style={[
-                styles.dropdownMenu,
-                {
-                  position: "absolute",
-                  top: menuPosition.top,
-                  left: menuPosition.left,
-                  width: DROPDOWN_WIDTH,
-                },
-              ]}
-              onLayout={handleMenuLayout}
-            >
-              <View style={styles.menuMetaContainer}>
-                <View style={styles.menuMetaRow}>
-                  <Text style={styles.menuMetaLabel}>Directory</Text>
-                  <Text
-                    style={styles.menuMetaValue}
-                    numberOfLines={2}
-                    ellipsizeMode="middle"
-                  >
-                    {shortenPath(agent.cwd)}
-                  </Text>
-                </View>
-
-                <View style={styles.menuMetaRow}>
-                  <Text style={styles.menuMetaLabel}>Model</Text>
-                  <Text
-                    style={styles.menuMetaValue}
-                    numberOfLines={1}
-                    ellipsizeMode="middle"
-                  >
-                    {modelDisplayValue}
-                  </Text>
-                </View>
-
-                <View style={styles.menuMetaRow}>
-                  <Text style={styles.menuMetaLabel}>Branch</Text>
-                  <View style={styles.menuMetaValueRow}>
-                    {branchStatus === "loading" ? (
-                      <>
-                        <ActivityIndicator
-                          size="small"
-                          color={theme.colors.foregroundMuted}
-                        />
-                        <Text style={styles.menuMetaPendingText}>
-                          Fetching…
-                        </Text>
-                      </>
-                    ) : (
-                      <Text
-                        style={[
-                          styles.menuMetaValue,
-                          branchStatus === "error"
-                            ? styles.menuMetaValueError
-                            : null,
-                        ]}
-                        numberOfLines={1}
-                        ellipsizeMode="middle"
-                      >
-                        {branchDisplayValue}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              </View>
-
-              <View style={styles.menuDivider} />
-
-              <Pressable onPress={handleViewChanges} style={styles.menuItem}>
-                <GitBranch size={16} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>View Changes</Text>
-              </Pressable>
-              <Pressable onPress={handleBrowseFiles} style={styles.menuItem}>
-                <Folder size={16} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>Browse Files</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleRefreshAgent}
-                style={[
-                  styles.menuItem,
-                  isInitializing ? styles.menuItemDisabled : null,
-                ]}
-                disabled={isInitializing}
-              >
-                <RotateCcw size={16} color={theme.colors.foreground} />
-                <Text style={styles.menuItemText}>
-                  {isInitializing ? "Refreshing..." : "Refresh"}
-                </Text>
-                {isInitializing && (
-                  <ActivityIndicator
-                    size="small"
-                    color={theme.colors.primary}
-                    style={styles.menuItemSpinner}
-                  />
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
         </View>
       </FileDropZone>
 
@@ -924,25 +824,10 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
   },
-  menuOverlay: {
-    flex: 1,
-  },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  dropdownMenu: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[2],
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 5,
-  },
   menuMetaContainer: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     gap: theme.spacing[2],
-    marginBottom: theme.spacing[2],
   },
   menuMetaRow: {
     gap: theme.spacing[1],
@@ -969,28 +854,7 @@ const styles = StyleSheet.create((theme) => ({
   menuMetaValueError: {
     color: theme.colors.destructive,
   },
-  menuDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
-    marginVertical: theme.spacing[2],
-  },
-  menuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  menuItemDisabled: {
-    opacity: 0.6,
-  },
   menuItemSpinner: {
     marginLeft: "auto",
-  },
-  menuItemText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.normal,
   },
 }));

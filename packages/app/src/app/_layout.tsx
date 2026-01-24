@@ -4,6 +4,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import { PortalProvider } from "@gorhom/portal";
 import { RealtimeProvider } from "@/contexts/realtime-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
@@ -306,42 +307,44 @@ function MissingDaemonView() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <KeyboardProvider>
-          <BottomSheetModalProvider>
-            <QueryProvider>
-              <DaemonRegistryProvider>
-                <DaemonConnectionsProvider>
-                  <MultiDaemonSessionHost />
-                  <ProvidersWrapper>
-                    <SidebarAnimationProvider>
-                      <HorizontalScrollProvider>
-                        <AppWithSidebar>
-                        <Stack
-                          screenOptions={{
-                            headerShown: false,
-                            animation: "none",
-                          }}
-                        >
-                          <Stack.Screen name="index" />
-                          <Stack.Screen name="agents" />
-                          <Stack.Screen name="orchestrator" />
-                          <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
-                          <Stack.Screen name="agent/[serverId]/[agentId]" options={{ gestureEnabled: false }} />
-                          <Stack.Screen name="settings" />
-                          <Stack.Screen name="audio-test" />
-                          <Stack.Screen name="pair-scan" />
-                        </Stack>
-                      </AppWithSidebar>
-                      </HorizontalScrollProvider>
-                    </SidebarAnimationProvider>
-                  </ProvidersWrapper>
-                </DaemonConnectionsProvider>
-              </DaemonRegistryProvider>
-            </QueryProvider>
-          </BottomSheetModalProvider>
-        </KeyboardProvider>
-      </SafeAreaProvider>
+      <PortalProvider>
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <BottomSheetModalProvider>
+              <QueryProvider>
+                <DaemonRegistryProvider>
+                  <DaemonConnectionsProvider>
+                    <MultiDaemonSessionHost />
+                    <ProvidersWrapper>
+                      <SidebarAnimationProvider>
+                        <HorizontalScrollProvider>
+                          <AppWithSidebar>
+                            <Stack
+                              screenOptions={{
+                                headerShown: false,
+                                animation: "none",
+                              }}
+                            >
+                              <Stack.Screen name="index" />
+                              <Stack.Screen name="agents" />
+                              <Stack.Screen name="orchestrator" />
+                              <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
+                              <Stack.Screen name="agent/[serverId]/[agentId]" options={{ gestureEnabled: false }} />
+                              <Stack.Screen name="settings" />
+                              <Stack.Screen name="audio-test" />
+                              <Stack.Screen name="pair-scan" />
+                            </Stack>
+                          </AppWithSidebar>
+                        </HorizontalScrollProvider>
+                      </SidebarAnimationProvider>
+                    </ProvidersWrapper>
+                  </DaemonConnectionsProvider>
+                </DaemonRegistryProvider>
+              </QueryProvider>
+            </BottomSheetModalProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </PortalProvider>
     </GestureHandlerRootView>
   );
 }

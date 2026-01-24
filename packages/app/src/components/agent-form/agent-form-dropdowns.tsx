@@ -7,9 +7,9 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
-  useWindowDimensions,
   ScrollView,
   Platform,
+  StatusBar,
 } from "react-native";
 import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
 import {
@@ -21,6 +21,13 @@ import {
 } from "@gorhom/bottom-sheet";
 import Animated from "react-native-reanimated";
 import { ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react-native";
+import {
+  flip,
+  offset as floatingOffset,
+  shift,
+  size as floatingSize,
+  useFloating,
+} from "@floating-ui/react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import type {
   AgentMode,
@@ -263,43 +270,62 @@ export function AdaptiveSelect({
 }: AdaptiveSelectProps): ReactElement {
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
-  const [dropdownPosition, setDropdownPosition] = useState({
-    top: 0,
-    left: 0,
-    width: 0,
+  const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(null);
+  const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
+
+  const collisionPadding = useMemo(() => {
+    const basePadding = 16;
+    if (Platform.OS !== "android") return basePadding;
+    const statusBarHeight = StatusBar.currentHeight ?? 0;
+    return Math.max(basePadding, statusBarHeight + basePadding);
+  }, []);
+
+  const middleware = useMemo(
+    () => [
+      floatingOffset({ mainAxis: 4 }),
+      flip({ padding: collisionPadding }),
+      // Avoid `crossAxis: true` here: per Floating UI docs it can cause overlap with the reference.
+      shift({ padding: collisionPadding }),
+      floatingSize({
+        padding: collisionPadding,
+        apply({ availableWidth, availableHeight, rects }) {
+          setAvailableSize((prev) => {
+            const next = { width: availableWidth, height: availableHeight };
+            if (!prev) return next;
+            if (prev.width === next.width && prev.height === next.height) return prev;
+            return next;
+          });
+          setReferenceWidth((prev) => {
+            const next = rects.reference.width;
+            if (prev === next) return prev;
+            return next;
+          });
+        },
+      }),
+    ],
+    [collisionPadding]
+  );
+
+  const { refs, floatingStyles, update } = useFloating({
+    placement: "bottom-start",
+    middleware,
+    sameScrollView: false,
+    elements: {
+      reference: anchorRef.current ?? undefined,
+    },
   });
 
   useEffect(() => {
     if (!visible || isMobile) {
+      setAvailableSize(null);
+      setReferenceWidth(null);
       return;
     }
-
-    const anchor = anchorRef.current;
-    if (!anchor) {
-      return;
-    }
-
-    anchor.measureInWindow((x, y, width, height) => {
-      const verticalOffset = 4;
-      const horizontalMargin = 16;
-      const maxDropdownHeight = 400;
-
-      let top = y + height + verticalOffset;
-      const left = Math.max(horizontalMargin, Math.min(x, windowWidth - width - horizontalMargin));
-
-      if (top + maxDropdownHeight > windowHeight - horizontalMargin) {
-        top = y - maxDropdownHeight - verticalOffset;
-        if (top < horizontalMargin) {
-          top = y + height + verticalOffset;
-        }
-      }
-
-      setDropdownPosition({ top, left, width });
-    });
-  }, [visible, isMobile, anchorRef, windowWidth, windowHeight]);
+    const raf = requestAnimationFrame(() => update());
+    return () => cancelAnimationFrame(raf);
+  }, [isMobile, update, visible]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -367,19 +393,23 @@ export function AdaptiveSelect({
       visible={visible}
       onRequestClose={onClose}
     >
-      <View style={styles.desktopDropdownOverlay}>
+      <View ref={refs.setOffsetParent} collapsable={false} style={styles.desktopDropdownOverlay}>
         <Pressable style={styles.desktopDropdownBackdrop} onPress={onClose} />
         <View
           style={[
             styles.desktopDropdownContainer,
             {
               position: "absolute",
-              top: dropdownPosition.top,
-              left: dropdownPosition.left,
-              width: dropdownPosition.width,
               minWidth: 200,
+              width: referenceWidth ?? undefined,
             },
+            floatingStyles,
+            typeof availableSize?.height === "number" ? { maxHeight: Math.min(availableSize.height, 400) } : null,
+            typeof availableSize?.width === "number" ? { maxWidth: availableSize.width } : null,
           ]}
+          ref={refs.setFloating}
+          collapsable={false}
+          onLayout={() => update()}
         >
           <ScrollView
             contentContainerStyle={styles.desktopDropdownScrollContent}
