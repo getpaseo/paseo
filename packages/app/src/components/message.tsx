@@ -51,13 +51,11 @@ import {
 } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
-import type { TodoEntry, ThoughtStatus } from "@/types/stream";
+import type { TodoEntry } from "@/types/stream";
 import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { resolveToolCallPreview } from "./tool-call-preview";
 import { useToolCallSheet } from "./tool-call-sheet";
-import { useThinkingSheet } from "./thinking-sheet";
-import { AgentThoughtContent } from "./agent-thought-content";
 import {
   ToolCallDetailsContent,
   useToolCallDetails,
@@ -1051,13 +1049,6 @@ export const TodoListCard = memo(function TodoListCard({
   );
 });
 
-interface AgentThoughtMessageProps {
-  message: string;
-  status?: ThoughtStatus;
-  isLastInSequence?: boolean;
-  disableOuterSpacing?: boolean;
-}
-
 interface ExpandableBadgeProps {
   label: string;
   secondaryLabel?: string;
@@ -1195,46 +1186,6 @@ const ExpandableBadge = memo(function ExpandableBadge({
   );
 });
 
-export const AgentThoughtMessage = memo(function AgentThoughtMessage({
-  message,
-  status = "ready",
-  isLastInSequence = false,
-  disableOuterSpacing,
-}: AgentThoughtMessageProps) {
-  const { openThinking } = useThinkingSheet();
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" ||
-    UnistylesRuntime.breakpoint === "sm";
-
-  const handleToggle = useCallback(() => {
-    if (isMobile) {
-      openThinking({ message, status });
-      return;
-    }
-    setIsExpanded((prev) => !prev);
-  }, [isMobile, openThinking, message, status]);
-
-  const renderDetails = useCallback(() => {
-    return <AgentThoughtContent message={message} />;
-  }, [message]);
-
-  return (
-    <ExpandableBadge
-      label="Thinking"
-      icon={status === "ready" ? Brain : undefined}
-      isExpanded={!isMobile && isExpanded}
-      onToggle={handleToggle}
-      renderDetails={isMobile ? () => null : renderDetails}
-      isLoading={status !== "ready"}
-      isLastInSequence={isLastInSequence}
-      style={isLastInSequence ? undefined : { marginBottom: theme.spacing[1] }}
-      disableOuterSpacing={disableOuterSpacing}
-    />
-  );
-});
-
 interface ToolCallProps {
   toolName: string;
   args: any;
@@ -1252,6 +1203,7 @@ const toolKindIcons: Record<string, any> = {
   read: Eye,
   execute: SquareTerminal,
   search: Search,
+  thinking: Brain,
 };
 const TOOL_CALL_LOG_TAG = "[ToolCall]";
 const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
@@ -1259,6 +1211,7 @@ const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
 // Derive tool kind from tool name for icon selection
 function getToolKindFromName(toolName: string): string {
   const lower = toolName.toLowerCase();
+  if (lower === "thinking") return "thinking";
   if (lower === "read" || lower === "read_file" || lower.startsWith("read"))
     return "read";
   if (lower === "edit" || lower === "write" || lower === "apply_patch")

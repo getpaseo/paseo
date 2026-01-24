@@ -1168,6 +1168,7 @@ const TOOL_NAME_MAP: Record<string, string> = {
   set_branch: "Set branch",
   "mcp__agent-control__set_title": "Set title",
   "mcp__agent-control__set_branch": "Set branch",
+  thinking: "Thinking",
 };
 
 const ToolCallDisplaySchema = z
@@ -1178,6 +1179,16 @@ const ToolCallDisplaySchema = z
   })
   .transform((data) => {
     const normalizedToolName = TOOL_NAME_MAP[data.toolName] ?? data.toolName;
+
+    // Handle thinking - input is the thinking text content
+    if (data.toolName === "thinking") {
+      const content = typeof data.input === "string" ? data.input : "";
+      return {
+        type: "thinking" as const,
+        content,
+        toolName: normalizedToolName,
+      };
+    }
 
     // Try each schema in order
     const shellParsed = ShellToolCallSchema.safeParse({ input: data.input, result: data.result });

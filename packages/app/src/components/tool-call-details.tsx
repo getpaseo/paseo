@@ -87,6 +87,14 @@ function summarizeToolCallDisplay(display: ToolCallDisplay): ToolCallDisplaySumm
         },
       };
     }
+    case "thinking": {
+      const contentLength = display.content.length;
+      return {
+        displayType: display.type,
+        totalChars: contentLength,
+        detail: { contentLength },
+      };
+    }
     default:
       return assertNever(display);
   }
@@ -225,6 +233,20 @@ export function ToolCallDetailsContent({
             </ScrollView>
           </ScrollView>
         ) : null}
+      </View>
+    );
+  } else if (display.type === "thinking") {
+    // Thinking: display the content as plain text
+    sections.push(
+      <View key="thinking" style={styles.section}>
+        <ScrollView
+          style={[styles.scrollArea, { maxHeight }]}
+          contentContainerStyle={styles.scrollContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={true}
+        >
+          <Text selectable style={styles.scrollText}>{display.content}</Text>
+        </ScrollView>
       </View>
     );
   } else {

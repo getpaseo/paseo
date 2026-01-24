@@ -30,6 +30,7 @@
   "devDependencies": {
     "concurrently": "^9.2.1",
     "get-port-cli": "^3.0.0",
+    "knip": "^5.82.1",
     "patch-package": "^8.0.1",
     "typescript": "^5.9.3"
   },
