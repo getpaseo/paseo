@@ -57,6 +57,8 @@ import {
 import { extractAgentModel } from "@/utils/extract-agent-model";
 import { startPerfMonitor } from "@/utils/perf-monitor";
 import { shortenPath } from "@/utils/shorten-path";
+import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
+import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -406,6 +408,13 @@ function AgentScreenContent({
       ? branchError ?? "Unavailable"
       : branchLabel ?? "Unknown";
 
+  // Checkout status for header subtitle
+  const checkoutStatusQuery = useCheckoutStatusQuery({
+    serverId,
+    agentId: resolvedAgentId ?? "",
+  });
+  const checkout = checkoutStatusQuery.status;
+
   useEffect(() => {
     if (!resolvedAgentId) {
       setFocusedAgentId(null);
@@ -489,6 +498,20 @@ function AgentScreenContent({
   }, [resolvedAgentId, serverId, shouldUseOptimisticStream]);
 
   const effectiveAgent = agent ?? placeholderAgent;
+
+  // Header subtitle: project path + branch (matching agent list row format)
+  const headerProjectPath = effectiveAgent
+    ? deriveProjectPath(effectiveAgent.cwd, checkout)
+    : null;
+  const headerBranchLabel = deriveBranchLabel(checkout);
+  const headerSubtitle = useMemo(() => {
+    if (!headerProjectPath) return undefined;
+    const path = shortenPath(headerProjectPath);
+    if (headerBranchLabel) {
+      return `${path} · ${headerBranchLabel}`;
+    }
+    return path;
+  }, [headerProjectPath, headerBranchLabel]);
 
   useEffect(() => {
     if (!isPendingCreateForRoute || !pendingCreate) {
@@ -596,6 +619,7 @@ function AgentScreenContent({
         {/* Header */}
         <MenuHeader
           title={effectiveAgent.title || "Agent"}
+          subtitle={headerSubtitle}
           rightContent={
             <View style={styles.headerRightContent}>
               <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
