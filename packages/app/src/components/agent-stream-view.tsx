@@ -34,7 +34,6 @@ import {
   UserMessage,
   ActivityLog,
   ToolCall,
-  AgentThoughtMessage,
   TodoListCard,
   TurnCopyButton,
   MessageOuterSpacingProvider,
@@ -49,7 +48,6 @@ import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
-import { ThinkingSheetProvider } from "./thinking-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
@@ -274,9 +272,10 @@ export function AgentStreamView({
           const isLastInSequence =
             nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
           return (
-            <AgentThoughtMessage
-              message={item.text}
-              status={item.status}
+            <ToolCall
+              toolName="thinking"
+              args={item.text}
+              status={item.status === "ready" ? "completed" : "executing"}
               isLastInSequence={isLastInSequence}
             />
           );
@@ -533,8 +532,7 @@ export function AgentStreamView({
 
   return (
     <ToolCallSheetProvider>
-      <ThinkingSheetProvider>
-        <View style={stylesheet.container}>
+      <View style={stylesheet.container}>
           <MessageOuterSpacingProvider disableOuterSpacing>
             <FlatList
               ref={flatListRef}
@@ -590,7 +588,6 @@ export function AgentStreamView({
             </Animated.View>
           )}
         </View>
-      </ThinkingSheetProvider>
     </ToolCallSheetProvider>
   );
 }
