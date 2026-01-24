@@ -29,10 +29,31 @@ function getChangesActionButton(page: Page, label: string) {
   return getChangesActionLabel(page, label).locator('..');
 }
 
+async function selectChangesView(page: Page, view: 'working' | 'base') {
+  const scope = getChangesScope(page);
+  await scope.getByTestId('changes-view-selector').click();
+  if (view === 'working') {
+    await page.getByTestId('changes-mode-uncommitted').click();
+  } else {
+    await page.getByTestId('changes-mode-base').click();
+  }
+}
+
 async function openChangesOverflowMenu(page: Page) {
-  const menuButton = page.getByTestId('changes-overflow-menu').first();
+  const menuButton = getChangesScope(page).locator('[data-testid="changes-overflow-menu"]:visible').first();
   await expect(menuButton).toBeVisible();
   await menuButton.click();
+}
+
+async function openChangesShipMenu(page: Page) {
+  const backdrop = page.getByRole('button', { name: 'Ship menu backdrop' }).first();
+  if (await backdrop.isVisible().catch(() => false)) {
+    return;
+  }
+  const scope = getChangesScope(page);
+  const caret = scope.getByTestId('changes-ship-caret').first();
+  await expect(caret).toBeVisible();
+  await caret.click();
 }
 
 async function openChangesPanel(page: Page, options?: { expectGit?: boolean }) {
@@ -114,6 +135,8 @@ async function createAgentAndWait(page: Page, message: string) {
 async function requestCwd(page: Page) {
   await sendPrompt(page, 'Run `pwd` and respond with exactly: CWD: <path>');
   const message = await waitForAssistantText(page, 'CWD:');
+  // The assistant streams tokens; make sure we capture the full path (not a partial prefix).
+  await expect.poll(async () => (await message.textContent()) ?? '', { timeout: 60000 }).toContain('.paseo/worktrees/');
   const content = (await message.textContent()) ?? '';
   const match = content.match(/CWD:\s*(\S+)/);
   if (!match) {
@@ -168,9 +191,8 @@ async function enableCreateWorktree(page: Page) {
 }
 
 async function refreshUncommittedMode(page: Page) {
-  const changesScope = getChangesScope(page);
-  await changesScope.getByTestId('changes-mode-base').click();
-  await changesScope.getByTestId('changes-mode-uncommitted').click();
+  await selectChangesView(page, 'base');
+  await selectChangesView(page, 'working');
 }
 
 async function refreshChangesTab(page: Page) {
@@ -253,17 +275,17 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     });
     await getChangesScope(page).getByTestId('diff-file-0-toggle').first().click();
     await expect(page.getByText('First change')).toBeVisible();
-    await expect(getChangesActionLabel(page, 'Commit')).toBeVisible();
+    await expect(getChangesScope(page).getByTestId('changes-action-commit')).toBeVisible();
 
-    await getChangesActionButton(page, 'Commit').click();
-    await getChangesScope(page).getByTestId('changes-mode-uncommitted').click();
+    await getChangesScope(page).getByTestId('changes-action-commit').click();
+    await selectChangesView(page, 'working');
     await refreshChangesTab(page);
     await expect(getChangesScope(page).getByText('No uncommitted changes')).toBeVisible({
       timeout: 30000,
     });
-    await expect(getChangesActionLabel(page, 'Commit')).toHaveCount(0);
+    await expect(getChangesScope(page).getByTestId('changes-action-commit')).toHaveCount(0);
 
-    await getChangesScope(page).getByTestId('changes-mode-base').click();
+    await selectChangesView(page, 'base');
     await expect(getChangesScope(page).getByText('README.md', { exact: true })).toBeVisible({
       timeout: 30000,
     });
@@ -277,19 +299,19 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
       timeout: 30000,
     });
     await expect(getChangesScope(page).getByText('README.md', { exact: true })).toHaveCount(0);
-    await expect(getChangesActionLabel(page, 'Commit')).toBeVisible();
+    await expect(getChangesScope(page).getByTestId('changes-action-commit')).toBeVisible();
 
-    await getChangesScope(page).getByTestId('changes-mode-base').click();
+    await selectChangesView(page, 'base');
     await expect(getChangesScope(page).getByText('README.md', { exact: true })).toBeVisible({
       timeout: 30000,
     });
 
-    await getChangesActionButton(page, 'Commit').click();
-    await getChangesScope(page).getByTestId('changes-mode-uncommitted').click();
+    await getChangesScope(page).getByTestId('changes-action-commit').click();
+    await selectChangesView(page, 'working');
     await expect(page.getByText('No uncommitted changes')).toBeVisible({ timeout: 30000 });
-    await expect(getChangesActionLabel(page, 'Commit')).toHaveCount(0);
+    await expect(getChangesScope(page).getByTestId('changes-action-commit')).toHaveCount(0);
 
-    await getChangesScope(page).getByTestId('changes-mode-base').click();
+    await selectChangesView(page, 'base');
     await expect(getChangesScope(page).getByText('README.md', { exact: true })).toBeVisible({
       timeout: 30000,
     });
@@ -297,20 +319,21 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
       timeout: 30000,
     });
 
-    await expect(getChangesActionLabel(page, 'Create PR')).toBeVisible();
-    await getChangesActionButton(page, 'Create PR').click();
+    await openChangesShipMenu(page);
+    await page.getByTestId('changes-ship-create-pr').click();
     await expect(getChangesScope(page).getByTestId('changes-pr-status')).toContainText(/open/i, {
       timeout: 60000,
     });
-    await expect(getChangesActionLabel(page, 'Create PR')).toHaveCount(0);
+    await openChangesShipMenu(page);
+    await expect(page.getByTestId('changes-ship-open-pr')).toBeVisible();
 
-    await getChangesActionButton(page, 'Merge to base').click();
-    await getChangesScope(page).getByTestId('changes-mode-base').click();
+    await page.getByTestId('changes-ship-merge').click();
+    await selectChangesView(page, 'base');
     await expect(getChangesScope(page).getByText('No base changes')).toBeVisible({
       timeout: 60000,
     });
     await refreshChangesTab(page);
-    await expect(getChangesActionLabel(page, 'Merge to base')).toHaveCount(0, { timeout: 30000 });
+    await expect(getChangesScope(page).getByTestId('changes-ship-caret')).toHaveCount(0, { timeout: 30000 });
 
     await openChangesOverflowMenu(page);
     await expect(page.getByTestId('changes-menu-archive')).toBeVisible();

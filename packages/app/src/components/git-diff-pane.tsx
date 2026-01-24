@@ -15,7 +15,9 @@ import {
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronRight, GitBranch, MoreVertical, RotateCcw } from "lucide-react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Linking from "expo-linking";
+import { ChevronDown, ChevronRight, GitBranch, MoreVertical, RotateCcw } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -361,6 +363,13 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const [overflowVisible, setOverflowVisible] = useState(false);
   const [overflowAnchor, setOverflowAnchor] = useState({ left: 0, top: 0 });
   const [overflowHeight, setOverflowHeight] = useState(0);
+  const [viewMenuVisible, setViewMenuVisible] = useState(false);
+  const [viewMenuAnchor, setViewMenuAnchor] = useState({ left: 0, top: 0 });
+  const [viewMenuHeight, setViewMenuHeight] = useState(0);
+  const [shipMenuVisible, setShipMenuVisible] = useState(false);
+  const [shipMenuAnchor, setShipMenuAnchor] = useState({ left: 0, top: 0 });
+  const [shipMenuHeight, setShipMenuHeight] = useState(0);
+  const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
     useCheckoutStatusQuery({ serverId, agentId });
   const gitStatus = status && status.isGit ? status : null;
@@ -428,6 +437,44 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     void refreshPrStatus();
   }, [refreshDiff, refreshStatus, refreshPrStatus]);
 
+  const shipDefaultStorageKey = useMemo(() => {
+    if (!gitStatus?.repoRoot) {
+      return null;
+    }
+    return `@paseo:changes-ship-default:${gitStatus.repoRoot}`;
+  }, [gitStatus?.repoRoot]);
+
+  useEffect(() => {
+    if (!shipDefaultStorageKey) {
+      return;
+    }
+    let isActive = true;
+    AsyncStorage.getItem(shipDefaultStorageKey)
+      .then((value) => {
+        if (!isActive) return;
+        if (value === "pr" || value === "merge") {
+          setShipDefault(value);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isActive = false;
+    };
+  }, [shipDefaultStorageKey]);
+
+  const persistShipDefault = useCallback(
+    async (next: "merge" | "pr") => {
+      setShipDefault(next);
+      if (!shipDefaultStorageKey) return;
+      try {
+        await AsyncStorage.setItem(shipDefaultStorageKey, next);
+      } catch {
+        // Ignore persistence failures; default will reset to "merge".
+      }
+    },
+    [shipDefaultStorageKey]
+  );
+
   const handleOpenOverflowMenu = useCallback((event: any) => {
     const { pageX, pageY } = event?.nativeEvent ?? {};
     setOverflowAnchor({
@@ -445,6 +492,44 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const handleOverflowLayout = useCallback((event: LayoutChangeEvent) => {
     const { height } = event.nativeEvent.layout;
     setOverflowHeight((current) => (current === height ? current : height));
+  }, []);
+
+  const handleOpenViewMenu = useCallback((event: any) => {
+    const { pageX, pageY } = event?.nativeEvent ?? {};
+    setViewMenuAnchor({
+      left: typeof pageX === "number" ? pageX : 0,
+      top: typeof pageY === "number" ? pageY : 0,
+    });
+    setViewMenuVisible(true);
+  }, []);
+
+  const handleCloseViewMenu = useCallback(() => {
+    setViewMenuVisible(false);
+    setViewMenuHeight(0);
+  }, []);
+
+  const handleViewMenuLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setViewMenuHeight((current) => (current === height ? current : height));
+  }, []);
+
+  const handleOpenShipMenu = useCallback((event: any) => {
+    const { pageX, pageY } = event?.nativeEvent ?? {};
+    setShipMenuAnchor({
+      left: typeof pageX === "number" ? pageX : 0,
+      top: typeof pageY === "number" ? pageY : 0,
+    });
+    setShipMenuVisible(true);
+  }, []);
+
+  const handleCloseShipMenu = useCallback(() => {
+    setShipMenuVisible(false);
+    setShipMenuHeight(0);
+  }, []);
+
+  const handleShipMenuLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setShipMenuHeight((current) => (current === height ? current : height));
   }, []);
 
   const handleToggleExpanded = useCallback((path: string) => {
@@ -624,14 +709,17 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
-  const showCommitAction =
-    !isGit || hasUncommittedChanges || (diffMode === "uncommitted" && hasChanges);
-  const showCreatePrAction = !isGit || !prStatus;
-  const showMergeAction =
-    diffMode === "base" && isGit && (gitStatus?.aheadBehind?.ahead ?? 0) > 0;
+  const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
+  const canShowCommit = isGit && hasUncommittedChanges;
+  const canShowShip = isGit && aheadCount > 0;
+  const baseRefLabel = useMemo(() => {
+    if (!baseRef) return "base";
+    const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
+    return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
+  }, [baseRef]);
   const commitDisabled = actionsDisabled || commitMutation.isPending;
   const prDisabled = actionsDisabled || prMutation.isPending;
-  const mergeDisabled = actionsDisabled || mergeMutation.isPending;
+  const mergeDisabled = actionsDisabled || mergeMutation.isPending || hasUncommittedChanges;
   const archiveDisabled =
     actionsDisabled ||
     archiveMutation.isPending ||
@@ -698,62 +786,43 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     );
   }
 
-  type PrimaryAction = {
-    key: "commit" | "create_pr" | "merge";
-    label: string;
-    testID: string;
-    disabled: boolean;
-    isPending: boolean;
-    onPress: () => void;
-  };
+  const hasPullRequest = Boolean(prStatus?.url);
+  const prActionLabel = hasPullRequest ? "Open PR" : "Create PR";
 
-  const primaryAction: PrimaryAction | null = useMemo(() => {
-    if (!isGit) {
-      return null;
+  type ShipActionKey = "merge" | "pr";
+  const shipActions: { key: ShipActionKey; label: string; disabled: boolean; isPending: boolean }[] =
+    useMemo(
+      () => [
+        { key: "merge", label: "Merge", disabled: mergeDisabled, isPending: mergeMutation.isPending },
+        { key: "pr", label: prActionLabel, disabled: prDisabled, isPending: prMutation.isPending },
+      ],
+      [mergeDisabled, mergeMutation.isPending, prActionLabel, prDisabled, prMutation.isPending]
+    );
+
+  const resolvedShipPrimary: ShipActionKey | null = useMemo(() => {
+    if (!canShowShip) return null;
+    const preferred = shipDefault;
+    const preferredMeta = shipActions.find((action) => action.key === preferred);
+    if (preferredMeta && !preferredMeta.disabled) {
+      return preferred;
     }
-    if (showCommitAction) {
-      return {
-        key: "commit",
-        label: "Commit",
-        testID: "changes-primary-commit",
-        disabled: commitDisabled,
-        isPending: commitMutation.isPending,
-        onPress: () => commitMutation.mutate(),
-      };
-    }
-    if (showCreatePrAction) {
-      return {
-        key: "create_pr",
-        label: "Create PR",
-        testID: "changes-primary-create-pr",
-        disabled: prDisabled,
-        isPending: prMutation.isPending,
-        onPress: () => prMutation.mutate(),
-      };
-    }
-    if (showMergeAction) {
-      return {
-        key: "merge",
-        label: "Merge to base",
-        testID: "changes-primary-merge",
-        disabled: mergeDisabled,
-        isPending: mergeMutation.isPending,
-        onPress: () => mergeMutation.mutate(),
-      };
-    }
-    return null;
-  }, [
-    commitDisabled,
-    commitMutation,
-    isGit,
-    mergeDisabled,
-    mergeMutation,
-    prDisabled,
-    prMutation,
-    showCommitAction,
-    showCreatePrAction,
-    showMergeAction,
-  ]);
+    const fallback = shipActions.find((action) => !action.disabled);
+    return fallback?.key ?? preferred;
+  }, [canShowShip, shipActions, shipDefault]);
+
+  const shipPrimaryDisabled = useMemo(() => {
+    if (!resolvedShipPrimary) return true;
+    if (actionsDisabled) return true;
+    const meta = shipActions.find((action) => action.key === resolvedShipPrimary);
+    return meta?.disabled ?? true;
+  }, [actionsDisabled, resolvedShipPrimary, shipActions]);
+
+  const shipPrimaryPending = useMemo(() => {
+    if (!resolvedShipPrimary) return false;
+    if (resolvedShipPrimary === "merge") return mergeMutation.isPending;
+    // "pr" maps to open PR (instant) or create PR (mutation)
+    return hasPullRequest ? false : prMutation.isPending;
+  }, [hasPullRequest, mergeMutation.isPending, prMutation.isPending, resolvedShipPrimary]);
 
   const overflowPosition = useMemo(() => {
     if (!overflowVisible) {
@@ -780,6 +849,56 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
     windowWidth,
   ]);
 
+  const viewMenuPosition = useMemo(() => {
+    if (!viewMenuVisible) {
+      return null;
+    }
+    const menuWidth = 180;
+    const horizontalPadding = theme.spacing[2];
+    const verticalPadding = theme.spacing[2];
+    const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
+    const maxTop = Math.max(verticalPadding, windowHeight - viewMenuHeight - verticalPadding);
+    const left = Math.min(
+      Math.max(viewMenuAnchor.left - menuWidth + horizontalPadding, horizontalPadding),
+      maxLeft
+    );
+    const top = Math.min(Math.max(viewMenuAnchor.top + verticalPadding, verticalPadding), maxTop);
+    return { top, left, width: menuWidth };
+  }, [
+    theme.spacing,
+    viewMenuAnchor.left,
+    viewMenuAnchor.top,
+    viewMenuHeight,
+    viewMenuVisible,
+    windowHeight,
+    windowWidth,
+  ]);
+
+  const shipMenuPosition = useMemo(() => {
+    if (!shipMenuVisible) {
+      return null;
+    }
+    const menuWidth = 220;
+    const horizontalPadding = theme.spacing[2];
+    const verticalPadding = theme.spacing[2];
+    const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
+    const maxTop = Math.max(verticalPadding, windowHeight - shipMenuHeight - verticalPadding);
+    const left = Math.min(
+      Math.max(shipMenuAnchor.left - menuWidth + horizontalPadding, horizontalPadding),
+      maxLeft
+    );
+    const top = Math.min(Math.max(shipMenuAnchor.top + verticalPadding, verticalPadding), maxTop);
+    return { top, left, width: menuWidth };
+  }, [
+    shipMenuAnchor.left,
+    shipMenuAnchor.top,
+    shipMenuHeight,
+    shipMenuVisible,
+    theme.spacing,
+    windowHeight,
+    windowWidth,
+  ]);
+
   return (
     <View style={styles.container}>
       <View style={styles.header} testID="changes-header">
@@ -788,72 +907,101 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
           <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
             {branchLabel}
           </Text>
-          {isStatusFetching && (
-            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-          )}
+            {isStatusFetching && (
+              <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+            )}
         </View>
-        <View style={styles.modeToggle}>
+        {isGit ? (
           <Pressable
-            testID="changes-mode-uncommitted"
-            onPress={() => setDiffMode("uncommitted")}
-            style={[
-              styles.modeToggleButton,
-              diffMode === "uncommitted" && styles.modeToggleButtonActive,
-            ]}
+            testID="changes-view-selector"
+            onPress={handleOpenViewMenu}
+            style={styles.viewSelector}
+            accessibilityRole="button"
+            accessibilityLabel="Change diff view"
           >
-            <Text
-              style={[
-                styles.modeToggleText,
-                diffMode === "uncommitted" && styles.modeToggleTextActive,
-              ]}
-            >
-              Uncommitted
+            <Text style={styles.viewSelectorText}>
+              {diffMode === "uncommitted" ? "Working" : "Base"}
             </Text>
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
           </Pressable>
-          <Pressable
-            testID="changes-mode-base"
-            onPress={() => setDiffMode("base")}
-            style={[
-              styles.modeToggleButton,
-              diffMode === "base" && styles.modeToggleButtonActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.modeToggleText,
-                diffMode === "base" && styles.modeToggleTextActive,
-              ]}
-            >
-              Base
-            </Text>
-          </Pressable>
-        </View>
+        ) : null}
       </View>
 
       {isGit ? (
         <View style={styles.toolbarRow} testID="changes-toolbar">
-          <View style={styles.toolbarPrimary}>
-            {primaryAction ? (
+          <View style={styles.toolbarLeft}>
+            {canShowCommit ? (
               <Pressable
-                testID={primaryAction.testID}
+                testID="changes-action-commit"
                 style={[
-                  styles.primaryActionButton,
-                  primaryAction.disabled && styles.primaryActionButtonDisabled,
+                  styles.secondaryActionButton,
+                  commitDisabled && styles.secondaryActionButtonDisabled,
                 ]}
-                onPress={primaryAction.onPress}
-                disabled={primaryAction.disabled}
+                onPress={() => commitMutation.mutate()}
+                disabled={commitDisabled}
               >
-                {primaryAction.isPending ? (
+                {commitMutation.isPending ? (
                   <ActivityIndicator size="small" color={theme.colors.foreground} />
                 ) : (
-                  <Text style={styles.primaryActionText}>{primaryAction.label}</Text>
+                  <Text style={styles.secondaryActionText}>Commit…</Text>
                 )}
               </Pressable>
             ) : (
-              <View style={styles.toolbarPrimarySpacer} />
+              <View style={styles.toolbarLeftSpacer} />
             )}
           </View>
           <View style={styles.toolbarRight}>
+            {canShowShip ? (
+              <View style={styles.shipSplitButton}>
+                <Pressable
+                  testID="changes-ship-primary"
+                  style={[
+                    styles.shipPrimaryButton,
+                    shipPrimaryDisabled && styles.shipPrimaryButtonDisabled,
+                  ]}
+                  onPress={async () => {
+                    if (!resolvedShipPrimary || shipPrimaryDisabled) return;
+                    await persistShipDefault(resolvedShipPrimary);
+                    if (resolvedShipPrimary === "merge") {
+                      if (mergeDisabled) return;
+                      mergeMutation.mutate();
+                    return;
+                  }
+                  if (hasPullRequest && prStatus?.url) {
+                      void Linking.openURL(prStatus.url);
+                      return;
+                  }
+                  if (prDisabled) return;
+                  prMutation.mutate();
+                }}
+                  disabled={shipPrimaryDisabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Ship changes"
+                >
+                  {shipPrimaryPending ? (
+                    <ActivityIndicator size="small" color={theme.colors.foreground} />
+                  ) : (
+                    <>
+                      <Text style={styles.shipPrimaryText}>
+                        {resolvedShipPrimary === "merge" ? "Merge" : prActionLabel}
+                      </Text>
+                      <Text style={styles.shipSecondaryText} numberOfLines={1}>
+                        into {baseRefLabel}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+                <Pressable
+                  testID="changes-ship-caret"
+                  onPress={handleOpenShipMenu}
+                  style={styles.shipCaretButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="More ship options"
+                >
+                  <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+                </Pressable>
+              </View>
+            ) : null}
             <Pressable
               testID="changes-overflow-menu"
               onPress={handleOpenOverflowMenu}
@@ -871,12 +1019,21 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
       {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
       {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
       {prStatus ? (
-        <View style={styles.prStatusRow} testID="changes-pr-status">
+        <Pressable
+          style={styles.prStatusRow}
+          testID="changes-pr-status"
+          accessibilityRole="button"
+          accessibilityLabel="Open pull request"
+          onPress={() => {
+            if (!prStatus.url) return;
+            void Linking.openURL(prStatus.url);
+          }}
+        >
           <Text style={styles.prStatusLabel}>PR</Text>
           <Text style={styles.prStatusValue}>
             {prStatus.state} {prStatus.url ? `· ${prStatus.url}` : ""}
           </Text>
-        </View>
+        </Pressable>
       ) : null}
       {prErrorMessage ? (
         <Text style={styles.actionErrorText}>{prErrorMessage}</Text>
@@ -925,56 +1082,6 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
 
               <View style={styles.menuDivider} />
 
-              {showCommitAction && primaryAction?.key !== "commit" ? (
-                <Pressable
-                  testID="changes-menu-commit"
-                  style={[styles.menuItem, commitDisabled && styles.menuItemDisabled]}
-                  onPress={() => {
-                    if (commitDisabled) return;
-                    handleCloseOverflowMenu();
-                    commitMutation.mutate();
-                  }}
-                  disabled={commitDisabled}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.menuItemText}>Commit</Text>
-                </Pressable>
-              ) : null}
-
-              {showCreatePrAction && primaryAction?.key !== "create_pr" ? (
-                <Pressable
-                  testID="changes-menu-create-pr"
-                  style={[styles.menuItem, prDisabled && styles.menuItemDisabled]}
-                  onPress={() => {
-                    if (prDisabled) return;
-                    handleCloseOverflowMenu();
-                    prMutation.mutate();
-                  }}
-                  disabled={prDisabled}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.menuItemText}>Create PR</Text>
-                </Pressable>
-              ) : null}
-
-              {showMergeAction && primaryAction?.key !== "merge" ? (
-                <Pressable
-                  testID="changes-menu-merge"
-                  style={[styles.menuItem, mergeDisabled && styles.menuItemDisabled]}
-                  onPress={() => {
-                    if (mergeDisabled) return;
-                    handleCloseOverflowMenu();
-                    mergeMutation.mutate();
-                  }}
-                  disabled={mergeDisabled}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.menuItemText}>Merge to base</Text>
-                </Pressable>
-              ) : null}
-
-              <View style={styles.menuDivider} />
-
               <Pressable
                 testID="changes-menu-archive"
                 style={[
@@ -992,6 +1099,130 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
               >
                 <Text style={[styles.menuItemText, styles.menuItemTextDestructive]}>
                   Archive worktree
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
+
+      <Modal
+        visible={viewMenuVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseViewMenu}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="View menu backdrop"
+            style={styles.menuBackdrop}
+            onPress={handleCloseViewMenu}
+          />
+          {viewMenuPosition ? (
+            <View
+              style={[
+                styles.dropdownMenu,
+                {
+                  position: "absolute",
+                  top: viewMenuPosition.top,
+                  left: viewMenuPosition.left,
+                  width: viewMenuPosition.width,
+                },
+              ]}
+              onLayout={handleViewMenuLayout}
+            >
+              <Pressable
+                testID="changes-mode-uncommitted"
+                style={[styles.menuItem, diffMode === "uncommitted" && styles.menuItemSelected]}
+                onPress={() => {
+                  handleCloseViewMenu();
+                  setDiffMode("uncommitted");
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={styles.menuItemText}>Working</Text>
+              </Pressable>
+              <Pressable
+                testID="changes-mode-base"
+                style={[styles.menuItem, diffMode === "base" && styles.menuItemSelected]}
+                onPress={() => {
+                  handleCloseViewMenu();
+                  setDiffMode("base");
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={styles.menuItemText}>Base</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
+
+      <Modal
+        visible={shipMenuVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={handleCloseShipMenu}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Ship menu backdrop"
+            style={styles.menuBackdrop}
+            onPress={handleCloseShipMenu}
+          />
+          {shipMenuPosition ? (
+            <View
+              style={[
+                styles.dropdownMenu,
+                {
+                  position: "absolute",
+                  top: shipMenuPosition.top,
+                  left: shipMenuPosition.left,
+                  width: shipMenuPosition.width,
+                },
+              ]}
+              onLayout={handleShipMenuLayout}
+            >
+              <Pressable
+                testID="changes-ship-merge"
+                style={[styles.menuItem, mergeDisabled && styles.menuItemDisabled]}
+                onPress={() => {
+                  if (mergeDisabled) return;
+                  handleCloseShipMenu();
+                  void persistShipDefault("merge");
+                  mergeMutation.mutate();
+                }}
+                disabled={mergeDisabled}
+                accessibilityRole="button"
+              >
+                <Text style={styles.menuItemText}>Merge into {baseRefLabel}</Text>
+              </Pressable>
+              {mergeDisabled && hasUncommittedChanges ? (
+                <Text style={styles.menuHintText}>Requires a clean working tree.</Text>
+              ) : null}
+
+              <View style={styles.menuDivider} />
+
+              <Pressable
+                testID={hasPullRequest ? "changes-ship-open-pr" : "changes-ship-create-pr"}
+                style={[styles.menuItem, prDisabled && styles.menuItemDisabled]}
+                onPress={() => {
+                  if (prDisabled) return;
+                  handleCloseShipMenu();
+                  void persistShipDefault("pr");
+                  if (hasPullRequest && prStatus?.url) {
+                    void Linking.openURL(prStatus.url);
+                    return;
+                  }
+                  prMutation.mutate();
+                }}
+                disabled={prDisabled}
+                accessibilityRole="button"
+              >
+                <Text style={styles.menuItemText}>
+                  {hasPullRequest ? "Open PR" : `Create PR into ${baseRefLabel}`}
                 </Text>
               </Pressable>
             </View>
@@ -1030,29 +1261,21 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
-  modeToggle: {
+  viewSelector: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing[1],
     gap: theme.spacing[1],
-  },
-  modeToggleButton: {
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
   },
-  modeToggleButtonActive: {
-    backgroundColor: theme.colors.surface0,
-  },
-  modeToggleText: {
+  viewSelectorText: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.medium,
-  },
-  modeToggleTextActive: {
     color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
   },
   toolbarRow: {
     flexDirection: "row",
@@ -1062,12 +1285,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[1],
   },
-  toolbarPrimary: {
+  toolbarLeft: {
     flex: 1,
     minWidth: 0,
   },
-  toolbarPrimarySpacer: {
-    height: 32,
+  toolbarLeftSpacer: {
+    height: 36,
   },
   toolbarRight: {
     flexDirection: "row",
@@ -1075,7 +1298,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     flexShrink: 0,
   },
-  primaryActionButton: {
+  secondaryActionButton: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
@@ -1084,13 +1307,47 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
     alignSelf: "flex-start",
   },
-  primaryActionButtonDisabled: {
+  secondaryActionButtonDisabled: {
     opacity: 0.5,
   },
-  primaryActionText: {
+  secondaryActionText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+  },
+  shipSplitButton: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    overflow: "hidden",
+  },
+  shipPrimaryButton: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    minWidth: 140,
+  },
+  shipPrimaryButtonDisabled: {
+    opacity: 0.6,
+  },
+  shipPrimaryText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+  },
+  shipSecondaryText: {
+    marginTop: 2,
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  shipCaretButton: {
+    width: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderLeftWidth: theme.borderWidth[1],
+    borderLeftColor: theme.colors.borderAccent,
   },
   iconButton: {
     width: 32,
@@ -1128,6 +1385,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
+  menuItemSelected: {
+    backgroundColor: theme.colors.surface2,
+  },
   menuItemDisabled: {
     opacity: 0.5,
   },
@@ -1135,6 +1395,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+  },
+  menuHintText: {
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   menuItemDestructive: {
     backgroundColor: "rgba(248, 81, 73, 0.08)",
