@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Menu, PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
@@ -7,10 +7,11 @@ import { usePanelStore } from "@/stores/panel-store";
 
 interface MenuHeaderProps {
   title?: string;
+  subtitle?: string;
   rightContent?: ReactNode;
 }
 
-export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
+export function MenuHeader({ title, subtitle, rightContent }: MenuHeaderProps) {
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -32,9 +33,16 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
             <MenuIcon size={16} color={menuIconColor} />
           </Pressable>
           {title && (
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
+            <View style={styles.titleContainer}>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
+              {subtitle && (
+                <Text style={styles.subtitle} numberOfLines={1}>
+                  {subtitle}
+                </Text>
+              )}
+            </View>
           )}
         </>
       }
@@ -55,13 +63,21 @@ const styles = StyleSheet.create((theme) => ({
     },
     borderRadius: theme.borderRadius.lg,
   },
-  title: {
+  titleContainer: {
     flex: 1,
-    fontSize: theme.fontSize.lg,
+    gap: theme.spacing[0],
+  },
+  title: {
+    fontSize: theme.fontSize.base,
     fontWeight: {
-      xs: theme.fontWeight.semibold,
-      md: "400",
+      xs: "400",
+      md: "300",
     },
     color: theme.colors.foreground,
+  },
+  subtitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "300",
+    color: theme.colors.foregroundMuted,
   },
 }));

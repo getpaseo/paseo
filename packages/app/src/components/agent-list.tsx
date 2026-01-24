@@ -14,12 +14,12 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
+import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
   CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
-  type CheckoutStatusPayload,
   useCheckoutStatusCacheOnly,
 } from "@/hooks/use-checkout-status-query";
 import {
@@ -105,35 +105,6 @@ export function AgentList({
     setActionAgent(null);
   }, [actionAgent, deleteAgent]);
 
-  const deriveBranchLabel = useCallback((checkout: CheckoutStatusPayload | null): string | null => {
-    if (!checkout || !checkout.isGit) {
-      return null;
-    }
-    const currentBranch: string | null = checkout.currentBranch ?? null;
-    const baseRef: string | null = checkout.baseRef ?? null;
-    if (!currentBranch) {
-      return null;
-    }
-    if (baseRef && currentBranch === baseRef) {
-      return null;
-    }
-    return currentBranch;
-  }, []);
-
-  const deriveProjectPath = useCallback(
-    (agent: AggregatedAgent, checkout: CheckoutStatusPayload | null): string => {
-      const basePath = checkout?.isGit ? (checkout.repoRoot ?? agent.cwd) : agent.cwd;
-      const worktreeMarker = ".paseo/worktrees/";
-      const idx = basePath.indexOf(worktreeMarker);
-      if (idx !== -1) {
-        const afterMarker = basePath.slice(idx + worktreeMarker.length);
-        return afterMarker;
-      }
-      return basePath;
-    },
-    []
-  );
-
   const viewabilityConfig = useMemo(
     () => ({ itemVisiblePercentThreshold: 30 }),
     []
@@ -190,7 +161,7 @@ export function AgentList({
         agentId: agent.id,
       });
       const checkout = checkoutQuery.data ?? null;
-      const projectPath = deriveProjectPath(agent, checkout);
+      const projectPath = deriveProjectPath(agent.cwd, checkout);
       const branchLabel = deriveBranchLabel(checkout);
 
       return (
@@ -233,8 +204,6 @@ export function AgentList({
       );
     },
     [
-      deriveBranchLabel,
-      deriveProjectPath,
       handleAgentLongPress,
       handleAgentPress,
       selectedAgentId,
