@@ -33,7 +33,7 @@ import type {
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
-import { AgentRegistry } from "../agent-registry.js";
+import { AgentStorage } from "../agent-storage.js";
 import { createAgentMcpServer } from "../mcp-server.js";
 
 const createHTTPServer = createServer;
@@ -116,11 +116,11 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   const httpServer = createHTTPServer(app);
 
   const registryDir = mkdtempSync(path.join(os.tmpdir(), "agent-mcp-registry-"));
-  const registryPath = path.join(registryDir, "agents.json");
-  const agentRegistry = new AgentRegistry(registryPath, testLogger);
+  const storagePath = path.join(registryDir, "agents");
+  const agentStorage = new AgentStorage(storagePath, testLogger);
   const agentManager = new AgentManager({
     clients: {},
-    registry: agentRegistry,
+    registry: agentStorage,
     logger: testLogger,
   });
 
@@ -130,7 +130,7 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   const createAgentMcpTransport = async (callerAgentId?: string) => {
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
-      agentRegistry,
+      agentStorage,
       callerAgentId,
       logger: testLogger,
     });

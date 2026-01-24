@@ -42,8 +42,8 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { OpenAISTT, type STTConfig } from "./agent/stt-openai.js";
 import { OpenAITTS, type TTSConfig } from "./agent/tts-openai.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import { AgentRegistry } from "./agent/agent-registry.js";
-import { attachAgentRegistryPersistence } from "./persistence-hooks.js";
+import { AgentStorage } from "./agent/agent-storage.js";
+import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
@@ -77,7 +77,7 @@ export type PaseoDaemonConfig = {
   staticDir: string;
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
-  agentRegistryPath: string;
+  agentStoragePath: string;
   agentControlMcp: AgentControlMcpConfig;
   relayEnabled?: boolean;
   relayEndpoint?: string;
@@ -89,7 +89,7 @@ export type PaseoDaemonConfig = {
 export interface PaseoDaemon {
   config: PaseoDaemonConfig;
   agentManager: AgentManager;
-  agentRegistry: AgentRegistry;
+  agentStorage: AgentStorage;
   terminalManager: TerminalManager;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -98,7 +98,7 @@ export interface PaseoDaemon {
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger
-): Promise<PaseoDaemon> {
+  ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const connectionSessionId = randomUUID();
   let relayTransport: RelayTransportController | null = null;
@@ -204,21 +204,21 @@ export async function createPaseoDaemon(
 
   const httpServer = createHTTPServer(app);
 
-  const agentRegistry = new AgentRegistry(config.agentRegistryPath, logger);
+  const agentStorage = new AgentStorage(config.agentStoragePath, logger);
   const agentManager = new AgentManager({
     clients: {
       ...createAllClients(logger),
       ...config.agentClients,
     },
-    registry: agentRegistry,
+    registry: agentStorage,
     agentControlMcp: config.agentControlMcp,
     logger,
   });
 
   const terminalManager = createTerminalManager();
 
-  attachAgentRegistryPersistence(logger, agentManager, agentRegistry);
-  const persistedRecords = await agentRegistry.list();
+  attachAgentStoragePersistence(logger, agentManager, agentStorage);
+  const persistedRecords = await agentStorage.list();
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
@@ -229,7 +229,7 @@ export async function createPaseoDaemon(
   const createAgentMcpTransport = async (callerAgentId?: string) => {
     const agentMcpServer = await createAgentMcpServer({
       agentManager,
-      agentRegistry,
+      agentStorage,
       callerAgentId,
       logger,
     });
@@ -374,7 +374,7 @@ export async function createPaseoDaemon(
     httpServer,
     logger,
     agentManager,
-    agentRegistry,
+    agentStorage,
     downloadTokenStore,
     config.paseoHome,
     {
@@ -470,7 +470,7 @@ export async function createPaseoDaemon(
   return {
     config,
     agentManager,
-    agentRegistry,
+    agentStorage,
     terminalManager,
     start,
     stop,

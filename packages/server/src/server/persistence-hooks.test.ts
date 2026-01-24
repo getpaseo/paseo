@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { ManagedAgent } from "./agent/agent-manager.js";
-import type { StoredAgentRecord } from "./agent/agent-registry.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
-  attachAgentRegistryPersistence,
+  attachAgentStoragePersistence,
 } from "./persistence-hooks.js";
 import type {
   AgentPermissionRequest,
@@ -108,7 +108,7 @@ function createRecord(
 }
 
 describe("persistence hooks", () => {
-  test("attachAgentRegistryPersistence forwards agent snapshots", async () => {
+  test("attachAgentStoragePersistence forwards agent snapshots", async () => {
     const applySnapshot = vi.fn().mockResolvedValue(undefined);
     let subscriber: (event: any) => void = () => {
       throw new Error("Agent manager subscriber was not registered");
@@ -123,7 +123,7 @@ describe("persistence hooks", () => {
         };
       }),
     };
-    attachAgentRegistryPersistence(testLogger, agentManager as any, {
+    attachAgentStoragePersistence(testLogger, agentManager as any, {
       applySnapshot,
       list: vi.fn(),
     } as any);

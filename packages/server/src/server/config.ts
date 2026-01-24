@@ -83,7 +83,7 @@ export function loadConfig(
     agentControlMcp: {
       url: `http://${mcpListen}${DEFAULT_AGENT_MCP_ROUTE}`,
     },
-    agentRegistryPath: path.join(paseoHome, "agents.json"),
+    agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},
     relayEnabled: true,

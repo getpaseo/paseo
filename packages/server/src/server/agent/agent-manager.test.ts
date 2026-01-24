@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { AgentRegistry } from "./agent-registry.js";
+import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
   AgentRunResult,
@@ -106,13 +106,13 @@ describe("AgentManager", () => {
 
   test("normalizeConfig does not inject default model when omitted", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "agent-without-model",
     });
@@ -127,13 +127,13 @@ describe("AgentManager", () => {
 
   test("createAgent persists provided title before returning", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "agent-with-title",
     });
@@ -147,20 +147,20 @@ describe("AgentManager", () => {
     expect(snapshot.id).toBe("agent-with-title");
     expect(snapshot.lifecycle).toBe("idle");
 
-    const persisted = await registry.get("agent-with-title");
+    const persisted = await storage.get("agent-with-title");
     expect(persisted?.title).toBe("Fix Login Bug");
     expect(persisted?.id).toBe("agent-with-title");
   });
 
   test("createAgent populates runtimeInfo after session creation", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "agent-with-runtime-info",
     });
@@ -179,13 +179,13 @@ describe("AgentManager", () => {
 
   test("runAgent refreshes runtimeInfo after completion", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "agent-with-run-runtime",
     });
@@ -205,14 +205,14 @@ describe("AgentManager", () => {
 
   test("listAgents excludes internal agents", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     let agentCounter = 0;
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => `agent-${agentCounter++}`,
     });
@@ -239,13 +239,13 @@ describe("AgentManager", () => {
 
   test("getAgent returns internal agents by ID", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "internal-agent",
     });
@@ -264,14 +264,14 @@ describe("AgentManager", () => {
 
   test("subscribe does not emit state events for internal agents to global subscribers", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     let agentCounter = 0;
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => `agent-${agentCounter++}`,
     });
@@ -305,13 +305,13 @@ describe("AgentManager", () => {
 
   test("subscribe emits state events for internal agents when subscribed by agentId", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "internal-agent",
     });
@@ -340,14 +340,14 @@ describe("AgentManager", () => {
 
   test("onAgentAttention is not called for internal agents", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
-    const registryPath = join(workdir, "agents.json");
-    const registry = new AgentRegistry(registryPath, logger);
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
     const attentionCalls: string[] = [];
     const manager = new AgentManager({
       clients: {
         codex: new TestAgentClient(),
       },
-      registry,
+      registry: storage,
       logger,
       idFactory: () => "internal-agent",
       onAgentAttention: ({ agentId }) => {

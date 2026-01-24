@@ -61,7 +61,7 @@ export async function createTestPaseoDaemon(
       staticDir,
       mcpDebug: false,
       agentClients: {},
-      agentRegistryPath: path.join(paseoHome, "agents.json"),
+      agentStoragePath: path.join(paseoHome, "agents"),
       agentControlMcp: {
         url: `http://127.0.0.1:${port}/mcp/agents`,
       },

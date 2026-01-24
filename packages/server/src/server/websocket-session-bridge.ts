@@ -8,7 +8,7 @@ import {
 } from "./messages.js";
 import { Session } from "./session.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import { AgentRegistry } from "./agent/agent-registry.js";
+import { AgentStorage } from "./agent/agent-storage.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
@@ -29,7 +29,7 @@ export class WebSocketSessionBridge {
   private readonly sessions: Map<WebSocket, Session> = new Map();
   private clientIdCounter = 0;
   private readonly agentManager: AgentManager;
-  private readonly agentRegistry: AgentRegistry;
+  private readonly agentStorage: AgentStorage;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
@@ -42,7 +42,7 @@ export class WebSocketSessionBridge {
   constructor(
     logger: pino.Logger,
     agentManager: AgentManager,
-    agentRegistry: AgentRegistry,
+    agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
     agentMcpConfig: AgentMcpClientConfig,
@@ -51,7 +51,7 @@ export class WebSocketSessionBridge {
   ) {
     this.logger = logger.child({ module: "websocket-session-bridge" });
     this.agentManager = agentManager;
-    this.agentRegistry = agentRegistry;
+    this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
     this.agentMcpConfig = agentMcpConfig;
     this.stt = speech?.stt ?? null;
@@ -87,7 +87,7 @@ export class WebSocketSessionBridge {
       this.downloadTokenStore,
       this.pushTokenStore,
       this.agentManager,
-      this.agentRegistry,
+      this.agentStorage,
       this.agentMcpConfig,
       this.stt,
       this.tts,

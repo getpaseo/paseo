@@ -1,10 +1,10 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentRegistry } from "./agent-registry.js";
+import { AgentStorage } from "./agent-storage.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
   AgentPermissionRequest,
@@ -91,16 +91,16 @@ function createManagedAgent(
   return agent;
 }
 
-describe("AgentRegistry", () => {
+describe("AgentStorage", () => {
   let tmpDir: string;
-  let filePath: string;
-  let registry: AgentRegistry;
+  let storagePath: string;
+  let storage: AgentStorage;
   const logger = createTestLogger();
 
   beforeEach(() => {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), "agent-registry-"));
-    filePath = path.join(tmpDir, "agents.json");
-    registry = new AgentRegistry(filePath, logger);
+    storagePath = path.join(tmpDir, "agents");
+    storage = new AgentStorage(storagePath, logger);
   });
 
   afterEach(() => {
@@ -108,7 +108,7 @@ describe("AgentRegistry", () => {
   });
 
   test("applySnapshot persists configs and snapshot metadata", async () => {
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "agent-1",
         cwd: "/tmp/project",
@@ -122,7 +122,7 @@ describe("AgentRegistry", () => {
       })
     );
 
-    const records = await registry.list();
+    const records = await storage.list();
     expect(records).toHaveLength(1);
     const [record] = records;
     expect(record.provider).toBe("claude");
@@ -131,7 +131,7 @@ describe("AgentRegistry", () => {
     expect(record.lastModeId).toBe("coding");
     expect(record.lastStatus).toBe("idle");
 
-    const reloaded = new AgentRegistry(filePath, logger);
+    const reloaded = new AgentStorage(storagePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
@@ -140,14 +140,14 @@ describe("AgentRegistry", () => {
   test("applySnapshot preserves original createdAt timestamp", async () => {
     const agentId = "agent-created-at";
     const firstTimestamp = new Date("2025-01-01T00:00:00.000Z");
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({ id: agentId, createdAt: firstTimestamp })
     );
 
-    const initialRecord = await registry.get(agentId);
+    const initialRecord = await storage.get(agentId);
     expect(initialRecord?.createdAt).toBe(firstTimestamp.toISOString());
 
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: agentId,
         createdAt: new Date("2025-02-01T00:00:00.000Z"),
@@ -156,57 +156,57 @@ describe("AgentRegistry", () => {
       })
     );
 
-    const updatedRecord = await registry.get(agentId);
+    const updatedRecord = await storage.get(agentId);
     expect(updatedRecord?.createdAt).toBe(firstTimestamp.toISOString());
     expect(updatedRecord?.lastStatus).toBe("running");
   });
 
   test("stores titles independently of snapshots", async () => {
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "agent-2",
         provider: "codex",
         cwd: "/tmp/second",
       })
     );
-    await registry.setTitle("agent-2", "Fix Login Bug");
+    await storage.setTitle("agent-2", "Fix Login Bug");
 
-    const current = await registry.get("agent-2");
+    const current = await storage.get("agent-2");
     expect(current?.title).toBe("Fix Login Bug");
 
-    const reloaded = new AgentRegistry(filePath, logger);
+    const reloaded = new AgentStorage(storagePath, logger);
     const persisted = await reloaded.get("agent-2");
     expect(persisted?.title).toBe("Fix Login Bug");
   });
 
   test("setTitle throws when the agent record does not exist", async () => {
-    await expect(registry.setTitle("missing-agent", "Impossible"))
+    await expect(storage.setTitle("missing-agent", "Impossible"))
       .rejects.toThrow("Agent missing-agent not found");
   });
 
   test("applySnapshot accepts explicit title overrides", async () => {
     const agentId = "agent-override";
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({ id: agentId }),
       { title: "Provided Title" }
     );
 
-    const record = await registry.get(agentId);
+    const record = await storage.get(agentId);
     expect(record?.title).toBe("Provided Title");
   });
 
   test("applySnapshot preserves custom titles while updating metadata", async () => {
     const agentId = "agent-3";
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: agentId,
         lifecycle: "idle",
         currentModeId: "plan",
       })
     );
-    await registry.setTitle(agentId, "Important Bug Fix");
+    await storage.setTitle(agentId, "Important Bug Fix");
 
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: agentId,
         lifecycle: "running",
@@ -215,44 +215,15 @@ describe("AgentRegistry", () => {
       })
     );
 
-    const record = await registry.get(agentId);
+    const record = await storage.get(agentId);
     expect(record?.title).toBe("Important Bug Fix");
     expect(record?.lastModeId).toBe("build");
     expect(record?.lastStatus).toBe("running");
   });
 
-  test("recovers from trailing garbage in agents.json", async () => {
-    const payload = [
-      {
-        id: "agent-4",
-        provider: "claude",
-        cwd: "/tmp/project",
-        createdAt: "2024-01-01T00:00:00.000Z",
-        updatedAt: "2024-01-01T00:00:00.000Z",
-        title: "Recovered agent",
-        lastStatus: "idle",
-        lastModeId: "plan",
-        config: null,
-        persistence: null,
-      },
-    ];
-    writeFileSync(
-      filePath,
-      `${JSON.stringify(payload, null, 2)}\nGARBAGE-TRAILING`
-    );
-
-    const reloaded = new AgentRegistry(filePath, logger);
-    const result = await reloaded.list();
-    expect(result).toHaveLength(1);
-    expect(result[0]?.title).toBe("Recovered agent");
-
-    const sanitized = readFileSync(filePath, "utf8");
-    expect(sanitized.includes("GARBAGE-TRAILING")).toBe(false);
-  });
-
   test("list returns all agents including internal ones", async () => {
     // Create a normal agent
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "normal-agent",
         cwd: "/tmp/project",
@@ -260,7 +231,7 @@ describe("AgentRegistry", () => {
     );
 
     // Create an internal agent
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "internal-agent",
         cwd: "/tmp/project",
@@ -270,12 +241,12 @@ describe("AgentRegistry", () => {
     );
 
     // Registry should return all agents - filtering is done at the manager level
-    const records = await registry.list();
+    const records = await storage.list();
     expect(records).toHaveLength(2);
   });
 
   test("get returns internal agents by ID", async () => {
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "internal-agent",
         cwd: "/tmp/project",
@@ -284,13 +255,13 @@ describe("AgentRegistry", () => {
       { internal: true }
     );
 
-    const record = await registry.get("internal-agent");
+    const record = await storage.get("internal-agent");
     expect(record).not.toBeNull();
     expect(record?.internal).toBe(true);
   });
 
   test("internal flag is persisted and reloaded", async () => {
-    await registry.applySnapshot(
+    await storage.applySnapshot(
       createManagedAgent({
         id: "internal-agent",
         cwd: "/tmp/project",
@@ -300,7 +271,7 @@ describe("AgentRegistry", () => {
     );
 
     // Reload the registry from disk
-    const reloaded = new AgentRegistry(filePath, logger);
+    const reloaded = new AgentStorage(storagePath, logger);
     const record = await reloaded.get("internal-agent");
     expect(record?.internal).toBe(true);
 

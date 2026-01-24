@@ -3,14 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
-import type { AgentRegistry } from "./agent-registry.js";
+import type { AgentStorage } from "./agent-storage.js";
 
 type TestDeps = {
   agentManager: AgentManager;
-  agentRegistry: AgentRegistry;
+  agentStorage: AgentStorage;
   spies: {
     agentManager: Record<string, any>;
-    agentRegistry: Record<string, any>;
+    agentStorage: Record<string, any>;
   };
 };
 
@@ -28,7 +28,7 @@ function createTestDeps(): TestDeps {
     getPendingPermissions: vi.fn(),
   };
 
-  const agentRegistrySpies = {
+  const agentStorageSpies = {
     get: vi.fn().mockResolvedValue(null),
     setTitle: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
@@ -38,10 +38,10 @@ function createTestDeps(): TestDeps {
 
   return {
     agentManager: agentManagerSpies as unknown as AgentManager,
-    agentRegistry: agentRegistrySpies as unknown as AgentRegistry,
+    agentStorage: agentStorageSpies as unknown as AgentStorage,
     spies: {
       agentManager: agentManagerSpies,
-      agentRegistry: agentRegistrySpies,
+      agentStorage: agentStorageSpies,
     },
   };
 }
@@ -50,8 +50,8 @@ describe("create_agent MCP tool", () => {
   const logger = createTestLogger();
 
   it("requires a concise title no longer than 60 characters", async () => {
-    const { agentManager, agentRegistry } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentRegistry, logger });
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     expect(tool).toBeDefined();
 
@@ -79,7 +79,7 @@ describe("create_agent MCP tool", () => {
   });
 
   it("passes caller-provided titles directly into createAgent", async () => {
-    const { agentManager, agentRegistry, spies } = createTestDeps();
+    const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "agent-123",
       cwd: "/tmp/repo",
@@ -88,7 +88,7 @@ describe("create_agent MCP tool", () => {
       availableModes: [],
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentRegistry, logger });
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
     const tool = (server as any)._registeredTools["create_agent"];
     await tool.callback({
       cwd: "/tmp/repo",
@@ -104,14 +104,14 @@ describe("create_agent MCP tool", () => {
   });
 
   it("set_title trims and persists titles for caller agent", async () => {
-    const { agentManager, agentRegistry, spies } = createTestDeps();
+    const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "agent-1",
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
       agentManager,
-      agentRegistry,
+      agentStorage,
       logger,
       callerAgentId: "agent-1",
     });

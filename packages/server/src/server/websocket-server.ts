@@ -1,7 +1,7 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { AgentRegistry } from "./agent/agent-registry.js";
+import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
@@ -31,7 +31,7 @@ export class VoiceAssistantWebSocketServer {
     server: HTTPServer,
     logger: pino.Logger,
     agentManager: AgentManager,
-    agentRegistry: AgentRegistry,
+    agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
     agentMcpConfig: AgentMcpClientConfig,
@@ -43,7 +43,7 @@ export class VoiceAssistantWebSocketServer {
     this.bridge = new WebSocketSessionBridge(
       this.logger,
       agentManager,
-      agentRegistry,
+      agentStorage,
       downloadTokenStore,
       paseoHome,
       agentMcpConfig,

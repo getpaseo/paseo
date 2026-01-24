@@ -4,9 +4,9 @@ import type {
   AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 import type {
-  AgentRegistry,
+  AgentStorage,
   StoredAgentRecord,
-} from "./agent/agent-registry.js";
+} from "./agent/agent-storage.js";
 
 type LoggerLike = {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -17,7 +17,7 @@ function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
 }
 
-type AgentRegistryPersistence = Pick<AgentRegistry, "applySnapshot" | "list">;
+type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
 function isKnownProvider(provider: string): provider is AgentProvider {
@@ -25,20 +25,20 @@ function isKnownProvider(provider: string): provider is AgentProvider {
 }
 
 /**
- * Attach AgentRegistry persistence to an AgentManager instance so every
+ * Attach AgentStorage persistence to an AgentManager instance so every
  * agent_state snapshot is flushed to disk.
  */
-export function attachAgentRegistryPersistence(
+export function attachAgentStoragePersistence(
   logger: LoggerLike,
   agentManager: AgentManagerStateSource,
-  registry: AgentRegistryPersistence
+  storage: AgentStoragePersistence
 ): () => void {
   const log = getLogger(logger);
   const unsubscribe = agentManager.subscribe((event) => {
     if (event.type !== "agent_state") {
       return;
     }
-    void registry.applySnapshot(event.agent).catch((error) => {
+    void storage.applySnapshot(event.agent).catch((error) => {
       log.error({ err: error, agentId: event.agent.id }, "Failed to persist agent snapshot");
     });
   });

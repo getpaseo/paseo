@@ -24,7 +24,7 @@ import {
 import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
-import { AgentRegistry } from "./agent-registry.js";
+import { AgentStorage } from "./agent-storage.js";
 import {
   createWorktree,
   isPaseoOwnedWorktreeCwd,
@@ -36,7 +36,7 @@ import { injectLeadingPaseoInstructionTag } from "./paseo-instructions-tag.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
-  agentRegistry: AgentRegistry;
+  agentStorage: AgentStorage;
   /**
    * ID of the agent that is connecting to this MCP server.
    * When set, create_agent will auto-inject this as parentAgentId.
@@ -240,12 +240,12 @@ function sanitizePermissionRequest(
 }
 
 async function resolveAgentTitle(
-  agentRegistry: AgentRegistry,
+  agentStorage: AgentStorage,
   agentId: string,
   logger: Logger
 ): Promise<string | null> {
   try {
-    const record = await agentRegistry.get(agentId);
+    const record = await agentStorage.get(agentId);
     return record?.title ?? null;
   } catch (error) {
     logger.error(
@@ -257,18 +257,18 @@ async function resolveAgentTitle(
 }
 
 async function serializeSnapshotWithMetadata(
-  agentRegistry: AgentRegistry,
+  agentStorage: AgentStorage,
   snapshot: ManagedAgent,
   logger: Logger
 ) {
-  const title = await resolveAgentTitle(agentRegistry, snapshot.id, logger);
+  const title = await resolveAgentTitle(agentStorage, snapshot.id, logger);
   return serializeAgentSnapshot(snapshot, { title });
 }
 
 export async function createAgentMcpServer(
   options: AgentMcpServerOptions
 ): Promise<McpServer> {
-  const { agentManager, agentRegistry, callerAgentId, logger } = options;
+  const { agentManager, agentStorage, callerAgentId, logger } = options;
   const childLogger = logger.child({ module: "agent", component: "mcp-server" });
   const waitTracker = new WaitForAgentTracker(logger);
 
@@ -776,7 +776,7 @@ export async function createAgentMcpServer(
       }
 
       const structuredSnapshot = await serializeSnapshotWithMetadata(
-        agentRegistry,
+        agentStorage,
         snapshot,
         childLogger
       );
@@ -804,7 +804,7 @@ export async function createAgentMcpServer(
       const snapshots = agentManager.listAgents();
       const agents = await Promise.all(
         snapshots.map((snapshot) =>
-          serializeSnapshotWithMetadata(agentRegistry, snapshot, childLogger)
+          serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger)
         )
       );
       return {

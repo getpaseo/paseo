@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { AgentRegistry } from "./agent-registry.js";
+import { AgentStorage } from "./agent-storage.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { createWorktree } from "../../utils/worktree.js";
 import type {
@@ -132,11 +132,11 @@ describe("self-identification MCP tools", () => {
         worktreeSlug: "self-ident",
       });
 
-      const registryPath = path.join(repoDir, "agents.json");
-      const registry = new AgentRegistry(registryPath, logger);
+      const storagePath = path.join(repoDir, "agents");
+      const storage = new AgentStorage(storagePath, logger);
       const manager = new AgentManager({
         clients: { codex: new TestAgentClient() },
-        registry,
+        registry: storage,
         logger,
         idFactory: () => "agent-self-ident",
       });
@@ -148,7 +148,7 @@ describe("self-identification MCP tools", () => {
 
       const server = await createAgentMcpServer({
         agentManager: manager,
-        agentRegistry: registry,
+        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });
@@ -183,11 +183,11 @@ describe("self-identification MCP tools", () => {
       const nestedDir = path.join(worktree.worktreePath, "nested");
       execSync(`mkdir -p "${nestedDir}"`, { stdio: "ignore" });
 
-      const registryPath = path.join(repoDir, "agents.json");
-      const registry = new AgentRegistry(registryPath, logger);
+      const storagePath = path.join(repoDir, "agents");
+      const storage = new AgentStorage(storagePath, logger);
       const manager = new AgentManager({
         clients: { codex: new TestAgentClient() },
-        registry,
+        registry: storage,
         logger,
         idFactory: () => "agent-self-ident-subdir",
       });
@@ -199,7 +199,7 @@ describe("self-identification MCP tools", () => {
 
       const server = await createAgentMcpServer({
         agentManager: manager,
-        agentRegistry: registry,
+        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });
@@ -225,11 +225,11 @@ describe("self-identification MCP tools", () => {
 
     try {
       initGitRepo(repoDir);
-      const registryPath = path.join(repoDir, "agents.json");
-      const registry = new AgentRegistry(registryPath, logger);
+      const storagePath = path.join(repoDir, "agents");
+      const storage = new AgentStorage(storagePath, logger);
       const manager = new AgentManager({
         clients: { codex: new TestAgentClient() },
-        registry,
+        registry: storage,
         logger,
         idFactory: () => "agent-non-worktree",
       });
@@ -241,7 +241,7 @@ describe("self-identification MCP tools", () => {
 
       const server = await createAgentMcpServer({
         agentManager: manager,
-        agentRegistry: registry,
+        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });
@@ -259,11 +259,11 @@ describe("self-identification MCP tools", () => {
     const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-self-ident-"));
 
     try {
-      const registryPath = path.join(repoDir, "agents.json");
-      const registry = new AgentRegistry(registryPath, logger);
+      const storagePath = path.join(repoDir, "agents");
+      const storage = new AgentStorage(storagePath, logger);
       const manager = new AgentManager({
         clients: { codex: new TestAgentClient() },
-        registry,
+        registry: storage,
         logger,
         idFactory: () => "agent-non-git",
       });
@@ -275,7 +275,7 @@ describe("self-identification MCP tools", () => {
 
       const server = await createAgentMcpServer({
         agentManager: manager,
-        agentRegistry: registry,
+        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });

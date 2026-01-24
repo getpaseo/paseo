@@ -28,7 +28,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
-import type { AgentRegistry } from "./agent-registry.js";
+import type { AgentStorage } from "./agent-storage.js";
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 
@@ -57,7 +57,7 @@ export type AgentManagerOptions = {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
   maxTimelineItems?: number;
   idFactory?: () => string;
-  registry?: AgentRegistry;
+  registry?: AgentStorage;
   agentControlMcp?: AgentControlMcpConfig;
   onAgentAttention?: AgentAttentionCallback;
   logger: Logger;
@@ -187,7 +187,7 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly maxTimelineItems: number;
   private readonly idFactory: () => string;
-  private readonly registry?: AgentRegistry;
+  private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly agentControlMcp?: AgentControlMcpConfig;
   private onAgentAttention?: AgentAttentionCallback;

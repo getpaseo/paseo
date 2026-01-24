@@ -63,7 +63,7 @@ import type {
   AgentPersistenceHandle,
   AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
-import { AgentRegistry, type StoredAgentRecord } from "./agent/agent-registry.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from "./agent/provider-manifest.js";
 import {
   listDirectoryEntries,
@@ -307,7 +307,7 @@ export class Session {
   > | null = null;
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
-  private readonly agentRegistry: AgentRegistry;
+  private readonly agentStorage: AgentStorage;
   private readonly agentMcpConfig: AgentMcpClientConfig;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
@@ -329,7 +329,7 @@ export class Session {
     downloadTokenStore: DownloadTokenStore,
     pushTokenStore: PushTokenStore,
     agentManager: AgentManager,
-    agentRegistry: AgentRegistry,
+    agentStorage: AgentStorage,
     agentMcpConfig: AgentMcpClientConfig,
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
@@ -342,7 +342,7 @@ export class Session {
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
     this.agentManager = agentManager;
-    this.agentRegistry = agentRegistry;
+    this.agentStorage = agentStorage;
     this.agentMcpConfig = agentMcpConfig;
     this.terminalManager = terminalManager;
     this.voiceConversationStore = voiceConversationStore;
@@ -653,7 +653,7 @@ export class Session {
     }
 
     const initPromise = (async () => {
-      const record = await this.agentRegistry.get(agentId);
+      const record = await this.agentStorage.get(agentId);
       if (!record) {
         throw new Error(`Agent not found: ${agentId}`);
       }
@@ -704,7 +704,7 @@ export class Session {
 
   private async getStoredAgentTitle(agentId: string): Promise<string | null> {
     try {
-      const record = await this.agentRegistry.get(agentId);
+      const record = await this.agentStorage.get(agentId);
       const title = record?.title ?? null;
       return title;
     } catch (error) {
@@ -1105,7 +1105,7 @@ export class Session {
     }
 
     try {
-      await this.agentRegistry.remove(agentId);
+      await this.agentStorage.remove(agentId);
     } catch (error: any) {
       this.sessionLogger.error(
         { err: error, agentId },
@@ -1748,7 +1748,7 @@ export class Session {
           snapshot = existing;
         }
       } else {
-        const record = await this.agentRegistry.get(agentId);
+        const record = await this.agentStorage.get(agentId);
         if (!record) {
           throw new Error(`Agent not found: ${agentId}`);
         }
@@ -3133,19 +3133,19 @@ export class Session {
             // ignore cleanup errors
           }
           try {
-            await this.agentRegistry.remove(agent.id);
+            await this.agentStorage.remove(agent.id);
           } catch {
             // ignore cleanup errors
           }
         }
       }
 
-      const registryRecords = await this.agentRegistry.list();
+      const registryRecords = await this.agentStorage.list();
       for (const record of registryRecords) {
         if (this.isPathWithinRoot(targetPath, record.cwd)) {
           removedAgents.add(record.id);
           try {
-            await this.agentRegistry.remove(record.id);
+            await this.agentStorage.remove(record.id);
           } catch {
             // ignore cleanup errors
           }
@@ -3604,7 +3604,7 @@ export class Session {
       );
 
       // Add persisted agents that have not been lazily initialized yet
-      const registryRecords = await this.agentRegistry.list();
+      const registryRecords = await this.agentStorage.list();
       const liveIds = new Set(agentSnapshots.map((a) => a.id));
       const persistedAgents = registryRecords
         .filter((record) => !liveIds.has(record.id))

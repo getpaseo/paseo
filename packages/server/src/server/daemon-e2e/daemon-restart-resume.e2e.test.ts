@@ -56,7 +56,7 @@ async function startDaemon(options: {
     staticDir,
     mcpDebug: false,
     agentClients: {},
-    agentRegistryPath: path.join(options.paseoHome, "agents.json"),
+    agentStoragePath: path.join(options.paseoHome, "agents"),
     agentControlMcp: {
       url: `http://127.0.0.1:${port}/mcp/agents`,
     },
@@ -184,9 +184,9 @@ describe("daemon restart and agent resume", () => {
       await stopDaemon(currentDaemon);
       currentDaemon = null;
 
-      // Verify agents.json was persisted
-      const agentsJsonPath = path.join(paseoHome, "agents.json");
-      expect(existsSync(agentsJsonPath)).toBe(true);
+      // Verify agent storage was persisted
+      const agentsDir = path.join(paseoHome, "agents");
+      expect(existsSync(agentsDir)).toBe(true);
 
       // === PHASE 3: Start a NEW daemon with the SAME paseoHome ===
       currentDaemon = await startDaemon({ paseoHome, staticDir });

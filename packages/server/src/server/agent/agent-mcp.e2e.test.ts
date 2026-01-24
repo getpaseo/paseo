@@ -101,7 +101,7 @@ describe("agent MCP end-to-end", () => {
         staticDir,
         mcpDebug: false,
         agentClients: {},
-        agentRegistryPath: path.join(paseoHome, "agents.json"),
+        agentStoragePath: path.join(paseoHome, "agents"),
         agentControlMcp: {
           url: `http://127.0.0.1:${port}/mcp/agents`,
         },
@@ -234,7 +234,7 @@ describe("agent MCP end-to-end", () => {
         staticDir,
         mcpDebug: false,
         agentClients: {},
-        agentRegistryPath: path.join(paseoHome, "agents.json"),
+        agentStoragePath: path.join(paseoHome, "agents"),
         agentControlMcp: {
           url: `http://127.0.0.1:${port}/mcp/agents`,
         },

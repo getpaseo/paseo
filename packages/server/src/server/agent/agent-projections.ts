@@ -2,7 +2,7 @@ import type { AgentSnapshotPayload } from "../messages.js";
 import type {
   SerializableAgentConfig,
   StoredAgentRecord,
-} from "./agent-registry.js";
+} from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
   AgentMetadata,
