@@ -67,6 +67,8 @@ export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
+  private pendingWrites: Map<string, Promise<void>> = new Map();
+  private deleting: Set<string> = new Set();
   private loaded = false;
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
@@ -106,33 +108,102 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
-    const nextPath = this.buildRecordPath(record);
-    const previousPath = this.pathById.get(record.id);
-
-    await fs.mkdir(path.dirname(nextPath), { recursive: true });
-    await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
-
-    if (previousPath && previousPath !== nextPath) {
-      try {
-        await fs.unlink(previousPath);
-      } catch {
-        // ignore cleanup errors
+    const agentId = record.id;
+    const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      if (this.deleting.has(agentId)) {
+        return;
       }
-    }
 
-    this.cache.set(record.id, record);
-    this.pathById.set(record.id, nextPath);
+      const nextPath = this.buildRecordPath(record);
+      const previousPath = this.pathById.get(agentId);
+
+      await fs.mkdir(path.dirname(nextPath), { recursive: true });
+      await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
+
+      if (previousPath && previousPath !== nextPath) {
+        try {
+          await fs.unlink(previousPath);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+
+      this.cache.set(agentId, record);
+      this.pathById.set(agentId, nextPath);
+    });
+
+    this.pendingWrites.set(
+      agentId,
+      next.finally(() => {
+        if (this.pendingWrites.get(agentId) === next) {
+          this.pendingWrites.delete(agentId);
+        }
+      })
+    );
+
+    await next;
+  }
+
+  beginDelete(agentId: string): void {
+    this.deleting.add(agentId);
   }
 
   async remove(agentId: string): Promise<void> {
     await this.load();
+    this.beginDelete(agentId);
+    await (this.pendingWrites.get(agentId) ?? Promise.resolve());
+    const candidates = new Set<string>();
+
     const existingPath =
       this.pathById.get(agentId) ?? (await this.findAgentPathById(agentId));
     if (existingPath) {
+      candidates.add(existingPath);
+    }
+
+    // Remove any stray duplicate record files across project directories.
+    // This can happen across storage layout migrations or when a record path changes.
+    try {
+      const projects = await fs.readdir(this.baseDir, { withFileTypes: true });
+      for (const project of projects) {
+        if (!project.isDirectory()) {
+          continue;
+        }
+        const projectDir = path.join(this.baseDir, project.name);
+        candidates.add(path.join(projectDir, `${agentId}.json`));
+
+        // Support one more nesting layer (e.g. provider/version subfolders).
+        let entries: Array<import("node:fs").Dirent> = [];
+        try {
+          entries = await fs.readdir(projectDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (!entry.isDirectory()) {
+            continue;
+          }
+          candidates.add(path.join(projectDir, entry.name, `${agentId}.json`));
+        }
+      }
+    } catch {
+      // ignore scan errors
+    }
+
+    // Support legacy flat layouts: baseDir/<agentId>.json
+    candidates.add(path.join(this.baseDir, `${agentId}.json`));
+
+    for (const filePath of candidates) {
       try {
-        await fs.unlink(existingPath);
-      } catch {
-        // ignore removal errors
+        await fs.unlink(filePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code && code !== "ENOENT") {
+          this.logger.warn(
+            { err: error, agentId, filePath },
+            "Failed to remove agent record file"
+          );
+        }
       }
     }
 

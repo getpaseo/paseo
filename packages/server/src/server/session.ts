@@ -78,12 +78,13 @@ import {
   WorktreeSetupError,
   type WorktreeConfig,
   type WorktreeSetupCommandResult,
-  slugify,
-  validateBranchSlug,
-  listPaseoWorktrees,
-  deletePaseoWorktree,
-  isPaseoOwnedWorktreeCwd,
-} from "../utils/worktree.js";
+	  slugify,
+	  validateBranchSlug,
+	  listPaseoWorktrees,
+	  deletePaseoWorktree,
+	  isPaseoOwnedWorktreeCwd,
+	  resolvePaseoWorktreeRootForCwd,
+	} from "../utils/worktree.js";
 import {
   getCheckoutDiff,
   getCheckoutStatus,
@@ -1147,6 +1148,9 @@ export class Session {
       { agentId },
       `Deleting agent ${agentId} from registry`
     );
+
+    // Prevent the persistence hook from re-creating the record while we close/delete.
+    this.agentStorage.beginDelete(agentId);
 
     try {
       await this.agentManager.closeAgent(agentId);
@@ -3298,12 +3302,12 @@ export class Session {
     }
   }
 
-  private async handlePaseoWorktreeArchiveRequest(
-    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>
-  ): Promise<void> {
-    const { requestId } = msg;
-    let targetPath = msg.worktreePath;
-    let repoRoot = msg.repoRoot ?? null;
+	  private async handlePaseoWorktreeArchiveRequest(
+	    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>
+	  ): Promise<void> {
+	    const { requestId } = msg;
+	    let targetPath = msg.worktreePath;
+	    let repoRoot = msg.repoRoot ?? null;
 
     try {
       if (!targetPath) {
@@ -3335,16 +3339,23 @@ export class Session {
         return;
       }
 
-      repoRoot = ownership.repoRoot ?? repoRoot ?? null;
-      if (!repoRoot) {
-        throw new Error("Unable to resolve repo root for worktree");
-      }
+	      repoRoot = ownership.repoRoot ?? repoRoot ?? null;
+	      if (!repoRoot) {
+	        throw new Error("Unable to resolve repo root for worktree");
+	      }
 
-      const removedAgents = new Set<string>();
-      const agents = this.agentManager.listAgents();
-      for (const agent of agents) {
-        if (this.isPathWithinRoot(targetPath, agent.cwd)) {
-          removedAgents.add(agent.id);
+	      const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
+	        paseoHome: this.paseoHome,
+	      });
+	      if (resolvedWorktree) {
+	        targetPath = resolvedWorktree.worktreePath;
+	      }
+
+	      const removedAgents = new Set<string>();
+	      const agents = this.agentManager.listAgents();
+	      for (const agent of agents) {
+	        if (this.isPathWithinRoot(targetPath, agent.cwd)) {
+	          removedAgents.add(agent.id);
           try {
             await this.agentManager.closeAgent(agent.id);
           } catch {
@@ -3370,11 +3381,11 @@ export class Session {
         }
       }
 
-      await deletePaseoWorktree({
-        cwd: repoRoot,
-        worktreePath: targetPath,
-        paseoHome: this.paseoHome,
-      });
+	      await deletePaseoWorktree({
+	        cwd: repoRoot,
+	        worktreePath: targetPath,
+	        paseoHome: this.paseoHome,
+	      });
 
       for (const agentId of removedAgents) {
         this.emit({
