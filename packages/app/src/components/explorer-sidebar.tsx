@@ -8,7 +8,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { X, GitBranch, Folder, LayoutGrid, List as ListIcon } from "lucide-react-native";
+import { X, LayoutGrid, List as ListIcon } from "lucide-react-native";
 import {
   usePanelStore,
   MIN_EXPLORER_SIDEBAR_WIDTH,
@@ -255,14 +255,6 @@ function SidebarContent({
             style={[styles.tab, activeTab === "changes" && styles.tabActive]}
             onPress={() => onTabPress("changes")}
           >
-            <GitBranch
-              size={16}
-              color={
-                activeTab === "changes"
-                  ? theme.colors.foreground
-                  : theme.colors.foregroundMuted
-              }
-            />
             <Text
               style={[
                 styles.tabText,
@@ -276,14 +268,6 @@ function SidebarContent({
             style={[styles.tab, activeTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}
           >
-            <Folder
-              size={16}
-              color={
-                activeTab === "files"
-                  ? theme.colors.foreground
-                  : theme.colors.foregroundMuted
-              }
-            />
             <Text
               style={[
                 styles.tabText,
