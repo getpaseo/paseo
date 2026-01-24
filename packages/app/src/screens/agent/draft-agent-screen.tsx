@@ -103,7 +103,15 @@ type DraftAgentParams = {
   workingDir?: string;
 };
 
-export function DraftAgentScreen() {
+type DraftAgentScreenProps = {
+  isVisible?: boolean;
+  onCreateFlowActiveChange?: (active: boolean) => void;
+};
+
+export function DraftAgentScreen({
+  isVisible = true,
+  onCreateFlowActiveChange,
+}: DraftAgentScreenProps = {}) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -171,7 +179,7 @@ export function DraftAgentScreen() {
   } = useAgentFormState({
     initialServerId: resolvedServerId ?? null,
     initialValues,
-    isVisible: true,
+    isVisible,
     isCreateFlow: true,
   });
   const hostEntry = selectedServerId
@@ -695,6 +703,7 @@ export function DraftAgentScreen() {
       }
       Keyboard.dismiss();
       dispatch({ type: "SUBMIT", attempt });
+      onCreateFlowActiveChange?.(true);
 
       try {
         const result = await createAgent({
@@ -707,7 +716,7 @@ export function DraftAgentScreen() {
         const agentId = (result as { id?: string })?.id;
         if (agentId && selectedServerId) {
           router.replace({
-            pathname: "/agent/[...route]",
+            pathname: "/agent/[[...route]]",
             params: { route: [selectedServerId, agentId] },
           });
           return;
@@ -717,10 +726,12 @@ export function DraftAgentScreen() {
           type: "CREATE_FAILED",
           message: "Failed to create agent",
         });
+        onCreateFlowActiveChange?.(false);
         throw new Error("Failed to create agent");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to create agent";
         dispatch({ type: "CREATE_FAILED", message });
+        onCreateFlowActiveChange?.(false);
         throw error; // Re-throw so AgentInputArea knows it failed
       }
     },
@@ -745,6 +756,7 @@ export function DraftAgentScreen() {
       workingDir,
       isAttachWorktree,
       isSubmitting,
+      onCreateFlowActiveChange,
     ]
   );
 

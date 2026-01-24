@@ -51,19 +51,19 @@ export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
     }
     const match = matches[0];
     router.replace({
-      pathname: "/agent/[...route]",
+      pathname: "/agent/[[...route]]",
       params: { route: [match.serverId, match.agent.id] },
     });
   }, [isRedirecting, matches, router]);
 
   const handleGoDraft = useCallback(() => {
-    router.replace("/agent");
+    router.replace({ pathname: "/agent/[[...route]]" });
   }, [router]);
 
   const handleSelectMatch = useCallback(
     (match: AgentMatch) => {
       router.replace({
-        pathname: "/agent/[...route]",
+        pathname: "/agent/[[...route]]",
         params: { route: [match.serverId, match.agent.id] },
       });
     },

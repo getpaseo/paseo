@@ -142,7 +142,7 @@ export function HomeFooter() {
             <Pressable
               onPress={() => {
                 console.log("[HomeFooter] New Agent button pressed");
-                router.push("/agent");
+                router.push({ pathname: "/agent/[[...route]]" });
               }}
               style={({ pressed }) => [
                 styles.footerButton,

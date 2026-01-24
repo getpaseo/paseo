@@ -118,7 +118,7 @@ export function AgentReadyScreen({
         targetMs: 300,
       });
     }
-    router.replace("/agent");
+    router.replace({ pathname: "/agent/[[...route]]" });
   }, [resolvedAgentId, resolvedServerId, router]);
 
   const focusServerId = resolvedServerId;

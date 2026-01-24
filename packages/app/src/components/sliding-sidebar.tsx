@@ -82,7 +82,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   }, [closeToAgent]);
 
   const handleCreateAgentClean = useCallback(() => {
-    router.push("/agent");
+    router.push({ pathname: "/agent/[[...route]]" });
   }, []);
 
   // Mobile: close sidebar and navigate
