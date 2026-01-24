@@ -625,7 +625,7 @@ function AgentScreenContent({
               <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
                 {isMobile ? (
                   <Folder
-                    size={16}
+                    size={20}
                     color={
                       isExplorerOpen
                         ? theme.colors.foreground
@@ -651,7 +651,7 @@ function AgentScreenContent({
                 }}
               >
                 <DropdownMenuTrigger testID="agent-overflow-menu" style={styles.menuButton}>
-                  <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+                  <MoreVertical size={isMobile ? 20 : 16} color={theme.colors.foregroundMuted} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" width={DROPDOWN_WIDTH} testID="agent-overflow-content">
                   <View style={styles.menuMetaContainer}>

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
-import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { useTauriDragHandlers } from "@/utils/tauri-window";
 
 interface ScreenHeaderProps {
@@ -44,7 +44,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: {},
   row: {
-    height: HEADER_INNER_HEIGHT,
+    height: {
+      xs: HEADER_INNER_HEIGHT_MOBILE,
+      md: HEADER_INNER_HEIGHT,
+    },
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
