@@ -20,13 +20,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { formatTimeAgo } from "@/utils/time";
-import { shortenPath } from "@/utils/shorten-path";
-import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import {
   groupAgents,
+  parseRepoNameFromRemoteUrl,
   parseRepoShortNameFromRemoteUrl,
   type ProjectGroup,
-  type DateGroup,
 } from "@/utils/agent-grouping";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
@@ -42,13 +40,12 @@ import {
 } from "@/utils/navigation-timing";
 
 type SectionType =
-  | { type: "project"; data: ProjectGroup }
-  | { type: "date"; data: DateGroup };
+  | { type: "project"; data: ProjectGroup };
 
 interface SectionData {
   key: string;
   title: string;
-  type: "project" | "date";
+  type: "project";
   data: AggregatedAgent[];
   /** For project sections, the first agent's serverId (to lookup checkout status) */
   firstAgentServerId?: string;
@@ -68,14 +65,12 @@ interface GroupedAgentListProps {
 interface SectionHeaderProps {
   section: SectionData;
   isCollapsed: boolean;
-  agentCount: number;
   onToggle: () => void;
 }
 
 function SectionHeader({
   section,
   isCollapsed,
-  agentCount,
   onToggle,
 }: SectionHeaderProps) {
   const { theme } = useUnistyles();
@@ -90,7 +85,14 @@ function SectionHeader({
   // Derive display title: prefer repo name from remote URL, fallback to path-based name
   let displayTitle = section.title;
   if (section.type === "project" && checkout?.isGit && checkout.remoteUrl) {
-    const repoName = parseRepoShortNameFromRemoteUrl(checkout.remoteUrl);
+    const isGitHubRemote =
+      checkout.remoteUrl.includes("github.com") ||
+      checkout.remoteUrl.includes("git@github.com:");
+
+    const repoName = isGitHubRemote
+      ? parseRepoNameFromRemoteUrl(checkout.remoteUrl)
+      : parseRepoShortNameFromRemoteUrl(checkout.remoteUrl);
+
     if (repoName) {
       displayTitle = repoName;
     }
@@ -105,24 +107,17 @@ function SectionHeader({
       onPress={onToggle}
     >
       <View style={styles.sectionHeaderLeft}>
-        {isCollapsed ? (
-          <ChevronRight
-            size={14}
-            color={theme.colors.foregroundMuted}
-            style={styles.chevron}
-          />
-        ) : (
-          <ChevronDown
-            size={14}
-            color={theme.colors.foregroundMuted}
-            style={styles.chevron}
-          />
-        )}
         <Text style={styles.sectionTitle} numberOfLines={1}>
           {displayTitle}
         </Text>
       </View>
-      <Text style={styles.sectionCount}>{agentCount}</Text>
+      <View style={styles.sectionHeaderRight}>
+        {isCollapsed ? (
+          <ChevronRight size={14} color={theme.colors.foregroundMuted} />
+        ) : (
+          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+        )}
+      </View>
     </Pressable>
   );
 }
@@ -241,7 +236,7 @@ export function GroupedAgentList({
   }, [agents, checkoutCacheQueries]);
 
   // Group agents
-  const { activeGroups, inactiveGroups } = useMemo(
+  const { activeGroups } = useMemo(
     () =>
       groupAgents(agents, {
         getRemoteUrl: (agent) =>
@@ -268,19 +263,8 @@ export function GroupedAgentList({
       });
     }
 
-    for (const group of inactiveGroups) {
-      const sectionKey = `date:${group.label}`;
-      const isCollapsed = collapsedSections.has(sectionKey);
-      result.push({
-        key: sectionKey,
-        title: group.label,
-        type: "date",
-        data: isCollapsed ? [] : group.agents,
-      });
-    }
-
     return result;
-  }, [activeGroups, inactiveGroups, collapsedSections]);
+  }, [activeGroups, collapsedSections]);
 
   const viewabilityConfig = useMemo(
     () => ({ itemVisiblePercentThreshold: 30 }),
@@ -338,8 +322,9 @@ export function GroupedAgentList({
         agentId: agent.id,
       });
       const checkout = checkoutQuery.data ?? null;
-      const projectPath = deriveProjectPath(agent.cwd, checkout);
-      const branchLabel = deriveBranchLabel(checkout);
+      const activeBranchLabel = checkout?.isGit
+        ? (checkout.currentBranch ?? checkout.baseRef ?? "git")
+        : null;
 
       return (
         <Pressable
@@ -373,8 +358,7 @@ export function GroupedAgentList({
               </View>
 
               <Text style={styles.secondaryRow} numberOfLines={1}>
-                {shortenPath(projectPath)}
-                {branchLabel ? ` · ${branchLabel}` : ""} · {timeAgo}
+                {activeBranchLabel ? `${activeBranchLabel} · ${timeAgo}` : timeAgo}
               </Text>
             </View>
           )}
@@ -391,31 +375,21 @@ export function GroupedAgentList({
   );
 
   const renderItem: SectionListRenderItem<AggregatedAgent, SectionData> =
-    useCallback(
-      ({ item: agent }) => <AgentListRow agent={agent} />,
-      [AgentListRow]
-    );
+    useCallback(({ item: agent }) => <AgentListRow agent={agent} />, [AgentListRow]);
 
   const renderSectionHeader = useCallback(
     ({ section }: { section: SectionData }) => {
       const isCollapsed = collapsedSections.has(section.key);
-      const agentCount =
-        section.type === "project"
-          ? activeGroups.find((g) => `project:${g.projectKey}` === section.key)
-              ?.agents.length ?? 0
-          : inactiveGroups.find((g) => `date:${g.label}` === section.key)
-              ?.agents.length ?? 0;
 
       return (
         <SectionHeader
           section={section}
           isCollapsed={isCollapsed}
-          agentCount={agentCount}
           onToggle={() => toggleSection(section.key)}
         />
       );
     },
-    [collapsedSections, activeGroups, inactiveGroups, toggleSection]
+    [collapsedSections, toggleSection]
   );
 
   const keyExtractor = useCallback(
@@ -521,7 +495,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4] + theme.spacing[2],
+    marginHorizontal: -theme.spacing[4],
     marginTop: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
   },
@@ -531,22 +506,21 @@ const styles = StyleSheet.create((theme) => ({
   sectionHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "flex-start",
     flex: 1,
     minWidth: 0,
   },
-  chevron: {
-    marginRight: theme.spacing[1],
+  sectionHeaderRight: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: theme.spacing[2],
   },
   sectionTitle: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: "500",
     color: theme.colors.foregroundMuted,
     flex: 1,
-  },
-  sectionCount: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    marginLeft: theme.spacing[2],
+    textAlign: "left",
   },
   agentItem: {
     paddingVertical: theme.spacing[2],

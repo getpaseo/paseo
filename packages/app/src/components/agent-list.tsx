@@ -4,9 +4,9 @@ import {
   Pressable,
   Modal,
   RefreshControl,
-  FlatList,
+  SectionList,
   type ViewToken,
-  type ListRenderItem,
+  type SectionListRenderItem,
 } from "react-native";
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
@@ -34,6 +34,40 @@ interface AgentListProps {
   selectedAgentId?: string;
   onAgentSelect?: () => void;
   listFooterComponent?: ReactElement | null;
+}
+
+interface AgentListSection {
+  key: string;
+  title: string;
+  data: AggregatedAgent[];
+}
+
+function deriveDateSectionLabel(lastActivityAt: Date): string {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+  const activityStart = new Date(
+    lastActivityAt.getFullYear(),
+    lastActivityAt.getMonth(),
+    lastActivityAt.getDate()
+  );
+
+  if (activityStart.getTime() >= todayStart.getTime()) {
+    return "Today";
+  }
+  if (activityStart.getTime() >= yesterdayStart.getTime()) {
+    return "Yesterday";
+  }
+
+  const diffTime = todayStart.getTime() - activityStart.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  if (diffDays <= 7) {
+    return "This week";
+  }
+  if (diffDays <= 30) {
+    return "This month";
+  }
+  return "Older";
 }
 
 export function AgentList({
@@ -213,9 +247,37 @@ export function AgentList({
     ]
   );
 
-  const renderAgentItem = useCallback<ListRenderItem<AggregatedAgent>>(
-    ({ item: agent }) => <AgentListRow agent={agent} />,
-    [AgentListRow]
+  const sections = useMemo((): AgentListSection[] => {
+    const order = ["Today", "Yesterday", "This week", "This month", "Older"] as const;
+    const buckets = new Map<string, AggregatedAgent[]>();
+    for (const agent of agents) {
+      const label = deriveDateSectionLabel(agent.lastActivityAt);
+      const existing = buckets.get(label) ?? [];
+      existing.push(agent);
+      buckets.set(label, existing);
+    }
+
+    const result: AgentListSection[] = [];
+    for (const label of order) {
+      const data = buckets.get(label);
+      if (!data || data.length === 0) {
+        continue;
+      }
+      result.push({ key: `date:${label}`, title: label, data });
+    }
+    return result;
+  }, [agents]);
+
+  const renderAgentItem: SectionListRenderItem<AggregatedAgent, AgentListSection> =
+    useCallback(({ item: agent }) => <AgentListRow agent={agent} />, [AgentListRow]);
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: AgentListSection }) => (
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+      </View>
+    ),
+    []
   );
 
   const keyExtractor = useCallback(
@@ -225,12 +287,14 @@ export function AgentList({
 
   return (
     <>
-      <FlatList
-        data={agents}
+      <SectionList
+        sections={sections}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
         renderItem={renderAgentItem}
+        renderSectionHeader={renderSectionHeader}
+        stickySectionHeadersEnabled={false}
         extraData={selectedAgentId}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -314,6 +378,16 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[4],
+  },
+  sectionHeader: {
+    paddingVertical: theme.spacing[2],
+    marginTop: theme.spacing[2],
+  },
+  sectionTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+    color: theme.colors.foregroundMuted,
+    textAlign: "left",
   },
   agentItem: {
     paddingVertical: theme.spacing[2],
