@@ -28,11 +28,13 @@ import {
   Folder,
   RotateCcw,
   PanelRight,
+  Info,
 } from "lucide-react-native";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { BackHeader } from "@/components/headers/back-header";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { AgentInputArea } from "@/components/agent-input-area";
+import { AgentDetailsSheet } from "@/components/agent-details-sheet";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
@@ -179,6 +181,7 @@ function AgentScreenContent({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
 
@@ -734,6 +737,16 @@ function AgentScreenContent({
                   >
                     {isInitializing ? "Refreshing..." : "Refresh"}
                   </DropdownMenuItem>
+
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuItem
+                    testID="agent-menu-details"
+                    leading={<Info size={16} color={theme.colors.foreground} />}
+                    onSelect={() => setDetailsOpen(true)}
+                  >
+                    Details
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </View>
@@ -772,6 +785,13 @@ function AgentScreenContent({
 
         </View>
       </FileDropZone>
+
+      <AgentDetailsSheet
+        visible={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        agentId={effectiveAgent.id}
+        persistenceSessionId={effectiveAgent.persistence?.sessionId ?? null}
+      />
 
         {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
         {!isMobile && isExplorerOpen && resolvedAgentId && (

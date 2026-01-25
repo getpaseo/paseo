@@ -20,6 +20,7 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
 import { DownloadToast } from "@/components/download-toast";
+import { ToastProvider } from "@/contexts/toast-context";
 import { usePanelStore } from "@/stores/panel-store";
 import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
 import {
@@ -338,26 +339,28 @@ export default function RootLayout() {
                     <ProvidersWrapper>
                       <SidebarAnimationProvider>
                         <HorizontalScrollProvider>
-                          <AppWithSidebar>
-                            <Stack
-                              screenOptions={{
-                                headerShown: false,
-                                animation: "none",
-                              }}
-                            >
-                              <Stack.Screen name="index" />
-                              <Stack.Screen name="agents" />
-                              <Stack.Screen name="agent" />
-                              <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
-                              <Stack.Screen
-                                name="agent/[serverId]/[agentId]"
-                                options={{ gestureEnabled: false }}
-                              />
-                              <Stack.Screen name="settings" />
-                              <Stack.Screen name="audio-test" />
-                              <Stack.Screen name="pair-scan" />
-                            </Stack>
-                          </AppWithSidebar>
+                          <ToastProvider>
+                            <AppWithSidebar>
+                              <Stack
+                                screenOptions={{
+                                  headerShown: false,
+                                  animation: "none",
+                                }}
+                              >
+                                <Stack.Screen name="index" />
+                                <Stack.Screen name="agents" />
+                                <Stack.Screen name="agent" />
+                                <Stack.Screen name="agent/[id]" options={{ gestureEnabled: false }} />
+                                <Stack.Screen
+                                  name="agent/[serverId]/[agentId]"
+                                  options={{ gestureEnabled: false }}
+                                />
+                                <Stack.Screen name="settings" />
+                                <Stack.Screen name="audio-test" />
+                                <Stack.Screen name="pair-scan" />
+                              </Stack>
+                            </AppWithSidebar>
+                          </ToastProvider>
                         </HorizontalScrollProvider>
                       </SidebarAnimationProvider>
                     </ProvidersWrapper>
