@@ -9,7 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Plus, Settings } from "lucide-react-native";
+import { ChevronRight, Plus, Settings } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { GroupedAgentList } from "./grouped-agent-list";
@@ -75,7 +75,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     () => sortedAgents.slice(0, SIDEBAR_AGENT_LIMIT),
     [sortedAgents]
   );
-  const hasMore = agents.length > SIDEBAR_AGENT_LIMIT;
 
   const handleClose = useCallback(() => {
     closeToAgent();
@@ -171,20 +170,20 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
-  const viewMoreButton = hasMore ? (
+  const viewMoreButton = (
     <View style={styles.viewMoreContainer}>
       <Pressable
-        style={({ hovered }) => [
-          styles.newAgentButton,
+        style={({ hovered, pressed }) => [
           styles.viewMoreButton,
-          hovered && styles.newAgentButtonHovered,
+          (hovered || pressed) && styles.viewMoreButtonHovered,
         ]}
         onPress={handleViewMore}
       >
-        <Text style={styles.viewMoreButtonText}>View More</Text>
+        <Text style={styles.viewMoreButtonText}>All agents</Text>
+        <ChevronRight size={16} color={theme.colors.foregroundMuted} />
       </Pressable>
     </View>
-  ) : null;
+  );
 
   // Render mobile sidebar
   // On web, use "auto" instead of "box-none" because web's pointer-events: none blocks scroll
@@ -354,12 +353,25 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[2],
   },
   viewMoreButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: theme.spacing[1],
     paddingVertical: theme.spacing[2],
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    alignSelf: "flex-start",
+    transitionProperty: "opacity",
+    transitionDuration: "150ms",
+  },
+  viewMoreButtonHovered: {
+    opacity: 0.8,
   },
   viewMoreButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foreground,
+    color: theme.colors.foregroundMuted,
   },
   sidebarFooter: {
     paddingHorizontal: theme.spacing[4],

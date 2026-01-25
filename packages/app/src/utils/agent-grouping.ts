@@ -204,7 +204,7 @@ export interface GroupedAgents {
   inactiveGroups: DateGroup[];
 }
 
-const ACTIVE_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
+const ACTIVE_GRACE_PERIOD_MS = 15 * 60 * 1000; // 15 minutes
 
 interface GroupAgentsOptions {
   /**
