@@ -17,7 +17,7 @@ import {
 } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
@@ -32,6 +32,7 @@ import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
   CHECKOUT_STATUS_STALE_TIME,
+  type CheckoutStatusPayload,
   checkoutStatusQueryKey,
   useCheckoutStatusCacheOnly,
 } from "@/hooks/use-checkout-status-query";
@@ -210,10 +211,43 @@ export function GroupedAgentList({
     });
   }, []);
 
+  // Subscribe to checkout status cache entries so project grouping can react
+  // to remote URL updates (e.g. git worktrees in different directories).
+  const checkoutCacheQueries = useQueries({
+    queries: agents.map(
+      (agent): UseQueryOptions<CheckoutStatusPayload> => ({
+      queryKey: checkoutStatusQueryKey(agent.serverId, agent.id),
+      enabled: false,
+      staleTime: CHECKOUT_STATUS_STALE_TIME,
+      queryFn: async (): Promise<CheckoutStatusPayload> => {
+        throw new Error("checkout status cache-only query should not run");
+      },
+      })
+    ),
+  });
+
+  const remoteUrlByAgentKey = useMemo(() => {
+    const result = new Map<string, string | null>();
+    for (let i = 0; i < agents.length; i++) {
+      const agent = agents[i];
+      if (!agent) {
+        continue;
+      }
+      const checkout = checkoutCacheQueries[i]?.data ?? null;
+      const remoteUrl = checkout?.remoteUrl ?? null;
+      result.set(`${agent.serverId}:${agent.id}`, remoteUrl);
+    }
+    return result;
+  }, [agents, checkoutCacheQueries]);
+
   // Group agents
   const { activeGroups, inactiveGroups } = useMemo(
-    () => groupAgents(agents),
-    [agents]
+    () =>
+      groupAgents(agents, {
+        getRemoteUrl: (agent) =>
+          remoteUrlByAgentKey.get(`${agent.serverId}:${agent.id}`) ?? null,
+      }),
+    [agents, remoteUrlByAgentKey]
   );
 
   // Build sections for SectionList

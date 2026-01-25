@@ -16,6 +16,71 @@ export function deriveProjectKey(cwd: string): string {
 }
 
 /**
+ * Produces a stable grouping key from a git remote URL.
+ *
+ * Waterfall:
+ * - Prefer a GitHub key (normalizes SSH/HTTPS to the same key).
+ * - Fallback to a generic host/path key (still normalized across SSH/HTTPS).
+ */
+export function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  // Support the common forms:
+  // - git@github.com:owner/repo.git
+  // - https://github.com/owner/repo(.git)
+  // - ssh://git@github.com/owner/repo(.git)
+  let host: string | null = null;
+  let path: string | null = null;
+
+  // SSH scp-like form: user@host:owner/repo(.git)
+  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/);
+  if (scpLike) {
+    host = scpLike[1] ?? null;
+    path = scpLike[2] ?? null;
+  } else if (trimmed.includes("://")) {
+    try {
+      const parsed = new URL(trimmed);
+      host = parsed.hostname || null;
+      path = parsed.pathname ? parsed.pathname.replace(/^\//, "") : null;
+    } catch {
+      // Fall through to best-effort parsing below.
+    }
+  }
+
+  if (!host || !path) {
+    return null;
+  }
+
+  let cleanedPath = path.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  if (cleanedPath.endsWith(".git")) {
+    cleanedPath = cleanedPath.slice(0, -4);
+  }
+
+  // Best-effort: owner/repo is the common case.
+  // If the path is longer (e.g. groups/subgroups/repo), still keep it.
+  if (!cleanedPath.includes("/")) {
+    return null;
+  }
+
+  const cleanedHost = host.toLowerCase();
+
+  // GitHub normalization: treat github.com as a special "well-known" host to
+  // match the intended UX: group by repo even across different local worktrees.
+  if (cleanedHost === "github.com") {
+    return `remote:github.com/${cleanedPath}`;
+  }
+
+  return `remote:${cleanedHost}/${cleanedPath}`;
+}
+
+/**
  * Extracts the repo name from a git remote URL.
  * Examples:
  *   git@github.com:anthropics/claude-code.git -> anthropics/claude-code
@@ -137,11 +202,22 @@ export interface GroupedAgents {
 
 const ACTIVE_GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
 
+interface GroupAgentsOptions {
+  /**
+   * Optional function to read a remote URL for an agent.
+   * If present and a remote URL is available, agents are grouped by remote.
+   */
+  getRemoteUrl?: (agent: AggregatedAgent) => string | null;
+}
+
 /**
  * Groups agents into active (by project) and inactive (by date) sections.
  * Active = running, requires attention, or had activity within the last 5 minutes.
  */
-export function groupAgents(agents: AggregatedAgent[]): GroupedAgents {
+export function groupAgents(
+  agents: AggregatedAgent[],
+  options?: GroupAgentsOptions
+): GroupedAgents {
   const activeAgents: AggregatedAgent[] = [];
   const inactiveAgents: AggregatedAgent[] = [];
   const now = Date.now();
@@ -163,7 +239,10 @@ export function groupAgents(agents: AggregatedAgent[]): GroupedAgents {
   // Group active agents by project
   const projectMap = new Map<string, AggregatedAgent[]>();
   for (const agent of activeAgents) {
-    const projectKey = deriveProjectKey(agent.cwd);
+    const remoteKey = deriveRemoteProjectKey(
+      options?.getRemoteUrl?.(agent) ?? null
+    );
+    const projectKey = remoteKey ?? deriveProjectKey(agent.cwd);
     const existing = projectMap.get(projectKey) || [];
     existing.push(agent);
     projectMap.set(projectKey, existing);
