@@ -71,6 +71,7 @@ export type CheckoutStatusGitNonPaseo = {
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
   hasRemote: boolean;
+  remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
 };
 
@@ -82,6 +83,7 @@ export type CheckoutStatusGitPaseo = {
   baseRef: string;
   aheadBehind: AheadBehind | null;
   hasRemote: boolean;
+  remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
 };
 
@@ -257,16 +259,22 @@ async function isWorkingTreeDirty(cwd: string, repoType: "bare" | "normal"): Pro
   return stdout.trim().length > 0;
 }
 
-async function hasOriginRemote(cwd: string): Promise<boolean> {
+async function getOriginRemoteUrl(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await execAsync("git config --get remote.origin.url", {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
-    return stdout.trim().length > 0;
+    const url = stdout.trim();
+    return url.length > 0 ? url : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function hasOriginRemote(cwd: string): Promise<boolean> {
+  const url = await getOriginRemoteUrl(cwd);
+  return url !== null;
 }
 
 async function resolveBaseRef(repoRoot: string): Promise<string | null> {
@@ -429,7 +437,8 @@ export async function getCheckoutStatus(
 
   const currentBranch = await getCurrentBranch(cwd);
   const isDirty = await isWorkingTreeDirty(cwd, repoInfo.type);
-  const hasRemote = await hasOriginRemote(repoInfo.path);
+  const remoteUrl = await getOriginRemoteUrl(repoInfo.path);
+  const hasRemote = remoteUrl !== null;
   const configured = await getConfiguredBaseRefForCwd(cwd, context);
   const baseRef = configured.baseRef ?? (await resolveBaseRef(repoInfo.path));
   const aheadBehind =
@@ -444,6 +453,7 @@ export async function getCheckoutStatus(
       baseRef: configured.baseRef,
       aheadBehind,
       hasRemote,
+      remoteUrl,
       isPaseoOwnedWorktree: true,
     };
   }
@@ -456,6 +466,7 @@ export async function getCheckoutStatus(
     baseRef,
     aheadBehind,
     hasRemote,
+    remoteUrl,
     isPaseoOwnedWorktree: false,
   };
 }

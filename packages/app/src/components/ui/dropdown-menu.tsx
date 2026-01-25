@@ -232,24 +232,33 @@ export function DropdownMenuContent({
 
   // Measure trigger when opening
   useEffect(() => {
-    if (open && triggerRef.current) {
-      measureElement(triggerRef.current).then((rect) => {
-        // On Android with statusBarTranslucent, measureInWindow returns coordinates
-        // from screen top, but Modal content area also starts from screen top.
-        // However, the measured y doesn't account for status bar offset correctly,
-        // so we need to add it (same as react-native-popover-view does)
-        const statusBarAdjustment = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
-        const adjustedRect = {
-          ...rect,
-          y: rect.y + statusBarAdjustment,
-        };
-        setTriggerRect(adjustedRect);
-      });
-    } else {
+    if (!open || !triggerRef.current) {
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
+      return;
     }
+
+    // Capture status bar height synchronously before async measurement.
+    // This avoids race conditions where StatusBar.currentHeight could change
+    // or return null if read after the component re-renders.
+    const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
+    let cancelled = false;
+
+    measureElement(triggerRef.current).then((rect) => {
+      if (cancelled) return;
+      // On Android with statusBarTranslucent, measureInWindow returns coordinates
+      // relative to below the status bar, but Modal content starts from screen top.
+      // Add status bar height to align coordinate systems (same as react-native-popover-view).
+      setTriggerRect({
+        ...rect,
+        y: rect.y + statusBarHeight,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, triggerRef]);
 
   // Calculate position when we have both measurements

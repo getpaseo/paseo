@@ -12,7 +12,7 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { Plus, Settings } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
-import { AgentList } from "./agent-list";
+import { GroupedAgentList } from "./grouped-agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
@@ -223,7 +223,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
               </View>
 
               {/* Middle: scrollable agent list */}
-              <AgentList
+              <GroupedAgentList
                 agents={limitedAgents}
                 isRefreshing={isManualRefresh && isRevalidating}
                 onRefresh={handleRefresh}
@@ -275,7 +275,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
       </View>
 
       {/* Middle: scrollable agent list */}
-      <AgentList
+      <GroupedAgentList
         agents={limitedAgents}
         isRefreshing={isManualRefresh && isRevalidating}
         onRefresh={handleRefresh}

@@ -17,7 +17,7 @@ METRO_PORT=$(get-port 8081 8082 8083 8084 8085 8086 8087)
 CORS_ORIGINS="http://localhost:${METRO_PORT},http://127.0.0.1:${METRO_PORT}"
 
 # Configure app to auto-connect to this daemon
-EXPO_DAEMONS="[{\"label\":\"localhost\",\"endpoint\":\"localhost:${DAEMON_PORT}\"}]"
+LOCAL_DAEMON="localhost:${DAEMON_PORT}"
 
 echo "══════════════════════════════════════════════════════"
 echo "  Paseo Dev"
@@ -33,9 +33,9 @@ export PASEO_CORS_ORIGINS="${CORS_ORIGINS}"
 
 # Run both with concurrently
 # BROWSER=none prevents auto-opening browser
-# EXPO_PUBLIC_DAEMONS configures the app to auto-connect to this daemon
+# EXPO_PUBLIC_LOCAL_DAEMON configures the app to auto-connect to this daemon
 concurrently \
   --names "daemon,metro" \
   --prefix-colors "cyan,magenta" \
   "npm run dev:server" \
-  "BROWSER=none EXPO_PUBLIC_DAEMONS='${EXPO_DAEMONS}' npm run start --workspace=@paseo/app -- --port ${METRO_PORT}"
+  "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${LOCAL_DAEMON}' npm run start --workspace=@paseo/app -- --port ${METRO_PORT}"

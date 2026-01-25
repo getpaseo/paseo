@@ -224,71 +224,14 @@ function createProfile(label: string, endpoint: string): HostProfile {
   };
 }
 
-type EnvDaemonConfig = {
-  label?: string;
-  endpoint?: string;
-  wsUrl?: string;
-};
+const LOCAL_DAEMON_LABEL = "Local";
 
-function parseEnvDaemonDefaults(): HostProfile[] {
-  const envDaemons = ((): EnvDaemonConfig[] => {
-    // Primary: allow a JSON array string like
-    // EXPO_PUBLIC_DAEMONS='[{"label":"Host","endpoint":"10.0.0.1:6767"}]'
-    const jsonList = process.env.EXPO_PUBLIC_DAEMONS;
-    if (jsonList) {
-      try {
-        const parsed = JSON.parse(jsonList) as unknown;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed as EnvDaemonConfig[];
-        }
-      } catch (error) {
-        console.warn("[DaemonRegistry] Failed to parse EXPO_PUBLIC_DAEMONS:", error);
-      }
-    }
-
-    // Fallback: single host via EXPO_PUBLIC_DAEMON_WS_URL (+ optional label/rest URL)
-    const singleWsUrl = process.env.EXPO_PUBLIC_DAEMON_WS_URL;
-    if (singleWsUrl) {
-      return [
-        {
-          label: process.env.EXPO_PUBLIC_DAEMON_LABEL,
-          wsUrl: singleWsUrl,
-        },
-      ];
-    }
-
-    return [];
-  })();
-
-  const timestamp = new Date().toISOString();
-  return envDaemons
-    .map((entry): HostProfile | null => {
-      const endpoint = (() => {
-        if (typeof entry.endpoint === "string" && entry.endpoint.trim().length > 0) {
-          return entry.endpoint.trim();
-        }
-        if (typeof entry.wsUrl === "string" && entry.wsUrl.trim().length > 0) {
-          try {
-            return extractHostPortFromWebSocketUrl(entry.wsUrl.trim());
-          } catch {
-            return null;
-          }
-        }
-        return null;
-      })();
-
-      if (!endpoint) return null;
-
-      return {
-        id: generateDaemonId(),
-        label: entry.label?.trim() || deriveLabelFromEndpoint(endpoint),
-        endpoints: [normalizeHostPort(endpoint)],
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        metadata: null,
-      };
-    })
-    .filter((entry): entry is HostProfile => entry !== null);
+function getLocalDaemonEndpoint(): string | null {
+  const endpoint = process.env.EXPO_PUBLIC_LOCAL_DAEMON;
+  if (!endpoint || endpoint.trim().length === 0) {
+    return null;
+  }
+  return endpoint.trim();
 }
 
 type LegacyDaemonProfile = {
@@ -327,28 +270,54 @@ function migrateLegacyToHostProfile(legacy: LegacyDaemonProfile): HostProfile {
   };
 }
 
+function upsertLocalDaemon(hosts: HostProfile[], localEndpoint: string): HostProfile[] {
+  const result = [...hosts];
+  const now = new Date().toISOString();
+  const existingIndex = result.findIndex((host) => host.label === LOCAL_DAEMON_LABEL);
+
+  if (existingIndex !== -1) {
+    result[existingIndex] = {
+      ...result[existingIndex],
+      endpoints: [normalizeHostPort(localEndpoint)],
+      updatedAt: now,
+    };
+  } else {
+    result.unshift({
+      id: generateDaemonId(),
+      label: LOCAL_DAEMON_LABEL,
+      endpoints: [normalizeHostPort(localEndpoint)],
+      createdAt: now,
+      updatedAt: now,
+      metadata: null,
+    });
+  }
+
+  return result;
+}
+
 async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
   try {
-    // When env vars define a default daemon, always reset to that daemon only.
-    // This ensures the app uses the configured daemon regardless of stored state.
-    const envDefaults = parseEnvDaemonDefaults();
-    if (envDefaults.length > 0) {
-      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(envDefaults));
-      return envDefaults;
-    }
+    const localEndpoint = getLocalDaemonEndpoint();
 
     const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as unknown;
       if (Array.isArray(parsed)) {
-        if (parsed.length === 0) {
+        if (parsed.length === 0 && !localEndpoint) {
           return [];
         }
+
         const hasLegacy = parsed.some((entry) => isLegacyDaemonProfile(entry));
         const hasNew = parsed.some((entry) => isHostProfile(entry));
 
         if (hasNew && !hasLegacy) {
-          return parsed as HostProfile[];
+          const hosts = parsed as HostProfile[];
+          if (localEndpoint) {
+            const merged = upsertLocalDaemon(hosts, localEndpoint);
+            await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(merged));
+            return merged;
+          }
+          return hosts;
         }
 
         const migrated = parsed
@@ -380,8 +349,9 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
           .filter((entry): entry is HostProfile => entry !== null);
 
         if (migrated.length > 0) {
-          await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
-          return migrated;
+          const merged = localEndpoint ? upsertLocalDaemon(migrated, localEndpoint) : migrated;
+          await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(merged));
+          return merged;
         }
       }
     }
@@ -393,12 +363,18 @@ async function loadDaemonRegistryFromStorage(): Promise<HostProfile[]> {
       if (legacyUrl) {
         const endpoint = extractHostPortFromWebSocketUrl(legacyUrl);
         const migrated = [createProfile("Primary Host", endpoint)];
-        await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(migrated));
-        return migrated;
+        const merged = localEndpoint ? upsertLocalDaemon(migrated, localEndpoint) : migrated;
+        await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(merged));
+        return merged;
       }
     }
 
-    // No implicit localhost fallback: a fresh install starts with zero hosts.
+    if (localEndpoint) {
+      const hosts = upsertLocalDaemon([], localEndpoint);
+      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(hosts));
+      return hosts;
+    }
+
     return [];
   } catch (error) {
     console.error("[DaemonRegistry] Failed to load daemon registry", error);

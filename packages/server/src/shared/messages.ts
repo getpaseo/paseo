@@ -1056,6 +1056,7 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   baseRef: z.null(),
   aheadBehind: z.null(),
   hasRemote: z.boolean(),
+  remoteUrl: z.null(),
 });
 
 const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
@@ -1067,6 +1068,7 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   baseRef: z.string().nullable(),
   aheadBehind: AheadBehindSchema.nullable(),
   hasRemote: z.boolean(),
+  remoteUrl: z.string().nullable(),
 });
 
 const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
@@ -1078,6 +1080,7 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   baseRef: z.string(),
   aheadBehind: AheadBehindSchema.nullable(),
   hasRemote: z.boolean(),
+  remoteUrl: z.string().nullable(),
 });
 
 export const CheckoutStatusResponseSchema = z.object({
