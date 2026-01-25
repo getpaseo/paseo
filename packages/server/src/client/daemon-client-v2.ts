@@ -999,7 +999,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      120000,
+      30000,
       { skipQueue: true }
     );
 
@@ -1013,7 +1013,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      120000,
+      30000,
       { skipQueue: true }
     ).then((payload) => {
       throw new Error(payload.error);

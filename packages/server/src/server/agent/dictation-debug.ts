@@ -4,20 +4,18 @@ import { join } from "path";
 import { inferAudioExtension, sanitizeForFilename } from "./audio-utils.js";
 import { resolveRecordingsDebugDir } from "./recordings-debug.js";
 
-const debugDir = resolveRecordingsDebugDir("STT_DEBUG_AUDIO_DIR");
+const debugDir = resolveRecordingsDebugDir("DICTATION_DEBUG_AUDIO_DIR");
 let announced = false;
 
-export interface DebugAudioMetadata {
+export interface DictationDebugAudioMetadata {
   sessionId: string;
-  agentId?: string;
-  requestId?: string;
-  label?: string;
+  dictationId: string;
   format: string;
 }
 
-export async function maybePersistDebugAudio(
+export async function maybePersistDictationDebugAudio(
   audio: Buffer,
-  metadata: DebugAudioMetadata,
+  metadata: DictationDebugAudioMetadata,
   logger: pino.Logger
 ): Promise<string | null> {
   if (!debugDir) {
@@ -25,7 +23,7 @@ export async function maybePersistDebugAudio(
   }
 
   if (!announced) {
-    logger.info({ debugDir }, "Raw audio capture enabled");
+    logger.info({ debugDir }, "Dictation audio capture enabled");
     announced = true;
   }
 
@@ -33,17 +31,7 @@ export async function maybePersistDebugAudio(
   const folder = join(debugDir, sanitizeForFilename(metadata.sessionId, "session"));
   await mkdir(folder, { recursive: true });
 
-  const parts = [timestamp];
-  if (metadata.agentId) {
-    parts.push(sanitizeForFilename(metadata.agentId, "agent"));
-  }
-  if (metadata.label) {
-    parts.push(sanitizeForFilename(metadata.label, "source"));
-  }
-  if (metadata.requestId) {
-    parts.push(sanitizeForFilename(metadata.requestId, "request"));
-  }
-
+  const parts = [timestamp, sanitizeForFilename(metadata.dictationId, "dictation")];
   const ext = inferAudioExtension(metadata.format);
   const filePath = join(folder, `${parts.join("_")}.${ext}`);
   await writeFile(filePath, audio);

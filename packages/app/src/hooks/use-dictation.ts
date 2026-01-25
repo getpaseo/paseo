@@ -200,6 +200,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const handleStreamingTranscriptionSuccess = useCallback(
     (text: string, requestId: string) => {
       setIsProcessing(false);
+      isProcessingRef.current = false;
       setPartialTranscript("");
       setDuration(0);
       setStatus("idle");
@@ -220,6 +221,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       const normalized = toError(failure);
       const failureId = generateMessageId();
       setIsProcessing(false);
+      isProcessingRef.current = false;
       isRecordingRef.current = false;
       setIsRecording(false);
 
@@ -447,9 +449,14 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
         stopDurationTracking();
         setDuration(0);
         setIsProcessing(false);
+        isProcessingRef.current = false;
         setError(null);
-        setStatus("idle");
-        clearStreamingState();
+        if (senderRef.current?.hasSegments()) {
+          setStatus("failed");
+        } else {
+          setStatus("idle");
+          clearStreamingState();
+        }
       }
     }
   }, [autoStopWhenHidden?.isVisible, clearStreamingState, stopDurationTracking]);

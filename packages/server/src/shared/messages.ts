@@ -842,6 +842,7 @@ export const DictationStreamFinalMessageSchema = z.object({
   payload: z.object({
     dictationId: z.string(),
     text: z.string(),
+    debugRecordingPath: z.string().optional(),
   }),
 });
 
@@ -851,6 +852,7 @@ export const DictationStreamErrorMessageSchema = z.object({
     dictationId: z.string(),
     error: z.string(),
     retryable: z.boolean(),
+    debugRecordingPath: z.string().optional(),
   }),
 });
 

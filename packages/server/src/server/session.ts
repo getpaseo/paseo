@@ -37,6 +37,9 @@ import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
 import { OpenAIRealtimeTranscriptionSession } from "./agent/openai-realtime-transcription.js";
 import { Pcm16MonoResampler } from "./agent/pcm16-resampler.js";
+import { maybePersistDictationDebugAudio } from "./agent/dictation-debug.js";
+import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
+import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
   buildConfigOverrides,
@@ -145,7 +148,7 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
 
 const DICTATION_PCM_INPUT_RATE = 16000;
 const DICTATION_PCM_OUTPUT_RATE = 24000;
-const DICTATION_FINAL_TIMEOUT_MS = 120000;
+const DICTATION_FINAL_TIMEOUT_MS = 30000;
 const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
   process.env.OPENAI_REALTIME_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10
@@ -322,6 +325,8 @@ export class Session {
       inputFormat: string;
       openai: OpenAIRealtimeTranscriptionSession;
       resampler: Pcm16MonoResampler;
+      debugAudioChunks: Buffer[];
+      debugRecordingPath: string | null;
       receivedChunks: Map<number, Buffer>;
       nextSeqToForward: number;
       ackSeq: number;
@@ -341,6 +346,12 @@ export class Session {
   private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
   private bufferTimeout: NodeJS.Timeout | null = null;
   private audioBuffer: AudioBufferState | null = null;
+
+  // Optional TTS debug capture (persisted per utterance)
+  private readonly ttsDebugStreams = new Map<
+    string,
+    { format: string; chunks: Buffer[] }
+  >();
 
   // Conversation history
   private messages: ModelMessage[] = [];
@@ -1299,6 +1310,65 @@ export class Session {
     });
   }
 
+  private async maybePersistDictationStreamAudio(dictationId: string): Promise<string | null> {
+    const state = this.dictationStreams.get(dictationId) ?? null;
+    if (!state) {
+      return null;
+    }
+    if (state.debugRecordingPath) {
+      return state.debugRecordingPath;
+    }
+    if (state.debugAudioChunks.length === 0) {
+      return null;
+    }
+
+    const pcmBuffer = Buffer.concat(state.debugAudioChunks);
+    const wavBuffer = convertPCMToWavBuffer(
+      pcmBuffer,
+      DICTATION_PCM_OUTPUT_RATE,
+      PCM_CHANNELS,
+      PCM_BITS_PER_SAMPLE
+    );
+
+    const path = await maybePersistDictationDebugAudio(
+      wavBuffer,
+      { sessionId: this.sessionId, dictationId, format: "audio/wav" },
+      this.sessionLogger
+    );
+    state.debugRecordingPath = path;
+    return path;
+  }
+
+  private async failAndCleanupDictationStream(
+    dictationId: string,
+    error: string,
+    retryable: boolean
+  ): Promise<void> {
+    const debugRecordingPath = await this.maybePersistDictationStreamAudio(dictationId);
+    this.emit({
+      type: "dictation_stream_error",
+      payload: {
+        dictationId,
+        error,
+        retryable,
+        ...(debugRecordingPath ? { debugRecordingPath } : {}),
+      },
+    });
+    if (debugRecordingPath) {
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "system",
+          content: `Saved dictation audio: ${debugRecordingPath}`,
+          metadata: { recordingPath: debugRecordingPath, dictationId },
+        },
+      });
+    }
+    this.cleanupDictationStream(dictationId);
+  }
+
   private cleanupDictationStream(dictationId: string): void {
     const state = this.dictationStreams.get(dictationId) ?? null;
     if (!state) {
@@ -1354,12 +1424,30 @@ export class Session {
       .join(" ")
       .trim();
 
-    this.emit({
-      type: "dictation_stream_final",
-      payload: { dictationId, text: orderedText },
-    });
-
-    this.cleanupDictationStream(dictationId);
+    void (async () => {
+      const debugRecordingPath = await this.maybePersistDictationStreamAudio(dictationId);
+      this.emit({
+        type: "dictation_stream_final",
+        payload: {
+          dictationId,
+          text: orderedText,
+          ...(debugRecordingPath ? { debugRecordingPath } : {}),
+        },
+      });
+      if (debugRecordingPath) {
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "system",
+            content: `Saved dictation audio: ${debugRecordingPath}`,
+            metadata: { recordingPath: debugRecordingPath, dictationId },
+          },
+        });
+      }
+      this.cleanupDictationStream(dictationId);
+    })();
   }
 
   private async handleDictationStreamStart(
@@ -1433,8 +1521,7 @@ export class Session {
 
     openai.on("error", (err) => {
       const message = err instanceof Error ? err.message : String(err);
-      this.failDictationStream(dictationId, message, true);
-      this.cleanupDictationStream(dictationId);
+      void this.failAndCleanupDictationStream(dictationId, message, true);
     });
 
     await openai.connect();
@@ -1447,6 +1534,8 @@ export class Session {
         inputRate: DICTATION_PCM_INPUT_RATE,
         outputRate: DICTATION_PCM_OUTPUT_RATE,
       }),
+      debugAudioChunks: [],
+      debugRecordingPath: null,
       receivedChunks: new Map(),
       nextSeqToForward: 0,
       ackSeq: -1,
@@ -1474,7 +1563,7 @@ export class Session {
     }
 
     if (msg.format !== state.inputFormat) {
-      this.failDictationStream(
+      void this.failAndCleanupDictationStream(
         msg.dictationId,
         `Mismatched dictation stream format: ${msg.format}`,
         false
@@ -1499,6 +1588,7 @@ export class Session {
       const resampled = state.resampler.processChunk(pcm16);
       if (resampled.length > 0) {
         state.openai.appendPcm16Base64(resampled.toString("base64"));
+        state.debugAudioChunks.push(resampled);
         state.bytesSinceCommit += resampled.length;
         state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
       }
@@ -1573,7 +1663,9 @@ export class Session {
             { dictationId: msg.dictationId, silenceMs: DICTATION_FLUSH_SILENCE_MS, silenceBytes },
             "Dictation finish: appending silence tail for semantic VAD flush"
           );
-          state.openai.appendPcm16Base64(Buffer.alloc(silenceBytes).toString("base64"));
+          const silence = Buffer.alloc(silenceBytes);
+          state.openai.appendPcm16Base64(silence.toString("base64"));
+          state.debugAudioChunks.push(silence);
           state.bytesSinceCommit += silenceBytes;
         }
         state.awaitingFinalCommit = true;
@@ -1586,12 +1678,11 @@ export class Session {
       clearTimeout(state.finalTimeout);
     }
     state.finalTimeout = setTimeout(() => {
-      this.failDictationStream(
+      void this.failAndCleanupDictationStream(
         msg.dictationId,
         "Timed out waiting for final transcription",
         true
       );
-      this.cleanupDictationStream(msg.dictationId);
     }, DICTATION_FINAL_TIMEOUT_MS);
 
     this.maybeFinalizeDictationStream(msg.dictationId);
@@ -4109,7 +4200,9 @@ export class Session {
     });
 
     try {
+      const requestId = uuidv4();
       const result = await this.sttManager.transcribe(audio, format, {
+        requestId,
         label: this.isRealtimeMode ? "realtime" : "buffered",
       });
 
@@ -4137,7 +4230,7 @@ export class Session {
           text: result.text,
           language: result.language,
           duration: result.duration,
-          requestId: uuidv4(),
+          requestId,
           avgLogprob: result.avgLogprob,
           isLowConfidence: result.isLowConfidence,
           byteLength: result.byteLength,
@@ -4145,6 +4238,23 @@ export class Session {
           debugRecordingPath: result.debugRecordingPath,
         },
       });
+
+      if (result.debugRecordingPath) {
+        this.emit({
+          type: "activity_log",
+          payload: {
+            id: uuidv4(),
+            timestamp: new Date(),
+            type: "system",
+            content: `Saved input audio: ${result.debugRecordingPath}`,
+            metadata: {
+              recordingPath: result.debugRecordingPath,
+              format: result.format,
+              requestId,
+            },
+          },
+        });
+      }
 
       // Emit activity log
       this.emit({
@@ -4657,6 +4767,7 @@ export class Session {
   private createAbortController(): AbortController {
     this.abortController.abort();
     this.abortController = new AbortController();
+    this.ttsDebugStreams.clear();
     return this.abortController;
   }
 
@@ -4702,6 +4813,54 @@ export class Session {
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
+    if (
+      msg.type === "audio_output" &&
+      (process.env.TTS_DEBUG_AUDIO_DIR || isPaseoDictationDebugEnabled()) &&
+      msg.payload.groupId &&
+      typeof msg.payload.audio === "string"
+    ) {
+      const groupId = msg.payload.groupId;
+      const existing =
+        this.ttsDebugStreams.get(groupId) ??
+        ({ format: msg.payload.format, chunks: [] } satisfies {
+          format: string;
+          chunks: Buffer[];
+        });
+
+      try {
+        existing.chunks.push(Buffer.from(msg.payload.audio, "base64"));
+        existing.format = msg.payload.format;
+        this.ttsDebugStreams.set(groupId, existing);
+      } catch {
+        // ignore malformed base64
+      }
+
+      if (msg.payload.isLastChunk) {
+        const final = this.ttsDebugStreams.get(groupId);
+        this.ttsDebugStreams.delete(groupId);
+        if (final && final.chunks.length > 0) {
+          void (async () => {
+            const recordingPath = await maybePersistTtsDebugAudio(
+              Buffer.concat(final.chunks),
+              { sessionId: this.sessionId, groupId, format: final.format },
+              this.sessionLogger
+            );
+            if (recordingPath) {
+              this.onMessage({
+                type: "activity_log",
+                payload: {
+                  id: uuidv4(),
+                  timestamp: new Date(),
+                  type: "system",
+                  content: `Saved TTS audio: ${recordingPath}`,
+                  metadata: { recordingPath, format: final.format, groupId },
+                },
+              });
+            }
+          })();
+        }
+      }
+    }
     this.onMessage(msg);
   }
 
