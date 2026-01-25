@@ -148,6 +148,10 @@ export function parseRepoShortNameFromRemoteUrl(
  * Extracts the project name from a path (last segment).
  */
 export function deriveProjectName(projectKey: string): string {
+  const githubRemotePrefix = "remote:github.com/";
+  if (projectKey.startsWith(githubRemotePrefix)) {
+    return projectKey.slice(githubRemotePrefix.length) || projectKey;
+  }
   const segments = projectKey.split("/").filter(Boolean);
   return segments[segments.length - 1] || projectKey;
 }

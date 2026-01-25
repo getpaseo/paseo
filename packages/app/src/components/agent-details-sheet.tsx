@@ -133,7 +133,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.surface2,
     backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[5],
+    paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     gap: theme.spacing[3],
   },
