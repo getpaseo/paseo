@@ -415,6 +415,7 @@ function AgentScreenContent({
   const checkoutStatusQuery = useCheckoutStatusQuery({
     serverId,
     agentId: resolvedAgentId ?? "",
+    cwd: agent?.cwd ?? "",
   });
   const checkout = checkoutStatusQuery.status;
 
@@ -795,7 +796,7 @@ function AgentScreenContent({
 
         {/* Explorer Sidebar - Desktop: inline, Mobile: overlay */}
         {!isMobile && isExplorerOpen && resolvedAgentId && (
-          <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} />
+          <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} cwd={effectiveAgent.cwd} />
         )}
       </View>
   );
@@ -812,7 +813,7 @@ function AgentScreenContent({
 
       {/* Mobile Explorer Sidebar Overlay */}
       {isMobile && resolvedAgentId && (
-        <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} />
+        <ExplorerSidebar serverId={serverId} agentId={resolvedAgentId} cwd={effectiveAgent.cwd} />
       )}
     </>
   );

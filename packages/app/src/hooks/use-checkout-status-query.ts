@@ -11,13 +11,14 @@ import {
 
 export const CHECKOUT_STATUS_STALE_TIME = 15_000;
 
-export function checkoutStatusQueryKey(serverId: string, agentId: string) {
-  return ["checkoutStatus", serverId, agentId] as const;
+export function checkoutStatusQueryKey(serverId: string, cwd: string) {
+  return ["checkoutStatus", serverId, cwd] as const;
 }
 
 interface UseCheckoutStatusQueryOptions {
   serverId: string;
   agentId: string;
+  cwd: string;
 }
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -29,7 +30,7 @@ function fetchCheckoutStatus(
   return client.getCheckoutStatus(agentId);
 }
 
-export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQueryOptions) {
+export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutStatusQueryOptions) {
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
@@ -44,14 +45,14 @@ export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQ
   const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   const query = useQuery({
-    queryKey: checkoutStatusQueryKey(serverId, agentId),
+    queryKey: checkoutStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client not available");
       }
       return await fetchCheckoutStatus(client, agentId);
     },
-    enabled: !!client && isConnected && !!agentId,
+    enabled: !!client && isConnected && !!agentId && !!cwd,
     staleTime: CHECKOUT_STATUS_STALE_TIME,
     refetchInterval: 10_000,
     refetchIntervalInBackground: true,
@@ -86,13 +87,13 @@ export function useCheckoutStatusQuery({ serverId, agentId }: UseCheckoutStatusQ
  * initiating a fetch. Useful for list rows where a parent component prefetches
  * only the visible agents.
  */
-export function useCheckoutStatusCacheOnly({ serverId, agentId }: UseCheckoutStatusQueryOptions) {
+export function useCheckoutStatusCacheOnly({ serverId, agentId, cwd }: UseCheckoutStatusQueryOptions) {
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
 
   return useQuery({
-    queryKey: checkoutStatusQueryKey(serverId, agentId),
+    queryKey: checkoutStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client not available");

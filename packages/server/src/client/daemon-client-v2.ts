@@ -213,6 +213,16 @@ const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_MESSAGE_QUEUE_LIMIT = 0;
 
+/** Default timeout for waiting for connection before sending queued messages */
+const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
+
+interface PendingSend {
+  message: SessionInboundMessage;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
 export class DaemonClientV2 {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
@@ -238,6 +248,7 @@ export class DaemonClientV2 {
   private messageQueueLimit: number | null;
   private agentIndex: Map<string, AgentSnapshotPayload> = new Map();
   private logger: Logger;
+  private pendingSendQueue: PendingSend[] = [];
 
   constructor(private config: DaemonClientV2Config) {
     this.messageQueueLimit =
@@ -308,6 +319,7 @@ export class DaemonClientV2 {
           this.lastErrorValue = null;
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" });
+          this.flushPendingSendQueue();
           this.resolveConnect();
         }),
         transport.onClose((event) => {
@@ -493,12 +505,17 @@ export class DaemonClientV2 {
   // Core Send Helpers
   // ============================================================================
 
+  /**
+   * Send a session message. For fire-and-forget messages (heartbeats, etc.),
+   * failures are suppressed if `suppressSendErrors` is configured.
+   * For RPC methods that wait for responses, use `sendSessionMessageOrThrow` instead.
+   */
   private sendSessionMessage(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
       if (this.config.suppressSendErrors) {
         return;
       }
-      throw new Error("Transport not connected");
+      throw new Error(`Transport not connected (status: ${this.connectionState.status})`);
     }
     const payload = SessionInboundMessageSchema.parse(message);
     try {
@@ -508,6 +525,78 @@ export class DaemonClientV2 {
         return;
       }
       throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  /**
+   * Send a session message for RPC methods that create waiters.
+   * If the connection is still being established ("connecting"), the message
+   * is queued and will be sent once connected (or rejected after timeout).
+   * This prevents waiters from hanging forever when called during connection.
+   */
+  private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+    const status = this.connectionState.status;
+
+    // If connected, send immediately
+    if (this.transport && status === "connected") {
+      const payload = SessionInboundMessageSchema.parse(message);
+      this.transport.send(JSON.stringify({ type: "session", message: payload }));
+      return Promise.resolve();
+    }
+
+    // If connecting, queue the message to be sent once connected
+    if (status === "connecting") {
+      return new Promise((resolve, reject) => {
+        const timeoutHandle = setTimeout(() => {
+          // Remove from queue
+          const idx = this.pendingSendQueue.findIndex((p) => p.resolve === resolve);
+          if (idx !== -1) {
+            this.pendingSendQueue.splice(idx, 1);
+          }
+          reject(new Error(`Timed out waiting for connection to send message`));
+        }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
+
+        this.pendingSendQueue.push({ message, resolve, reject, timeoutHandle });
+      });
+    }
+
+    // Not connected and not connecting - fail immediately
+    return Promise.reject(new Error(`Transport not connected (status: ${status})`));
+  }
+
+  /**
+   * Flush pending send queue - called when connection is established.
+   */
+  private flushPendingSendQueue(): void {
+    const queue = this.pendingSendQueue;
+    this.pendingSendQueue = [];
+
+    for (const pending of queue) {
+      clearTimeout(pending.timeoutHandle);
+      try {
+        if (this.transport && this.connectionState.status === "connected") {
+          const payload = SessionInboundMessageSchema.parse(pending.message);
+          this.transport.send(JSON.stringify({ type: "session", message: payload }));
+          pending.resolve();
+        } else {
+          pending.reject(new Error("Connection lost before message could be sent"));
+        }
+      } catch (error) {
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  }
+
+  /**
+   * Reject all pending sends - called when connection fails or is closed.
+   */
+  private rejectPendingSendQueue(error: Error): void {
+    const queue = this.pendingSendQueue;
+    this.pendingSendQueue = [];
+
+    for (const pending of queue) {
+      clearTimeout(pending.timeoutHandle);
+      pending.reject(error);
     }
   }
 
@@ -589,7 +678,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -612,7 +701,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -639,7 +728,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -682,7 +771,7 @@ export class DaemonClientV2 {
       { skipQueue: true }
     );
 
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     const status = await statusPromise;
     if (status.status === "agent_create_failed") {
       throw new Error(status.error);
@@ -723,7 +812,7 @@ export class DaemonClientV2 {
       { skipQueue: true }
     );
 
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -747,7 +836,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     await response;
   }
 
@@ -790,7 +879,7 @@ export class DaemonClientV2 {
       { skipQueue: true }
     );
 
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     const status = await statusPromise;
 
     return this.waitForAgentState(
@@ -824,7 +913,7 @@ export class DaemonClientV2 {
       15000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -851,7 +940,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     const payload = await response;
     if (payload.error) {
       throw new Error(payload.error);
@@ -926,7 +1015,7 @@ export class DaemonClientV2 {
       { skipQueue: true }
     );
 
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1046,10 +1135,6 @@ export class DaemonClientV2 {
     if (!requestId) {
       const existing = this.checkoutStatusInFlight.get(agentId);
       if (existing) {
-        this.logger.debug(
-          { agentId, inFlightCount: this.checkoutStatusInFlight.size },
-          "getCheckoutStatus: returning existing in-flight request"
-        );
         return existing;
       }
     }
@@ -1060,11 +1145,6 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-
-    this.logger.debug(
-      { agentId, requestId: resolvedRequestId, waiterCount: this.waiters.size },
-      "getCheckoutStatus: creating new request"
-    );
 
     const responsePromise = (async () => {
       const response = this.waitFor(
@@ -1080,30 +1160,17 @@ export class DaemonClientV2 {
         60000,
         { skipQueue: true }
       );
-      this.sendSessionMessage(message);
+      await this.sendSessionMessageOrThrow(message);
       return response;
     })();
 
     if (!requestId) {
       this.checkoutStatusInFlight.set(agentId, responsePromise);
-      responsePromise
-        .then(() => {
-          this.logger.debug(
-            { agentId, requestId: resolvedRequestId },
-            "getCheckoutStatus: request completed successfully"
-          );
-        })
-        .catch((err) => {
-          this.logger.debug(
-            { agentId, requestId: resolvedRequestId, error: err?.message },
-            "getCheckoutStatus: request failed"
-          );
-        })
-        .finally(() => {
-          if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
-            this.checkoutStatusInFlight.delete(agentId);
-          }
-        });
+      responsePromise.finally(() => {
+        if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
+          this.checkoutStatusInFlight.delete(agentId);
+        }
+      });
     }
 
     return responsePromise;
@@ -1134,7 +1201,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1164,7 +1231,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1195,7 +1262,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1225,7 +1292,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1249,7 +1316,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1280,7 +1347,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1307,7 +1374,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1335,7 +1402,7 @@ export class DaemonClientV2 {
       60000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1364,7 +1431,7 @@ export class DaemonClientV2 {
       20000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1391,7 +1458,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1418,7 +1485,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1464,7 +1531,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1499,7 +1566,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1528,7 +1595,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1560,7 +1627,7 @@ export class DaemonClientV2 {
       30000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1587,7 +1654,7 @@ export class DaemonClientV2 {
       30000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1618,7 +1685,7 @@ export class DaemonClientV2 {
       30000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1667,7 +1734,7 @@ export class DaemonClientV2 {
       timeout,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return resolved;
   }
 
@@ -1907,7 +1974,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1936,7 +2003,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -1963,7 +2030,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -2008,7 +2075,7 @@ export class DaemonClientV2 {
       10000,
       { skipQueue: true }
     );
-    this.sendSessionMessage(message);
+    await this.sendSessionMessageOrThrow(message);
     return response;
   }
 
@@ -2121,9 +2188,10 @@ export class DaemonClientV2 {
       this.lastErrorValue = reason.trim();
     }
 
-    // Clear all pending waiters since the connection was lost and responses
-    // from the previous connection will never arrive.
+    // Clear all pending waiters and queued sends since the connection was lost
+    // and responses from the previous connection will never arrive.
     this.clearWaiters(new Error(reason ?? "Connection lost"));
+    this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
 
     this.updateConnectionState({
       status: "disconnected",

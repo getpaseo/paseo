@@ -352,9 +352,10 @@ const DiffFileSection = memo(function DiffFileSection({
 interface GitDiffPaneProps {
   serverId: string;
   agentId: string;
+  cwd: string;
 }
 
-export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
+export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -366,7 +367,7 @@ export function GitDiffPane({ serverId, agentId }: GitDiffPaneProps) {
   const [actionStatus, setActionStatus] = useState<string | null>(null);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
-    useCheckoutStatusQuery({ serverId, agentId });
+    useCheckoutStatusQuery({ serverId, agentId, cwd });
   const gitStatus = status && status.isGit ? status : null;
   const isGit = Boolean(gitStatus);
   const notGit = status !== null && !status.isGit && !status.error;

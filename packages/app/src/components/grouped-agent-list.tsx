@@ -3,50 +3,52 @@ import {
   Text,
   Pressable,
   Modal,
-  RefreshControl,
-  SectionList,
-  type ViewToken,
-  type SectionListRenderItem,
 } from "react-native";
 import {
   useCallback,
   useMemo,
-  useRef,
   useState,
+  useEffect,
   type ReactElement,
+  type MutableRefObject,
 } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { type GestureType } from "react-native-gesture-handler";
 import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react-native";
+import {
+  DraggableList,
+  type DraggableRenderItemInfo,
+} from "./draggable-list";
 import { formatTimeAgo } from "@/utils/time";
 import {
   groupAgents,
   parseRepoNameFromRemoteUrl,
   parseRepoShortNameFromRemoteUrl,
-  type ProjectGroup,
 } from "@/utils/agent-grouping";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  CHECKOUT_STATUS_STALE_TIME,
   type CheckoutStatusPayload,
   checkoutStatusQueryKey,
   useCheckoutStatusCacheOnly,
+  CHECKOUT_STATUS_STALE_TIME,
 } from "@/hooks/use-checkout-status-query";
 import {
   buildAgentNavigationKey,
   startNavigationTiming,
 } from "@/utils/navigation-timing";
-
-type SectionType =
-  | { type: "project"; data: ProjectGroup };
+import {
+  useSectionOrderStore,
+  sortProjectsByStoredOrder,
+} from "@/stores/section-order-store";
 
 interface SectionData {
   key: string;
+  projectKey: string;
   title: string;
-  type: "project";
-  data: AggregatedAgent[];
+  agents: AggregatedAgent[];
   /** For project sections, the first agent's serverId (to lookup checkout status) */
   firstAgentServerId?: string;
   /** For project sections, the first agent's id (to lookup checkout status) */
@@ -62,6 +64,8 @@ interface GroupedAgentListProps {
   selectedAgentId?: string;
   onAgentSelect?: () => void;
   listFooterComponent?: ReactElement | null;
+  /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
 }
 
 interface SectionHeaderProps {
@@ -69,6 +73,8 @@ interface SectionHeaderProps {
   isCollapsed: boolean;
   onToggle: () => void;
   onCreateAgent: (workingDir: string) => void;
+  onDrag: () => void;
+  isDragging: boolean;
 }
 
 function SectionHeader({
@@ -76,6 +82,8 @@ function SectionHeader({
   isCollapsed,
   onToggle,
   onCreateAgent,
+  onDrag,
+  isDragging,
 }: SectionHeaderProps) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
@@ -84,12 +92,13 @@ function SectionHeader({
   const checkoutQuery = useCheckoutStatusCacheOnly({
     serverId: section.firstAgentServerId ?? "",
     agentId: section.firstAgentId ?? "",
+    cwd: section.workingDir ?? "",
   });
   const checkout = checkoutQuery.data ?? null;
 
   // Derive display title: prefer repo name from remote URL, fallback to path-based name
   let displayTitle = section.title;
-  if (section.type === "project" && checkout?.isGit && checkout.remoteUrl) {
+  if (checkout?.isGit && checkout.remoteUrl) {
     const isGitHubRemote =
       checkout.remoteUrl.includes("github.com") ||
       checkout.remoteUrl.includes("git@github.com:");
@@ -115,12 +124,16 @@ function SectionHeader({
 
   return (
     <Pressable
-      style={[
+      style={({ pressed }) => [
         styles.sectionHeader,
         isHovered && styles.sectionHeaderHovered,
+        pressed && styles.sectionHeaderPressed,
         !isCollapsed && styles.sectionHeaderExpanded,
+        isDragging && styles.sectionHeaderDragging,
       ]}
       onPress={onToggle}
+      onLongPress={onDrag}
+      delayLongPress={200}
       onHoverIn={() => setIsHovered(true)}
       onHoverOut={() => setIsHovered(false)}
     >
@@ -132,10 +145,7 @@ function SectionHeader({
       <View style={styles.sectionHeaderRight}>
         {section.workingDir && (
           <Pressable
-            style={[
-              styles.createAgentButton,
-              { opacity: isHovered ? 1 : 0 },
-            ]}
+            style={styles.createAgentButton}
             onPress={handleCreatePress}
             onHoverIn={() => setIsHovered(true)}
             onHoverOut={() => setIsHovered(true)}
@@ -165,6 +175,7 @@ export function GroupedAgentList({
   selectedAgentId,
   onAgentSelect,
   listFooterComponent,
+  parentGestureRef,
 }: GroupedAgentListProps) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
@@ -249,12 +260,42 @@ export function GroupedAgentList({
     []
   );
 
+  // Prefetch checkout status for all agents in the sidebar.
+  // The sidebar shows a limited number of agents, so we fetch all of them upfront
+  // to ensure project grouping (by remote URL) is stable from the start.
+  useEffect(() => {
+    for (const agent of agents) {
+      const session = useSessionStore.getState().sessions[agent.serverId];
+      const client = session?.client ?? null;
+      const isConnected = session?.connection.isConnected ?? false;
+      if (!client || !isConnected) {
+        continue;
+      }
+
+      const queryKey = checkoutStatusQueryKey(agent.serverId, agent.cwd);
+      const queryState = queryClient.getQueryState(queryKey);
+      const isFetching = queryState?.fetchStatus === "fetching";
+      const isFresh =
+        typeof queryState?.dataUpdatedAt === "number" &&
+        Date.now() - queryState.dataUpdatedAt < CHECKOUT_STATUS_STALE_TIME;
+      if (isFetching || isFresh) {
+        continue;
+      }
+
+      void queryClient.prefetchQuery({
+        queryKey,
+        queryFn: async () => await client.getCheckoutStatus(agent.id),
+        staleTime: CHECKOUT_STATUS_STALE_TIME,
+      });
+    }
+  }, [agents, queryClient]);
+
   // Subscribe to checkout status cache entries so project grouping can react
   // to remote URL updates (e.g. git worktrees in different directories).
   const checkoutCacheQueries = useQueries({
     queries: agents.map(
       (agent): UseQueryOptions<CheckoutStatusPayload> => ({
-      queryKey: checkoutStatusQueryKey(agent.serverId, agent.id),
+      queryKey: checkoutStatusQueryKey(agent.serverId, agent.cwd),
       enabled: false,
       staleTime: CHECKOUT_STATUS_STALE_TIME,
       queryFn: async (): Promise<CheckoutStatusPayload> => {
@@ -278,6 +319,10 @@ export function GroupedAgentList({
     return result;
   }, [agents, checkoutCacheQueries]);
 
+  // Section order from store
+  const projectOrder = useSectionOrderStore((state) => state.projectOrder);
+  const setProjectOrder = useSectionOrderStore((state) => state.setProjectOrder);
+
   // Group agents
   const { activeGroups } = useMemo(
     () =>
@@ -288,19 +333,24 @@ export function GroupedAgentList({
     [agents, remoteUrlByAgentKey]
   );
 
-  // Build sections for SectionList
+  // Sort groups by persisted order
+  const sortedGroups = useMemo(
+    () => sortProjectsByStoredOrder(activeGroups, projectOrder),
+    [activeGroups, projectOrder]
+  );
+
+  // Build sections for DraggableFlatList
   const sections: SectionData[] = useMemo(() => {
     const result: SectionData[] = [];
 
-    for (const group of activeGroups) {
+    for (const group of sortedGroups) {
       const sectionKey = `project:${group.projectKey}`;
-      const isCollapsed = collapsedSections.has(sectionKey);
       const firstAgent = group.agents[0];
       result.push({
         key: sectionKey,
+        projectKey: group.projectKey,
         title: group.projectName,
-        type: "project",
-        data: isCollapsed ? [] : group.agents,
+        agents: group.agents,
         firstAgentServerId: firstAgent?.serverId,
         firstAgentId: firstAgent?.id,
         workingDir: firstAgent?.cwd,
@@ -308,45 +358,26 @@ export function GroupedAgentList({
     }
 
     return result;
-  }, [activeGroups, collapsedSections]);
+  }, [sortedGroups]);
 
-  const viewabilityConfig = useMemo(
-    () => ({ itemVisiblePercentThreshold: 30 }),
-    []
-  );
+  // Sync section order when new projects appear
+  useEffect(() => {
+    const currentKeys = sections.map((s) => s.projectKey);
+    const storedKeys = new Set(projectOrder);
+    const newKeys = currentKeys.filter((key) => !storedKeys.has(key));
 
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
-      for (const token of viewableItems) {
-        const agent = token.item as AggregatedAgent | undefined;
-        if (!agent) {
-          continue;
-        }
-
-        const session = useSessionStore.getState().sessions[agent.serverId];
-        const client = session?.client ?? null;
-        const isConnected = session?.connection.isConnected ?? false;
-        if (!client || !isConnected) {
-          continue;
-        }
-
-        const queryKey = checkoutStatusQueryKey(agent.serverId, agent.id);
-        const queryState = queryClient.getQueryState(queryKey);
-        const isFetching = queryState?.fetchStatus === "fetching";
-        const isFresh =
-          typeof queryState?.dataUpdatedAt === "number" &&
-          Date.now() - queryState.dataUpdatedAt < CHECKOUT_STATUS_STALE_TIME;
-        if (isFetching || isFresh) {
-          continue;
-        }
-
-        void queryClient.prefetchQuery({
-          queryKey,
-          queryFn: async () => await client.getCheckoutStatus(agent.id),
-          staleTime: CHECKOUT_STATUS_STALE_TIME,
-        });
-      }
+    if (newKeys.length > 0) {
+      // Add new projects at the end of the stored order
+      setProjectOrder([...projectOrder, ...newKeys]);
     }
+  }, [sections, projectOrder, setProjectOrder]);
+
+  const handleDragEnd = useCallback(
+    (newData: SectionData[]) => {
+      const newOrder = newData.map((section) => section.projectKey);
+      setProjectOrder(newOrder);
+    },
+    [setProjectOrder]
   );
 
   const AgentListRow = useCallback(
@@ -364,6 +395,7 @@ export function GroupedAgentList({
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
         agentId: agent.id,
+        cwd: agent.cwd,
       });
       const checkout = checkoutQuery.data ?? null;
       const activeBranchLabel = checkout?.isGit
@@ -418,60 +450,49 @@ export function GroupedAgentList({
     ]
   );
 
-  const renderItem: SectionListRenderItem<AggregatedAgent, SectionData> =
-    useCallback(({ item: agent }) => <AgentListRow agent={agent} />, [AgentListRow]);
-
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: SectionData }) => {
+  const renderSection = useCallback(
+    ({ item: section, drag, isActive }: DraggableRenderItemInfo<SectionData>) => {
       const isCollapsed = collapsedSections.has(section.key);
 
       return (
-        <SectionHeader
-          section={section}
-          isCollapsed={isCollapsed}
-          onToggle={() => toggleSection(section.key)}
-          onCreateAgent={handleCreateAgentInProject}
-        />
+        <View style={isActive && styles.sectionDragging}>
+          <SectionHeader
+            section={section}
+            isCollapsed={isCollapsed}
+            onToggle={() => toggleSection(section.key)}
+            onCreateAgent={handleCreateAgentInProject}
+            onDrag={drag}
+            isDragging={isActive}
+          />
+          {!isCollapsed &&
+            section.agents.map((agent) => (
+              <AgentListRow key={`${agent.serverId}:${agent.id}`} agent={agent} />
+            ))}
+        </View>
       );
     },
-    [collapsedSections, toggleSection, handleCreateAgentInProject]
+    [AgentListRow, collapsedSections, handleCreateAgentInProject, toggleSection]
   );
 
   const keyExtractor = useCallback(
-    (agent: AggregatedAgent) => `${agent.serverId}:${agent.id}`,
+    (section: SectionData) => section.key,
     []
   );
 
   return (
     <>
-      <SectionList
-        sections={sections}
+      <DraggableList
+        data={sections}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader}
-        stickySectionHeadersEnabled={false}
-        extraData={selectedAgentId}
+        renderItem={renderSection}
+        onDragEnd={handleDragEnd}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        initialNumToRender={12}
-        windowSize={7}
-        maxToRenderPerBatch={12}
-        updateCellsBatchingPeriod={16}
         ListFooterComponent={listFooterComponent}
-        onViewableItemsChanged={onViewableItemsChanged.current}
-        viewabilityConfig={viewabilityConfig}
-        refreshControl={
-          onRefresh ? (
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.colors.foregroundMuted}
-              colors={[theme.colors.foregroundMuted]}
-            />
-          ) : undefined
-        }
+        refreshing={isRefreshing}
+        onRefresh={onRefresh}
+        simultaneousGestureRef={parentGestureRef}
       />
 
       <Modal
@@ -528,7 +549,6 @@ export function GroupedAgentList({
 const styles = StyleSheet.create((theme) => ({
   list: {
     flex: 1,
-    minHeight: 0,
   },
   listContent: {
     paddingHorizontal: theme.spacing[4],
@@ -548,8 +568,17 @@ const styles = StyleSheet.create((theme) => ({
   sectionHeaderHovered: {
     backgroundColor: theme.colors.surface1,
   },
+  sectionHeaderPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
   sectionHeaderExpanded: {
     marginBottom: theme.spacing[1],
+  },
+  sectionHeaderDragging: {
+    backgroundColor: theme.colors.surface2,
+  },
+  sectionDragging: {
+    opacity: 0.9,
   },
   sectionHeaderLeft: {
     flexDirection: "row",

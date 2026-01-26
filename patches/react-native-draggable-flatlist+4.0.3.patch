@@ -1,0 +1,18 @@
+diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
+index 7c88afc..b630940 100644
+--- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
++++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
+@@ -332,6 +332,13 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+       panGesture.activeOffsetY(activeOffset);
+     }
+   }
++  if (props.simultaneousHandlers) {
++    panGesture.simultaneousWithExternalGesture(
++      ...(Array.isArray(props.simultaneousHandlers)
++        ? props.simultaneousHandlers
++        : [props.simultaneousHandlers])
++    );
++  }
+ 
+   const onScroll = useStableCallback((scrollOffset: number) => {
+     props.onScrollOffsetChange?.(scrollOffset);

@@ -3930,10 +3930,11 @@ export class Session {
       );
 
       // Add persisted agents that have not been lazily initialized yet
+      // (excluding internal agents which are for ephemeral system tasks)
       const registryRecords = await this.agentStorage.list();
       const liveIds = new Set(agentSnapshots.map((a) => a.id));
       const persistedAgents = registryRecords
-        .filter((record) => !liveIds.has(record.id))
+        .filter((record) => !liveIds.has(record.id) && !record.internal)
         .map((record) => this.buildStoredAgentPayload(record));
 
       const agents = [...liveAgents, ...persistedAgents];

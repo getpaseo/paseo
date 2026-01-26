@@ -44,6 +44,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     animateToOpen,
     animateToClose,
     isGesturing,
+    closeGestureRef,
   } = useSidebarAnimation();
   const trafficLightPadding = useTrafficLightPadding();
   const dragHandlers = useTauriDragHandlers();
@@ -124,11 +125,16 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   }, [backdropOpacity, closeToAgent, isMobile, translateX, windowWidth]);
 
   // Close gesture (swipe left to close when sidebar is open)
+  // Only activates on leftward swipe, fails on rightward or vertical movement
+  // This mirrors the explorer-sidebar pattern for the right sidebar
   const closeGesture = Gesture.Pan()
+    .withRef(closeGestureRef)
     .enabled(isOpen)
-    // Only activate after 15px horizontal movement
-    .activeOffsetX([-15, 15])
-    // Fail if 10px vertical movement happens first (allow vertical scroll)
+    // Only activate on leftward swipe (negative X)
+    .activeOffsetX(-15)
+    // Fail on rightward movement (allow internal list scrolling)
+    .failOffsetX(10)
+    // Fail if vertical movement happens first (allow vertical scroll)
     .failOffsetY([-10, 10])
     .onStart(() => {
       isGesturing.value = true;
@@ -214,6 +220,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 onRefresh={handleRefresh}
                 selectedAgentId={selectedAgentId}
                 onAgentSelect={handleAgentSelectMobile}
+                parentGestureRef={closeGestureRef}
               />
 
               {/* Footer */}
