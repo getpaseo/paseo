@@ -616,6 +616,12 @@ export const FileExplorerRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectIconRequestSchema = z.object({
+  type: z.literal("project_icon_request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
 export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal("file_download_token_request"),
   agentId: z.string(),
@@ -745,6 +751,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveRequestSchema,
   HighlightedDiffRequestSchema,
   FileExplorerRequestSchema,
+  ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
   GitRepoInfoRequestMessageSchema,
   ClearAgentAttentionMessageSchema,
@@ -1221,6 +1228,21 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+const ProjectIconSchema = z.object({
+  data: z.string(),
+  mimeType: z.string(),
+});
+
+export const ProjectIconResponseSchema = z.object({
+  type: z.literal("project_icon_response"),
+  payload: z.object({
+    cwd: z.string(),
+    icon: ProjectIconSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileDownloadTokenResponseSchema = z.object({
   type: z.literal("file_download_token_response"),
   payload: z.object({
@@ -1406,6 +1428,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   HighlightedDiffResponseSchema,
   FileExplorerResponseSchema,
+  ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
@@ -1499,6 +1522,9 @@ export type HighlightedDiffRequest = z.infer<typeof HighlightedDiffRequestSchema
 export type HighlightedDiffResponse = z.infer<typeof HighlightedDiffResponseSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
+export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
+export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
 export type GitRepoInfoResponse = z.infer<typeof GitRepoInfoResponseSchema>;

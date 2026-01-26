@@ -3,6 +3,7 @@ import {
   Text,
   Pressable,
   Modal,
+  Image,
 } from "react-native";
 import {
   useCallback,
@@ -43,6 +44,7 @@ import {
   useSectionOrderStore,
   sortProjectsByStoredOrder,
 } from "@/stores/section-order-store";
+import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
 
 interface SectionData {
   key: string;
@@ -96,6 +98,13 @@ function SectionHeader({
   });
   const checkout = checkoutQuery.data ?? null;
 
+  // Get project icon
+  const iconQuery = useProjectIconQuery({
+    serverId: section.firstAgentServerId ?? "",
+    cwd: section.workingDir ?? "",
+  });
+  const icon = iconQuery.icon;
+
   // Derive display title: prefer repo name from remote URL, fallback to path-based name
   let displayTitle = section.title;
   if (checkout?.isGit && checkout.remoteUrl) {
@@ -138,6 +147,12 @@ function SectionHeader({
       onHoverOut={() => setIsHovered(false)}
     >
       <View style={styles.sectionHeaderLeft}>
+        {icon && (
+          <Image
+            source={{ uri: `data:${icon.mimeType};base64,${icon.data}` }}
+            style={styles.projectIcon}
+          />
+        )}
         <Text style={styles.sectionTitle} numberOfLines={1}>
           {displayTitle}
         </Text>
@@ -586,6 +601,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-start",
     flex: 1,
     minWidth: 0,
+    gap: theme.spacing[2],
+  },
+  projectIcon: {
+    width: 16,
+    height: 16,
+    borderRadius: theme.borderRadius.sm,
   },
   sectionHeaderRight: {
     flexDirection: "row",

@@ -326,7 +326,8 @@ export class AgentManager {
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    agentId?: string
+    agentId?: string,
+    timestamps?: { createdAt?: Date; updatedAt?: Date; lastUserMessageAt?: Date | null }
   ): Promise<ManagedAgent> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const mergedConfig = {
@@ -344,7 +345,8 @@ export class AgentManager {
     return this.registerSession(
       session,
       normalizedConfig,
-      agentId ?? this.idFactory()
+      agentId ?? this.idFactory(),
+      timestamps
     );
   }
 
@@ -792,7 +794,8 @@ export class AgentManager {
   private async registerSession(
     session: AgentSession,
     config: AgentSessionConfig,
-    agentId: string
+    agentId: string,
+    timestamps?: { createdAt?: Date; updatedAt?: Date; lastUserMessageAt?: Date | null }
   ): Promise<ManagedAgent> {
     if (this.agents.has(agentId)) {
       throw new Error(`Agent with id ${agentId} already exists`);
@@ -801,6 +804,7 @@ export class AgentManager {
     // Inform the session of its managed agent ID for MCP parent-child relationships
     session.setManagedAgentId?.(agentId);
 
+    const now = new Date();
     const managed = {
       id: agentId,
       provider: config.provider,
@@ -810,8 +814,8 @@ export class AgentManager {
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: timestamps?.createdAt ?? now,
+      updatedAt: timestamps?.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map(),
@@ -819,7 +823,7 @@ export class AgentManager {
       timeline: [],
       persistence: session.describePersistence(),
       historyPrimed: false,
-      lastUserMessageAt: null,
+      lastUserMessageAt: timestamps?.lastUserMessageAt ?? null,
       attention: { requiresAttention: false },
       parentAgentId: config.parentAgentId,
       internal: config.internal ?? false,
