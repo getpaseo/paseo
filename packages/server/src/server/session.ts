@@ -44,6 +44,7 @@ import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
+  extractTimestamps,
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -101,6 +102,7 @@ import {
   createPullRequest,
   getPullRequestStatus,
 } from "../utils/checkout-git.js";
+import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import type pino from "pino";
 
@@ -721,7 +723,8 @@ export class Session {
         snapshot = await this.agentManager.resumeAgent(
           handle,
           buildConfigOverrides(record),
-          agentId
+          agentId,
+          extractTimestamps(record)
         );
       } else {
         const config = buildSessionConfig(record);
@@ -933,6 +936,10 @@ export class Session {
 
         case "file_explorer_request":
           await this.handleFileExplorerRequest(msg);
+          break;
+
+        case "project_icon_request":
+          await this.handleProjectIconRequest(msg);
           break;
 
         case "file_download_token_request":
@@ -1952,7 +1959,8 @@ export class Session {
         snapshot = await this.agentManager.resumeAgent(
           handle,
           buildConfigOverrides(record),
-          agentId
+          agentId,
+          extractTimestamps(record)
         );
       }
       await this.agentManager.primeAgentHistory(agentId);
@@ -3829,6 +3837,38 @@ export class Session {
           mode,
           directory: null,
           file: null,
+          error: error.message,
+          requestId,
+        },
+      });
+    }
+  }
+
+  /**
+   * Handle project icon request for a given cwd
+   */
+  private async handleProjectIconRequest(
+    request: Extract<SessionInboundMessage, { type: "project_icon_request" }>
+  ): Promise<void> {
+    const { cwd, requestId } = request;
+
+    try {
+      const icon = await getProjectIcon(cwd);
+      this.emit({
+        type: "project_icon_response",
+        payload: {
+          cwd,
+          icon,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error: any) {
+      this.emit({
+        type: "project_icon_response",
+        payload: {
+          cwd,
+          icon: null,
           error: error.message,
           requestId,
         },

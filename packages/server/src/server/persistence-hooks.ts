@@ -74,3 +74,13 @@ export function buildSessionConfig(
     extra: overrides.extra,
   };
 }
+
+export function extractTimestamps(
+  record: StoredAgentRecord
+): { createdAt: Date; updatedAt: Date; lastUserMessageAt: Date | null } {
+  return {
+    createdAt: new Date(record.createdAt),
+    updatedAt: new Date(record.lastActivityAt ?? record.updatedAt),
+    lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+  };
+}

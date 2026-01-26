@@ -31,6 +31,7 @@ import type {
 	  CheckoutPrStatusResponse,
 	  PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
+  ProjectIconResponse,
   ListCommandsResponse,
   ExecuteCommandResponse,
   ListVoiceConversationsResponseMessage,
@@ -1585,6 +1586,33 @@ export class DaemonClientV2 {
     const response = this.waitFor(
       (msg) => {
         if (msg.type !== "file_download_token_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    return response;
+  }
+
+  async requestProjectIcon(
+    cwd: string,
+    requestId?: string
+  ): Promise<ProjectIconResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "project_icon_request",
+      cwd,
+      requestId: resolvedRequestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "project_icon_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
