@@ -9,7 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { ChevronRight, Plus, Settings } from "lucide-react-native";
+import { Plus, Settings, Users } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { GroupedAgentList } from "./grouped-agent-list";
@@ -170,20 +170,6 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
-  const viewMoreButton = (
-    <View style={styles.viewMoreContainer}>
-      <Pressable
-        style={({ hovered, pressed }) => [
-          styles.viewMoreButton,
-          (hovered || pressed) && styles.viewMoreButtonHovered,
-        ]}
-        onPress={handleViewMore}
-      >
-        <Text style={styles.viewMoreButtonText}>All agents</Text>
-        <ChevronRight size={16} color={theme.colors.foregroundMuted} />
-      </Pressable>
-    </View>
-  );
 
   // Render mobile sidebar
   // On web, use "auto" instead of "box-none" because web's pointer-events: none blocks scroll
@@ -228,17 +214,30 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 onRefresh={handleRefresh}
                 selectedAgentId={selectedAgentId}
                 onAgentSelect={handleAgentSelectMobile}
-                listFooterComponent={viewMoreButton}
               />
 
               {/* Footer */}
               <View style={styles.sidebarFooter}>
                 <Pressable
-                  style={styles.settingsButton}
+                  style={styles.footerButton}
+                  onPress={handleViewMore}
+                >
+                  {({ hovered }) => (
+                    <>
+                      <Users size={18} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+                      <Text style={[styles.footerButtonText, hovered && styles.footerButtonTextHovered]}>
+                        All agents
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+                <Pressable
+                  style={styles.footerIconButton}
                   onPress={handleSettingsMobile}
                 >
-                  <Settings size={20} color={theme.colors.foregroundMuted} />
-                  <Text style={styles.settingsButtonText}>Settings</Text>
+                  {({ hovered }) => (
+                    <Settings size={20} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+                  )}
                 </Pressable>
               </View>
             </View>
@@ -279,17 +278,30 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         isRefreshing={isManualRefresh && isRevalidating}
         onRefresh={handleRefresh}
         selectedAgentId={selectedAgentId}
-        listFooterComponent={viewMoreButton}
       />
 
-      {/* Footer: Settings button */}
+      {/* Footer */}
       <View style={styles.sidebarFooter}>
         <Pressable
-          style={styles.settingsButton}
+          style={styles.footerButton}
+          onPress={handleViewMore}
+        >
+          {({ hovered }) => (
+            <>
+              <Users size={18} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+              <Text style={[styles.footerButtonText, hovered && styles.footerButtonTextHovered]}>
+                All agents
+              </Text>
+            </>
+          )}
+        </Pressable>
+        <Pressable
+          style={styles.footerIconButton}
           onPress={handleSettingsDesktop}
         >
-          <Settings size={20} color={theme.colors.foregroundMuted} />
-          <Text style={styles.settingsButtonText}>Settings</Text>
+          {({ hovered }) => (
+            <Settings size={20} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+          )}
         </Pressable>
       </View>
     </View>
@@ -349,47 +361,32 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
   },
-  viewMoreContainer: {
-    paddingTop: theme.spacing[2],
-  },
-  viewMoreButton: {
+  sidebarFooter: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-start",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: 0,
-    borderWidth: 0,
-    backgroundColor: "transparent",
-    alignSelf: "flex-start",
-    transitionProperty: "opacity",
-    transitionDuration: "150ms",
-  },
-  viewMoreButtonHovered: {
-    opacity: 0.8,
-  },
-  viewMoreButtonText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  sidebarFooter: {
+    justifyContent: "space-between",
     paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
-  settingsButton: {
+  footerButton: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
   },
-  settingsButtonText: {
+  footerIconButton: {
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
+  },
+  footerButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
+  },
+  footerButtonTextHovered: {
+    color: theme.colors.foreground,
   },
 }));

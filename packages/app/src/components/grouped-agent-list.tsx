@@ -18,7 +18,7 @@ import {
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react-native";
 import { formatTimeAgo } from "@/utils/time";
 import {
   groupAgents,
@@ -51,6 +51,8 @@ interface SectionData {
   firstAgentServerId?: string;
   /** For project sections, the first agent's id (to lookup checkout status) */
   firstAgentId?: string;
+  /** Working directory for the project (from first agent) */
+  workingDir?: string;
 }
 
 interface GroupedAgentListProps {
@@ -66,14 +68,17 @@ interface SectionHeaderProps {
   section: SectionData;
   isCollapsed: boolean;
   onToggle: () => void;
+  onCreateAgent: (workingDir: string) => void;
 }
 
 function SectionHeader({
   section,
   isCollapsed,
   onToggle,
+  onCreateAgent,
 }: SectionHeaderProps) {
   const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
 
   // For project sections, try to get repo name from checkout status
   const checkoutQuery = useCheckoutStatusCacheOnly({
@@ -98,13 +103,26 @@ function SectionHeader({
     }
   }
 
+  const handleCreatePress = useCallback(
+    (e: { stopPropagation: () => void }) => {
+      e.stopPropagation();
+      if (section.workingDir) {
+        onCreateAgent(section.workingDir);
+      }
+    },
+    [onCreateAgent, section.workingDir]
+  );
+
   return (
     <Pressable
-      style={({ hovered }) => [
+      style={[
         styles.sectionHeader,
-        hovered && styles.sectionHeaderHovered,
+        isHovered && styles.sectionHeaderHovered,
+        !isCollapsed && styles.sectionHeaderExpanded,
       ]}
       onPress={onToggle}
+      onHoverIn={() => setIsHovered(true)}
+      onHoverOut={() => setIsHovered(false)}
     >
       <View style={styles.sectionHeaderLeft}>
         <Text style={styles.sectionTitle} numberOfLines={1}>
@@ -112,6 +130,24 @@ function SectionHeader({
         </Text>
       </View>
       <View style={styles.sectionHeaderRight}>
+        {section.workingDir && (
+          <Pressable
+            style={[
+              styles.createAgentButton,
+              { opacity: isHovered ? 1 : 0 },
+            ]}
+            onPress={handleCreatePress}
+            onHoverIn={() => setIsHovered(true)}
+            onHoverOut={() => setIsHovered(true)}
+          >
+            {({ hovered }) => (
+              <Plus
+                size={14}
+                color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+            )}
+          </Pressable>
+        )}
         {isCollapsed ? (
           <ChevronRight size={14} color={theme.colors.foregroundMuted} />
         ) : (
@@ -206,6 +242,13 @@ export function GroupedAgentList({
     });
   }, []);
 
+  const handleCreateAgentInProject = useCallback(
+    (workingDir: string) => {
+      router.push(`/agent?workingDir=${encodeURIComponent(workingDir)}` as any);
+    },
+    []
+  );
+
   // Subscribe to checkout status cache entries so project grouping can react
   // to remote URL updates (e.g. git worktrees in different directories).
   const checkoutCacheQueries = useQueries({
@@ -260,6 +303,7 @@ export function GroupedAgentList({
         data: isCollapsed ? [] : group.agents,
         firstAgentServerId: firstAgent?.serverId,
         firstAgentId: firstAgent?.id,
+        workingDir: firstAgent?.cwd,
       });
     }
 
@@ -386,10 +430,11 @@ export function GroupedAgentList({
           section={section}
           isCollapsed={isCollapsed}
           onToggle={() => toggleSection(section.key)}
+          onCreateAgent={handleCreateAgentInProject}
         />
       );
     },
-    [collapsedSections, toggleSection]
+    [collapsedSections, toggleSection, handleCreateAgentInProject]
   );
 
   const keyExtractor = useCallback(
@@ -495,13 +540,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4] + theme.spacing[2],
-    marginHorizontal: -theme.spacing[4],
+    paddingHorizontal: theme.spacing[3],
+    marginHorizontal: -theme.spacing[2],
     marginTop: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
   },
   sectionHeaderHovered: {
     backgroundColor: theme.colors.surface1,
+  },
+  sectionHeaderExpanded: {
+    marginBottom: theme.spacing[1],
   },
   sectionHeaderLeft: {
     flexDirection: "row",
@@ -511,13 +559,21 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   sectionHeaderRight: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: theme.spacing[2],
     marginLeft: theme.spacing[2],
+  },
+  createAgentButton: {
+    width: 14,
+    height: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionTitle: {
     fontSize: theme.fontSize.sm,
-    fontWeight: "500",
+    fontWeight: "normal",
     color: theme.colors.foregroundMuted,
     flex: 1,
     textAlign: "left",
@@ -525,6 +581,7 @@ const styles = StyleSheet.create((theme) => ({
   agentItem: {
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
+    marginHorizontal: -theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[1],
   },
