@@ -192,6 +192,10 @@ export interface ProjectGroup {
   projectKey: string;
   projectName: string;
   agents: AggregatedAgent[];
+  /** Number of truly active agents (running or requires attention) */
+  activeCount: number;
+  /** Total agents before any limit was applied */
+  totalCount: number;
 }
 
 export interface DateGroup {
@@ -204,7 +208,7 @@ export interface GroupedAgents {
   inactiveGroups: DateGroup[];
 }
 
-const ACTIVE_GRACE_PERIOD_MS = 15 * 60 * 1000; // 15 minutes
+const ACTIVE_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface GroupAgentsOptions {
   /**
@@ -214,9 +218,15 @@ interface GroupAgentsOptions {
   getRemoteUrl?: (agent: AggregatedAgent) => string | null;
 }
 
+const MAX_INACTIVE_PER_PROJECT = 5;
+
 /**
  * Groups agents into active (by project) and inactive (by date) sections.
- * Active = running, requires attention, or had activity within the last 5 minutes.
+ * Active = running, requires attention, or had activity within the grace period (24 hours).
+ *
+ * Within each project group:
+ * - All truly active agents (running/requires attention) are always shown
+ * - Recently active (within grace period but not running) are limited to MAX_INACTIVE_PER_PROJECT
  */
 export function groupAgents(
   agents: AggregatedAgent[],
@@ -240,28 +250,61 @@ export function groupAgents(
     }
   }
 
-  // Group active agents by project
-  const projectMap = new Map<string, AggregatedAgent[]>();
+  // Group active agents by project, tracking truly active vs recently active
+  const projectMap = new Map<
+    string,
+    { trulyActive: AggregatedAgent[]; recentlyActive: AggregatedAgent[] }
+  >();
   for (const agent of activeAgents) {
     const remoteKey = deriveRemoteProjectKey(
       options?.getRemoteUrl?.(agent) ?? null
     );
     const projectKey = remoteKey ?? deriveProjectKey(agent.cwd);
-    const existing = projectMap.get(projectKey) || [];
-    existing.push(agent);
+    const existing = projectMap.get(projectKey) || {
+      trulyActive: [],
+      recentlyActive: [],
+    };
+
+    const isTrulyActive =
+      agent.status === "running" || agent.requiresAttention;
+    if (isTrulyActive) {
+      existing.trulyActive.push(agent);
+    } else {
+      existing.recentlyActive.push(agent);
+    }
+
     projectMap.set(projectKey, existing);
   }
 
-  // Sort agents within each project by lastActivityAt (newest first)
+  // Build project groups with limits applied
   const activeGroups: ProjectGroup[] = [];
-  for (const [projectKey, projectAgents] of projectMap) {
-    projectAgents.sort(
+  for (const [projectKey, { trulyActive, recentlyActive }] of projectMap) {
+    // Sort both arrays by lastActivityAt (newest first)
+    trulyActive.sort(
       (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
     );
+    recentlyActive.sort(
+      (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
+    );
+
+    // All truly active agents shown, limit recently active to MAX_INACTIVE_PER_PROJECT
+    const limitedRecentlyActive = recentlyActive.slice(
+      0,
+      MAX_INACTIVE_PER_PROJECT
+    );
+    const combinedAgents = [...trulyActive, ...limitedRecentlyActive];
+
+    // Re-sort combined list by lastActivityAt
+    combinedAgents.sort(
+      (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
+    );
+
     activeGroups.push({
       projectKey,
       projectName: deriveProjectName(projectKey),
-      agents: projectAgents,
+      agents: combinedAgents,
+      activeCount: trulyActive.length,
+      totalCount: trulyActive.length + recentlyActive.length,
     });
   }
 

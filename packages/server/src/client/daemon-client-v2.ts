@@ -1046,6 +1046,10 @@ export class DaemonClientV2 {
     if (!requestId) {
       const existing = this.checkoutStatusInFlight.get(agentId);
       if (existing) {
+        this.logger.debug(
+          { agentId, inFlightCount: this.checkoutStatusInFlight.size },
+          "getCheckoutStatus: returning existing in-flight request"
+        );
         return existing;
       }
     }
@@ -1056,6 +1060,11 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
+
+    this.logger.debug(
+      { agentId, requestId: resolvedRequestId, waiterCount: this.waiters.size },
+      "getCheckoutStatus: creating new request"
+    );
 
     const responsePromise = (async () => {
       const response = this.waitFor(
@@ -1077,11 +1086,24 @@ export class DaemonClientV2 {
 
     if (!requestId) {
       this.checkoutStatusInFlight.set(agentId, responsePromise);
-      responsePromise.finally(() => {
-        if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
-          this.checkoutStatusInFlight.delete(agentId);
-        }
-      });
+      responsePromise
+        .then(() => {
+          this.logger.debug(
+            { agentId, requestId: resolvedRequestId },
+            "getCheckoutStatus: request completed successfully"
+          );
+        })
+        .catch((err) => {
+          this.logger.debug(
+            { agentId, requestId: resolvedRequestId, error: err?.message },
+            "getCheckoutStatus: request failed"
+          );
+        })
+        .finally(() => {
+          if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
+            this.checkoutStatusInFlight.delete(agentId);
+          }
+        });
     }
 
     return responsePromise;
@@ -2098,6 +2120,10 @@ export class DaemonClientV2 {
     if (typeof reason === "string" && reason.trim().length > 0) {
       this.lastErrorValue = reason.trim();
     }
+
+    // Clear all pending waiters since the connection was lost and responses
+    // from the previous connection will never arrive.
+    this.clearWaiters(new Error(reason ?? "Connection lost"));
 
     this.updateConnectionState({
       status: "disconnected",
