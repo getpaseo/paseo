@@ -24,9 +24,10 @@ import { FileExplorerPane } from "./file-explorer-pane";
 interface ExplorerSidebarProps {
   serverId: string;
   agentId: string;
+  cwd: string;
 }
 
-export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
+export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile =
@@ -182,6 +183,7 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
               onClose={handleClose}
               serverId={serverId}
               agentId={agentId}
+              cwd={cwd}
               fileViewMode={explorerViewMode}
               onFileViewModeChange={setExplorerViewMode}
               isMobile={isMobile}
@@ -215,6 +217,7 @@ export function ExplorerSidebar({ serverId, agentId }: ExplorerSidebarProps) {
         onClose={handleClose}
         serverId={serverId}
         agentId={agentId}
+        cwd={cwd}
         fileViewMode={explorerViewMode}
         onFileViewModeChange={setExplorerViewMode}
         isMobile={false}
@@ -229,6 +232,7 @@ interface SidebarContentProps {
   onClose: () => void;
   serverId: string;
   agentId: string;
+  cwd: string;
   fileViewMode: ViewMode;
   onFileViewModeChange: (mode: ViewMode) => void;
   isMobile: boolean;
@@ -240,6 +244,7 @@ function SidebarContent({
   onClose,
   serverId,
   agentId,
+  cwd,
   fileViewMode,
   onFileViewModeChange,
   isMobile,
@@ -293,7 +298,7 @@ function SidebarContent({
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
         {activeTab === "changes" && (
-          <GitDiffPane serverId={serverId} agentId={agentId} />
+          <GitDiffPane serverId={serverId} agentId={agentId} cwd={cwd} />
         )}
         {activeTab === "files" && (
           <FileExplorerPane serverId={serverId} agentId={agentId} />

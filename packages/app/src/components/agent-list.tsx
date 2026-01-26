@@ -159,7 +159,7 @@ export function AgentList({
           continue;
         }
 
-        const queryKey = checkoutStatusQueryKey(agent.serverId, agent.id);
+        const queryKey = checkoutStatusQueryKey(agent.serverId, agent.cwd);
         const queryState = queryClient.getQueryState(queryKey);
         const isFetching = queryState?.fetchStatus === "fetching";
         const isFresh =
@@ -193,6 +193,7 @@ export function AgentList({
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
         agentId: agent.id,
+        cwd: agent.cwd,
       });
       const checkout = checkoutQuery.data ?? null;
       const projectPath = deriveProjectPath(agent.cwd, checkout);

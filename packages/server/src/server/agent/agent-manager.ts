@@ -848,6 +848,10 @@ export class AgentManager {
     if (!this.registry) {
       return;
     }
+    // Don't persist internal agents - they're ephemeral system tasks
+    if (agent.internal) {
+      return;
+    }
     await this.registry.applySnapshot(agent, options);
   }
 

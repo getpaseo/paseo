@@ -6,6 +6,7 @@ import {
   Easing,
   type SharedValue,
 } from "react-native-reanimated";
+import { type GestureType } from "react-native-gesture-handler";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { usePanelStore } from "@/stores/panel-store";
 
@@ -19,6 +20,7 @@ interface SidebarAnimationContextValue {
   animateToOpen: () => void;
   animateToClose: () => void;
   isGesturing: SharedValue<boolean>;
+  closeGestureRef: React.MutableRefObject<GestureType | undefined>;
 }
 
 const SidebarAnimationContext = createContext<SidebarAnimationContextValue | null>(null);
@@ -37,6 +39,7 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const translateX = useSharedValue(isOpen ? 0 : -windowWidth);
   const backdropOpacity = useSharedValue(isOpen ? 1 : 0);
   const isGesturing = useSharedValue(false);
+  const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
@@ -108,6 +111,7 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
         animateToOpen,
         animateToClose,
         isGesturing,
+        closeGestureRef,
       }}
     >
       {children}
