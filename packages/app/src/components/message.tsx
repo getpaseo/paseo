@@ -19,7 +19,8 @@ import {
 import type { ReactNode, ComponentType } from "react";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
-import Markdown from "react-native-markdown-display";
+import Markdown, { MarkdownIt } from "react-native-markdown-display";
+import * as Linking from "expo-linking";
 import {
   Circle,
   Info,
@@ -506,6 +507,16 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
+  const markdownParser = useMemo(
+    () => MarkdownIt({ typographer: true, linkify: true }),
+    []
+  );
+
+  const handleLinkPress = useCallback((url: string) => {
+    void Linking.openURL(url);
+    return true;
+  }, []);
+
   const markdownRules = useMemo(() => {
     return {
       text: (
@@ -657,7 +668,12 @@ export const AssistantMessage = memo(function AssistantMessage({
           assistantMessageStylesheet.containerSpacing,
       ]}
     >
-      <Markdown style={markdownStyles} rules={markdownRules}>
+      <Markdown
+        style={markdownStyles}
+        rules={markdownRules}
+        markdownit={markdownParser}
+        onLinkPress={handleLinkPress}
+      >
         {message}
       </Markdown>
     </View>

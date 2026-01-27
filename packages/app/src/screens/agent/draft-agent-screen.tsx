@@ -597,7 +597,7 @@ export function DraftAgentScreen({
         model,
         modeId,
       },
-      title: "New Agent",
+      title: "New agent",
       cwd,
       model,
     };
@@ -788,7 +788,7 @@ export function DraftAgentScreen({
       <View style={styles.container}>
         <View style={styles.agentPanel}>
           <MenuHeader
-            title="New Agent"
+            title="New agent"
             rightContent={
               <Pressable
                 style={styles.hostBadge}

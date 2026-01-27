@@ -74,7 +74,7 @@ export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
           This link is missing an agent id. Go back to the Agents screen to pick one.
         </Text>
         <Pressable style={styles.primaryButton} onPress={handleGoDraft}>
-          <Text style={styles.primaryButtonText}>New Agent</Text>
+          <Text style={styles.primaryButtonText}>New agent</Text>
         </Pressable>
       </View>
     );
@@ -96,7 +96,7 @@ export function LegacyAgentIdScreen({ agentId }: { agentId: string }) {
             again from the Agents screen after it comes back online.
           </Text>
           <Pressable style={styles.primaryButton} onPress={handleGoDraft}>
-            <Text style={styles.primaryButtonText}>New Agent</Text>
+            <Text style={styles.primaryButtonText}>New agent</Text>
           </Pressable>
       </View>
     );

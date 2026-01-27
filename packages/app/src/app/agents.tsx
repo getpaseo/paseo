@@ -33,7 +33,7 @@ export default function AgentsScreen() {
 
   return (
     <View style={styles.container}>
-      <BackHeader title="All Agents" />
+      <BackHeader title="All agents" />
       <AgentList
         agents={sortedAgents}
         isRefreshing={isManualRefresh && isRevalidating}

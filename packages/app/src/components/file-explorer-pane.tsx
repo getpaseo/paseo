@@ -862,7 +862,7 @@ export function FileExplorerPane({
                   handleCloseMenu();
                 }}
               >
-                <Text style={styles.entryMenuText}>Copy Path</Text>
+                <Text style={styles.entryMenuText}>Copy path</Text>
               </Pressable>
               {menuEntry.kind === "file" ? (
                 <Pressable

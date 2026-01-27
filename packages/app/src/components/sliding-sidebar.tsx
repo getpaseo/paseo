@@ -201,15 +201,16 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
               {/* Header */}
               <View style={styles.sidebarHeader}>
                 <Pressable
-                  style={({ hovered }) => [
-                    styles.newAgentButton,
-                    hovered && styles.newAgentButtonHovered,
-                  ]}
+                  style={styles.newAgentButton}
                   testID="sidebar-new-agent"
                   onPress={handleCreateAgentCleanMobile}
                 >
-                  <Plus size={18} color={theme.colors.foreground} />
-                  <Text style={styles.newAgentButtonText}>New Agent</Text>
+                  {({ hovered }) => (
+                    <>
+                      <Plus size={18} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+                      <Text style={[styles.newAgentButtonText, hovered && styles.newAgentButtonTextHovered]}>New agent</Text>
+                    </>
+                  )}
                 </Pressable>
               </View>
 
@@ -267,15 +268,16 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         {...dragHandlers}
       >
         <Pressable
-          style={({ hovered }) => [
-            styles.newAgentButton,
-            hovered && styles.newAgentButtonHovered,
-          ]}
+          style={styles.newAgentButton}
           testID="sidebar-new-agent"
           onPress={handleCreateAgentCleanDesktop}
         >
-          <Plus size={18} color={theme.colors.foreground} />
-          <Text style={styles.newAgentButtonText}>New Agent</Text>
+          {({ hovered }) => (
+            <>
+              <Plus size={18} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+              <Text style={[styles.newAgentButtonText, hovered && styles.newAgentButtonTextHovered]}>New agent</Text>
+            </>
+          )}
         </Pressable>
       </View>
 
@@ -344,28 +346,25 @@ const styles = StyleSheet.create((theme) => ({
   sidebarHeader: {
     paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
     userSelect: "none",
   },
   newAgentButton: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    transitionProperty: "border-color, background-color",
-    transitionDuration: "150ms",
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
   },
-  newAgentButtonHovered: {
-    borderColor: theme.colors.palette.zinc[500],
-    backgroundColor: theme.colors.surface2,
-  },
+  newAgentButtonHovered: {},
   newAgentButtonText: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+  },
+  newAgentButtonTextHovered: {
     color: theme.colors.foreground,
   },
   sidebarFooter: {

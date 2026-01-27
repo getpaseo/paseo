@@ -469,7 +469,7 @@ export default function SettingsScreen() {
       }
 
       Alert.alert(
-        "Remove Host",
+        "Remove host",
         `Remove ${profile.label}?`,
         [
           { text: "Cancel", style: "cancel" },
@@ -520,7 +520,7 @@ export default function SettingsScreen() {
 
   function handleReset() {
     Alert.alert(
-      "Reset Settings",
+      "Reset settings",
       "Are you sure you want to reset all settings to defaults?",
       [
         { text: "Cancel", style: "cancel" },
@@ -531,7 +531,7 @@ export default function SettingsScreen() {
             try {
               await resetSettings();
               Alert.alert(
-                "Settings Reset",
+                "Settings reset",
                 "All settings have been reset to defaults."
               );
             } catch (error) {
@@ -596,7 +596,7 @@ export default function SettingsScreen() {
               style={styles.addButton}
               onPress={() => setIsAddHostMethodVisible(true)}
             >
-              <Text style={styles.addButtonText}>+ Add Host</Text>
+              <Text style={styles.addButtonText}>+ Add host</Text>
             </Pressable>
           </View>
 
@@ -711,7 +711,7 @@ export default function SettingsScreen() {
             <View style={styles.audioCard}>
               <View style={styles.audioRow}>
                 <View style={styles.audioRowContent}>
-                  <Text style={styles.audioRowTitle}>Use Speaker</Text>
+                  <Text style={styles.audioRowTitle}>Use speaker</Text>
                   <Text style={styles.audioRowDescription}>
                     Play audio through speaker instead of earpiece
                   </Text>
@@ -726,7 +726,7 @@ export default function SettingsScreen() {
 
               <View style={[styles.audioRow, styles.audioRowBorder]}>
                 <View style={styles.audioRowContent}>
-                  <Text style={styles.audioRowTitle}>Keep Screen On</Text>
+                  <Text style={styles.audioRowTitle}>Keep screen on</Text>
                   <Text style={styles.audioRowDescription}>
                     Prevent screen from sleeping during voice sessions
                   </Text>
@@ -750,7 +750,7 @@ export default function SettingsScreen() {
                 onPress={() => router.push("/audio-test")}
               >
                 <View style={styles.devButtonContent}>
-                  <Text style={styles.devButtonTitle}>Audio Test</Text>
+                  <Text style={styles.devButtonTitle}>Audio test</Text>
                   <Text style={styles.devButtonDescription}>
                     Test audio recording and playback
                   </Text>

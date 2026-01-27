@@ -55,7 +55,7 @@ export function AgentDetailsSheet({
 
   return (
     <AdaptiveModalSheet
-      title="Agent Details"
+      title="Agent details"
       visible={visible}
       onClose={onClose}
       testID="agent-details-sheet"

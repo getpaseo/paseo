@@ -714,13 +714,13 @@ function AgentScreenContent({
                     leading={<GitBranch size={16} color={theme.colors.foreground} />}
                     onSelect={handleViewChanges}
                   >
-                    View Changes
+                    View changes
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     leading={<Folder size={16} color={theme.colors.foreground} />}
                     onSelect={handleBrowseFiles}
                   >
-                    Browse Files
+                    Browse files
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     leading={<RotateCcw size={16} color={theme.colors.foreground} />}

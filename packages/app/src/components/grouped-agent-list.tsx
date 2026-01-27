@@ -444,7 +444,7 @@ export function GroupedAgentList({
                   ]}
                   numberOfLines={1}
                 >
-                  {agent.title || "New Agent"}
+                  {agent.title || "New agent"}
                 </Text>
               </View>
 

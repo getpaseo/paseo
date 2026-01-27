@@ -156,7 +156,7 @@ export function HomeFooter() {
                   style={iconStyle}
                 />
               </View>
-              <Text style={styles.footerButtonText}>New Agent</Text>
+              <Text style={styles.footerButtonText}>New agent</Text>
             </Pressable>
 
             <Pressable

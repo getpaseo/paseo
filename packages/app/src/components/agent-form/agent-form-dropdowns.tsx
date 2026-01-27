@@ -706,7 +706,7 @@ export function AgentConfigRow({
       <View style={styles.agentConfigColumn}>
         <ComboSelect
           label="PROVIDER"
-          title="Select Provider"
+          title="Select provider"
           value={selectedProvider}
           options={providerOptions}
           placeholder="Select..."
@@ -717,7 +717,7 @@ export function AgentConfigRow({
       <View style={styles.agentConfigColumn}>
         <ComboSelect
           label="MODEL"
-          title="Select Model"
+          title="Select model"
           value={selectedModel}
           options={modelSelectOptions}
           placeholder="Auto"
@@ -729,7 +729,7 @@ export function AgentConfigRow({
       <View style={styles.agentConfigColumn}>
         <ComboSelect
           label="MODE"
-          title="Select Mode"
+          title="Select mode"
           value={effectiveSelectedMode}
           options={modeSelectOptions}
           placeholder="Default"
@@ -775,7 +775,7 @@ export function AssistantDropdown({
         controlRef={anchorRef}
       />
       <AdaptiveSelect
-        title="Choose Assistant"
+        title="Choose assistant"
         visible={isOpen}
         onClose={handleClose}
         anchorRef={anchorRef}
@@ -1069,7 +1069,7 @@ export function WorkingDirectoryDropdown({
         testID="working-directory-select"
       />
       <AdaptiveSelect
-        title="Working Directory"
+        title="Working directory"
         visible={isOpen}
         onClose={handleClose}
         anchorRef={anchorRef}
