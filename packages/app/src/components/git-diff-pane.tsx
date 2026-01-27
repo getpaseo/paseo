@@ -364,7 +364,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   );
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionStatus, setActionStatus] = useState<string | null>(null);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
     useCheckoutStatusQuery({ serverId, agentId, cwd });
@@ -535,13 +534,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("Commit created.");
       void refreshDiff();
       void refreshStatus();
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to commit";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -559,12 +556,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("PR created.");
       void refreshPrStatus();
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to create PR";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -586,13 +581,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("Merged to base.");
       void refreshDiff();
       void refreshStatus();
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to merge";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -613,13 +606,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("Merged from base.");
       void refreshDiff();
       void refreshStatus();
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to merge from base";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -637,12 +628,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("Pushed branch.");
       void refreshStatus();
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to push";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -664,7 +653,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onSuccess: () => {
       setActionError(null);
-      setActionStatus("Worktree archived.");
       queryClient.invalidateQueries({
         predicate: (query) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
@@ -673,7 +661,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Failed to archive worktree";
-      setActionStatus(null);
       setActionError(message);
     },
   });
@@ -766,7 +753,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     bodyContent = (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>
-          {diffMode === "uncommitted" ? "No uncommitted changes" : "No base changes"}
+          {diffMode === "uncommitted" ? "No uncommitted changes" : `No changes vs ${baseRefLabel}`}
         </Text>
       </View>
     );
@@ -1091,7 +1078,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         </View>
       ) : null}
 
-      {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
       {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
       {prErrorMessage ? (
         <Text style={styles.actionErrorText}>{prErrorMessage}</Text>
@@ -1237,12 +1223,6 @@ const styles = StyleSheet.create((theme) => ({
   menuDivider: {
     height: 1,
     backgroundColor: theme.colors.border,
-  },
-  actionStatusText: {
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[1],
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.success,
   },
   actionErrorText: {
     paddingHorizontal: theme.spacing[3],
