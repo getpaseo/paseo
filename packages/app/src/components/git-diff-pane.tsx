@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useId, useMemo, useRef, memo, type ReactElement } from "react";
+import type { UseMutationResult } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
   View,
@@ -6,6 +7,7 @@ import {
   ActivityIndicator,
   Pressable,
   FlatList,
+  Platform,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type ListRenderItem,
@@ -35,7 +37,71 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  type ActionStatus,
 } from "@/components/ui/dropdown-menu";
+
+// =============================================================================
+// Action Status Hook
+// =============================================================================
+// Tracks mutation state with a brief success phase before returning to idle.
+// State flow: idle → pending → success (1s) → idle
+// =============================================================================
+
+const SUCCESS_DISPLAY_MS = 1000;
+
+type ActionState = {
+  status: ActionStatus;
+  trigger: () => void;
+};
+
+function useActionStatus<TData, TError, TVariables, TContext>(
+  mutation: UseMutationResult<TData, TError, TVariables, TContext>,
+  onTrigger?: () => void
+): ActionState {
+  const [showSuccess, setShowSuccess] = useState(false);
+  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Watch for mutation success to trigger success display
+  useEffect(() => {
+    if (mutation.isSuccess && !mutation.isPending) {
+      setShowSuccess(true);
+      successTimeoutRef.current = setTimeout(() => {
+        setShowSuccess(false);
+        mutation.reset();
+      }, SUCCESS_DISPLAY_MS);
+    }
+  }, [mutation.isSuccess, mutation.isPending, mutation]);
+
+  const status: ActionStatus = mutation.isPending
+    ? "pending"
+    : showSuccess
+      ? "success"
+      : "idle";
+
+  const trigger = useCallback(() => {
+    onTrigger?.();
+    mutation.mutate(undefined as TVariables);
+  }, [mutation, onTrigger]);
+
+  return { status, trigger };
+}
+
+function openURLInNewTab(url: string): void {
+  if (Platform.OS === "web") {
+    window.open(url, "_blank", "noopener");
+  } else {
+    void Linking.openURL(url);
+  }
+}
 
 const DIFF_PANE_LOG_TAG = "[GitDiffPane]";
 const DIFF_FILE_LOG_TAG = "[DiffFileSection]";
@@ -665,6 +731,14 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     },
   });
 
+  // Wrap mutations with action status for UI feedback
+  const commitAction = useActionStatus(commitMutation);
+  const prCreateAction = useActionStatus(prMutation, () => void persistShipDefault("pr"));
+  const mergeAction = useActionStatus(mergeMutation, () => void persistShipDefault("merge"));
+  const mergeFromBaseAction = useActionStatus(mergeFromBaseMutation);
+  const pushAction = useActionStatus(pushMutation);
+  const archiveAction = useActionStatus(archiveMutation);
+
   const renderFileSection: ListRenderItem<ParsedDiffFile> = useCallback(
     ({ item, index }) => (
       <DiffFileSection
@@ -696,8 +770,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
-  const canShowCommit = isGit && hasUncommittedChanges;
-  const canShowShip = isGit && aheadCount > 0;
   const baseRefLabel = useMemo(() => {
     if (!baseRef) return "base";
     const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
@@ -777,46 +849,131 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   }
 
   const hasPullRequest = Boolean(prStatus?.url);
-  const prActionLabel = hasPullRequest ? "View PR" : "Create PR";
 
-  type ShipActionKey = "merge" | "pr";
-  const shipActions: { key: ShipActionKey; label: string; disabled: boolean; isPending: boolean }[] =
-    useMemo(
-      () => [
-        { key: "merge", label: "Merge", disabled: mergeDisabled, isPending: mergeMutation.isPending },
-        { key: "pr", label: prActionLabel, disabled: prDisabled, isPending: prMutation.isPending },
-      ],
-      [mergeDisabled, mergeMutation.isPending, prActionLabel, prDisabled, prMutation.isPending]
-    );
+  // ==========================================================================
+  // Primary CTA Logic
+  // ==========================================================================
+  // Rules (in priority order):
+  // 1. Uncommitted changes → "Commit" is primary
+  // 2. Has PR → "View PR" is primary
+  // 3. Ahead of base → "Merge branch" or "Create PR" based on shipDefault preference
+  // 4. Nothing to do → no primary CTA
+  // ==========================================================================
 
-  const resolvedShipPrimary: ShipActionKey | null = useMemo(() => {
-    if (!canShowShip) return null;
-    const preferred = shipDefault;
-    const preferredMeta = shipActions.find((action) => action.key === preferred);
-    if (preferredMeta && !preferredMeta.disabled) {
-      return preferred;
+  type PrimaryCTA =
+    | { type: "commit" }
+    | { type: "view-pr"; url: string }
+    | { type: "ship"; action: "merge" | "create-pr" }
+    | null;
+
+  const primaryCTA: PrimaryCTA = useMemo(() => {
+    if (!isGit) return null;
+
+    // Rule 1: Uncommitted changes → Commit
+    if (hasUncommittedChanges) {
+      return { type: "commit" };
     }
-    const fallback = shipActions.find((action) => !action.disabled);
-    return fallback?.key ?? preferred;
-  }, [canShowShip, shipActions, shipDefault]);
 
-  const shipPrimaryDisabled = useMemo(() => {
-    if (!resolvedShipPrimary) return true;
-    if (actionsDisabled) return true;
-    const meta = shipActions.find((action) => action.key === resolvedShipPrimary);
-    return meta?.disabled ?? true;
-  }, [actionsDisabled, resolvedShipPrimary, shipActions]);
+    // Rule 2: Has PR → View PR
+    if (hasPullRequest && prStatus?.url) {
+      return { type: "view-pr", url: prStatus.url };
+    }
 
-  const shipPrimaryPending = useMemo(() => {
-    if (!resolvedShipPrimary) return false;
-    if (resolvedShipPrimary === "merge") return mergeMutation.isPending;
-    // "pr" maps to open PR (instant) or create PR (mutation)
-    return hasPullRequest ? false : prMutation.isPending;
-  }, [hasPullRequest, mergeMutation.isPending, prMutation.isPending, resolvedShipPrimary]);
+    // Rule 3: Ahead of base → Ship (merge or create PR based on preference)
+    if (aheadCount > 0) {
+      const preferredAction = shipDefault === "merge" ? "merge" : "create-pr";
+      // If preferred action is disabled, fall back to the other
+      if (preferredAction === "merge" && mergeDisabled && !prDisabled) {
+        return { type: "ship", action: "create-pr" };
+      }
+      if (preferredAction === "create-pr" && prDisabled && !mergeDisabled) {
+        return { type: "ship", action: "merge" };
+      }
+      return { type: "ship", action: preferredAction };
+    }
 
-  // When there are uncommitted changes, Commit becomes the primary CTA
-  const showCommitAsPrimary = canShowCommit;
-  const showShipSplitButton = canShowShip && !showCommitAsPrimary;
+    // Rule 4: Nothing to do
+    return null;
+  }, [isGit, hasUncommittedChanges, hasPullRequest, prStatus?.url, aheadCount, shipDefault, mergeDisabled, prDisabled]);
+
+  const primaryCTALabel = useMemo(() => {
+    if (!primaryCTA) return "";
+    switch (primaryCTA.type) {
+      case "commit":
+        return "Commit";
+      case "view-pr":
+        return "View PR";
+      case "ship":
+        return primaryCTA.action === "merge" ? "Merge branch" : "Create PR";
+    }
+  }, [primaryCTA]);
+
+  const primaryCTADisabled = useMemo(() => {
+    if (!primaryCTA || actionsDisabled) return true;
+    switch (primaryCTA.type) {
+      case "commit":
+        return commitDisabled;
+      case "view-pr":
+        return false; // View PR is never disabled
+      case "ship":
+        return primaryCTA.action === "merge" ? mergeDisabled : prDisabled;
+    }
+  }, [primaryCTA, actionsDisabled, commitDisabled, mergeDisabled, prDisabled]);
+
+  const primaryCTAStatus: ActionStatus = useMemo(() => {
+    if (!primaryCTA) return "idle";
+    switch (primaryCTA.type) {
+      case "commit":
+        return commitAction.status;
+      case "view-pr":
+        return "idle"; // View PR is instant, no status
+      case "ship":
+        return primaryCTA.action === "merge" ? mergeAction.status : prCreateAction.status;
+    }
+  }, [primaryCTA, commitAction.status, mergeAction.status, prCreateAction.status]);
+
+  const primaryCTADisplayLabel = useMemo(() => {
+    if (!primaryCTA) return "";
+    const status = primaryCTAStatus;
+
+    switch (primaryCTA.type) {
+      case "commit":
+        if (status === "pending") return "Committing...";
+        if (status === "success") return "Committed";
+        return "Commit";
+      case "view-pr":
+        return "View PR";
+      case "ship":
+        if (primaryCTA.action === "merge") {
+          if (status === "pending") return "Merging...";
+          if (status === "success") return "Merged";
+          return "Merge branch";
+        } else {
+          if (status === "pending") return "Creating PR...";
+          if (status === "success") return "PR Created";
+          return "Create PR";
+        }
+    }
+  }, [primaryCTA, primaryCTAStatus]);
+
+  const handlePrimaryCTAPress = useCallback(() => {
+    if (!primaryCTA || primaryCTADisabled || primaryCTAStatus !== "idle") return;
+    switch (primaryCTA.type) {
+      case "commit":
+        commitAction.trigger();
+        break;
+      case "view-pr":
+        openURLInNewTab(primaryCTA.url);
+        break;
+      case "ship":
+        if (primaryCTA.action === "merge") {
+          mergeAction.trigger();
+        } else {
+          prCreateAction.trigger();
+        }
+        break;
+    }
+  }, [primaryCTA, primaryCTADisabled, primaryCTAStatus, commitAction, mergeAction, prCreateAction]);
 
   return (
     <View style={styles.container}>
@@ -832,156 +989,94 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         </View>
         {isGit ? (
           <View style={styles.headerRight}>
-            {showCommitAsPrimary ? (
-              <View style={styles.shipSplitButton}>
+            {primaryCTA ? (
+              <View style={styles.splitButton}>
                 <Pressable
-                  testID="changes-commit-primary"
+                  testID="changes-primary-cta"
                   style={[
-                    styles.shipPrimaryButton,
-                    commitDisabled && styles.shipPrimaryButtonDisabled,
+                    styles.splitButtonPrimary,
+                    primaryCTADisabled && styles.splitButtonPrimaryDisabled,
                   ]}
-                  onPress={() => commitMutation.mutate()}
-                  disabled={commitDisabled}
+                  onPress={handlePrimaryCTAPress}
+                  disabled={primaryCTADisabled}
                   accessibilityRole="button"
-                  accessibilityLabel="Commit changes"
+                  accessibilityLabel={primaryCTALabel}
                 >
-                  {commitMutation.isPending ? (
-                    <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.shipPrimarySpinner} />
+                  {primaryCTAStatus === "pending" ? (
+                    <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.splitButtonSpinner} />
                   ) : (
-                    <Text style={styles.shipPrimaryText}>Commit</Text>
+                    <Text style={styles.splitButtonText}>{primaryCTADisplayLabel}</Text>
                   )}
                 </Pressable>
                 <DropdownMenu>
                   <DropdownMenuTrigger
-                    testID="changes-commit-caret"
-                    style={styles.shipCaretButton}
+                    testID="changes-primary-cta-caret"
+                    style={styles.splitButtonCaret}
                     accessibilityRole="button"
                     accessibilityLabel="More options"
                   >
                     <ChevronDown size={16} color={theme.colors.foregroundMuted} />
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" width={260} testID="changes-commit-menu">
-                    {canShowShip ? (
+                  <DropdownMenuContent align="end" width={260} testID="changes-primary-cta-menu">
+                    {/* Ship actions - only show if ahead of base */}
+                    {aheadCount > 0 ? (
                       <>
                         <DropdownMenuItem
-                          testID="changes-commit-menu-merge"
+                          testID="changes-menu-merge"
                           disabled={mergeDisabled}
-                          description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                          onSelect={() => {
-                            void persistShipDefault("merge");
-                            mergeMutation.mutate();
-                          }}
+                          status={mergeAction.status}
+                          pendingLabel="Merging..."
+                          successLabel="Merged"
+                          closeOnSelect={false}
+                          description={hasUncommittedChanges ? "Requires clean working tree" : undefined}
+                          onSelect={mergeAction.trigger}
                         >
                           Merge branch
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          testID={hasPullRequest ? "changes-commit-menu-view-pr" : "changes-commit-menu-create-pr"}
-                          disabled={prDisabled}
+                          testID={hasPullRequest ? "changes-menu-view-pr" : "changes-menu-create-pr"}
+                          disabled={!hasPullRequest && prDisabled}
+                          status={!hasPullRequest ? prCreateAction.status : undefined}
+                          pendingLabel="Creating PR..."
+                          successLabel="PR Created"
+                          closeOnSelect={!hasPullRequest ? false : true}
                           onSelect={() => {
-                            void persistShipDefault("pr");
                             if (hasPullRequest && prStatus?.url) {
-                              void Linking.openURL(prStatus.url);
+                              openURLInNewTab(prStatus.url);
                               return;
                             }
-                            prMutation.mutate();
+                            prCreateAction.trigger();
                           }}
                         >
-                          {prActionLabel}
+                          {hasPullRequest ? "View PR" : "Create PR"}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>
                     ) : null}
                     <DropdownMenuItem
-                      testID="changes-commit-menu-merge-from-base"
+                      testID="changes-menu-merge-from-base"
                       disabled={mergeFromBaseDisabled}
-                      description={mergeFromBaseDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                      onSelect={() => mergeFromBaseMutation.mutate()}
+                      status={mergeFromBaseAction.status}
+                      pendingLabel="Merging..."
+                      successLabel="Merged"
+                      closeOnSelect={false}
+                      description={hasUncommittedChanges ? "Requires clean working tree" : undefined}
+                      onSelect={mergeFromBaseAction.trigger}
                     >
                       Merge from {baseRefLabel}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      testID="changes-commit-menu-push"
+                      testID="changes-menu-push"
                       disabled={pushDisabled}
-                      description={pushDisabled && !(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
-                      onSelect={() => pushMutation.mutate()}
+                      status={pushAction.status}
+                      pendingLabel="Pushing..."
+                      successLabel="Pushed"
+                      closeOnSelect={false}
+                      description={!(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
+                      onSelect={pushAction.trigger}
                     >
                       Push to remote
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </View>
-            ) : showShipSplitButton ? (
-              <View style={styles.shipSplitButton}>
-                <Pressable
-                  testID="changes-ship-primary"
-                  style={[
-                    styles.shipPrimaryButton,
-                    shipPrimaryDisabled && styles.shipPrimaryButtonDisabled,
-                  ]}
-                  onPress={async () => {
-                    if (!resolvedShipPrimary || shipPrimaryDisabled) return;
-                    await persistShipDefault(resolvedShipPrimary);
-                    if (resolvedShipPrimary === "merge") {
-                      if (mergeDisabled) return;
-                      mergeMutation.mutate();
-                      return;
-                    }
-
-                    if (hasPullRequest && prStatus?.url) {
-                      void Linking.openURL(prStatus.url);
-                      return;
-                    }
-
-                    if (prDisabled) return;
-                    prMutation.mutate();
-                  }}
-                  disabled={shipPrimaryDisabled}
-                  accessibilityRole="button"
-                  accessibilityLabel="Ship changes"
-                >
-                  {shipPrimaryPending ? (
-                    <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.shipPrimarySpinner} />
-                  ) : (
-                    <Text style={styles.shipPrimaryText}>
-                      {resolvedShipPrimary === "merge" ? "Merge branch" : prActionLabel}
-                    </Text>
-                  )}
-                </Pressable>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    testID="changes-ship-caret"
-                    style={styles.shipCaretButton}
-                    accessibilityRole="button"
-                    accessibilityLabel="More ship options"
-                  >
-                    <ChevronDown size={16} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" width={260} testID="changes-ship-menu">
-                    <DropdownMenuItem
-                      testID="changes-ship-merge"
-                      disabled={mergeDisabled}
-                      onSelect={() => {
-                        void persistShipDefault("merge");
-                        mergeMutation.mutate();
-                      }}
-                    >
-                      Merge branch
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      testID={hasPullRequest ? "changes-ship-view-pr" : "changes-ship-create-pr"}
-                      disabled={prDisabled}
-                      onSelect={() => {
-                        void persistShipDefault("pr");
-                        if (hasPullRequest && prStatus?.url) {
-                          void Linking.openURL(prStatus.url);
-                          return;
-                        }
-                        prMutation.mutate();
-                      }}
-                    >
-                      {prActionLabel}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -998,79 +1093,36 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                 <MoreVertical size={16} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
-                {canShowShip ? (
-                  <>
-                    {resolvedShipPrimary === "merge" ? (
-                      <DropdownMenuItem
-                        testID={hasPullRequest ? "changes-menu-view-pr" : "changes-menu-create-pr"}
-                        disabled={prDisabled}
-                        onSelect={() => {
-                          void persistShipDefault("pr");
-                          if (hasPullRequest && prStatus?.url) {
-                            void Linking.openURL(prStatus.url);
-                            return;
-                          }
-                          prMutation.mutate();
-                        }}
-                      >
-                        {prActionLabel}
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem
-                        testID="changes-menu-merge"
-                        disabled={mergeDisabled}
-                        description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                        onSelect={() => {
-                          void persistShipDefault("merge");
-                          mergeMutation.mutate();
-                        }}
-                      >
-                        Merge branch
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                  </>
-                ) : null}
-                <DropdownMenuItem
-                  testID="changes-menu-merge-from-base"
-                  disabled={mergeFromBaseDisabled}
-                  description={mergeFromBaseDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                  onSelect={() => mergeFromBaseMutation.mutate()}
-                >
-                  Merge from {baseRefLabel}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  testID="changes-menu-push"
-                  disabled={pushDisabled}
-                  description={pushDisabled && !(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
-                  onSelect={() => pushMutation.mutate()}
-                >
-                  Push to remote
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   testID="changes-menu-toggle-view"
                   onSelect={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
                 >
                   {diffMode === "uncommitted" ? `Show changes vs ${baseRefLabel}` : "Show uncommitted changes"}
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  testID="changes-menu-archive"
-                  destructive
-                  disabled={archiveDisabled}
-                  onSelect={() => archiveMutation.mutate()}
-                >
-                  Archive worktree
-                </DropdownMenuItem>
+                {gitStatus?.isPaseoOwnedWorktree ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      testID="changes-menu-archive"
+                      destructive
+                      disabled={archiveDisabled}
+                      status={archiveAction.status}
+                      pendingLabel="Archiving..."
+                      successLabel="Archived"
+                      closeOnSelect={false}
+                      onSelect={archiveAction.trigger}
+                    >
+                      Archive worktree
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </View>
         ) : null}
       </View>
 
-      {isGit ? (
+      {isGit && hasChanges ? (
         <View style={styles.diffStatusRow} testID="changes-diff-status">
           <Text style={styles.diffStatusText}>
             {diffMode === "uncommitted" ? "Uncommitted changes" : `Changes vs ${baseRefLabel}`}
@@ -1132,7 +1184,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  shipSplitButton: {
+  splitButton: {
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: theme.borderRadius.md,
@@ -1141,25 +1193,25 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
   },
-  shipPrimaryButton: {
+  splitButtonPrimary: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     justifyContent: "center",
   },
-  shipPrimaryButtonDisabled: {
+  splitButtonPrimaryDisabled: {
     opacity: 0.6,
   },
-  shipPrimaryText: {
+  splitButtonText: {
     fontSize: theme.fontSize.xs,
     lineHeight: theme.fontSize.xs * 1.5,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
   },
-  shipPrimarySpinner: {
+  splitButtonSpinner: {
     height: theme.fontSize.xs * 1.5,
     width: theme.fontSize.xs * 1.5,
   },
-  shipCaretButton: {
+  splitButtonCaret: {
     width: 36,
     alignItems: "center",
     justifyContent: "center",

@@ -4,8 +4,7 @@ import { join } from "path";
 import { inferAudioExtension, sanitizeForFilename } from "./audio-utils.js";
 import { resolveRecordingsDebugDir } from "./recordings-debug.js";
 
-const debugDir = resolveRecordingsDebugDir("DICTATION_DEBUG_AUDIO_DIR");
-let announced = false;
+let announcedDir: string | null = null;
 
 export interface DictationDebugAudioMetadata {
   sessionId: string;
@@ -18,13 +17,14 @@ export async function maybePersistDictationDebugAudio(
   metadata: DictationDebugAudioMetadata,
   logger: pino.Logger
 ): Promise<string | null> {
+  const debugDir = resolveRecordingsDebugDir("DICTATION_DEBUG_AUDIO_DIR");
   if (!debugDir) {
     return null;
   }
 
-  if (!announced) {
+  if (announcedDir !== debugDir) {
     logger.info({ debugDir }, "Dictation audio capture enabled");
-    announced = true;
+    announcedDir = debugDir;
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");

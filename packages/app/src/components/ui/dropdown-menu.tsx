@@ -10,6 +10,7 @@ import {
   type ReactElement,
 } from "react";
 import {
+  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
@@ -23,7 +24,10 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Check } from "lucide-react-native";
+import { Check, CheckCircle } from "lucide-react-native";
+
+// Action status for menu items with loading/success feedback
+export type ActionStatus = "idle" | "pending" | "success";
 
 type Placement = "top" | "bottom" | "left" | "right";
 type Alignment = "start" | "center" | "end";
@@ -384,6 +388,10 @@ export function DropdownMenuItem({
   selectedVariant = "default",
   leading,
   trailing,
+  loading,
+  status,
+  pendingLabel,
+  successLabel,
   closeOnSelect = true,
   testID,
 }: PropsWithChildren<{
@@ -396,19 +404,50 @@ export function DropdownMenuItem({
   selectedVariant?: "default" | "accent";
   leading?: ReactElement | null;
   trailing?: ReactElement | null;
+  /** @deprecated Use `status` instead */
+  loading?: boolean;
+  /** Action status: idle, pending, or success */
+  status?: ActionStatus;
+  /** Label to show while pending (e.g., "Pushing...") */
+  pendingLabel?: string;
+  /** Label to show on success (e.g., "Pushed") */
+  successLabel?: string;
   closeOnSelect?: boolean;
   testID?: string;
 }>): ReactElement {
   const { theme } = useUnistyles();
   const { setOpen } = useDropdownMenuContext("DropdownMenuItem");
 
+  // Derive state from status prop (preferred) or legacy loading prop
+  const isPending = status === "pending" || loading;
+  const isSuccess = status === "success";
+  const isDisabled = disabled || isPending || isSuccess;
+
+  // Determine leading icon based on status
+  let leadingContent: ReactElement | null = null;
+  if (isPending) {
+    leadingContent = <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
+  } else if (isSuccess) {
+    leadingContent = <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
+  } else if (leading) {
+    leadingContent = leading;
+  }
+
+  // Determine label based on status
+  let label = children;
+  if (isPending && pendingLabel) {
+    label = pendingLabel;
+  } else if (isSuccess && successLabel) {
+    label = successLabel;
+  }
+
   return (
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      disabled={disabled}
+      disabled={isDisabled}
       onPress={() => {
-        if (disabled) return;
+        if (isDisabled) return;
         if (closeOnSelect) {
           setOpen(false);
         }
@@ -417,9 +456,9 @@ export function DropdownMenuItem({
       style={({ pressed }) => [
         styles.item,
         selected ? (selectedVariant === "accent" ? styles.itemSelectedAccent : styles.itemSelected) : null,
-        destructive ? styles.itemDestructive : null,
-        disabled ? styles.itemDisabled : null,
-        pressed && !disabled ? styles.itemPressed : null,
+        destructive && !isSuccess ? styles.itemDestructive : null,
+        isDisabled ? styles.itemDisabled : null,
+        pressed && !isDisabled ? styles.itemPressed : null,
       ]}
     >
       {showSelectedCheck ? (
@@ -427,19 +466,20 @@ export function DropdownMenuItem({
           {selected ? <Check size={16} color={theme.colors.foreground} /> : null}
         </View>
       ) : null}
-      {leading ? <View style={styles.leadingSlot}>{leading}</View> : null}
+      {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
       <View style={styles.itemContent}>
         <Text
           numberOfLines={1}
           style={[
             styles.itemText,
-            destructive ? styles.itemTextDestructive : null,
+            destructive && !isSuccess ? styles.itemTextDestructive : null,
+            isSuccess ? styles.itemTextSuccess : null,
             selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
           ]}
         >
-          {children}
+          {label}
         </Text>
-        {description ? (
+        {description && !isPending && !isSuccess ? (
           <Text
             numberOfLines={2}
             style={[
@@ -532,6 +572,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemTextDestructive: {
     color: theme.colors.destructive,
+  },
+  itemTextSuccess: {
+    color: theme.colors.palette.green[500],
   },
   itemTextSelectedAccent: {
     color: theme.colors.accentForeground,

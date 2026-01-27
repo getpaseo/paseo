@@ -18,6 +18,7 @@ import {
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
 
@@ -250,33 +251,40 @@ function SidebarContent({
   isMobile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
+  const { status } = useCheckoutStatusQuery({ serverId, agentId, cwd });
+  const isGit = status?.isGit ?? false;
+
+  // If not a git repo, only show files tab
+  const effectiveTab = isGit ? activeTab : "files";
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
       <View style={styles.header} testID="explorer-header">
         <View style={styles.tabsContainer}>
-          <Pressable
-            style={[styles.tab, activeTab === "changes" && styles.tabActive]}
-            onPress={() => onTabPress("changes")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === "changes" && styles.tabTextActive,
-              ]}
+          {isGit ? (
+            <Pressable
+              style={[styles.tab, effectiveTab === "changes" && styles.tabActive]}
+              onPress={() => onTabPress("changes")}
             >
-              Changes
-            </Text>
-          </Pressable>
+              <Text
+                style={[
+                  styles.tabText,
+                  effectiveTab === "changes" && styles.tabTextActive,
+                ]}
+              >
+                Changes
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
-            style={[styles.tab, activeTab === "files" && styles.tabActive]}
+            style={[styles.tab, effectiveTab === "files" && styles.tabActive]}
             onPress={() => onTabPress("files")}
           >
             <Text
               style={[
                 styles.tabText,
-                activeTab === "files" && styles.tabTextActive,
+                effectiveTab === "files" && styles.tabTextActive,
               ]}
             >
               Files
@@ -284,7 +292,7 @@ function SidebarContent({
           </Pressable>
         </View>
         <View style={styles.headerRightSection}>
-          {activeTab === "files" && (
+          {effectiveTab === "files" && (
             <ViewToggle viewMode={fileViewMode} onChange={onFileViewModeChange} />
           )}
           {isMobile && (
@@ -297,10 +305,10 @@ function SidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
-        {activeTab === "changes" && (
+        {effectiveTab === "changes" && (
           <GitDiffPane serverId={serverId} agentId={agentId} cwd={cwd} />
         )}
-        {activeTab === "files" && (
+        {effectiveTab === "files" && (
           <FileExplorerPane serverId={serverId} agentId={agentId} />
         )}
       </View>
