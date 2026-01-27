@@ -846,7 +846,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                   accessibilityLabel="Commit changes"
                 >
                   {commitMutation.isPending ? (
-                    <ActivityIndicator size="small" color={theme.colors.foreground} />
+                    <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.shipPrimarySpinner} />
                   ) : (
                     <Text style={styles.shipPrimaryText}>Commit</Text>
                   )}
@@ -941,7 +941,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                   accessibilityLabel="Ship changes"
                 >
                   {shipPrimaryPending ? (
-                    <ActivityIndicator size="small" color={theme.colors.foreground} />
+                    <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.shipPrimarySpinner} />
                   ) : (
                     <Text style={styles.shipPrimaryText}>
                       {resolvedShipPrimary === "merge" ? "Merge branch" : prActionLabel}
@@ -1151,8 +1151,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   shipPrimaryText: {
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.fontSize.xs * 1.5,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+  },
+  shipPrimarySpinner: {
+    height: theme.fontSize.xs * 1.5,
+    width: theme.fontSize.xs * 1.5,
   },
   shipCaretButton: {
     width: 36,
