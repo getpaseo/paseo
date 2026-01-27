@@ -1131,8 +1131,11 @@ export class DaemonClientV2 {
 
   async getCheckoutStatus(
     agentId: string,
-    requestId?: string
+    options?: { cwd?: string; requestId?: string }
   ): Promise<CheckoutStatusPayload> {
+    const requestId = options?.requestId;
+    const cwd = options?.cwd;
+
     if (!requestId) {
       const existing = this.checkoutStatusInFlight.get(agentId);
       if (existing) {
@@ -1144,6 +1147,7 @@ export class DaemonClientV2 {
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_status_request",
       agentId,
+      cwd,
       requestId: resolvedRequestId,
     });
 

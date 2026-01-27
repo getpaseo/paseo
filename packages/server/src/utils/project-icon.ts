@@ -9,6 +9,9 @@ export const ICON_PATTERNS = [
   "favicon.ico",
   "favicon.png",
   "favicon.svg",
+  "favico.ico",
+  "favico.png",
+  "favico.svg",
   "icon.png",
   "icon.svg",
   "app-icon.png",
@@ -23,6 +26,11 @@ export const ICON_PATTERNS = [
  * Directories to search first (in priority order).
  */
 export const PRIORITY_DIRS = ["public", "static", "assets", "images", "img"];
+
+/**
+ * Monorepo package directory patterns to scan (e.g., packages/app, apps/web).
+ */
+export const MONOREPO_PACKAGE_DIRS = ["packages", "apps"];
 
 /**
  * Directories to ignore during search.
@@ -303,6 +311,54 @@ export async function findProjectIcon(
       }
     } catch {
       // Directory doesn't exist, continue
+    }
+  }
+
+  // Then search monorepo package directories (packages/*, apps/*)
+  for (const monoDir of MONOREPO_PACKAGE_DIRS) {
+    const monoPath = join(projectDir, monoDir);
+    let packageEntries: string[];
+    try {
+      packageEntries = await readdir(monoPath);
+    } catch {
+      continue;
+    }
+
+    for (const packageName of packageEntries) {
+      const packagePath = join(monoPath, packageName);
+      try {
+        const packageStats = await stat(packagePath);
+        if (!packageStats.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      // Search priority dirs within the package
+      for (const priorityDir of PRIORITY_DIRS) {
+        const priorityPath = join(packagePath, priorityDir);
+        try {
+          const priorityStats = await stat(priorityPath);
+          if (priorityStats.isDirectory()) {
+            const result = await searchDirRecursively(
+              priorityPath,
+              ICON_PATTERNS,
+              ignoredDirsSet,
+              maxDepth - 1
+            );
+            if (result) {
+              return result;
+            }
+          }
+        } catch {
+          // Directory doesn't exist, continue
+        }
+      }
+
+      // Search package root
+      const found = await findIconInDir(packagePath, ICON_PATTERNS);
+      if (found) {
+        return found;
+      }
     }
   }
 

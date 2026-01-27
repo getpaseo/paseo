@@ -477,6 +477,8 @@ const CheckoutDiffCompareSchema = z.object({
 export const CheckoutStatusRequestSchema = z.object({
   type: z.literal("checkout_status_request"),
   agentId: z.string(),
+  /** Optional cwd to use if the agent is not live in memory (e.g. from persisted agents.json) */
+  cwd: z.string().optional(),
   requestId: z.string(),
 });
 

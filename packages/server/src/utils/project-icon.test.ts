@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { findProjectIcon, getProjectIcon, ICON_PATTERNS, PRIORITY_DIRS, IGNORED_DIRS } from "./project-icon.js";
+import { findProjectIcon, getProjectIcon, ICON_PATTERNS, PRIORITY_DIRS, IGNORED_DIRS, MONOREPO_PACKAGE_DIRS } from "./project-icon.js";
 
 function createTempDir(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "project-icon-test-")));
@@ -52,6 +52,13 @@ describe("findProjectIcon", () => {
       expect(IGNORED_DIRS).toContain("node_modules");
       expect(IGNORED_DIRS).toContain("dist");
       expect(IGNORED_DIRS).toContain("build");
+    });
+  });
+
+  describe("MONOREPO_PACKAGE_DIRS", () => {
+    it("includes common monorepo package directories", () => {
+      expect(MONOREPO_PACKAGE_DIRS).toContain("packages");
+      expect(MONOREPO_PACKAGE_DIRS).toContain("apps");
     });
   });
 
@@ -174,6 +181,51 @@ describe("findProjectIcon", () => {
     const result = await findProjectIcon(tempDir);
     // Should return the first one based on pattern order (favicon.ico comes first)
     expect(result).toBe(join(tempDir, "favicon.ico"));
+  });
+
+  describe("monorepo package directories", () => {
+    it("finds icon in packages/*/public directory", async () => {
+      mkdirSync(join(tempDir, "packages", "app", "public"), { recursive: true });
+      writeFileSync(join(tempDir, "packages", "app", "public", "favicon.ico"), "icon");
+
+      const result = await findProjectIcon(tempDir);
+      expect(result).toBe(join(tempDir, "packages", "app", "public", "favicon.ico"));
+    });
+
+    it("finds icon in apps/*/public directory", async () => {
+      mkdirSync(join(tempDir, "apps", "web", "public"), { recursive: true });
+      writeFileSync(join(tempDir, "apps", "web", "public", "favicon.png"), "icon");
+
+      const result = await findProjectIcon(tempDir);
+      expect(result).toBe(join(tempDir, "apps", "web", "public", "favicon.png"));
+    });
+
+    it("finds icon in packages/* root", async () => {
+      mkdirSync(join(tempDir, "packages", "ui"), { recursive: true });
+      writeFileSync(join(tempDir, "packages", "ui", "logo.svg"), "icon");
+
+      const result = await findProjectIcon(tempDir);
+      expect(result).toBe(join(tempDir, "packages", "ui", "logo.svg"));
+    });
+
+    it("prioritizes root priority dirs over monorepo dirs", async () => {
+      mkdirSync(join(tempDir, "public"), { recursive: true });
+      mkdirSync(join(tempDir, "packages", "app", "public"), { recursive: true });
+      writeFileSync(join(tempDir, "public", "favicon.ico"), "root icon");
+      writeFileSync(join(tempDir, "packages", "app", "public", "favicon.ico"), "package icon");
+
+      const result = await findProjectIcon(tempDir);
+      expect(result).toBe(join(tempDir, "public", "favicon.ico"));
+    });
+
+    it("prioritizes monorepo dirs over root dir (non-priority)", async () => {
+      mkdirSync(join(tempDir, "packages", "app", "public"), { recursive: true });
+      writeFileSync(join(tempDir, "logo.png"), "root icon");
+      writeFileSync(join(tempDir, "packages", "app", "public", "favicon.ico"), "package icon");
+
+      const result = await findProjectIcon(tempDir);
+      expect(result).toBe(join(tempDir, "packages", "app", "public", "favicon.ico"));
+    });
   });
 });
 

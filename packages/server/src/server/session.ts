@@ -2855,7 +2855,9 @@ export class Session {
   ): Promise<void> {
     const { agentId, requestId } = msg;
     const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
+    // Use cwd from agent if found, otherwise fall back to cwd from message
+    const cwd = agent?.cwd ?? msg.cwd;
+    if (!cwd) {
       this.emit({
         type: "checkout_status_response",
         payload: {
@@ -2870,7 +2872,7 @@ export class Session {
           hasRemote: false,
           remoteUrl: null,
           isPaseoOwnedWorktree: false,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
+          error: { code: "UNKNOWN", message: `Agent not found and no cwd provided: ${agentId}` },
           requestId,
         },
       });
@@ -2878,13 +2880,13 @@ export class Session {
     }
 
     try {
-      const status = await getCheckoutStatus(agent.cwd, { paseoHome: this.paseoHome });
+      const status = await getCheckoutStatus(cwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
         this.emit({
           type: "checkout_status_response",
           payload: {
             agentId,
-            cwd: agent.cwd,
+            cwd,
             isGit: false,
             repoRoot: null,
             currentBranch: null,
@@ -2906,7 +2908,7 @@ export class Session {
           type: "checkout_status_response",
           payload: {
             agentId,
-            cwd: agent.cwd,
+            cwd,
             isGit: true,
             repoRoot: status.repoRoot ?? null,
             currentBranch: status.currentBranch ?? null,
@@ -2927,7 +2929,7 @@ export class Session {
         type: "checkout_status_response",
         payload: {
           agentId,
-          cwd: agent.cwd,
+          cwd,
           isGit: true,
           repoRoot: status.repoRoot ?? null,
           currentBranch: status.currentBranch ?? null,
@@ -2946,7 +2948,7 @@ export class Session {
         type: "checkout_status_response",
         payload: {
           agentId,
-          cwd: agent.cwd,
+          cwd,
           isGit: false,
           repoRoot: null,
           currentBranch: null,

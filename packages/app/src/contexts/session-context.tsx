@@ -194,8 +194,6 @@ type FileDownloadTokenPayload = Extract<
   { type: "file_download_token_response" }
 >["payload"];
 
-const SESSION_SNAPSHOT_STORAGE_PREFIX = "@paseo:session-snapshot:";
-
 // Module-level map for agent initialization promises
 // Key: `${serverId}:${agentId}`, Value: { promise, resolve, reject }
 // This survives Fast Refresh because it's outside React component tree
@@ -208,60 +206,6 @@ const agentInitializationPromises = new Map<string, DeferredInit>();
 
 function getInitKey(serverId: string, agentId: string): string {
   return `${serverId}:${agentId}`;
-}
-
-type PersistedSessionSnapshot = {
-  agents: AgentSnapshotPayload[];
-  savedAt: string;
-};
-
-const getSessionSnapshotStorageKey = (serverId: string): string => {
-  return `${SESSION_SNAPSHOT_STORAGE_PREFIX}${serverId}`;
-};
-
-async function loadPersistedSessionSnapshot(
-  serverId: string
-): Promise<PersistedSessionSnapshot | null> {
-  try {
-    const raw = await AsyncStorage.getItem(
-      getSessionSnapshotStorageKey(serverId)
-    );
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as PersistedSessionSnapshot;
-    if (!Array.isArray(parsed?.agents)) {
-      return null;
-    }
-    return parsed;
-  } catch (error) {
-    console.error(
-      `[Session] Failed to load persisted snapshot for ${serverId}`,
-      error
-    );
-    return null;
-  }
-}
-
-async function persistSessionSnapshot(
-  serverId: string,
-  snapshot: { agents: AgentSnapshotPayload[] }
-) {
-  try {
-    const payload: PersistedSessionSnapshot = {
-      agents: snapshot.agents,
-      savedAt: new Date().toISOString(),
-    };
-    await AsyncStorage.setItem(
-      getSessionSnapshotStorageKey(serverId),
-      JSON.stringify(payload)
-    );
-  } catch (error) {
-    console.error(
-      `[Session] Failed to persist snapshot for ${serverId}`,
-      error
-    );
-  }
 }
 
 function normalizeAgentSnapshot(
@@ -462,7 +406,6 @@ export function SessionProvider({
       ) => Promise<void>)
     | null
   >(null);
-  const hasHydratedSnapshotRef = useRef(false);
   const hasRequestedInitialSnapshotRef = useRef(false);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -620,61 +563,6 @@ export function SessionProvider({
       updateConnectionStatus(serverId, { status: "offline", lastError: null });
     };
   }, [serverId, updateConnectionStatus]);
-
-  useEffect(() => {
-    hasHydratedSnapshotRef.current = false;
-    setHasHydratedAgents(serverId, false);
-  }, [serverId, setHasHydratedAgents]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const hydrateFromSnapshot = async () => {
-      if (hasHydratedSnapshotRef.current) {
-        return;
-      }
-      hasHydratedSnapshotRef.current = true;
-      const snapshot = await loadPersistedSessionSnapshot(serverId);
-      if (!snapshot || !isMounted) {
-        return;
-      }
-
-      const agents = new Map();
-      const pendingPermissions = new Map();
-      const agentLastActivity = new Map();
-
-      for (const agentSnapshot of snapshot.agents) {
-        const agent = normalizeAgentSnapshot(agentSnapshot, serverId);
-        agents.set(agent.id, agent);
-        agentLastActivity.set(agent.id, agent.lastActivityAt);
-        for (const request of agent.pendingPermissions) {
-          const key = derivePendingPermissionKey(agent.id, request);
-          pendingPermissions.set(key, { key, agentId: agent.id, request });
-        }
-      }
-
-      setAgents(serverId, (prev) => {
-        if (prev.size > 0) {
-          return prev;
-        }
-        return agents;
-      });
-
-      // Initialize agentLastActivity slice (top-level)
-      for (const [agentId, timestamp] of agentLastActivity.entries()) {
-        setAgentLastActivity(agentId, timestamp);
-      }
-
-      setPendingPermissions(serverId, pendingPermissions);
-      setHasHydratedAgents(serverId, true);
-    };
-
-    void hydrateFromSnapshot();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [serverId, setAgents, setPendingPermissions, setHasHydratedAgents]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: any) => any) => {
@@ -953,7 +841,6 @@ export function SessionProvider({
 
         return changed ? next : prev;
       });
-      void persistSessionSnapshot(serverId, { agents: agentsList });
       setHasHydratedAgents(serverId, true);
       updateConnectionStatus(serverId, {
         status: "online",

@@ -24,10 +24,11 @@ interface UseCheckoutStatusQueryOptions {
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
 function fetchCheckoutStatus(
-  client: { getCheckoutStatus: (agentId: string) => Promise<CheckoutStatusPayload> },
-  agentId: string
+  client: { getCheckoutStatus: (agentId: string, options?: { cwd?: string }) => Promise<CheckoutStatusPayload> },
+  agentId: string,
+  cwd: string
 ): Promise<CheckoutStatusPayload> {
-  return client.getCheckoutStatus(agentId);
+  return client.getCheckoutStatus(agentId, { cwd });
 }
 
 export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutStatusQueryOptions) {
@@ -50,7 +51,7 @@ export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutSt
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await fetchCheckoutStatus(client, agentId);
+      return await fetchCheckoutStatus(client, agentId, cwd);
     },
     enabled: !!client && isConnected && !!agentId && !!cwd,
     staleTime: CHECKOUT_STATUS_STALE_TIME,
@@ -98,7 +99,7 @@ export function useCheckoutStatusCacheOnly({ serverId, agentId, cwd }: UseChecko
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await fetchCheckoutStatus(client, agentId);
+      return await fetchCheckoutStatus(client, agentId, cwd);
     },
     enabled: false,
     staleTime: CHECKOUT_STATUS_STALE_TIME,

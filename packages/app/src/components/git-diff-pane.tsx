@@ -362,7 +362,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
-  const [diffMode, setDiffMode] = useState<"uncommitted" | "base">("uncommitted");
+  const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionStatus, setActionStatus] = useState<string | null>(null);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
@@ -375,6 +375,12 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     status?.error?.message ??
     (isStatusError && statusError instanceof Error ? statusError.message : null);
   const baseRef = gitStatus?.baseRef ?? undefined;
+
+  // Auto-select diff mode based on state: uncommitted when dirty, base when clean
+  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
+  const autoDiffMode = hasUncommittedChanges ? "uncommitted" : "base";
+  const diffMode = diffModeOverride ?? autoDiffMode;
+
   const {
     files,
     payloadError: diffPayloadError,
@@ -484,6 +490,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       setIsManualRefresh(false);
     }
   }, [isDiffFetching, isStatusFetching, isManualRefresh]);
+
+  // Clear diff mode override when auto mode changes (e.g., after commit)
+  useEffect(() => {
+    setDiffModeOverride(null);
+  }, [autoDiffMode]);
 
   useEffect(() => {
     if (!isPerfLoggingEnabled()) {
@@ -697,7 +708,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const branchLabel =
     gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
-  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
   const canShowCommit = isGit && hasUncommittedChanges;
   const canShowShip = isGit && aheadCount > 0;
@@ -780,7 +790,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   }
 
   const hasPullRequest = Boolean(prStatus?.url);
-  const prActionLabel = hasPullRequest ? "Open PR" : "Create PR";
+  const prActionLabel = hasPullRequest ? "View PR" : "Create PR";
 
   type ShipActionKey = "merge" | "pr";
   const shipActions: { key: ShipActionKey; label: string; disabled: boolean; isPending: boolean }[] =
@@ -817,6 +827,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     return hasPullRequest ? false : prMutation.isPending;
   }, [hasPullRequest, mergeMutation.isPending, prMutation.isPending, resolvedShipPrimary]);
 
+  // When there are uncommitted changes, Commit becomes the primary CTA
+  const showCommitAsPrimary = canShowCommit;
+  const showShipSplitButton = canShowShip && !showCommitAsPrimary;
+
   return (
     <View style={styles.container}>
       <View style={styles.header} testID="changes-header">
@@ -831,7 +845,86 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         </View>
         {isGit ? (
           <View style={styles.headerRight}>
-            {canShowShip ? (
+            {showCommitAsPrimary ? (
+              <View style={styles.shipSplitButton}>
+                <Pressable
+                  testID="changes-commit-primary"
+                  style={[
+                    styles.shipPrimaryButton,
+                    commitDisabled && styles.shipPrimaryButtonDisabled,
+                  ]}
+                  onPress={() => commitMutation.mutate()}
+                  disabled={commitDisabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Commit changes"
+                >
+                  {commitMutation.isPending ? (
+                    <ActivityIndicator size="small" color={theme.colors.foreground} />
+                  ) : (
+                    <Text style={styles.shipPrimaryText}>Commit</Text>
+                  )}
+                </Pressable>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    testID="changes-commit-caret"
+                    style={styles.shipCaretButton}
+                    accessibilityRole="button"
+                    accessibilityLabel="More options"
+                  >
+                    <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" width={260} testID="changes-commit-menu">
+                    {canShowShip ? (
+                      <>
+                        <DropdownMenuItem
+                          testID="changes-commit-menu-merge"
+                          disabled={mergeDisabled}
+                          description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
+                          onSelect={() => {
+                            void persistShipDefault("merge");
+                            mergeMutation.mutate();
+                          }}
+                        >
+                          Merge branch
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          testID={hasPullRequest ? "changes-commit-menu-view-pr" : "changes-commit-menu-create-pr"}
+                          disabled={prDisabled}
+                          onSelect={() => {
+                            void persistShipDefault("pr");
+                            if (hasPullRequest && prStatus?.url) {
+                              void Linking.openURL(prStatus.url);
+                              return;
+                            }
+                            prMutation.mutate();
+                          }}
+                        >
+                          {prActionLabel}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    ) : null}
+                    <DropdownMenuItem
+                      testID="changes-commit-menu-merge-from-base"
+                      disabled={mergeFromBaseDisabled}
+                      description={mergeFromBaseDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
+                      onSelect={() => mergeFromBaseMutation.mutate()}
+                    >
+                      Merge from {baseRefLabel}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      testID="changes-commit-menu-push"
+                      disabled={pushDisabled}
+                      description={pushDisabled && !(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
+                      onSelect={() => pushMutation.mutate()}
+                    >
+                      Push to remote
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </View>
+            ) : showShipSplitButton ? (
               <View style={styles.shipSplitButton}>
                 <Pressable
                   testID="changes-ship-primary"
@@ -881,7 +974,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                     <DropdownMenuItem
                       testID="changes-ship-merge"
                       disabled={mergeDisabled}
-                      description={mergeDisabled && hasUncommittedChanges ? "Requires clean working tree" : undefined}
                       onSelect={() => {
                         void persistShipDefault("merge");
                         mergeMutation.mutate();
@@ -891,7 +983,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      testID={hasPullRequest ? "changes-ship-open-pr" : "changes-ship-create-pr"}
+                      testID={hasPullRequest ? "changes-ship-view-pr" : "changes-ship-create-pr"}
                       disabled={prDisabled}
                       onSelect={() => {
                         void persistShipDefault("pr");
@@ -902,7 +994,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                         prMutation.mutate();
                       }}
                     >
-                      {hasPullRequest ? "Open PR" : "Create PR"}
+                      {prActionLabel}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -923,7 +1015,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                   <>
                     {resolvedShipPrimary === "merge" ? (
                       <DropdownMenuItem
-                        testID={hasPullRequest ? "changes-menu-open-pr" : "changes-menu-create-pr"}
+                        testID={hasPullRequest ? "changes-menu-view-pr" : "changes-menu-create-pr"}
                         disabled={prDisabled}
                         onSelect={() => {
                           void persistShipDefault("pr");
@@ -934,7 +1026,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                           prMutation.mutate();
                         }}
                       >
-                        {hasPullRequest ? "Open PR" : "Create PR"}
+                        {prActionLabel}
                       </DropdownMenuItem>
                     ) : (
                       <DropdownMenuItem
@@ -971,6 +1063,13 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
+                  testID="changes-menu-toggle-view"
+                  onSelect={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
+                >
+                  {diffMode === "uncommitted" ? `Show changes vs ${baseRefLabel}` : "Show uncommitted changes"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
                   testID="changes-menu-archive"
                   destructive
                   disabled={archiveDisabled}
@@ -985,81 +1084,15 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       </View>
 
       {isGit ? (
-        <View style={styles.toolbarRow} testID="changes-toolbar">
-          <View style={styles.toolbarLeft}>
-            {canShowCommit ? (
-              <Pressable
-                testID="changes-action-commit"
-                style={[
-                  styles.secondaryActionButton,
-                  commitDisabled && styles.secondaryActionButtonDisabled,
-                ]}
-                onPress={() => commitMutation.mutate()}
-                disabled={commitDisabled}
-              >
-                {commitMutation.isPending ? (
-                  <ActivityIndicator size={12} color={theme.colors.foreground} style={styles.buttonSpinner} />
-                ) : (
-                  <Text style={styles.secondaryActionText}>Commit</Text>
-                )}
-              </Pressable>
-            ) : (
-              <View style={styles.toolbarLeftSpacer} />
-            )}
-          </View>
-          <View style={styles.toolbarRight}>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                testID="changes-view-selector"
-                style={styles.viewSelector}
-                accessibilityRole="button"
-                accessibilityLabel="Change diff view"
-              >
-                <Text style={styles.viewSelectorText}>
-                  {diffMode === "uncommitted" ? "Working" : "Base"}
-                </Text>
-                <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" width={180} testID="changes-view-menu">
-                <DropdownMenuItem
-                  testID="changes-mode-uncommitted"
-                  selected={diffMode === "uncommitted"}
-                  onSelect={() => setDiffMode("uncommitted")}
-                >
-                  Working
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  testID="changes-mode-base"
-                  selected={diffMode === "base"}
-                  onSelect={() => setDiffMode("base")}
-                >
-                  Base
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </View>
+        <View style={styles.diffStatusRow} testID="changes-diff-status">
+          <Text style={styles.diffStatusText}>
+            {diffMode === "uncommitted" ? "Uncommitted changes" : `Changes vs ${baseRefLabel}`}
+          </Text>
         </View>
       ) : null}
 
       {actionStatus ? <Text style={styles.actionStatusText}>{actionStatus}</Text> : null}
       {actionError ? <Text style={styles.actionErrorText}>{actionError}</Text> : null}
-      {prStatus ? (
-        <Pressable
-          style={styles.prStatusRow}
-          testID="changes-pr-status"
-          accessibilityRole="button"
-          accessibilityLabel="Open pull request"
-          onPress={() => {
-            if (!prStatus.url) return;
-            void Linking.openURL(prStatus.url);
-          }}
-        >
-          <Text style={styles.prStatusLabel}>PR</Text>
-          <Text style={styles.prStatusValue}>
-            {prStatus.state} {prStatus.url ? `· ${prStatus.url}` : ""}
-          </Text>
-        </Pressable>
-      ) : null}
       {prErrorMessage ? (
         <Text style={styles.actionErrorText}>{prErrorMessage}</Text>
       ) : null}
@@ -1103,64 +1136,15 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
-  viewSelector: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface2,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  viewSelectorText: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-  },
-  toolbarRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
+  diffStatusRow: {
     paddingHorizontal: theme.spacing[3],
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  toolbarLeft: {
-    flex: 1,
-    minWidth: 0,
-  },
-  toolbarLeftSpacer: {
-    height: 36,
-  },
-  toolbarRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  secondaryActionButton: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface2,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    alignSelf: "flex-start",
-  },
-  secondaryActionButtonDisabled: {
-    opacity: 0.5,
-  },
-  secondaryActionText: {
+  diffStatusText: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-  },
-  buttonSpinner: {
-    height: theme.fontSize.xs * 1.4,
+    color: theme.colors.foregroundMuted,
   },
   shipSplitButton: {
     flexDirection: "row",
@@ -1265,24 +1249,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[1],
     fontSize: theme.fontSize.xs,
     color: theme.colors.destructive,
-  },
-  prStatusRow: {
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  prStatusLabel: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  prStatusValue: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-    flexShrink: 1,
   },
   diffContainer: {
     flex: 1,
