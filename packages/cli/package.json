@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:e2e": "npx zx tests/run-all.mts"
+    "test:e2e": "npx zx tests/run-all.ts"
   },
   "dependencies": {
     "@paseo/server": "*",

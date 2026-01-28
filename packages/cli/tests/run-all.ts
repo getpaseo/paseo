@@ -4,7 +4,7 @@
  * Test runner for Paseo CLI E2E tests
  *
  * Runs all test phases in sequence and reports results.
- * Each test is a separate .mts file that can also be run independently.
+ * Each test is a separate .ts file that can also be run independently.
  */
 
 import { $ } from 'zx'
@@ -22,7 +22,7 @@ console.log('='.repeat(50))
 // Discover all test files
 const files = await readdir(__dirname)
 const testFiles = files
-  .filter(f => f.match(/^\d{2}-.*\.test\.mts$/))
+  .filter(f => f.match(/^\d{2}-.*\.test\.ts$/))
   .sort()
 
 if (testFiles.length === 0) {
@@ -42,14 +42,14 @@ const failures: { test: string; error: string }[] = []
 
 for (const testFile of testFiles) {
   const testPath = join(__dirname, testFile)
-  const testName = testFile.replace(/\.test\.mts$/, '')
+  const testName = testFile.replace(/\.test\.ts$/, '')
 
   console.log(`\n${'─'.repeat(50)}`)
   console.log(`📋 Running ${testName}...`)
   console.log('─'.repeat(50))
 
   try {
-    const result = await $`npx zx ${testPath}`.nothrow()
+    const result = await $`npx tsx ${testPath}`.nothrow()
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`)
       passed++

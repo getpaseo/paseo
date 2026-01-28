@@ -1,51 +1,86 @@
-import { Command } from 'commander'
-import chalk from 'chalk'
+import type { Command } from 'commander'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
+import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 
-export function restartCommand(): Command {
-  return new Command('restart')
-    .description('Restart the daemon')
-    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action(async (options: { host?: string }) => {
-      await runRestart(options)
-    })
+/** Result of restart command */
+interface RestartResult {
+  action: 'restarted' | 'not_running'
+  host: string
+  message: string
 }
 
-async function runRestart(options: { host?: string }): Promise<void> {
-  const host = getDaemonHost(options)
+/** Schema for restart result */
+const restartResultSchema: OutputSchema<RestartResult> = {
+  idField: 'action',
+  columns: [
+    {
+      header: 'STATUS',
+      field: 'action',
+      color: (value) => (value === 'restarted' ? 'green' : 'red'),
+    },
+    { header: 'HOST', field: 'host' },
+    { header: 'MESSAGE', field: 'message' },
+  ],
+}
+
+export type RestartCommandResult = SingleResult<RestartResult>
+
+export async function runRestartCommand(
+  options: CommandOptions,
+  _command: Command
+): Promise<RestartCommandResult> {
+  const connectOptions = { host: options.host as string | undefined }
+  const host = getDaemonHost(connectOptions)
 
   let client
   try {
-    client = await connectToDaemon(options)
+    client = await connectToDaemon(connectOptions)
   } catch {
-    console.log(chalk.yellow('Daemon is not running'))
-    console.log(chalk.dim(`Tried to connect to ${host}`))
-    console.log()
-    console.log(chalk.dim('Start the daemon with:'))
-    console.log(chalk.dim('  paseo daemon start'))
-    process.exit(1)
+    // Daemon not running - cannot restart
+    const error: CommandError = {
+      code: 'DAEMON_NOT_RUNNING',
+      message: `Daemon is not running (tried to connect to ${host})`,
+      details: 'Start the daemon with: paseo daemon start',
+    }
+    throw error
   }
 
   try {
-    console.log(chalk.dim('Restarting daemon...'))
-
     // Request server restart
     await client.restartServer('cli_restart')
 
-    console.log(chalk.green('Daemon restart requested'))
-
     await client.close()
+
+    return {
+      type: 'single',
+      data: {
+        action: 'restarted',
+        host,
+        message: 'Daemon restart requested',
+      },
+      schema: restartResultSchema,
+    }
   } catch (err) {
     await client.close().catch(() => {})
     const message = err instanceof Error ? err.message : String(err)
 
     // If connection was closed, the daemon is restarting
     if (message.includes('closed') || message.includes('disconnected')) {
-      console.log(chalk.green('Daemon is restarting'))
-      process.exit(0)
+      return {
+        type: 'single',
+        data: {
+          action: 'restarted',
+          host,
+          message: 'Daemon is restarting',
+        },
+        schema: restartResultSchema,
+      }
     }
 
-    console.error(chalk.red(`Failed to restart daemon: ${message}`))
-    process.exit(1)
+    const error: CommandError = {
+      code: 'RESTART_FAILED',
+      message: `Failed to restart daemon: ${message}`,
+    }
+    throw error
   }
 }

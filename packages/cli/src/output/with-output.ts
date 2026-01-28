@@ -47,7 +47,9 @@ export function withOutput<T, Args extends unknown[]>(
 ): (...args: [...Args, CommandOptions, Command]) => Promise<void> {
   return async (...args) => {
     // Last two args are options and command
-    const options = args[args.length - 2] as CommandOptions
+    const command = args[args.length - 1] as Command
+    // Use optsWithGlobals() to get both local and global options
+    const options = command.optsWithGlobals() as CommandOptions
     const outputOptions = extractOutputOptions(options)
 
     try {
