@@ -10,6 +10,11 @@ export function createCli(): Command {
     .name('paseo')
     .description('Paseo CLI - control your AI coding agents from the command line')
     .version(VERSION, '-v, --version', 'output the version number')
+    // Global output options
+    .option('-f, --format <format>', 'output format: table, json, yaml', 'table')
+    .option('-q, --quiet', 'minimal output (IDs only)')
+    .option('--no-headers', 'omit table headers')
+    .option('--no-color', 'disable colored output')
 
   // Placeholder subcommands
   program
