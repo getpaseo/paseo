@@ -2,7 +2,6 @@ import { Command } from 'commander'
 import { runPsCommand } from './ps.js'
 import { runRunCommand } from './run.js'
 import { runSendCommand } from './send.js'
-import { runStopCommand } from './stop.js'
 import { withOutput } from '../../output/index.js'
 
 export function createAgentCommand(): Command {
@@ -33,8 +32,8 @@ export function createAgentCommand(): Command {
     .command('send')
     .description('Send a message/task to an existing agent')
     .argument('<id>', 'Agent ID (or prefix)')
-    .argument('<prompt>', 'The message/task to send')
-    .option('--no-wait', 'Return immediately (default: wait for completion)')
+    .argument('<prompt>', 'The message to send')
+    .option('--no-wait', 'Return immediately without waiting for completion')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runSendCommand))
 
