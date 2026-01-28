@@ -4,6 +4,7 @@ import { runRunCommand } from './run.js'
 import { runSendCommand } from './send.js'
 import { runStopCommand } from './stop.js'
 import { runModeCommand } from './mode.js'
+import { runInspectCommand } from './inspect.js'
 import { withOutput } from '../../output/index.js'
 
 export function createAgentCommand(): Command {
@@ -56,6 +57,13 @@ export function createAgentCommand(): Command {
     .option('--list', 'List available modes for this agent')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runModeCommand))
+
+  agent
+    .command('inspect')
+    .description('Show detailed information about an agent')
+    .argument('<id>', 'Agent ID (or prefix)')
+    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .action(withOutput(runInspectCommand))
 
   return agent
 }
