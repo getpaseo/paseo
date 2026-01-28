@@ -97,7 +97,7 @@ function renderRow<T>(
         }
       }
 
-      return padCell(cell, width, col.align ?? 'left')
+      return padCell(cell, width ?? 0, col.align ?? 'left')
     })
     .join('  ')
 }
@@ -109,7 +109,7 @@ function renderHeader<T>(
   options: OutputOptions
 ): string {
   const headerRow = columns
-    .map((col, i) => padCell(col.header, widths[i], col.align ?? 'left'))
+    .map((col, i) => padCell(col.header, widths[i] ?? 0, col.align ?? 'left'))
     .join('  ')
 
   return options.noColor ? headerRow : chalk.bold(headerRow)
