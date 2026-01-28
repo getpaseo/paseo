@@ -423,15 +423,15 @@ describe("daemon checkout ship loop", () => {
         });
         agentId = agent.id;
 
-        const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
+        const status = await ctx.client.getCheckoutStatus(cwd);
         expect(status.isGit).toBe(false);
 
-        const diff = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
+        const diff = await ctx.client.getCheckoutDiff(cwd, {
           mode: "uncommitted",
         });
         expect(diff.error?.code).toBe("NOT_GIT_REPO");
 
-        const commit = await ctx.client.checkoutCommit(worktree.worktreePath, {
+        const commit = await ctx.client.checkoutCommit(cwd, {
           message: "Should fail",
           addAll: true,
         });

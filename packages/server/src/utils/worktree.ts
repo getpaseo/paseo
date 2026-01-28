@@ -1,6 +1,6 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join, basename, dirname, resolve, sep } from "path";
 import { createNameId } from "mnemonic-id";
 import { normalizeBaseRefName, writePaseoWorktreeMetadata } from "./worktree-metadata.js";
@@ -18,17 +18,9 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   GIT_OPTIONAL_LOCKS: "0",
 };
 
-interface RepoInfo {
-  type: "bare" | "normal";
-  path: string;
-  name: string;
-}
-
 export interface WorktreeConfig {
   branchName: string;
   worktreePath: string;
-  repoType: "bare" | "normal";
-  repoPath: string;
 }
 
 export type WorktreeSetupCommandResult = {
@@ -123,19 +115,19 @@ async function execSetupCommand(
 }
 
 export async function runWorktreeSetupCommands(options: {
-  repoRoot: string;
   worktreePath: string;
   branchName: string;
   cleanupOnFailure: boolean;
 }): Promise<WorktreeSetupCommandResult[]> {
-  const setupCommands = getWorktreeSetupCommands(options.repoRoot);
+  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  const setupCommands = getWorktreeSetupCommands(options.worktreePath);
   if (setupCommands.length === 0) {
     return [];
   }
 
   const setupEnv = {
     ...process.env,
-    PASEO_ROOT_PATH: options.repoRoot,
+    PASEO_ROOT_PATH: options.worktreePath,
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: options.branchName,
   };
@@ -152,7 +144,7 @@ export async function runWorktreeSetupCommands(options: {
       if (options.cleanupOnFailure) {
         try {
           await execAsync(`git worktree remove "${options.worktreePath}" --force`, {
-            cwd: options.repoRoot,
+            cwd: options.worktreePath,
           });
         } catch {
           rmSync(options.worktreePath, { recursive: true, force: true });
@@ -169,82 +161,19 @@ export async function runWorktreeSetupCommands(options: {
 }
 
 /**
- * Check if current directory is a bare repository
+ * Get the git common directory (shared across worktrees) for a given cwd.
+ * This is where refs, objects, etc. are stored.
  */
-function isBareRepo(dir: string): boolean {
-  const headPath = join(dir, "HEAD");
-  const refsPath = join(dir, "refs");
-  const gitPath = join(dir, ".git");
-
-  return existsSync(headPath) && existsSync(refsPath) && !existsSync(gitPath);
-}
-
-/**
- * Detect repository information (type, path, name)
- */
-export async function detectRepoInfo(cwd: string): Promise<RepoInfo> {
-  // Check if we're in a bare repository
-  if (isBareRepo(cwd)) {
-    return {
-      type: "bare",
-      path: cwd,
-      name: basename(cwd),
-    };
-  }
-
-  // Check if we're in a worktree directory (has .git file pointing to gitdir)
-  const gitFilePath = join(cwd, ".git");
-  if (existsSync(gitFilePath) && !existsSync(join(cwd, ".git", "HEAD"))) {
-    const gitContent = readFileSync(gitFilePath, "utf8");
-    const gitdirMatch = gitContent.match(/gitdir:\s*(.+)/);
-
-    if (gitdirMatch && gitdirMatch[1]) {
-      const gitdir = gitdirMatch[1].trim();
-
-      // Check if gitdir contains .git/worktrees
-      if (gitdir.includes("/.git/worktrees/")) {
-        // Extract the repo path (everything before /.git/worktrees/)
-        const repoRoot = gitdir.split("/.git/worktrees/")[0];
-        if (repoRoot) {
-          return {
-            type: "normal",
-            path: repoRoot,
-            name: basename(repoRoot),
-          };
-        }
-      } else {
-        // Bare repo structure - worktrees are siblings
-        const worktreesDir = dirname(gitdir);
-        const bareRepoDir = dirname(worktreesDir);
-        return {
-          type: "bare",
-          path: bareRepoDir,
-          name: basename(bareRepoDir),
-        };
-      }
-    }
-  }
-
-  // Fallback: allow running from any subdirectory inside a git checkout/worktree.
-  // Use git's common dir (shared .git) to find the repo root even when cwd has no .git entry.
-  try {
-    const { stdout } = await execAsync(
-      "git rev-parse --path-format=absolute --git-common-dir",
-      { cwd, env: READ_ONLY_GIT_ENV }
-    );
-    const commonDir = stdout.trim();
-    if (!commonDir) {
-      throw new Error("git-common-dir was empty");
-    }
-    const repoRoot = basename(commonDir) === ".git" ? dirname(commonDir) : dirname(commonDir);
-    return {
-      type: "normal",
-      path: repoRoot,
-      name: basename(repoRoot),
-    };
-  } catch {
+export async function getGitCommonDir(cwd: string): Promise<string> {
+  const { stdout } = await execAsync(
+    "git rev-parse --path-format=absolute --git-common-dir",
+    { cwd, env: READ_ONLY_GIT_ENV }
+  );
+  const commonDir = stdout.trim();
+  if (!commonDir) {
     throw new Error("Not in a git repository");
   }
+  return commonDir;
 }
 
 /**
@@ -353,10 +282,11 @@ function inferProjectNameFromRemote(remoteUrl: string): string | null {
   return segments[segments.length - 1] ?? null;
 }
 
-async function detectWorktreeProject(repoRoot: string): Promise<string> {
+async function detectWorktreeProject(cwd: string): Promise<string> {
+  // First try to get project name from remote URL (consistent across worktrees)
   try {
     const { stdout } = await execAsync("git config --get remote.origin.url", {
-      cwd: repoRoot,
+      cwd,
       env: READ_ONLY_GIT_ENV,
     });
     const remote = stdout.trim();
@@ -373,12 +303,33 @@ async function detectWorktreeProject(repoRoot: string): Promise<string> {
     // ignore
   }
 
-  return slugify(basename(repoRoot));
+  // Fallback: derive from git common dir parent (works for both main checkout and worktrees)
+  // For normal repos: .git -> parent is repo root
+  // For bare repos: the bare repo dir itself
+  // For worktrees: common dir points to main repo's .git
+  try {
+    const { stdout } = await execAsync("git rev-parse --git-common-dir", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const commonDir = stdout.trim();
+    const normalized = realpathSync(commonDir);
+    // If common dir ends with .git, use its parent. Otherwise use its parent too (bare repo case).
+    const repoRoot = basename(normalized) === ".git" ? dirname(normalized) : dirname(normalized);
+    return slugify(basename(repoRoot));
+  } catch {
+    // Last resort: use cwd
+    try {
+      return slugify(basename(realpathSync(cwd)));
+    } catch {
+      return slugify(basename(cwd));
+    }
+  }
 }
 
-async function getPaseoWorktreesRoot(repoRoot: string, paseoHome?: string): Promise<string> {
+async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Promise<string> {
   const home = paseoHome ? resolve(paseoHome) : resolvePaseoHome();
-  const project = await detectWorktreeProject(repoRoot);
+  const project = await detectWorktreeProject(cwd);
   return join(home, "worktrees", project);
 }
 
@@ -394,65 +345,31 @@ export async function isPaseoOwnedWorktreeCwd(
   cwd: string,
   options?: { paseoHome?: string }
 ): Promise<PaseoWorktreeOwnership> {
-  const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, options?.paseoHome);
+  const gitCommonDir = await getGitCommonDir(cwd);
+  const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
   const resolvedCwd = normalizePathForOwnership(cwd);
 
   if (!resolvedCwd.startsWith(resolvedRoot)) {
     return {
       allowed: false,
-      repoRoot: repoInfo.path,
+      repoRoot: gitCommonDir,
       worktreeRoot: worktreesRoot,
       worktreePath: resolvedCwd,
     };
   }
 
-  const worktrees = await listPaseoWorktrees({ cwd: repoInfo.path, paseoHome: options?.paseoHome });
+  const worktrees = await listPaseoWorktrees({ cwd, paseoHome: options?.paseoHome });
   const allowed = worktrees.some((entry) => {
     const worktreePath = resolve(entry.path);
     return resolvedCwd === worktreePath || resolvedCwd.startsWith(worktreePath + sep);
   });
   return {
     allowed,
-    repoRoot: repoInfo.path,
+    repoRoot: gitCommonDir,
     worktreeRoot: worktreesRoot,
     worktreePath: resolvedCwd,
   };
-}
-
-function ensurePaseoIgnoredForRepo(repoInfo: RepoInfo): {
-  updated: boolean;
-  skipped: boolean;
-  path?: string;
-} {
-  if (repoInfo.type === "bare") {
-    return { updated: false, skipped: true };
-  }
-
-  const gitignorePath = join(repoInfo.path, ".gitignore");
-  const existing = existsSync(gitignorePath)
-    ? readFileSync(gitignorePath, "utf8")
-    : "";
-  const hasEntry = /^\.paseo\/?$/m.test(existing);
-
-  if (hasEntry) {
-    return { updated: false, skipped: false, path: gitignorePath };
-  }
-
-  const needsNewline = existing.length > 0 && !existing.endsWith("\n");
-  const nextContents = `${existing}${needsNewline ? "\n" : ""}.paseo/\n`;
-  writeFileSync(gitignorePath, nextContents);
-  return { updated: true, skipped: false, path: gitignorePath };
-}
-
-export async function ensurePaseoIgnored(cwd: string): Promise<{
-  updated: boolean;
-  skipped: boolean;
-  path?: string;
-}> {
-  const repoInfo = await detectRepoInfo(cwd);
-  return ensurePaseoIgnoredForRepo(repoInfo);
 }
 
 function parseWorktreeList(output: string): PaseoWorktreeInfo[] {
@@ -501,10 +418,9 @@ export async function listPaseoWorktrees({
   cwd: string;
   paseoHome?: string;
 }): Promise<PaseoWorktreeInfo[]> {
-  const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, paseoHome);
+  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
   const { stdout } = await execAsync("git worktree list --porcelain", {
-    cwd: repoInfo.path,
+    cwd,
     env: READ_ONLY_GIT_ENV,
   });
 
@@ -518,14 +434,14 @@ export async function resolvePaseoWorktreeRootForCwd(
   cwd: string,
   options?: { paseoHome?: string }
 ): Promise<{ repoRoot: string; worktreeRoot: string; worktreePath: string } | null> {
-  let repoInfo: RepoInfo;
+  let gitCommonDir: string;
   try {
-    repoInfo = await detectRepoInfo(cwd);
+    gitCommonDir = await getGitCommonDir(cwd);
   } catch {
     return null;
   }
 
-  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, options?.paseoHome);
+  const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
 
   let worktreeRoot: string | null = null;
@@ -550,7 +466,7 @@ export async function resolvePaseoWorktreeRootForCwd(
   }
 
   const knownWorktrees = await listPaseoWorktrees({
-    cwd: repoInfo.path,
+    cwd,
     paseoHome: options?.paseoHome,
   });
   const match = knownWorktrees.find((entry) => entry.path === resolvedWorktreeRoot);
@@ -559,7 +475,7 @@ export async function resolvePaseoWorktreeRootForCwd(
   }
 
   return {
-    repoRoot: repoInfo.path,
+    repoRoot: gitCommonDir,
     worktreeRoot: worktreesRoot,
     worktreePath: match.path,
   };
@@ -580,8 +496,7 @@ export async function deletePaseoWorktree({
     throw new Error("worktreePath or worktreeSlug is required");
   }
 
-  const repoInfo = await detectRepoInfo(cwd);
-  const worktreesRoot = await getPaseoWorktreesRoot(repoInfo.path, paseoHome);
+  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
   const requestedPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
@@ -594,7 +509,7 @@ export async function deletePaseoWorktree({
   }
 
   await execAsync(`git worktree remove "${resolvedWorktree}" --force`, {
-    cwd: repoInfo.path,
+    cwd,
   });
 
   if (existsSync(resolvedWorktree)) {
@@ -620,12 +535,6 @@ export async function createWorktree({
     throw new Error(`Invalid branch name: ${validation.error}`);
   }
 
-  // Detect repository info
-  const repoInfo = await detectRepoInfo(cwd);
-
-  // Ensure .paseo exists and is ignored
-  ensurePaseoIgnoredForRepo(repoInfo);
-
   const normalizedBaseBranch = baseBranch ? normalizeBaseRefName(baseBranch) : "";
   if (!normalizedBaseBranch) {
     throw new Error("Base branch is required when creating a Paseo worktree");
@@ -634,16 +543,15 @@ export async function createWorktree({
     throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
   }
   try {
-    await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd: repoInfo.path });
+    await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd });
   } catch {
     throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
   }
 
-  // Determine worktree directory based on repo type
   let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
 
-  worktreePath = join(await getPaseoWorktreesRoot(repoInfo.path, paseoHome), desiredSlug);
+  worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome), desiredSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Check if branch already exists
@@ -651,7 +559,7 @@ export async function createWorktree({
   try {
     await execAsync(
       `git show-ref --verify --quiet refs/heads/${branchName}`,
-      { cwd: repoInfo.path }
+      { cwd }
     );
     branchExists = true;
   } catch {
@@ -671,7 +579,7 @@ export async function createWorktree({
     try {
       await execAsync(
         `git show-ref --verify --quiet refs/heads/${newBranchName}`,
-        { cwd: repoInfo.path }
+        { cwd }
       );
       // Branch exists, try with suffix
       newBranchName = `${candidateBranch}-${suffix}`;
@@ -690,14 +598,13 @@ export async function createWorktree({
   }
 
   const command = `git worktree add "${finalWorktreePath}" -b "${newBranchName}" "${base}"`;
-  await execAsync(command, { cwd: repoInfo.path });
+  await execAsync(command, { cwd });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
 
   if (runSetup) {
     await runWorktreeSetupCommands({
-      repoRoot: repoInfo.path,
       worktreePath,
       branchName: newBranchName,
       cleanupOnFailure: true,
@@ -707,7 +614,5 @@ export async function createWorktree({
   return {
     branchName: newBranchName,
     worktreePath,
-    repoType: repoInfo.type,
-    repoPath: repoInfo.path,
   };
 }

@@ -13,4 +13,5 @@ export interface AgentDirectoryEntry {
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   parentAgentId?: string | null;
+  archivedAt?: Date | null;
 }

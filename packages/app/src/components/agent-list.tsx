@@ -381,6 +381,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   sectionHeader: {
     paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
     marginTop: theme.spacing[2],
   },
   sectionTitle: {

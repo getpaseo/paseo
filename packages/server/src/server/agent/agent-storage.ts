@@ -55,6 +55,7 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   parentAgentId: z.string().nullable().optional(),
   internal: z.boolean().optional(),
+  archivedAt: z.string().nullable().optional(),
 });
 
 export type SerializableAgentConfig = Pick<

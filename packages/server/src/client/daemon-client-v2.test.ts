@@ -100,6 +100,7 @@ describe("DaemonClientV2", () => {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
+          aheadOfOrigin: null,
           hasRemote: false,
           remoteUrl: null,
         },
@@ -131,7 +132,7 @@ describe("DaemonClientV2", () => {
     );
 
     await expect(p3).resolves.toMatchObject({
-      agentId: "agent-1",
+      cwd: "/tmp/project",
       requestId: request2.message.requestId,
       isGit: false,
     });

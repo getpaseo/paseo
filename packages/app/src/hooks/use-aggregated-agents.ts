@@ -80,6 +80,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,
           parentAgentId: agent.parentAgentId,
+          archivedAt: agent.archivedAt,
         };
         allAgents.push(nextAgent);
       }

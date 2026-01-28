@@ -17,7 +17,7 @@ import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
 import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react-native";
+import { Archive, ChevronDown, ChevronRight, Plus } from "lucide-react-native";
 import {
   DraggableList,
   type DraggableRenderItemInfo,
@@ -394,8 +394,21 @@ export function GroupedAgentList({
     [setProjectOrder]
   );
 
+  const handleArchiveAgent = useCallback(
+    (e: { stopPropagation: () => void }, agent: AggregatedAgent) => {
+      e.stopPropagation();
+      const session = useSessionStore.getState().sessions[agent.serverId];
+      const archiveMethod = session?.methods?.archiveAgent;
+      if (archiveMethod) {
+        archiveMethod(agent.id);
+      }
+    },
+    []
+  );
+
   const AgentListRow = useCallback(
     ({ agent }: { agent: AggregatedAgent }) => {
+      const [isHovered, setIsHovered] = useState(false);
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
@@ -415,49 +428,74 @@ export function GroupedAgentList({
         ? (checkout.currentBranch ?? checkout.baseRef ?? "git")
         : null;
 
+      const canArchive = !isRunning && !agent.requiresAttention;
+
       return (
         <Pressable
-          style={({ pressed, hovered }) => [
+          style={({ pressed }) => [
             styles.agentItem,
             isSelected && styles.agentItemSelected,
-            hovered && styles.agentItemHovered,
+            isHovered && styles.agentItemHovered,
             pressed && styles.agentItemPressed,
           ]}
           onPress={() => handleAgentPress(agent.serverId, agent.id)}
           onLongPress={() => handleAgentLongPress(agent)}
+          onHoverIn={() => setIsHovered(true)}
+          onHoverOut={() => setIsHovered(false)}
           testID={`agent-row-${agent.serverId}-${agent.id}`}
         >
-          {({ hovered }) => (
-            <View style={styles.agentContent}>
-              <View style={styles.row}>
-                {statusColor && (
-                  <View
-                    style={[styles.statusDot, { backgroundColor: statusColor }]}
-                  />
-                )}
-                <Text
-                  style={[
-                    styles.agentTitle,
-                    (isSelected || hovered) && styles.agentTitleHighlighted,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {agent.title || "New agent"}
-                </Text>
-              </View>
-
-              <Text style={styles.secondaryRow} numberOfLines={1}>
-                {activeBranchLabel ? `${activeBranchLabel} · ${timeAgo}` : timeAgo}
+          <View style={styles.agentContent}>
+            <View style={styles.row}>
+              {statusColor && (
+                <View
+                  style={[styles.statusDot, { backgroundColor: statusColor }]}
+                />
+              )}
+              <Text
+                style={[
+                  styles.agentTitle,
+                  (isSelected || isHovered) && styles.agentTitleHighlighted,
+                ]}
+                numberOfLines={1}
+              >
+                {agent.title || "New agent"}
               </Text>
+              {isHovered && canArchive && (
+                <Pressable
+                  style={styles.archiveButton}
+                  onPress={(e) => handleArchiveAgent(e, agent)}
+                  onHoverIn={() => setIsHovered(true)}
+                  onHoverOut={() => setIsHovered(true)}
+                  testID={`agent-archive-${agent.serverId}-${agent.id}`}
+                >
+                  {({ hovered: archiveHovered }) => (
+                    <Archive
+                      size={14}
+                      color={
+                        archiveHovered
+                          ? theme.colors.foreground
+                          : theme.colors.foregroundMuted
+                      }
+                    />
+                  )}
+                </Pressable>
+              )}
             </View>
-          )}
+
+            <Text style={styles.secondaryRow} numberOfLines={1}>
+              {activeBranchLabel ? `${activeBranchLabel} · ${timeAgo}` : timeAgo}
+            </Text>
+          </View>
         </Pressable>
       );
     },
     [
       handleAgentLongPress,
       handleAgentPress,
+      handleArchiveAgent,
       selectedAgentId,
+      theme.colors.foreground,
+      theme.colors.foregroundMuted,
       theme.colors.palette.blue,
       theme.colors.success,
     ]
@@ -660,6 +698,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     color: theme.colors.foreground,
     opacity: 0.8,
+  },
+  archiveButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: theme.spacing[1],
   },
   agentTitleHighlighted: {
     color: theme.colors.foreground,
