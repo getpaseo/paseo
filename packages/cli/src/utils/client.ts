@@ -73,3 +73,58 @@ export async function tryConnectToDaemon(options?: ConnectOptions): Promise<Daem
     return null
   }
 }
+
+/** Minimal agent type for ID resolution */
+interface AgentLike {
+  id: string
+  title?: string | null
+}
+
+/**
+ * Resolve an agent ID from a partial ID or name.
+ * Supports:
+ * - Full ID match
+ * - Prefix match (first N characters)
+ * - Title/name match (case-insensitive)
+ *
+ * Returns the full agent ID if found, null otherwise.
+ */
+export function resolveAgentId(idOrName: string, agents: AgentLike[]): string | null {
+  if (!idOrName || agents.length === 0) {
+    return null
+  }
+
+  const query = idOrName.toLowerCase()
+
+  // Try exact ID match first
+  const exactMatch = agents.find((a) => a.id === idOrName)
+  if (exactMatch) {
+    return exactMatch.id
+  }
+
+  // Try ID prefix match
+  const prefixMatches = agents.filter((a) => a.id.toLowerCase().startsWith(query))
+  if (prefixMatches.length === 1 && prefixMatches[0]) {
+    return prefixMatches[0].id
+  }
+
+  // Try title/name match (case-insensitive)
+  const titleMatches = agents.filter((a) => a.title?.toLowerCase() === query)
+  if (titleMatches.length === 1 && titleMatches[0]) {
+    return titleMatches[0].id
+  }
+
+  // Try partial title match
+  const partialTitleMatches = agents.filter((a) => a.title?.toLowerCase().includes(query))
+  if (partialTitleMatches.length === 1 && partialTitleMatches[0]) {
+    return partialTitleMatches[0].id
+  }
+
+  // If we have multiple prefix matches and no unique title match, return first prefix match
+  const firstPrefixMatch = prefixMatches[0]
+  if (firstPrefixMatch) {
+    return firstPrefixMatch.id
+  }
+
+  return null
+}
