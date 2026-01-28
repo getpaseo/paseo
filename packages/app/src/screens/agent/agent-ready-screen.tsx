@@ -506,16 +506,6 @@ function AgentScreenContent({
   const headerProjectPath = effectiveAgent
     ? deriveProjectPath(effectiveAgent.cwd, checkout)
     : null;
-  const headerBranchLabel = deriveBranchLabel(checkout);
-  const headerSubtitle = useMemo(() => {
-    if (!headerProjectPath) return undefined;
-    const path = shortenPath(headerProjectPath);
-    if (headerBranchLabel) {
-      return `${path} · ${headerBranchLabel}`;
-    }
-    return path;
-  }, [headerProjectPath, headerBranchLabel]);
-
   useEffect(() => {
     if (!isPendingCreateForRoute || !pendingCreate) {
       return;
@@ -622,7 +612,6 @@ function AgentScreenContent({
         {/* Header */}
         <MenuHeader
           title={effectiveAgent.title || "Agent"}
-          subtitle={headerSubtitle}
           rightContent={
             <View style={styles.headerRightContent}>
               <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>

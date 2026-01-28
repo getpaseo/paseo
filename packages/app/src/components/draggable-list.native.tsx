@@ -69,6 +69,8 @@ export function DraggableList<T>({
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       simultaneousHandlers={simultaneousHandlers}
+      // Higher activationDistance prevents drag from interfering with nested onLongPress handlers
+      activationDistance={20}
       // @ts-expect-error - waitFor is supported by RNGH FlatList but not typed in DraggableFlatList
       waitFor={waitFor}
       refreshControl={

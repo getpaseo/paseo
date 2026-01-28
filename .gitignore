@@ -55,4 +55,5 @@ CLAUDE.local.md
 .tasks/
 
 .debug.conversations/
+.debug/
 .paseo/

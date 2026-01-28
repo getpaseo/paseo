@@ -109,4 +109,36 @@ describe("getStructuredAgentResponse", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("validation errors");
   });
+
+  it("extracts JSON from markdown code fences", async () => {
+    const schema = z.object({ message: z.string() });
+    const { caller } = createScriptedCaller([
+      '```json\n{"message": "hello"}\n```',
+    ]);
+
+    const result = await getStructuredAgentResponse({
+      caller,
+      prompt: "Provide a message",
+      schema,
+      maxRetries: 0,
+    });
+
+    expect(result).toEqual({ message: "hello" });
+  });
+
+  it("extracts JSON from plain code fences", async () => {
+    const schema = z.object({ value: z.number() });
+    const { caller } = createScriptedCaller([
+      '```\n{"value": 42}\n```',
+    ]);
+
+    const result = await getStructuredAgentResponse({
+      caller,
+      prompt: "Provide a value",
+      schema,
+      maxRetries: 0,
+    });
+
+    expect(result).toEqual({ value: 42 });
+  });
 });

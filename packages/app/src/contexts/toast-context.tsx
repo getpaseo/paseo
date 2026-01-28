@@ -8,6 +8,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
+import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
 import {
   Animated,
   Easing,
@@ -204,7 +206,7 @@ function ToastViewport({
       <AlertTriangle size={18} color={theme.colors.destructive} />
     ) : null;
 
-  return (
+  const content = (
     <View style={styles.container} pointerEvents="box-none">
       <Animated.View
         testID={toast.testID ?? "app-toast"}
@@ -232,6 +234,13 @@ function ToastViewport({
       </Animated.View>
     </View>
   );
+
+  // On web, portal to overlay root to control stacking order
+  if (Platform.OS === "web" && typeof document !== "undefined") {
+    return createPortal(content, getOverlayRoot());
+  }
+
+  return content;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -240,7 +249,7 @@ const styles = StyleSheet.create((theme) => ({
     left: theme.spacing[4],
     right: theme.spacing[4],
     bottom: 0,
-    zIndex: 1100,
+    zIndex: OVERLAY_Z.toast,
     alignItems: "center",
   },
   toast: {

@@ -1,6 +1,10 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
-import { maybePersistDictationDebugAudio } from "../agent/dictation-debug.js";
+import {
+  createDictationDebugChunkWriter,
+  maybePersistDictationDebugAudio,
+  type DictationDebugChunkWriter,
+} from "../agent/dictation-debug.js";
 import { isPaseoDictationDebugEnabled } from "../agent/recordings-debug.js";
 import { Pcm16MonoResampler } from "../agent/pcm16-resampler.js";
 import { OpenAIRealtimeTranscriptionSession } from "../agent/openai-realtime-transcription.js";
@@ -118,6 +122,7 @@ type DictationStreamState = {
   resampler: Pcm16MonoResampler | null;
   debugAudioChunks: Buffer[];
   debugRecordingPath: string | null;
+  debugChunkWriter: DictationDebugChunkWriter | null;
   receivedChunks: Map<number, Buffer>;
   nextSeqToForward: number;
   ackSeq: number;
@@ -271,6 +276,11 @@ export class DictationStreamManager {
       return;
     }
 
+    const debugChunkWriter = createDictationDebugChunkWriter(
+      { sessionId: this.sessionId, dictationId },
+      this.logger
+    );
+
     this.streams.set(dictationId, {
       dictationId,
       sessionId: this.sessionId,
@@ -286,6 +296,7 @@ export class DictationStreamManager {
             }),
       debugAudioChunks: [],
       debugRecordingPath: null,
+      debugChunkWriter,
       receivedChunks: new Map(),
       nextSeqToForward: 0,
       ackSeq: -1,
@@ -345,6 +356,12 @@ export class DictationStreamManager {
         state.debugAudioChunks.push(resampled);
         state.bytesSinceCommit += resampled.length;
         state.peakSinceCommit = Math.max(state.peakSinceCommit, pcm16lePeakAbs(resampled));
+
+        if (state.debugChunkWriter) {
+          void state.debugChunkWriter.writeChunk(seq, resampled).catch((err) => {
+            this.logger.warn({ dictationId: params.dictationId, seq, err }, "Failed to write debug chunk");
+          });
+        }
       }
 
       state.nextSeqToForward += 1;
@@ -440,7 +457,8 @@ export class DictationStreamManager {
     const path = await maybePersistDictationDebugAudio(
       wavBuffer,
       { sessionId: state.sessionId, dictationId: state.dictationId, format: "audio/wav" },
-      this.logger
+      this.logger,
+      state.debugChunkWriter?.folder
     );
     state.debugRecordingPath = path;
     return path;

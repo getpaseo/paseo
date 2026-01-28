@@ -126,6 +126,14 @@ function buildRetryPrompt(basePrompt: string, errors: string[]): string {
   ].join("\n");
 }
 
+function extractJsonFromMarkdown(text: string): string {
+  const fencedMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+  if (fencedMatch) {
+    return fencedMatch[1].trim();
+  }
+  return text.trim();
+}
+
 export async function getStructuredAgentResponse<T>(
   options: StructuredAgentResponseOptions<T>
 ): Promise<T> {
@@ -140,10 +148,11 @@ export async function getStructuredAgentResponse<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const response = await caller(attemptPrompt);
     lastResponse = response;
+    const jsonText = extractJsonFromMarkdown(response);
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(response);
+      parsed = JSON.parse(jsonText);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastErrors = [`Invalid JSON: ${message}`];
@@ -185,7 +194,12 @@ export async function generateStructuredAgentResponse<T>(
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);
-      return result.finalText;
+      // Accumulate all assistant_message items since Claude streams text as deltas
+      const fullText = result.timeline
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("");
+      return fullText || result.finalText;
     };
     return await getStructuredAgentResponse({
       caller,

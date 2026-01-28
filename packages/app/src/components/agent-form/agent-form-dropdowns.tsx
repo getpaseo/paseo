@@ -4,30 +4,19 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
   TextInput,
   ActivityIndicator,
-  ScrollView,
   Platform,
-  StatusBar,
 } from "react-native";
-import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
-  BottomSheetTextInput,
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated from "react-native-reanimated";
 import { ChevronDown, ChevronRight, Pencil, Check, X } from "lucide-react-native";
-import {
-  flip,
-  offset as floatingOffset,
-  shift,
-  size as floatingSize,
-  useFloating,
-} from "@floating-ui/react-native";
 import { theme as defaultTheme } from "@/styles/theme";
 import type {
   AgentMode,
@@ -35,6 +24,7 @@ import type {
   AgentProvider,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import { Combobox, ComboboxItem, ComboboxEmpty } from "@/components/ui/combobox";
 
 type DropdownTriggerRenderProps = {
   label: string;
@@ -256,177 +246,8 @@ export function DropdownSheet({
   );
 }
 
-interface AdaptiveSelectProps {
-  title: string;
-  visible: boolean;
-  onClose: () => void;
-  children: ReactNode;
-  anchorRef: React.RefObject<View | null>;
-}
-
-export function AdaptiveSelect({
-  title,
-  visible,
-  onClose,
-  children,
-  anchorRef,
-}: AdaptiveSelectProps): ReactElement {
-  const isMobile =
-    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
-  const snapPoints = useMemo(() => ["60%", "90%"], []);
-  const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(null);
-  const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
-
-  const collisionPadding = useMemo(() => {
-    const basePadding = 16;
-    if (Platform.OS !== "android") return basePadding;
-    const statusBarHeight = StatusBar.currentHeight ?? 0;
-    return Math.max(basePadding, statusBarHeight + basePadding);
-  }, []);
-
-  const middleware = useMemo(
-    () => [
-      floatingOffset({ mainAxis: 4 }),
-      flip({ padding: collisionPadding }),
-      // Avoid `crossAxis: true` here: per Floating UI docs it can cause overlap with the reference.
-      shift({ padding: collisionPadding }),
-      floatingSize({
-        padding: collisionPadding,
-        apply({ availableWidth, availableHeight, rects }) {
-          setAvailableSize((prev) => {
-            const next = { width: availableWidth, height: availableHeight };
-            if (!prev) return next;
-            if (prev.width === next.width && prev.height === next.height) return prev;
-            return next;
-          });
-          setReferenceWidth((prev) => {
-            const next = rects.reference.width;
-            if (prev === next) return prev;
-            return next;
-          });
-        },
-      }),
-    ],
-    [collisionPadding]
-  );
-
-  const { refs, floatingStyles, update } = useFloating({
-    placement: "bottom-start",
-    middleware,
-    sameScrollView: false,
-    elements: {
-      reference: anchorRef.current ?? undefined,
-    },
-  });
-
-  useEffect(() => {
-    if (!visible || isMobile) {
-      setAvailableSize(null);
-      setReferenceWidth(null);
-      return;
-    }
-    const raf = requestAnimationFrame(() => update());
-    return () => cancelAnimationFrame(raf);
-  }, [isMobile, update, visible]);
-
-  useEffect(() => {
-    if (!isMobile) return;
-    if (visible) {
-      bottomSheetRef.current?.present();
-    } else {
-      bottomSheetRef.current?.dismiss();
-    }
-  }, [visible, isMobile]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        onClose();
-      }
-    },
-    [onClose]
-  );
-
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop
-        {...props}
-        disappearsOnIndex={-1}
-        appearsOnIndex={0}
-        opacity={0.45}
-      />
-    ),
-    []
-  );
-
-  if (isMobile) {
-    return (
-      <BottomSheetModal
-        ref={bottomSheetRef}
-        snapPoints={snapPoints}
-        index={0}
-        enableDynamicSizing={false}
-        onChange={handleSheetChange}
-        backdropComponent={renderBackdrop}
-        enablePanDownToClose
-        backgroundComponent={DropdownSheetBackground}
-        handleIndicatorStyle={styles.bottomSheetHandle}
-        keyboardBehavior="extend"
-        keyboardBlurBehavior="restore"
-      >
-        <View style={styles.bottomSheetHeader}>
-          <Text style={styles.dropdownSheetTitle}>{title}</Text>
-        </View>
-        <BottomSheetScrollView
-          contentContainerStyle={styles.dropdownSheetScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {children}
-        </BottomSheetScrollView>
-      </BottomSheetModal>
-    );
-  }
-
-  return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={visible}
-      onRequestClose={onClose}
-    >
-      <View ref={refs.setOffsetParent} collapsable={false} style={styles.desktopDropdownOverlay}>
-        <Pressable style={styles.desktopDropdownBackdrop} onPress={onClose} />
-        <View
-          style={[
-            styles.desktopDropdownContainer,
-            {
-              position: "absolute",
-              minWidth: 200,
-              width: referenceWidth ?? undefined,
-            },
-            floatingStyles,
-            typeof availableSize?.height === "number" ? { maxHeight: Math.min(availableSize.height, 400) } : null,
-            typeof availableSize?.width === "number" ? { maxWidth: availableSize.width } : null,
-          ]}
-          ref={refs.setFloating}
-          collapsable={false}
-          onLayout={() => update()}
-        >
-          <ScrollView
-            contentContainerStyle={styles.desktopDropdownScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            style={styles.desktopDropdownScroll}
-          >
-            {children}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
+// Re-export ComboboxItem as SelectOption for backwards compatibility
+const SelectOption = ComboboxItem;
 
 interface ComboSelectOption {
   id: string;
@@ -459,54 +280,12 @@ export function ComboSelect({
 }: ComboSelectProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
-  const [searchQuery, setSearchQuery] = useState("");
 
   const selectedOption = options.find((opt) => opt.id === value);
   const displayValue = selectedOption?.label ?? (value || "");
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleClose = useCallback(() => {
-    setIsOpen(false);
-    setSearchQuery("");
-  }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      setSearchQuery("");
-    }
-  }, [isOpen]);
-
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const filteredOptions = useMemo(() => {
-    if (!normalizedSearch) {
-      return options;
-    }
-    return options.filter(
-      (opt) =>
-        opt.label.toLowerCase().includes(normalizedSearch) ||
-        opt.id.toLowerCase().includes(normalizedSearch) ||
-        opt.description?.toLowerCase().includes(normalizedSearch)
-    );
-  }, [options, normalizedSearch]);
-
-  const hasMatches = filteredOptions.length > 0;
-  const sanitizedSearchValue = searchQuery.trim();
-  const showCustomOption =
-    allowCustomValue &&
-    sanitizedSearchValue.length > 0 &&
-    !options.some(
-      (opt) =>
-        opt.id.toLowerCase() === sanitizedSearchValue.toLowerCase() ||
-        opt.label.toLowerCase() === sanitizedSearchValue.toLowerCase()
-    );
-
-  const handleSelect = useCallback(
-    (id: string) => {
-      onSelect(id);
-      handleClose();
-    },
-    [handleClose, onSelect]
-  );
+  const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
 
   return (
     <>
@@ -519,79 +298,17 @@ export function ComboSelect({
         isLoading={isLoading}
         controlRef={anchorRef}
       />
-      <AdaptiveSelect
+      <Combobox
+        options={options}
+        value={value}
+        onSelect={onSelect}
+        searchPlaceholder={`Search ${label.toLowerCase()}...`}
+        allowCustomValue={allowCustomValue}
         title={title}
-        visible={isOpen}
-        onClose={handleClose}
+        open={isOpen}
+        onOpenChange={handleOpenChange}
         anchorRef={anchorRef}
-      >
-        {Platform.OS === "web" ? (
-          <TextInput
-            style={styles.dropdownSearchInput}
-            placeholder={`Search ${label.toLowerCase()}...`}
-            placeholderTextColor={defaultTheme.colors.foregroundMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-          />
-        ) : (
-          <BottomSheetTextInput
-            style={styles.dropdownSearchInput}
-            placeholder={`Search ${label.toLowerCase()}...`}
-            placeholderTextColor={defaultTheme.colors.foregroundMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-          />
-        )}
-        {showCustomOption ? (
-          <View style={styles.dropdownSheetList}>
-            <Pressable
-              style={styles.dropdownSheetOption}
-              onPress={() => handleSelect(sanitizedSearchValue)}
-            >
-              <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
-                {`Use "${sanitizedSearchValue}"`}
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {hasMatches ? (
-          <View style={styles.dropdownSheetList}>
-            {filteredOptions.map((opt) => {
-              const isSelected = opt.id === value;
-              return (
-                <Pressable
-                  key={opt.id}
-                  style={[
-                    styles.dropdownSheetOption,
-                    isSelected && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => handleSelect(opt.id)}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel}>{opt.label}</Text>
-                  {opt.description ? (
-                    <Text style={styles.dropdownSheetOptionDescription}>
-                      {opt.description}
-                    </Text>
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : !showCustomOption ? (
-          <Text style={styles.helperText}>No options match your search.</Text>
-        ) : null}
-        {isLoading ? (
-          <View style={styles.dropdownSheetLoading}>
-            <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
-          </View>
-        ) : null}
-      </AdaptiveSelect>
+      />
     </>
   );
 }
@@ -761,8 +478,18 @@ export function AssistantDropdown({
     (definition) => definition.id === selectedProvider
   );
 
+  const options = useMemo(
+    () =>
+      providerDefinitions.map((def) => ({
+        id: def.id,
+        label: def.label,
+        description: def.description,
+      })),
+    [providerDefinitions]
+  );
+
   const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleClose = useCallback(() => setIsOpen(false), []);
+  const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
 
   return (
     <>
@@ -774,36 +501,15 @@ export function AssistantDropdown({
         disabled={disabled}
         controlRef={anchorRef}
       />
-      <AdaptiveSelect
+      <Combobox
+        options={options}
+        value={selectedProvider}
+        onSelect={(id) => onSelect(id as AgentProvider)}
         title="Choose assistant"
-        visible={isOpen}
-        onClose={handleClose}
+        open={isOpen}
+        onOpenChange={handleOpenChange}
         anchorRef={anchorRef}
-      >
-        {providerDefinitions.map((definition) => {
-          const isSelected = definition.id === selectedProvider;
-          return (
-            <Pressable
-              key={definition.id}
-              style={[
-                styles.dropdownSheetOption,
-                isSelected && styles.dropdownSheetOptionSelected,
-              ]}
-              onPress={() => {
-                onSelect(definition.id);
-                handleClose();
-              }}
-            >
-              <Text style={styles.dropdownSheetOptionLabel}>{definition.label}</Text>
-              {definition.description ? (
-                <Text style={styles.dropdownSheetOptionDescription}>
-                  {definition.description}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </AdaptiveSelect>
+      />
     </>
   );
 }
@@ -831,12 +537,22 @@ export function PermissionsDropdown({
       "Default"
     : "Automatic";
 
+  const options = useMemo(
+    () =>
+      modeOptions.map((mode) => ({
+        id: mode.id,
+        label: mode.label,
+        description: mode.description,
+      })),
+    [modeOptions]
+  );
+
   const handleOpen = useCallback(() => {
     if (hasOptions) {
       setIsOpen(true);
     }
   }, [hasOptions]);
-  const handleClose = useCallback(() => setIsOpen(false), []);
+  const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
 
   return (
     <>
@@ -854,36 +570,15 @@ export function PermissionsDropdown({
         controlRef={anchorRef}
       />
       {hasOptions ? (
-        <AdaptiveSelect
+        <Combobox
+          options={options}
+          value={selectedMode}
+          onSelect={onSelect}
           title="Permissions"
-          visible={isOpen}
-          onClose={handleClose}
+          open={isOpen}
+          onOpenChange={handleOpenChange}
           anchorRef={anchorRef}
-        >
-          {modeOptions.map((mode) => {
-            const isSelected = mode.id === selectedMode;
-            return (
-              <Pressable
-                key={mode.id}
-                style={[
-                  styles.dropdownSheetOption,
-                  isSelected && styles.dropdownSheetOptionSelected,
-                ]}
-                onPress={() => {
-                  onSelect(mode.id);
-                  handleClose();
-                }}
-              >
-                <Text style={styles.dropdownSheetOptionLabel}>{mode.label}</Text>
-                {mode.description ? (
-                  <Text style={styles.dropdownSheetOptionDescription}>
-                    {mode.description}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </AdaptiveSelect>
+        />
       ) : null}
     </>
   );
@@ -923,8 +618,36 @@ export function ModelDropdown({
         ? "This assistant did not expose selectable models."
         : undefined;
 
+  const options = useMemo(() => {
+    const opts: ComboSelectOption[] = [
+      {
+        id: "",
+        label: "Automatic (provider default)",
+        description: "Let the assistant pick the recommended model.",
+      },
+    ];
+    for (const model of models) {
+      opts.push({
+        id: model.id,
+        label: model.label,
+        description: model.description,
+      });
+    }
+    return opts;
+  }, [models]);
+
   const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleClose = useCallback(() => setIsOpen(false), []);
+  const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (id === "") {
+        onClear();
+      } else {
+        onSelect(id);
+      }
+    },
+    [onClear, onSelect]
+  );
 
   return (
     <>
@@ -938,61 +661,15 @@ export function ModelDropdown({
         helperText={helperText}
         controlRef={anchorRef}
       />
-      <AdaptiveSelect title="Model" visible={isOpen} onClose={handleClose} anchorRef={anchorRef}>
-        <Pressable
-          style={styles.dropdownSheetOption}
-          onPress={() => {
-            onClear();
-            handleClose();
-          }}
-        >
-          <Text style={styles.dropdownSheetOptionLabel}>
-            Automatic (provider default)
-          </Text>
-          <Text style={styles.dropdownSheetOptionDescription}>
-            Let the assistant pick the recommended model.
-          </Text>
-        </Pressable>
-        {models.map((model) => {
-          const isSelected = model.id === selectedModel;
-          return (
-            <Pressable
-              key={model.id}
-              style={[
-                styles.dropdownSheetOption,
-                isSelected && styles.dropdownSheetOptionSelected,
-              ]}
-              onPress={() => {
-                onSelect(model.id);
-                handleClose();
-              }}
-            >
-              <Text style={styles.dropdownSheetOptionLabel}>{model.label}</Text>
-              {model.description ? (
-                <Text style={styles.dropdownSheetOptionDescription}>
-                  {model.description}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-        <Pressable
-          style={styles.dropdownSheetOption}
-          onPress={() => {
-            onRefresh();
-          }}
-        >
-          <Text style={styles.dropdownSheetOptionLabel}>Refresh models</Text>
-          <Text style={styles.dropdownSheetOptionDescription}>
-            Request the latest catalog from the provider.
-          </Text>
-        </Pressable>
-        {isLoading ? (
-          <View style={styles.dropdownSheetLoading}>
-            <ActivityIndicator size="small" color={defaultTheme.colors.foreground} />
-          </View>
-        ) : null}
-      </AdaptiveSelect>
+      <Combobox
+        options={options}
+        value={selectedModel}
+        onSelect={handleSelect}
+        title="Model"
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        anchorRef={anchorRef}
+      />
     </>
   );
 }
@@ -1014,46 +691,18 @@ export function WorkingDirectoryDropdown({
 }: WorkingDirectoryDropdownProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
-  const [searchQuery, setSearchQuery] = useState("");
 
-  const handleOpen = useCallback(() => setIsOpen(true), []);
-  const handleClose = useCallback(() => setIsOpen(false), []);
-
-  useEffect(() => {
-    if (isOpen) {
-      setSearchQuery("");
-    }
-  }, [isOpen]);
-
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const filteredPaths = useMemo(() => {
-    if (!normalizedSearch) {
-      return suggestedPaths;
-    }
-    return suggestedPaths.filter((path) =>
-      path.toLowerCase().includes(normalizedSearch)
-    );
-  }, [suggestedPaths, normalizedSearch]);
-
-  const hasSuggestedPaths = suggestedPaths.length > 0;
-  const hasMatches = filteredPaths.length > 0;
-  const sanitizedSearchValue = searchQuery.trim();
-  const showCustomOption = sanitizedSearchValue.length > 0;
-
-  const handleSelect = useCallback(
-    (path: string) => {
-      onSelectPath(path);
-      handleClose();
-    },
-    [handleClose, onSelectPath]
+  const options = useMemo(
+    () => suggestedPaths.map((path) => ({ id: path, label: path })),
+    [suggestedPaths]
   );
 
-  const handleSubmitSearch = useCallback(() => {
-    if (!showCustomOption) {
-      return;
-    }
-    handleSelect(sanitizedSearchValue);
-  }, [handleSelect, sanitizedSearchValue, showCustomOption]);
+  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
+
+  const emptyText = suggestedPaths.length > 0
+    ? "No agent directories match your search."
+    : "We'll suggest directories from agents on this host once they exist.";
 
   return (
     <>
@@ -1068,85 +717,20 @@ export function WorkingDirectoryDropdown({
         controlRef={anchorRef}
         testID="working-directory-select"
       />
-      <AdaptiveSelect
+      <Combobox
+        options={options}
+        value={workingDir}
+        onSelect={onSelectPath}
+        searchPlaceholder="/path/to/project"
+        emptyText={emptyText}
+        allowCustomValue
+        customValuePrefix="Use"
+        customValueDescription="Launch the agent in this directory"
         title="Working directory"
-        visible={isOpen}
-        onClose={handleClose}
+        open={isOpen}
+        onOpenChange={handleOpenChange}
         anchorRef={anchorRef}
-      >
-        {Platform.OS === "web" ? (
-          <TextInput
-            style={styles.dropdownSearchInput}
-            placeholder="/path/to/project"
-            placeholderTextColor={defaultTheme.colors.foregroundMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-            onSubmitEditing={handleSubmitSearch}
-          />
-        ) : (
-          <BottomSheetTextInput
-            style={styles.dropdownSearchInput}
-            placeholder="/path/to/project"
-            placeholderTextColor={defaultTheme.colors.foregroundMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
-            onSubmitEditing={handleSubmitSearch}
-          />
-        )}
-        {!hasSuggestedPaths && !showCustomOption ? (
-          <Text style={styles.helperText}>
-            We'll suggest directories from agents on this host once they exist.
-          </Text>
-        ) : null}
-        {showCustomOption ? (
-          <View style={styles.dropdownSheetList}>
-            <Pressable
-              key="working-dir-custom-option"
-              testID="working-directory-custom-option"
-              style={styles.dropdownSheetOption}
-              onPress={() => handleSelect(sanitizedSearchValue)}
-            >
-              <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
-                {`Use "${sanitizedSearchValue}"`}
-              </Text>
-              <Text style={styles.dropdownSheetOptionDescription}>
-                Launch the agent in this directory
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {hasMatches ? (
-          <View style={styles.dropdownSheetList}>
-            {filteredPaths.map((path) => {
-              const isActive = path === workingDir;
-              return (
-                <Pressable
-                  key={path}
-                  style={[
-                    styles.dropdownSheetOption,
-                    isActive && styles.dropdownSheetOptionSelected,
-                  ]}
-                  onPress={() => handleSelect(path)}
-                >
-                  <Text style={styles.dropdownSheetOptionLabel} numberOfLines={1}>
-                    {path}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : hasSuggestedPaths ? (
-          <Text style={styles.helperText}>
-            No agent directories match your search.
-          </Text>
-        ) : null}
-      </AdaptiveSelect>
+      />
     </>
   );
 }
@@ -1343,16 +927,15 @@ export function GitOptionsSection({
             onClose={() => setIsWorktreeSheetOpen(false)}
           >
             {worktreeOptions.map((option) => (
-              <Pressable
+              <SelectOption
                 key={option.path}
-                style={styles.dropdownSheetOption}
+                label={option.label}
+                selected={option.path === selectedWorktreePath}
                 onPress={() => {
                   onSelectWorktreePath(option.path);
                   setIsWorktreeSheetOpen(false);
                 }}
-              >
-                <Text style={styles.dropdownSheetOptionLabel}>{option.label}</Text>
-              </Pressable>
+              />
             ))}
           </DropdownSheet>
         </>
@@ -1437,15 +1020,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-  },
-  dropdownSearchInput: {
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    color: theme.colors.foreground,
   },
   bottomSheetBackground: {
     backgroundColor: theme.colors.surface2,
@@ -1719,22 +1293,23 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
   },
   desktopDropdownContainer: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
     borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
     elevation: 8,
     maxHeight: 400,
+    overflow: "hidden",
   },
   desktopDropdownScroll: {
     maxHeight: 400,
   },
   desktopDropdownScrollContent: {
-    padding: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
   },
   agentConfigRow: {
     flexDirection: "row",
