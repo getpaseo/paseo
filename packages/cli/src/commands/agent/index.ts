@@ -3,6 +3,7 @@ import { runPsCommand } from './ps.js'
 import { runRunCommand } from './run.js'
 import { runSendCommand } from './send.js'
 import { runStopCommand } from './stop.js'
+import { runModeCommand } from './mode.js'
 import { withOutput } from '../../output/index.js'
 
 export function createAgentCommand(): Command {
@@ -46,6 +47,15 @@ export function createAgentCommand(): Command {
     .option('--cwd <path>', 'Stop all agents in directory')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runStopCommand))
+
+  agent
+    .command('mode')
+    .description("Change an agent's operational mode")
+    .argument('<id>', 'Agent ID (or prefix)')
+    .argument('[mode]', 'Mode to set (required unless --list)')
+    .option('--list', 'List available modes for this agent')
+    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .action(withOutput(runModeCommand))
 
   return agent
 }
