@@ -7,7 +7,7 @@ describe("useCheckoutStatusQuery", () => {
       expect(
         checkoutStatusRevalidationKey({
           serverId: "daemon-1",
-          agentId: "agent-1",
+          cwd: "/path/to/project",
           isOpen: false,
           explorerTab: "changes",
         })
@@ -18,7 +18,7 @@ describe("useCheckoutStatusQuery", () => {
       expect(
         checkoutStatusRevalidationKey({
           serverId: "daemon-1",
-          agentId: "agent-1",
+          cwd: "/path/to/project",
           isOpen: true,
           explorerTab: "files",
         })
@@ -29,11 +29,11 @@ describe("useCheckoutStatusQuery", () => {
       expect(
         checkoutStatusRevalidationKey({
           serverId: "daemon-1",
-          agentId: "agent-1",
+          cwd: "/path/to/project",
           isOpen: true,
           explorerTab: "changes",
         })
-      ).toBe("daemon-1:agent-1");
+      ).toBe("daemon-1:/path/to/project");
     });
   });
 

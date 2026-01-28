@@ -93,7 +93,6 @@ function SectionHeader({
   // For project sections, try to get repo name from checkout status
   const checkoutQuery = useCheckoutStatusCacheOnly({
     serverId: section.firstAgentServerId ?? "",
-    agentId: section.firstAgentId ?? "",
     cwd: section.workingDir ?? "",
   });
   const checkout = checkoutQuery.data ?? null;
@@ -299,7 +298,7 @@ export function GroupedAgentList({
 
       void queryClient.prefetchQuery({
         queryKey,
-        queryFn: async () => await client.getCheckoutStatus(agent.id, { cwd: agent.cwd }),
+        queryFn: async () => await client.getCheckoutStatus(agent.cwd),
         staleTime: CHECKOUT_STATUS_STALE_TIME,
       });
     }
@@ -409,7 +408,6 @@ export function GroupedAgentList({
 
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
-        agentId: agent.id,
         cwd: agent.cwd,
       });
       const checkout = checkoutQuery.data ?? null;

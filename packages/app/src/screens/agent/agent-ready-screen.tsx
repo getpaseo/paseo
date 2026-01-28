@@ -414,7 +414,6 @@ function AgentScreenContent({
   // Checkout status for header subtitle
   const checkoutStatusQuery = useCheckoutStatusQuery({
     serverId,
-    agentId: resolvedAgentId ?? "",
     cwd: agent?.cwd ?? "",
   });
   const checkout = checkoutStatusQuery.status;

@@ -4,10 +4,10 @@ import { exec } from "child_process";
 import { promisify, inspect } from "util";
 import { join, resolve, sep } from "path";
 import invariant from "tiny-invariant";
+import { z } from "zod";
 import { streamText, stepCountIs } from "ai";
 import type { ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { z } from "zod";
 import {
   createOpenRouter,
   OpenRouterProviderOptions,
@@ -120,6 +120,12 @@ const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 let restartRequested = false;
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 const RESTART_EXIT_DELAY_MS = 250;
+
+/**
+ * Default model used for auto-generating commit messages and PR descriptions.
+ * Uses Claude Haiku for speed and cost efficiency.
+ */
+const AUTO_GEN_MODEL = "haiku";
 
 type ProcessingPhase = "idle" | "transcribing" | "llm";
 
@@ -2357,18 +2363,8 @@ export class Session {
     return resolvedCandidate.startsWith(resolvedRoot + sep);
   }
 
-  private buildEphemeralAgentConfig(agent: ManagedAgent, title: string): AgentSessionConfig {
-    return {
-      ...agent.config,
-      cwd: agent.cwd,
-      title,
-      parentAgentId: agent.id,
-      internal: true,
-    };
-  }
-
-  private async generateCommitMessage(agent: ManagedAgent): Promise<string> {
-    const diff = await getCheckoutDiff(agent.cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
+  private async generateCommitMessage(cwd: string): Promise<string> {
+    const diff = await getCheckoutDiff(cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
     const schema = z.object({
       message: z
         .string()
@@ -2385,7 +2381,13 @@ export class Session {
     try {
       const result = await generateStructuredAgentResponse({
         manager: this.agentManager,
-        agentConfig: this.buildEphemeralAgentConfig(agent, "Commit generator"),
+        agentConfig: {
+          provider: "claude",
+          model: AUTO_GEN_MODEL,
+          cwd,
+          title: "Commit generator",
+          internal: true,
+        },
         prompt,
         schema,
         schemaName: "CommitMessage",
@@ -2400,12 +2402,12 @@ export class Session {
     }
   }
 
-  private async generatePullRequestText(agent: ManagedAgent, baseRef?: string): Promise<{
+  private async generatePullRequestText(cwd: string, baseRef?: string): Promise<{
     title: string;
     body: string;
   }> {
     const diff = await getCheckoutDiff(
-      agent.cwd,
+      cwd,
       {
         mode: "base",
         baseRef,
@@ -2425,7 +2427,13 @@ export class Session {
     try {
       return await generateStructuredAgentResponse({
         manager: this.agentManager,
-        agentConfig: this.buildEphemeralAgentConfig(agent, "PR generator"),
+        agentConfig: {
+          provider: "claude",
+          model: AUTO_GEN_MODEL,
+          cwd,
+          title: "PR generator",
+          internal: true,
+        },
         prompt,
         schema,
         schemaName: "PullRequest",
@@ -2853,31 +2861,7 @@ export class Session {
   private async handleCheckoutStatusRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_status_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    // Use cwd from agent if found, otherwise fall back to cwd from message
-    const cwd = agent?.cwd ?? msg.cwd;
-    if (!cwd) {
-      this.emit({
-        type: "checkout_status_response",
-        payload: {
-          agentId,
-          cwd: "",
-          isGit: false,
-          repoRoot: null,
-          currentBranch: null,
-          isDirty: null,
-          baseRef: null,
-          aheadBehind: null,
-          hasRemote: false,
-          remoteUrl: null,
-          isPaseoOwnedWorktree: false,
-          error: { code: "UNKNOWN", message: `Agent not found and no cwd provided: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
       const status = await getCheckoutStatus(cwd, { paseoHome: this.paseoHome });
@@ -2885,7 +2869,6 @@ export class Session {
         this.emit({
           type: "checkout_status_response",
           payload: {
-            agentId,
             cwd,
             isGit: false,
             repoRoot: null,
@@ -2893,6 +2876,7 @@ export class Session {
             isDirty: null,
             baseRef: null,
             aheadBehind: null,
+            aheadOfOrigin: null,
             hasRemote: false,
             remoteUrl: null,
             isPaseoOwnedWorktree: false,
@@ -2907,7 +2891,6 @@ export class Session {
         this.emit({
           type: "checkout_status_response",
           payload: {
-            agentId,
             cwd,
             isGit: true,
             repoRoot: status.repoRoot ?? null,
@@ -2915,6 +2898,7 @@ export class Session {
             isDirty: status.isDirty ?? null,
             baseRef: status.baseRef,
             aheadBehind: status.aheadBehind ?? null,
+            aheadOfOrigin: status.aheadOfOrigin ?? null,
             hasRemote: status.hasRemote,
             remoteUrl: status.remoteUrl,
             isPaseoOwnedWorktree: true,
@@ -2928,7 +2912,6 @@ export class Session {
       this.emit({
         type: "checkout_status_response",
         payload: {
-          agentId,
           cwd,
           isGit: true,
           repoRoot: status.repoRoot ?? null,
@@ -2936,6 +2919,7 @@ export class Session {
           isDirty: status.isDirty ?? null,
           baseRef: status.baseRef ?? null,
           aheadBehind: status.aheadBehind ?? null,
+          aheadOfOrigin: status.aheadOfOrigin ?? null,
           hasRemote: status.hasRemote,
           remoteUrl: status.remoteUrl,
           isPaseoOwnedWorktree: false,
@@ -2947,7 +2931,6 @@ export class Session {
       this.emit({
         type: "checkout_status_response",
         payload: {
-          agentId,
           cwd,
           isGit: false,
           repoRoot: null,
@@ -2955,6 +2938,7 @@ export class Session {
           isDirty: null,
           baseRef: null,
           aheadBehind: null,
+          aheadOfOrigin: null,
           hasRemote: false,
           remoteUrl: null,
           isPaseoOwnedWorktree: false,
@@ -2968,24 +2952,11 @@ export class Session {
   private async handleCheckoutDiffRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_diff_request" }>
   ): Promise<void> {
-    const { agentId, requestId, compare } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_diff_response",
-        payload: {
-          agentId,
-          files: [],
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId, compare } = msg;
 
     try {
       const diffResult = await getCheckoutDiff(
-        agent.cwd,
+        cwd,
         {
           mode: compare.mode,
           baseRef: compare.baseRef,
@@ -2996,7 +2967,7 @@ export class Session {
       this.emit({
         type: "checkout_diff_response",
         payload: {
-          agentId,
+          cwd,
           files: diffResult.structured ?? [],
           error: null,
           requestId,
@@ -3006,7 +2977,7 @@ export class Session {
       this.emit({
         type: "checkout_diff_response",
         payload: {
-          agentId,
+          cwd,
           files: [],
           error: this.toCheckoutError(error),
           requestId,
@@ -3018,31 +2989,18 @@ export class Session {
   private async handleCheckoutCommitRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_commit_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_commit_response",
-        payload: {
-          agentId,
-          success: false,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        message = await this.generateCommitMessage(agent);
+        message = await this.generateCommitMessage(cwd);
       }
       if (!message) {
         throw new Error("Commit message is required");
       }
 
-      await commitChanges(agent.cwd, {
+      await commitChanges(cwd, {
         message,
         addAll: msg.addAll ?? true,
       });
@@ -3050,7 +3008,7 @@ export class Session {
       this.emit({
         type: "checkout_commit_response",
         payload: {
-          agentId,
+          cwd,
           success: true,
           error: null,
           requestId,
@@ -3060,7 +3018,7 @@ export class Session {
       this.emit({
         type: "checkout_commit_response",
         payload: {
-          agentId,
+          cwd,
           success: false,
           error: this.toCheckoutError(error),
           requestId,
@@ -3072,29 +3030,14 @@ export class Session {
   private async handleCheckoutMergeRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_merge_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_merge_response",
-        payload: {
-          agentId,
-          success: false,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
-      const status = await getCheckoutStatus(agent.cwd, { paseoHome: this.paseoHome });
+      const status = await getCheckoutStatus(cwd, { paseoHome: this.paseoHome });
       if (!status.isGit) {
-        // `getCheckoutStatus` can return `isGit=false` in transient situations (e.g. cwd lookup
-        // running during other git operations). Double-check with git directly before failing.
         try {
           await execAsync("git rev-parse --is-inside-work-tree", {
-            cwd: agent.cwd,
+            cwd,
             env: READ_ONLY_GIT_ENV,
           });
         } catch (error) {
@@ -3104,13 +3047,13 @@ export class Session {
               : error instanceof Error
                 ? error.message
                 : String(error);
-          throw new Error(`Not a git repository: ${agent.cwd}\n${details}`.trim());
+          throw new Error(`Not a git repository: ${cwd}\n${details}`.trim());
         }
       }
 
       if (msg.requireCleanTarget) {
         const { stdout } = await execAsync("git status --porcelain", {
-          cwd: agent.cwd,
+          cwd,
           env: READ_ONLY_GIT_ENV,
         });
         if (stdout.trim().length > 0) {
@@ -3127,7 +3070,7 @@ export class Session {
       }
 
       await mergeToBase(
-        agent.cwd,
+        cwd,
         {
           baseRef,
           mode: msg.strategy === "squash" ? "squash" : "merge",
@@ -3138,7 +3081,7 @@ export class Session {
       this.emit({
         type: "checkout_merge_response",
         payload: {
-          agentId,
+          cwd,
           success: true,
           error: null,
           requestId,
@@ -3148,7 +3091,7 @@ export class Session {
       this.emit({
         type: "checkout_merge_response",
         payload: {
-          agentId,
+          cwd,
           success: false,
           error: this.toCheckoutError(error),
           requestId,
@@ -3160,25 +3103,12 @@ export class Session {
   private async handleCheckoutMergeFromBaseRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_merge_from_base_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_merge_from_base_response",
-        payload: {
-          agentId,
-          success: false,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
       if (msg.requireCleanTarget ?? true) {
         const { stdout } = await execAsync("git status --porcelain", {
-          cwd: agent.cwd,
+          cwd,
           env: READ_ONLY_GIT_ENV,
         });
         if (stdout.trim().length > 0) {
@@ -3187,7 +3117,7 @@ export class Session {
       }
 
       await mergeFromBase(
-        agent.cwd,
+        cwd,
         {
           baseRef: msg.baseRef,
           requireCleanTarget: msg.requireCleanTarget ?? true,
@@ -3197,7 +3127,7 @@ export class Session {
       this.emit({
         type: "checkout_merge_from_base_response",
         payload: {
-          agentId,
+          cwd,
           success: true,
           error: null,
           requestId,
@@ -3207,7 +3137,7 @@ export class Session {
       this.emit({
         type: "checkout_merge_from_base_response",
         payload: {
-          agentId,
+          cwd,
           success: false,
           error: this.toCheckoutError(error),
           requestId,
@@ -3219,27 +3149,14 @@ export class Session {
   private async handleCheckoutPushRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_push_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_push_response",
-        payload: {
-          agentId,
-          success: false,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
-      await pushCurrentBranch(agent.cwd);
+      await pushCurrentBranch(cwd);
       this.emit({
         type: "checkout_push_response",
         payload: {
-          agentId,
+          cwd,
           success: true,
           error: null,
           requestId,
@@ -3249,7 +3166,7 @@ export class Session {
       this.emit({
         type: "checkout_push_response",
         payload: {
-          agentId,
+          cwd,
           success: false,
           error: this.toCheckoutError(error),
           requestId,
@@ -3261,39 +3178,19 @@ export class Session {
   private async handleCheckoutPrCreateRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_pr_create_response",
-        payload: {
-          agentId,
-          url: null,
-          number: null,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
       let title = msg.title?.trim() ?? "";
       let body = msg.body?.trim() ?? "";
+
       if (!title || !body) {
-        const generated = await this.generatePullRequestText(agent, msg.baseRef);
-        if (!title) {
-          title = generated.title;
-        }
-        if (!body) {
-          body = generated.body;
-        }
-      }
-      if (!title) {
-        throw new Error("Pull request title is required");
+        const generated = await this.generatePullRequestText(cwd, msg.baseRef);
+        if (!title) title = generated.title;
+        if (!body) body = generated.body;
       }
 
-      const result = await createPullRequest(agent.cwd, {
+      const result = await createPullRequest(cwd, {
         title,
         body,
         base: msg.baseRef,
@@ -3302,7 +3199,7 @@ export class Session {
       this.emit({
         type: "checkout_pr_create_response",
         payload: {
-          agentId,
+          cwd,
           url: result.url ?? null,
           number: result.number ?? null,
           error: null,
@@ -3313,7 +3210,7 @@ export class Session {
       this.emit({
         type: "checkout_pr_create_response",
         payload: {
-          agentId,
+          cwd,
           url: null,
           number: null,
           error: this.toCheckoutError(error),
@@ -3326,27 +3223,14 @@ export class Session {
   private async handleCheckoutPrStatusRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_pr_status_request" }>
   ): Promise<void> {
-    const { agentId, requestId } = msg;
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      this.emit({
-        type: "checkout_pr_status_response",
-        payload: {
-          agentId,
-          status: null,
-          error: { code: "UNKNOWN", message: `Agent not found: ${agentId}` },
-          requestId,
-        },
-      });
-      return;
-    }
+    const { cwd, requestId } = msg;
 
     try {
-      const status = await getPullRequestStatus(agent.cwd);
+      const status = await getPullRequestStatus(cwd);
       this.emit({
         type: "checkout_pr_status_response",
         payload: {
-          agentId,
+          cwd,
           status,
           error: null,
           requestId,
@@ -3356,7 +3240,7 @@ export class Session {
       this.emit({
         type: "checkout_pr_status_response",
         payload: {
-          agentId,
+          cwd,
           status: null,
           error: this.toCheckoutError(error),
           requestId,

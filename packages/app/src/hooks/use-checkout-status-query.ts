@@ -17,21 +17,19 @@ export function checkoutStatusQueryKey(serverId: string, cwd: string) {
 
 interface UseCheckoutStatusQueryOptions {
   serverId: string;
-  agentId: string;
   cwd: string;
 }
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
 function fetchCheckoutStatus(
-  client: { getCheckoutStatus: (agentId: string, options?: { cwd?: string }) => Promise<CheckoutStatusPayload> },
-  agentId: string,
+  client: { getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload> },
   cwd: string
 ): Promise<CheckoutStatusPayload> {
-  return client.getCheckoutStatus(agentId, { cwd });
+  return client.getCheckoutStatus(cwd);
 }
 
-export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutStatusQueryOptions) {
+export function useCheckoutStatusQuery({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
@@ -51,9 +49,9 @@ export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutSt
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await fetchCheckoutStatus(client, agentId, cwd);
+      return await fetchCheckoutStatus(client, cwd);
     },
-    enabled: !!client && isConnected && !!agentId && !!cwd,
+    enabled: !!client && isConnected && !!cwd,
     staleTime: CHECKOUT_STATUS_STALE_TIME,
     refetchInterval: 10_000,
     refetchIntervalInBackground: true,
@@ -62,8 +60,8 @@ export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutSt
 
   // Revalidate when sidebar is open with "changes" tab active.
   const revalidationKey = useMemo(
-    () => checkoutStatusRevalidationKey({ serverId, agentId, isOpen, explorerTab }),
-    [serverId, agentId, isOpen, explorerTab]
+    () => checkoutStatusRevalidationKey({ serverId, cwd, isOpen, explorerTab }),
+    [serverId, cwd, isOpen, explorerTab]
   );
   const lastRevalidationKey = useRef<string | null>(null);
   useEffect(() => {
@@ -88,7 +86,7 @@ export function useCheckoutStatusQuery({ serverId, agentId, cwd }: UseCheckoutSt
  * initiating a fetch. Useful for list rows where a parent component prefetches
  * only the visible agents.
  */
-export function useCheckoutStatusCacheOnly({ serverId, agentId, cwd }: UseCheckoutStatusQueryOptions) {
+export function useCheckoutStatusCacheOnly({ serverId, cwd }: UseCheckoutStatusQueryOptions) {
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
   );
@@ -99,7 +97,7 @@ export function useCheckoutStatusCacheOnly({ serverId, agentId, cwd }: UseChecko
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await fetchCheckoutStatus(client, agentId, cwd);
+      return await fetchCheckoutStatus(client, cwd);
     },
     enabled: false,
     staleTime: CHECKOUT_STATUS_STALE_TIME,

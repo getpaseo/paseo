@@ -191,7 +191,7 @@ describe("daemon checkout ship loop", () => {
         });
         agentId = agent.id;
 
-        const status = await ctx.client.getCheckoutStatus(agent.id);
+        const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(status.isGit).toBe(true);
         expect(status.isPaseoOwnedWorktree).toBe(true);
         expect(status.repoRoot).toContain(repoDir);
@@ -207,13 +207,13 @@ describe("daemon checkout ship loop", () => {
         const renamePayload = getStructuredContent(renameResult);
         expect(renamePayload?.success).toBe(true);
 
-        const updatedStatus = await ctx.client.getCheckoutStatus(agent.id);
+        const updatedStatus = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(updatedStatus.currentBranch).toBe("ship-loop-ready");
 
         const readmePath = path.join(worktree.worktreePath, "README.md");
         writeFileSync(readmePath, "init\nship loop update\n");
 
-        const diffUncommitted = await ctx.client.getCheckoutDiff(agent.id, {
+        const diffUncommitted = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "uncommitted",
         });
         expect(diffUncommitted.error).toBeNull();
@@ -221,7 +221,7 @@ describe("daemon checkout ship loop", () => {
 
         const timelineBeforeCommit =
           ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        const commitResult = await ctx.client.checkoutCommit(agent.id, {
+        const commitResult = await ctx.client.checkoutCommit(worktree.worktreePath, {
           addAll: true,
         });
         expect(commitResult.error).toBeNull();
@@ -230,12 +230,12 @@ describe("daemon checkout ship loop", () => {
           ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
         expect(timelineAfterCommit).toBe(timelineBeforeCommit);
 
-        const diffAfterCommit = await ctx.client.getCheckoutDiff(agent.id, {
+        const diffAfterCommit = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "uncommitted",
         });
         expect(diffAfterCommit.files.length).toBe(0);
 
-        const baseDiff = await ctx.client.getCheckoutDiff(agent.id, {
+        const baseDiff = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "base",
           baseRef: "main",
         });
@@ -243,7 +243,7 @@ describe("daemon checkout ship loop", () => {
 
         const timelineBeforePr =
           ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
-        const prCreate = await ctx.client.checkoutPrCreate(agent.id, {
+        const prCreate = await ctx.client.checkoutPrCreate(worktree.worktreePath, {
           baseRef: "main",
         });
         expect(prCreate.error).toBeNull();
@@ -252,12 +252,12 @@ describe("daemon checkout ship loop", () => {
           ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
         expect(timelineAfterPr).toBe(timelineBeforePr);
 
-        const prStatus = await ctx.client.checkoutPrStatus(agent.id);
+        const prStatus = await ctx.client.checkoutPrStatus(worktree.worktreePath);
         expect(prStatus.error).toBeNull();
         expect(prStatus.status?.url).toContain(repoName);
         expect(prStatus.status?.state).toBeTruthy();
 
-        const mergeResult = await ctx.client.checkoutMerge(agent.id, {
+        const mergeResult = await ctx.client.checkoutMerge(worktree.worktreePath, {
           baseRef: "main",
           strategy: "merge",
           requireCleanTarget: true,
@@ -265,14 +265,14 @@ describe("daemon checkout ship loop", () => {
         expect(mergeResult.error).toBeNull();
         expect(mergeResult.success).toBe(true);
 
-        const statusAfterMerge = await ctx.client.getCheckoutStatus(agent.id);
+        const statusAfterMerge = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(statusAfterMerge.isGit).toBe(true);
         if (statusAfterMerge.isGit) {
           expect(statusAfterMerge.baseRef).toBe("main");
           expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
         }
 
-        const baseDiffAfterMerge = await ctx.client.getCheckoutDiff(agent.id, {
+        const baseDiffAfterMerge = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "base",
           baseRef: "main",
         });
@@ -353,7 +353,7 @@ describe("daemon checkout ship loop", () => {
 				});
 				agentId = agent.id;
 
-				const status = await ctx.client.getCheckoutStatus(agent.id);
+				const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
 				expect(status.isGit).toBe(true);
 				if (status.isGit) {
 					expect(status.hasRemote).toBe(true);
@@ -374,14 +374,14 @@ describe("daemon checkout ship loop", () => {
 
 				// Add a commit on the agent branch.
 				writeFileSync(path.join(worktree.worktreePath, "feature.txt"), "feature\n");
-				const commitResult = await ctx.client.checkoutCommit(agent.id, {
+				const commitResult = await ctx.client.checkoutCommit(worktree.worktreePath, {
 					message: "feature commit",
 					addAll: true,
 				});
 				expect(commitResult.error).toBeNull();
 				expect(commitResult.success).toBe(true);
 
-				const mergeFromBase = await ctx.client.checkoutMergeFromBase(agent.id, {
+				const mergeFromBase = await ctx.client.checkoutMergeFromBase(worktree.worktreePath, {
 					baseRef: "main",
 					requireCleanTarget: true,
 				});
@@ -394,7 +394,7 @@ describe("daemon checkout ship loop", () => {
 					stdio: "pipe",
 				});
 
-				const pushResult = await ctx.client.checkoutPush(agent.id);
+				const pushResult = await ctx.client.checkoutPush(worktree.worktreePath);
 				expect(pushResult.error).toBeNull();
 				expect(pushResult.success).toBe(true);
 			} finally {
@@ -423,15 +423,15 @@ describe("daemon checkout ship loop", () => {
         });
         agentId = agent.id;
 
-        const status = await ctx.client.getCheckoutStatus(agent.id);
+        const status = await ctx.client.getCheckoutStatus(worktree.worktreePath);
         expect(status.isGit).toBe(false);
 
-        const diff = await ctx.client.getCheckoutDiff(agent.id, {
+        const diff = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
           mode: "uncommitted",
         });
         expect(diff.error?.code).toBe("NOT_GIT_REPO");
 
-        const commit = await ctx.client.checkoutCommit(agent.id, {
+        const commit = await ctx.client.checkoutCommit(worktree.worktreePath, {
           message: "Should fail",
           addAll: true,
         });

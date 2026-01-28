@@ -432,7 +432,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("merge");
   const { status, isLoading: isStatusLoading, isFetching: isStatusFetching, isError: isStatusError, error: statusError, refresh: refreshStatus } =
-    useCheckoutStatusQuery({ serverId, agentId, cwd });
+    useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
   const isGit = Boolean(gitStatus);
   const notGit = status !== null && !status.isGit && !status.error;
@@ -456,7 +456,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     refresh: refreshDiff,
   } = useCheckoutDiffQuery({
     serverId,
-    agentId,
+    cwd,
     mode: diffMode,
     baseRef,
     enabled: isGit,
@@ -467,7 +467,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     refresh: refreshPrStatus,
   } = useCheckoutPrStatusQuery({
     serverId,
-    agentId,
+    cwd,
     enabled: isGit,
   });
   // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
@@ -583,16 +583,12 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     });
   }, [agentId, diffMetrics, isDiffFetching, isDiffLoading, serverId]);
 
-  const agentExists = useSessionStore((state) =>
-    state.sessions[serverId]?.agents?.has(agentId) ?? false
-  );
-
   const commitMutation = useMutation({
     mutationFn: async () => {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.checkoutCommit(agentId, { addAll: true });
+      const payload = await client.checkoutCommit(cwd, { addAll: true });
       if (payload.error) {
         throw new Error(payload.error.message);
       }
@@ -614,7 +610,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.checkoutPrCreate(agentId, {});
+      const payload = await client.checkoutPrCreate(cwd, {});
       if (payload.error) {
         throw new Error(payload.error.message);
       }
@@ -635,7 +631,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.checkoutMerge(agentId, {
+      const payload = await client.checkoutMerge(cwd, {
         baseRef,
         strategy: "merge",
         requireCleanTarget: true,
@@ -661,7 +657,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.checkoutMergeFromBase(agentId, {
+      const payload = await client.checkoutMergeFromBase(cwd, {
         baseRef,
         requireCleanTarget: true,
       });
@@ -686,7 +682,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.checkoutPush(agentId);
+      const payload = await client.checkoutPush(cwd);
       if (payload.error) {
         throw new Error(payload.error.message);
       }
@@ -753,14 +749,6 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
 
   const keyExtractor = useCallback((item: ParsedDiffFile) => item.path, []);
 
-  if (!agentExists) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Agent not found</Text>
-      </View>
-    );
-  }
-
   const hasChanges = files.length > 0;
   const diffErrorMessage =
     diffPayloadError?.message ??
@@ -770,6 +758,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
+  const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;
   const baseRefLabel = useMemo(() => {
     if (!baseRef) return "base";
     const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
@@ -855,13 +844,15 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   // ==========================================================================
   // Rules (in priority order):
   // 1. Uncommitted changes → "Commit" is primary
-  // 2. Has PR → "View PR" is primary
-  // 3. Ahead of base → "Merge branch" or "Create PR" based on shipDefault preference
-  // 4. Nothing to do → no primary CTA
+  // 2. Ahead of origin (unpushed commits) → "Push" is primary
+  // 3. Has PR → "View PR" is primary
+  // 4. Ahead of base → "Merge branch" or "Create PR" based on shipDefault preference
+  // 5. Nothing to do → no primary CTA
   // ==========================================================================
 
   type PrimaryCTA =
     | { type: "commit" }
+    | { type: "push" }
     | { type: "view-pr"; url: string }
     | { type: "ship"; action: "merge" | "create-pr" }
     | null;
@@ -874,12 +865,17 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       return { type: "commit" };
     }
 
-    // Rule 2: Has PR → View PR
+    // Rule 2: Ahead of origin → Push
+    if (aheadOfOrigin > 0 && !pushDisabled) {
+      return { type: "push" };
+    }
+
+    // Rule 3: Has PR → View PR
     if (hasPullRequest && prStatus?.url) {
       return { type: "view-pr", url: prStatus.url };
     }
 
-    // Rule 3: Ahead of base → Ship (merge or create PR based on preference)
+    // Rule 4: Ahead of base → Ship (merge or create PR based on preference)
     if (aheadCount > 0) {
       const preferredAction = shipDefault === "merge" ? "merge" : "create-pr";
       // If preferred action is disabled, fall back to the other
@@ -892,15 +888,17 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       return { type: "ship", action: preferredAction };
     }
 
-    // Rule 4: Nothing to do
+    // Rule 5: Nothing to do
     return null;
-  }, [isGit, hasUncommittedChanges, hasPullRequest, prStatus?.url, aheadCount, shipDefault, mergeDisabled, prDisabled]);
+  }, [isGit, hasUncommittedChanges, aheadOfOrigin, pushDisabled, hasPullRequest, prStatus?.url, aheadCount, shipDefault, mergeDisabled, prDisabled]);
 
   const primaryCTALabel = useMemo(() => {
     if (!primaryCTA) return "";
     switch (primaryCTA.type) {
       case "commit":
         return "Commit";
+      case "push":
+        return "Push";
       case "view-pr":
         return "View PR";
       case "ship":
@@ -913,24 +911,28 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     switch (primaryCTA.type) {
       case "commit":
         return commitDisabled;
+      case "push":
+        return pushDisabled;
       case "view-pr":
         return false; // View PR is never disabled
       case "ship":
         return primaryCTA.action === "merge" ? mergeDisabled : prDisabled;
     }
-  }, [primaryCTA, actionsDisabled, commitDisabled, mergeDisabled, prDisabled]);
+  }, [primaryCTA, actionsDisabled, commitDisabled, pushDisabled, mergeDisabled, prDisabled]);
 
   const primaryCTAStatus: ActionStatus = useMemo(() => {
     if (!primaryCTA) return "idle";
     switch (primaryCTA.type) {
       case "commit":
         return commitAction.status;
+      case "push":
+        return pushAction.status;
       case "view-pr":
         return "idle"; // View PR is instant, no status
       case "ship":
         return primaryCTA.action === "merge" ? mergeAction.status : prCreateAction.status;
     }
-  }, [primaryCTA, commitAction.status, mergeAction.status, prCreateAction.status]);
+  }, [primaryCTA, commitAction.status, pushAction.status, mergeAction.status, prCreateAction.status]);
 
   const primaryCTADisplayLabel = useMemo(() => {
     if (!primaryCTA) return "";
@@ -941,6 +943,10 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         if (status === "pending") return "Committing...";
         if (status === "success") return "Committed";
         return "Commit";
+      case "push":
+        if (status === "pending") return "Pushing...";
+        if (status === "success") return "Pushed";
+        return "Push";
       case "view-pr":
         return "View PR";
       case "ship":
@@ -962,6 +968,9 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       case "commit":
         commitAction.trigger();
         break;
+      case "push":
+        pushAction.trigger();
+        break;
       case "view-pr":
         openURLInNewTab(primaryCTA.url);
         break;
@@ -973,7 +982,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         }
         break;
     }
-  }, [primaryCTA, primaryCTADisabled, primaryCTAStatus, commitAction, mergeAction, prCreateAction]);
+  }, [primaryCTA, primaryCTADisabled, primaryCTAStatus, commitAction, pushAction, mergeAction, prCreateAction]);
 
   return (
     <View style={styles.container}>

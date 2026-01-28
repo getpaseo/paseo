@@ -4,13 +4,13 @@ import type { CheckoutPrStatusResponse } from "@server/shared/messages";
 
 const CHECKOUT_PR_STATUS_STALE_TIME = 20_000;
 
-function checkoutPrStatusQueryKey(serverId: string, agentId: string) {
-  return ["checkoutPrStatus", serverId, agentId] as const;
+function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
+  return ["checkoutPrStatus", serverId, cwd] as const;
 }
 
 interface UseCheckoutPrStatusQueryOptions {
   serverId: string;
-  agentId: string;
+  cwd: string;
   enabled?: boolean;
 }
 
@@ -18,7 +18,7 @@ export type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 
 export function useCheckoutPrStatusQuery({
   serverId,
-  agentId,
+  cwd,
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
   const client = useSessionStore(
@@ -29,14 +29,14 @@ export function useCheckoutPrStatusQuery({
   );
 
   const query = useQuery({
-    queryKey: checkoutPrStatusQueryKey(serverId, agentId),
+    queryKey: checkoutPrStatusQueryKey(serverId, cwd),
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client not available");
       }
-      return await client.checkoutPrStatus(agentId);
+      return await client.checkoutPrStatus(cwd);
     },
-    enabled: !!client && isConnected && !!agentId && enabled,
+    enabled: !!client && isConnected && !!cwd && enabled,
     staleTime: CHECKOUT_PR_STATUS_STALE_TIME,
     refetchInterval: 15_000,
   });
