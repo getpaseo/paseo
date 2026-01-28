@@ -237,6 +237,12 @@ export function groupAgents(
   const now = Date.now();
 
   for (const agent of agents) {
+    // Archived agents are always inactive (hidden from sidebar)
+    if (agent.archivedAt) {
+      inactiveAgents.push(agent);
+      continue;
+    }
+
     const isRunningOrAttention =
       agent.status === "running" || agent.requiresAttention;
     const isRecentlyActive =

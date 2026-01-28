@@ -3,7 +3,7 @@ import { promisify } from "util";
 import { resolve } from "path";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
-import { detectRepoInfo, isPaseoOwnedWorktreeCwd } from "./worktree.js";
+import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
 
 const execAsync = promisify(exec);
@@ -126,17 +126,11 @@ function isGitError(error: unknown): boolean {
   return /not a git repository/i.test(error.message) || /git repository/i.test(error.message);
 }
 
-async function requireRepoInfo(cwd: string) {
+async function requireGitRepo(cwd: string): Promise<void> {
   try {
-    return await detectRepoInfo(cwd);
+    await execAsync("git rev-parse --git-dir", { cwd, env: READ_ONLY_GIT_ENV });
   } catch (error) {
-    if (isGitError(error)) {
-      throw new NotGitRepoError(cwd);
-    }
-    if (error instanceof Error) {
-      throw new NotGitRepoError(cwd);
-    }
-    throw error;
+    throw new NotGitRepoError(cwd);
   }
 }
 
@@ -215,7 +209,7 @@ export async function renameCurrentBranch(
   cwd: string,
   newName: string
 ): Promise<{ previousBranch: string | null; currentBranch: string | null }> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
 
   const previousBranch = await getCurrentBranch(cwd);
   if (!previousBranch || previousBranch === "HEAD") {
@@ -250,10 +244,7 @@ async function getConfiguredBaseRefForCwd(
   };
 }
 
-async function isWorkingTreeDirty(cwd: string, repoType: "bare" | "normal"): Promise<boolean> {
-  if (repoType === "bare") {
-    return false;
-  }
+async function isWorkingTreeDirty(cwd: string): Promise<boolean> {
   const { stdout } = await execAsync("git status --porcelain", {
     cwd,
     env: READ_ONLY_GIT_ENV,
@@ -443,9 +434,13 @@ export async function getCheckoutStatus(
   cwd: string,
   context?: CheckoutContext
 ): Promise<CheckoutStatusResult> {
-  let repoInfo: Awaited<ReturnType<typeof detectRepoInfo>>;
+  let worktreeRoot: string;
   try {
-    repoInfo = await detectRepoInfo(cwd);
+    const root = await getWorktreeRoot(cwd);
+    if (!root) {
+      return { isGit: false };
+    }
+    worktreeRoot = root;
   } catch (error) {
     if (isGitError(error)) {
       return { isGit: false };
@@ -454,11 +449,11 @@ export async function getCheckoutStatus(
   }
 
   const currentBranch = await getCurrentBranch(cwd);
-  const isDirty = await isWorkingTreeDirty(cwd, repoInfo.type);
-  const remoteUrl = await getOriginRemoteUrl(repoInfo.path);
+  const isDirty = await isWorkingTreeDirty(cwd);
+  const remoteUrl = await getOriginRemoteUrl(cwd);
   const hasRemote = remoteUrl !== null;
   const configured = await getConfiguredBaseRefForCwd(cwd, context);
-  const baseRef = configured.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  const baseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
   const aheadBehind =
     baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
   const aheadOfOrigin =
@@ -467,7 +462,7 @@ export async function getCheckoutStatus(
   if (configured.isPaseoOwnedWorktree) {
     return {
       isGit: true,
-      repoRoot: repoInfo.path,
+      repoRoot: worktreeRoot,
       currentBranch,
       isDirty,
       baseRef: configured.baseRef,
@@ -481,7 +476,7 @@ export async function getCheckoutStatus(
 
   return {
     isGit: true,
-    repoRoot: repoInfo.path,
+    repoRoot: worktreeRoot,
     currentBranch,
     isDirty,
     baseRef,
@@ -498,7 +493,7 @@ export async function getCheckoutDiff(
   compare: CheckoutDiffCompare,
   context?: CheckoutContext
 ): Promise<CheckoutDiffResult> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
 
   let diff = "";
   if (compare.mode === "uncommitted") {
@@ -510,8 +505,7 @@ export async function getCheckoutDiff(
     diff = trackedDiff + untrackedDiff;
   } else {
     const configured = await getConfiguredBaseRefForCwd(cwd, context);
-    const repoInfo = await detectRepoInfo(cwd);
-    const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(repoInfo.path));
+    const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(cwd));
     if (!baseRef) {
       diff = "";
     } else if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
@@ -538,7 +532,7 @@ export async function commitChanges(
   cwd: string,
   options: { message: string; addAll?: boolean }
 ): Promise<void> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   if (options.addAll ?? true) {
     await execFileAsync("git", ["add", "-A"], { cwd });
   }
@@ -556,10 +550,10 @@ export async function mergeToBase(
   options: MergeToBaseOptions = {},
   context?: CheckoutContext
 ): Promise<void> {
-  const repoInfo = await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   const configured = await getConfiguredBaseRefForCwd(cwd, context);
-  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(cwd));
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
   }
@@ -576,7 +570,7 @@ export async function mergeToBase(
   }
 
   const currentWorktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
-  const baseWorktree = await getWorktreePathForBranch(repoInfo.path, normalizedBaseRef);
+  const baseWorktree = await getWorktreePathForBranch(cwd, normalizedBaseRef);
   const operationCwd = baseWorktree ?? currentWorktreeRoot;
   const isSameCheckout = resolve(operationCwd) === resolve(currentWorktreeRoot);
   const originalBranch = await getCurrentBranch(operationCwd);
@@ -662,14 +656,14 @@ export async function mergeFromBase(
   options: MergeFromBaseOptions = {},
   context?: CheckoutContext
 ): Promise<void> {
-  const repoInfo = await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for merge");
   }
 
   const configured = await getConfiguredBaseRefForCwd(cwd, context);
-  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(repoInfo.path));
+  const baseRef = configured.baseRef ?? options.baseRef ?? (await resolveBaseRef(cwd));
   if (!baseRef) {
     throw new Error("Unable to determine base branch for merge");
   }
@@ -751,7 +745,7 @@ export async function mergeFromBase(
 }
 
 export async function pushCurrentBranch(cwd: string): Promise<void> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
@@ -830,17 +824,16 @@ export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions
 ): Promise<{ url: string; number: number }> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   await ensureGhAvailable(cwd);
   const repo = await resolveGitHubRepo(cwd);
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
   }
 
-  const repoInfo = await detectRepoInfo(cwd);
   const head = options.head ?? (await getCurrentBranch(cwd));
   const configured = await getConfiguredBaseRefForCwd(cwd);
-  const base = configured.baseRef ?? options.base ?? (await resolveBaseRef(repoInfo.path));
+  const base = configured.baseRef ?? options.base ?? (await resolveBaseRef(cwd));
   if (!head) {
     throw new Error("Unable to determine head branch for PR");
   }
@@ -869,7 +862,7 @@ export async function createPullRequest(
 }
 
 export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatus | null> {
-  await requireRepoInfo(cwd);
+  await requireGitRepo(cwd);
   await ensureGhAvailable(cwd);
   const repo = await resolveGitHubRepo(cwd);
   const head = await getCurrentBranch(cwd);

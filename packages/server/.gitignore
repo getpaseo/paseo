@@ -6,3 +6,4 @@ dist
 .debug.conversations
 conversations
 .cache
+.debug/

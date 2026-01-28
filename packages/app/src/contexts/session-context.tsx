@@ -220,6 +220,9 @@ function normalizeAgentSnapshot(
   const attentionTimestamp = snapshot.attentionTimestamp
     ? new Date(snapshot.attentionTimestamp)
     : null;
+  const archivedAt = snapshot.archivedAt
+    ? new Date(snapshot.archivedAt)
+    : null;
   return {
     serverId,
     id: snapshot.id,
@@ -244,6 +247,7 @@ function normalizeAgentSnapshot(
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     parentAgentId: snapshot.parentAgentId,
+    archivedAt,
   };
 }
 
@@ -297,6 +301,7 @@ export interface SessionContextValue {
     images?: Array<{ uri: string; mimeType?: string }>
   ) => Promise<void>;
   deleteAgent: (agentId: string) => void;
+  archiveAgent: (agentId: string) => void;
   createAgent: (options: {
     config: any;
     initialPrompt: string;
@@ -1436,6 +1441,27 @@ export function SessionProvider({
       });
     });
 
+    const unsubAgentArchived = client.on("agent_archived", (message) => {
+      if (message.type !== "agent_archived") {
+        return;
+      }
+      const { agentId, archivedAt } = message.payload;
+      console.log("[Session] Agent archived:", agentId);
+
+      setAgents(serverId, (prev) => {
+        const existing = prev.get(agentId);
+        if (!existing) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(agentId, {
+          ...existing,
+          archivedAt: new Date(archivedAt),
+        });
+        return next;
+      });
+    });
+
     return () => {
       unsubSessionState();
       unsubAgentState();
@@ -1450,6 +1476,7 @@ export function SessionProvider({
       unsubTranscription();
       unsubProviderModels();
       unsubAgentDeleted();
+      unsubAgentArchived();
     };
   }, [
     client,
@@ -1837,6 +1864,19 @@ export function SessionProvider({
     [client]
   );
 
+  const archiveAgent = useCallback(
+    (agentId: string) => {
+      if (!client) {
+        console.warn("[Session] archiveAgent skipped: daemon unavailable");
+        return;
+      }
+      void client.archiveAgent(agentId).catch((error) => {
+        console.error("[Session] Failed to archive agent:", error);
+      });
+    },
+    [client]
+  );
+
   const restartServer = useCallback(
     (reason?: string) => {
       if (!client) {
@@ -2158,6 +2198,7 @@ export function SessionProvider({
       refreshSession,
       cancelAgentRun,
       deleteAgent,
+      archiveAgent,
       sendAgentMessage,
       createAgent,
       setAgentMode,
@@ -2181,6 +2222,7 @@ export function SessionProvider({
       refreshSession,
       cancelAgentRun,
       deleteAgent,
+      archiveAgent,
       sendAgentMessage,
       createAgent,
       setAgentMode,
@@ -2208,6 +2250,7 @@ export function SessionProvider({
       cancelAgentRun,
       sendAgentMessage,
       deleteAgent,
+      archiveAgent,
       createAgent,
       setAgentMode,
       respondToPermission,
@@ -2228,6 +2271,7 @@ export function SessionProvider({
       cancelAgentRun,
       sendAgentMessage,
       deleteAgent,
+      archiveAgent,
       createAgent,
       setAgentMode,
       respondToPermission,

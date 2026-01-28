@@ -841,6 +841,31 @@ export class DaemonClientV2 {
     await response;
   }
 
+  async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "archive_agent_request",
+      agentId,
+      requestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "agent_archived") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const result = await response;
+    return { archivedAt: result.archivedAt };
+  }
+
   listAgents(): AgentSnapshotPayload[] {
     return Array.from(this.agentIndex.values());
   }

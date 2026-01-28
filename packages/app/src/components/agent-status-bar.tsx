@@ -62,8 +62,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             side="top"
-            align="center"
-            fullWidth
+            align="start"
             testID="agent-mode-menu"
           >
             <DropdownMenuLabel>Mode</DropdownMenuLabel>

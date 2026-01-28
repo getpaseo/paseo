@@ -115,7 +115,7 @@ describe("checkout git utilities", () => {
 
     const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(status.repoRoot).toBe(repoDir);
+    expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isDirty).toBe(true);
 
     const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });

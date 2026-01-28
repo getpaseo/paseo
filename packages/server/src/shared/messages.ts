@@ -251,6 +251,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   parentAgentId: z.string().nullable().optional(),
+  archivedAt: z.string().nullable().optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -308,6 +309,12 @@ export const DeleteVoiceConversationRequestMessageSchema = z.object({
 
 export const DeleteAgentRequestMessageSchema = z.object({
   type: z.literal("delete_agent_request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const ArchiveAgentRequestMessageSchema = z.object({
+  type: z.literal("archive_agent_request"),
   agentId: z.string(),
   requestId: z.string(),
 });
@@ -723,6 +730,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ListVoiceConversationsRequestMessageSchema,
   DeleteVoiceConversationRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
+  ArchiveAgentRequestMessageSchema,
   SetVoiceConversationMessageSchema,
   SendAgentMessageSchema,
   DictationStreamStartMessageSchema,
@@ -1030,6 +1038,15 @@ export const AgentDeletedMessageSchema = z.object({
   type: z.literal("agent_deleted"),
   payload: z.object({
     agentId: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const AgentArchivedMessageSchema = z.object({
+  type: z.literal("agent_archived"),
+  payload: z.object({
+    agentId: z.string(),
+    archivedAt: z.string(),
     requestId: z.string(),
   }),
 });
@@ -1417,6 +1434,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
+  AgentArchivedMessageSchema,
   GitDiffResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutDiffResponseSchema,

@@ -99,6 +99,7 @@ export interface Agent {
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   parentAgentId?: string | null;
+  archivedAt?: Date | null;
 }
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -183,6 +184,7 @@ export interface SessionState {
       images?: Array<{ uri: string; mimeType?: string }>
     ) => Promise<void>;
     deleteAgent: (agentId: string) => void;
+    archiveAgent: (agentId: string) => void;
     createAgent: (options: {
       config: any;
       initialPrompt: string;
