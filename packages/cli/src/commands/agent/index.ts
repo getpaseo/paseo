@@ -3,6 +3,7 @@ import { runPsCommand } from './ps.js'
 import { runRunCommand } from './run.js'
 import { runSendCommand } from './send.js'
 import { runStopCommand } from './stop.js'
+import { runLogsCommand } from './logs.js'
 import { runModeCommand } from './mode.js'
 import { runInspectCommand } from './inspect.js'
 import { withOutput } from '../../output/index.js'
@@ -57,6 +58,15 @@ export function createAgentCommand(): Command {
     .option('--list', 'List available modes for this agent')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runModeCommand))
+
+  agent
+    .command('logs')
+    .description('View agent activity/timeline')
+    .argument('<id>', 'Agent ID (or prefix)')
+    .option('-f, --follow', 'Follow log output (streaming)')
+    .option('--tail <n>', 'Show last n entries')
+    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .action(withOutput(runLogsCommand))
 
   agent
     .command('inspect')
