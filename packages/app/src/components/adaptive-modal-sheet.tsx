@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
 } from "react-native";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
 import {
   BottomSheetModal,
   BottomSheetBackdrop,
@@ -18,11 +21,13 @@ import { X } from "lucide-react-native";
 
 const styles = StyleSheet.create((theme) => ({
   desktopOverlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     alignItems: "center",
     padding: theme.spacing[6],
+    zIndex: OVERLAY_Z.modal,
+    pointerEvents: "auto" as const,
   },
   desktopCard: {
     width: "100%",
@@ -184,6 +189,42 @@ export function AdaptiveModalSheet({
     );
   }
 
+  const desktopContent = (
+    <View style={styles.desktopOverlay} testID={testID}>
+      <Pressable
+        accessibilityLabel="Dismiss"
+        style={{ ...StyleSheet.absoluteFillObject }}
+        onPress={onClose}
+      />
+      <View style={styles.desktopCard}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{title}</Text>
+          <Pressable
+            accessibilityLabel="Close"
+            style={styles.closeButton}
+            onPress={onClose}
+          >
+            <X size={16} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        </View>
+        <ScrollView
+          style={styles.desktopScroll}
+          contentContainerStyle={styles.desktopContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {children}
+        </ScrollView>
+      </View>
+    </View>
+  );
+
+  // On web, use portal to overlay root for consistent stacking with toasts
+  if (Platform.OS === "web" && typeof document !== "undefined") {
+    if (!visible) return null;
+    return createPortal(desktopContent, getOverlayRoot());
+  }
+
   return (
     <Modal
       transparent
@@ -192,33 +233,7 @@ export function AdaptiveModalSheet({
       onRequestClose={onClose}
       hardwareAccelerated
     >
-      <View style={styles.desktopOverlay} testID={testID}>
-        <Pressable
-          accessibilityLabel="Dismiss"
-          style={{ ...StyleSheet.absoluteFillObject }}
-          onPress={onClose}
-        />
-        <View style={styles.desktopCard}>
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <Pressable
-              accessibilityLabel="Close"
-              style={styles.closeButton}
-              onPress={onClose}
-            >
-              <X size={16} color={theme.colors.foregroundMuted} />
-            </Pressable>
-          </View>
-          <ScrollView
-            style={styles.desktopScroll}
-            contentContainerStyle={styles.desktopContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </ScrollView>
-        </View>
-      </View>
+      {desktopContent}
     </Modal>
   );
 }

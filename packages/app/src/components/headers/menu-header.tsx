@@ -7,11 +7,10 @@ import { usePanelStore } from "@/stores/panel-store";
 
 interface MenuHeaderProps {
   title?: string;
-  subtitle?: string;
   rightContent?: ReactNode;
 }
 
-export function MenuHeader({ title, subtitle, rightContent }: MenuHeaderProps) {
+export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
   const { theme } = useUnistyles();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
@@ -33,16 +32,9 @@ export function MenuHeader({ title, subtitle, rightContent }: MenuHeaderProps) {
             <MenuIcon size={isMobile ? 20 : 16} color={menuIconColor} />
           </Pressable>
           {title && (
-            <View style={styles.titleContainer}>
-              <Text style={styles.title} numberOfLines={1}>
-                {title}
-              </Text>
-              {subtitle && (
-                <Text style={styles.subtitle} numberOfLines={1}>
-                  {subtitle}
-                </Text>
-              )}
-            </View>
+            <Text style={styles.title} numberOfLines={1}>
+              {title}
+            </Text>
           )}
         </>
       }
@@ -63,21 +55,13 @@ const styles = StyleSheet.create((theme) => ({
     },
     borderRadius: theme.borderRadius.lg,
   },
-  titleContainer: {
-    flex: 1,
-    gap: theme.spacing[0],
-  },
   title: {
+    flex: 1,
     fontSize: theme.fontSize.base,
     fontWeight: {
       xs: "400",
       md: "300",
     },
     color: theme.colors.foreground,
-  },
-  subtitle: {
-    fontSize: 12,
-    fontWeight: "300",
-    color: theme.colors.foregroundMuted,
   },
 }));

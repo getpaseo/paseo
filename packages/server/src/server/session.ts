@@ -36,6 +36,7 @@ import { STTManager } from "./agent/stt-manager.js";
 import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
+import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import { DictationStreamManager } from "./dictation/dictation-stream-manager.js";
 import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {

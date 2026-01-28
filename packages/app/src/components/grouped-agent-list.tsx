@@ -147,11 +147,24 @@ function SectionHeader({
       onHoverOut={() => setIsHovered(false)}
     >
       <View style={styles.sectionHeaderLeft}>
-        {icon && (
+        <View style={styles.chevron}>
+          {isCollapsed ? (
+            <ChevronRight size={14} color={theme.colors.foregroundMuted} />
+          ) : (
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+          )}
+        </View>
+        {icon ? (
           <Image
             source={{ uri: `data:${icon.mimeType};base64,${icon.data}` }}
             style={styles.projectIcon}
           />
+        ) : (
+          <View style={styles.projectIconPlaceholder}>
+            <Text style={styles.projectIconPlaceholderText}>
+              {(section.workingDir?.split("/").pop() ?? displayTitle).charAt(0).toUpperCase()}
+            </Text>
+          </View>
         )}
         <Text style={styles.sectionTitle} numberOfLines={1}>
           {displayTitle}
@@ -162,21 +175,17 @@ function SectionHeader({
           <Pressable
             style={styles.createAgentButton}
             onPress={handleCreatePress}
-            onHoverIn={() => setIsHovered(true)}
-            onHoverOut={() => setIsHovered(true)}
+            hitSlop={20}
+            onStartShouldSetResponder={() => true}
+            onStartShouldSetResponderCapture={() => true}
           >
-            {({ hovered }) => (
+            {({ hovered, pressed }) => (
               <Plus
-                size={14}
-                color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                size={18}
+                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
               />
             )}
           </Pressable>
-        )}
-        {isCollapsed ? (
-          <ChevronRight size={14} color={theme.colors.foregroundMuted} />
-        ) : (
-          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
         )}
       </View>
     </Pressable>
@@ -271,9 +280,10 @@ export function GroupedAgentList({
 
   const handleCreateAgentInProject = useCallback(
     (workingDir: string) => {
+      onAgentSelect?.();
       router.push(`/agent?workingDir=${encodeURIComponent(workingDir)}` as any);
     },
-    []
+    [onAgentSelect]
   );
 
   // Prefetch checkout status for all agents in the sidebar.
@@ -436,6 +446,7 @@ export function GroupedAgentList({
         <Pressable
           style={({ pressed }) => [
             styles.agentItem,
+            !isSelected && styles.agentItemUnselected,
             isSelected && styles.agentItemSelected,
             isHovered && styles.agentItemHovered,
             pressed && styles.agentItemPressed,
@@ -462,9 +473,9 @@ export function GroupedAgentList({
               >
                 {agent.title || "New agent"}
               </Text>
-              {isHovered && canArchive && (
+              {isHovered && canArchive ? (
                 <Pressable
-                  style={styles.archiveButton}
+                  style={styles.branchBadge}
                   onPress={(e) => handleArchiveAgent(e, agent)}
                   onHoverIn={() => setIsHovered(true)}
                   onHoverOut={() => setIsHovered(true)}
@@ -472,7 +483,7 @@ export function GroupedAgentList({
                 >
                   {({ hovered: archiveHovered }) => (
                     <Archive
-                      size={14}
+                      size={12}
                       color={
                         archiveHovered
                           ? theme.colors.foreground
@@ -481,12 +492,14 @@ export function GroupedAgentList({
                     />
                   )}
                 </Pressable>
-              )}
+              ) : activeBranchLabel ? (
+                <View style={styles.branchBadge}>
+                  <Text style={styles.branchBadgeText} numberOfLines={1}>
+                    {activeBranchLabel}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-
-            <Text style={styles.secondaryRow} numberOfLines={1}>
-              {activeBranchLabel ? `${activeBranchLabel} · ${timeAgo}` : timeAgo}
-            </Text>
           </View>
         </Pressable>
       );
@@ -508,7 +521,7 @@ export function GroupedAgentList({
       const isCollapsed = collapsedSections.has(section.key);
 
       return (
-        <View style={isActive && styles.sectionDragging}>
+        <View style={[styles.sectionContainer, isActive && styles.sectionDragging]}>
           <SectionHeader
             section={section}
             isCollapsed={isCollapsed}
@@ -624,13 +637,19 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   sectionHeaderExpanded: {
-    marginBottom: theme.spacing[1],
+    marginBottom: theme.spacing[2],
   },
   sectionHeaderDragging: {
     backgroundColor: theme.colors.surface2,
   },
+  sectionContainer: {
+    marginBottom: theme.spacing[2],
+  },
   sectionDragging: {
     opacity: 0.9,
+  },
+  chevron: {
+    opacity: 0.5,
   },
   sectionHeaderLeft: {
     flexDirection: "row",
@@ -645,6 +664,20 @@ const styles = StyleSheet.create((theme) => ({
     height: 16,
     borderRadius: theme.borderRadius.sm,
   },
+  projectIconPlaceholder: {
+    width: 16,
+    height: 16,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  projectIconPlaceholderText: {
+    fontSize: 10,
+    fontWeight: "500",
+    color: theme.colors.foregroundMuted,
+  },
   sectionHeaderRight: {
     flexDirection: "row",
     alignItems: "center",
@@ -653,8 +686,8 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: theme.spacing[2],
   },
   createAgentButton: {
-    width: 14,
-    height: 14,
+    width: 18,
+    height: 18,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -671,6 +704,9 @@ const styles = StyleSheet.create((theme) => ({
     marginHorizontal: -theme.spacing[2],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[1],
+  },
+  agentItemUnselected: {
+    opacity: 0.75,
   },
   agentItemSelected: {
     backgroundColor: theme.colors.surface2,
@@ -704,6 +740,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     marginLeft: theme.spacing[1],
+  },
+  branchBadge: {
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  branchBadgeText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 12,
   },
   agentTitleHighlighted: {
     color: theme.colors.foreground,
