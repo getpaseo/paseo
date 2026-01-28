@@ -8,6 +8,7 @@ import {
   type ViewToken,
   type SectionListRenderItem,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -81,6 +82,7 @@ export function AgentList({
   const { theme } = useUnistyles();
   const pathname = usePathname();
   const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
 
   // Get the methods for the specific server
@@ -89,7 +91,7 @@ export function AgentList({
       ? state.sessions[actionAgent.serverId]?.methods
       : undefined
   );
-  const deleteAgent = methods?.deleteAgent;
+  const archiveAgent = methods?.archiveAgent;
 
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !methods);
@@ -131,13 +133,13 @@ export function AgentList({
     setActionAgent(null);
   }, []);
 
-  const handleDeleteAgent = useCallback(() => {
-    if (!actionAgent || !deleteAgent) {
+  const handleArchiveAgent = useCallback(() => {
+    if (!actionAgent || !archiveAgent) {
       return;
     }
-    deleteAgent(actionAgent.id);
+    archiveAgent(actionAgent.id);
     setActionAgent(null);
-  }, [actionAgent, deleteAgent]);
+  }, [actionAgent, archiveAgent]);
 
   const viewabilityConfig = useMemo(
     () => ({ itemVisiblePercentThreshold: 30 }),
@@ -329,39 +331,38 @@ export function AgentList({
             style={styles.sheetBackdrop}
             onPress={handleCloseActionSheet}
           />
-          <View style={styles.sheetContainer}>
+          <View style={[styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) }]}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {actionAgent?.title || "Delete agent"}
-            </Text>
-            <Text style={styles.sheetSubtitle}>
               {isActionDaemonUnavailable
-                ? "This host is offline—actions will be available once it reconnects automatically."
-                : "Removing this agent only deletes it from Paseo. Claude/Codex keeps the original project."}
+                ? "Host offline"
+                : "Archive this agent?"}
             </Text>
-            <Pressable
-              disabled={!deleteAgent || isActionDaemonUnavailable}
-              style={[styles.sheetButton, styles.sheetDeleteButton]}
-              onPress={handleDeleteAgent}
-              testID="agent-action-delete"
-            >
-              <Text
-                style={[
-                  styles.sheetDeleteText,
-                  (!deleteAgent || isActionDaemonUnavailable) &&
-                    styles.sheetDeleteTextDisabled,
-                ]}
+            <View style={styles.sheetButtonRow}>
+              <Pressable
+                style={[styles.sheetButton, styles.sheetCancelButton]}
+                onPress={handleCloseActionSheet}
+                testID="agent-action-cancel"
               >
-                {isActionDaemonUnavailable ? "Host offline" : "Delete agent"}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.sheetButton, styles.sheetCancelButton]}
-              onPress={handleCloseActionSheet}
-              testID="agent-action-cancel"
-            >
-              <Text style={styles.sheetCancelText}>Cancel</Text>
-            </Pressable>
+                <Text style={styles.sheetCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                disabled={!archiveAgent || isActionDaemonUnavailable}
+                style={[styles.sheetButton, styles.sheetArchiveButton]}
+                onPress={handleArchiveAgent}
+                testID="agent-action-archive"
+              >
+                <Text
+                  style={[
+                    styles.sheetArchiveText,
+                    (!archiveAgent || isActionDaemonUnavailable) &&
+                      styles.sheetArchiveTextDisabled,
+                  ]}
+                >
+                  Archive
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -456,7 +457,6 @@ const styles = StyleSheet.create((theme) => ({
     borderTopRightRadius: theme.borderRadius["2xl"],
     paddingHorizontal: theme.spacing[6],
     paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[6],
     gap: theme.spacing[4],
   },
   sheetHandle: {
@@ -464,38 +464,43 @@ const styles = StyleSheet.create((theme) => ({
     width: 40,
     height: 4,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.foregroundMuted,
+    opacity: 0.3,
   },
   sheetTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
+    textAlign: "center",
   },
-  sheetSubtitle: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
+  sheetButtonRow: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
   },
   sheetButton: {
+    flex: 1,
     borderRadius: theme.borderRadius.lg,
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[4],
     alignItems: "center",
     justifyContent: "center",
   },
-  sheetDeleteButton: {
-    backgroundColor: theme.colors.destructive,
+  sheetArchiveButton: {
+    backgroundColor: theme.colors.primary,
   },
-  sheetDeleteText: {
-    color: theme.colors.destructiveForeground,
+  sheetArchiveText: {
+    color: theme.colors.primaryForeground,
     fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
   },
-  sheetDeleteTextDisabled: {
+  sheetArchiveTextDisabled: {
     opacity: 0.5,
   },
   sheetCancelButton: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface1,
   },
   sheetCancelText: {
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.base,
   },
 }));
