@@ -2,6 +2,7 @@ import { Command } from 'commander'
 import { runPsCommand } from './ps.js'
 import { runRunCommand } from './run.js'
 import { runSendCommand } from './send.js'
+import { runStopCommand } from './stop.js'
 import { withOutput } from '../../output/index.js'
 
 export function createAgentCommand(): Command {
@@ -36,6 +37,15 @@ export function createAgentCommand(): Command {
     .option('--no-wait', 'Return immediately without waiting for completion')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runSendCommand))
+
+  agent
+    .command('stop')
+    .description('Stop an agent (cancel if running, then terminate)')
+    .argument('[id]', 'Agent ID (or prefix) - optional if --all or --cwd specified')
+    .option('--all', 'Stop all agents')
+    .option('--cwd <path>', 'Stop all agents in directory')
+    .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
+    .action(withOutput(runStopCommand))
 
   return agent
 }
