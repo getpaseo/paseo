@@ -1,15 +1,15 @@
 export type CheckoutStatusRevalidationParams = {
   serverId: string;
-  agentId: string;
+  cwd: string;
   isOpen: boolean;
   explorerTab: string;
 };
 
 export function checkoutStatusRevalidationKey(params: CheckoutStatusRevalidationParams): string | null {
-  if (!params.agentId) return null;
+  if (!params.cwd) return null;
   if (!params.isOpen) return null;
   if (params.explorerTab !== "changes") return null;
-  return `${params.serverId}:${params.agentId}`;
+  return `${params.serverId}:${params.cwd}`;
 }
 
 export function nextCheckoutStatusRefetchDecision(

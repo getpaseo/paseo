@@ -1130,14 +1130,13 @@ export class DaemonClientV2 {
   // ============================================================================
 
   async getCheckoutStatus(
-    agentId: string,
-    options?: { cwd?: string; requestId?: string }
+    cwd: string,
+    options?: { requestId?: string }
   ): Promise<CheckoutStatusPayload> {
     const requestId = options?.requestId;
-    const cwd = options?.cwd;
 
     if (!requestId) {
-      const existing = this.checkoutStatusInFlight.get(agentId);
+      const existing = this.checkoutStatusInFlight.get(cwd);
       if (existing) {
         return existing;
       }
@@ -1146,7 +1145,6 @@ export class DaemonClientV2 {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_status_request",
-      agentId,
       cwd,
       requestId: resolvedRequestId,
     });
@@ -1170,10 +1168,10 @@ export class DaemonClientV2 {
     })();
 
     if (!requestId) {
-      this.checkoutStatusInFlight.set(agentId, responsePromise);
+      this.checkoutStatusInFlight.set(cwd, responsePromise);
       responsePromise.finally(() => {
-        if (this.checkoutStatusInFlight.get(agentId) === responsePromise) {
-          this.checkoutStatusInFlight.delete(agentId);
+        if (this.checkoutStatusInFlight.get(cwd) === responsePromise) {
+          this.checkoutStatusInFlight.delete(cwd);
         }
       });
     }
@@ -1182,14 +1180,14 @@ export class DaemonClientV2 {
   }
 
   async getCheckoutDiff(
-    agentId: string,
+    cwd: string,
     compare: { mode: "uncommitted" | "base"; baseRef?: string },
     requestId?: string
   ): Promise<CheckoutDiffPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_diff_request",
-      agentId,
+      cwd,
       compare,
       requestId: resolvedRequestId,
     });
@@ -1211,14 +1209,14 @@ export class DaemonClientV2 {
   }
 
   async checkoutCommit(
-    agentId: string,
+    cwd: string,
     input: { message?: string; addAll?: boolean },
     requestId?: string
   ): Promise<CheckoutCommitPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_commit_request",
-      agentId,
+      cwd,
       message: input.message,
       addAll: input.addAll,
       requestId: resolvedRequestId,
@@ -1241,14 +1239,14 @@ export class DaemonClientV2 {
   }
 
   async checkoutMerge(
-    agentId: string,
+    cwd: string,
     input: { baseRef?: string; strategy?: "merge" | "squash"; requireCleanTarget?: boolean },
     requestId?: string
   ): Promise<CheckoutMergePayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_merge_request",
-      agentId,
+      cwd,
       baseRef: input.baseRef,
       strategy: input.strategy,
       requireCleanTarget: input.requireCleanTarget,
@@ -1272,14 +1270,14 @@ export class DaemonClientV2 {
   }
 
   async checkoutMergeFromBase(
-    agentId: string,
+    cwd: string,
     input: { baseRef?: string; requireCleanTarget?: boolean },
     requestId?: string
   ): Promise<CheckoutMergeFromBasePayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_merge_from_base_request",
-      agentId,
+      cwd,
       baseRef: input.baseRef,
       requireCleanTarget: input.requireCleanTarget,
       requestId: resolvedRequestId,
@@ -1301,11 +1299,11 @@ export class DaemonClientV2 {
     return response;
   }
 
-  async checkoutPush(agentId: string, requestId?: string): Promise<CheckoutPushPayload> {
+  async checkoutPush(cwd: string, requestId?: string): Promise<CheckoutPushPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_push_request",
-      agentId,
+      cwd,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
@@ -1326,14 +1324,14 @@ export class DaemonClientV2 {
   }
 
   async checkoutPrCreate(
-    agentId: string,
+    cwd: string,
     input: { title?: string; body?: string; baseRef?: string },
     requestId?: string
   ): Promise<CheckoutPrCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_pr_create_request",
-      agentId,
+      cwd,
       title: input.title,
       body: input.body,
       baseRef: input.baseRef,
@@ -1357,13 +1355,13 @@ export class DaemonClientV2 {
   }
 
   async checkoutPrStatus(
-    agentId: string,
+    cwd: string,
     requestId?: string
   ): Promise<CheckoutPrStatusPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "checkout_pr_status_request",
-      agentId,
+      cwd,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(

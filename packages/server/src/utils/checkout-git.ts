@@ -70,6 +70,7 @@ export type CheckoutStatusGitNonPaseo = {
   isDirty: boolean;
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
+  aheadOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
@@ -82,6 +83,7 @@ export type CheckoutStatusGitPaseo = {
   isDirty: boolean;
   baseRef: string;
   aheadBehind: AheadBehind | null;
+  aheadOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
@@ -393,6 +395,22 @@ async function getAheadBehind(cwd: string, baseRef: string, currentBranch: strin
   return { ahead, behind };
 }
 
+async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<number | null> {
+  if (!currentBranch) {
+    return null;
+  }
+  try {
+    const { stdout } = await execAsync(
+      `git rev-list --count origin/${currentBranch}..${currentBranch}`,
+      { cwd, env: READ_ONLY_GIT_ENV }
+    );
+    const count = Number.parseInt(stdout.trim(), 10);
+    return Number.isNaN(count) ? null : count;
+  } catch {
+    return null;
+  }
+}
+
 async function getUntrackedDiff(cwd: string): Promise<string> {
   let untrackedDiff = "";
   try {
@@ -443,6 +461,8 @@ export async function getCheckoutStatus(
   const baseRef = configured.baseRef ?? (await resolveBaseRef(repoInfo.path));
   const aheadBehind =
     baseRef && currentBranch ? await getAheadBehind(cwd, baseRef, currentBranch) : null;
+  const aheadOfOrigin =
+    hasRemote && currentBranch ? await getAheadOfOrigin(cwd, currentBranch) : null;
 
   if (configured.isPaseoOwnedWorktree) {
     return {
@@ -452,6 +472,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: configured.baseRef,
       aheadBehind,
+      aheadOfOrigin,
       hasRemote,
       remoteUrl,
       isPaseoOwnedWorktree: true,
@@ -465,6 +486,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef,
     aheadBehind,
+    aheadOfOrigin,
     hasRemote,
     remoteUrl,
     isPaseoOwnedWorktree: false,

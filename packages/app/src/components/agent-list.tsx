@@ -171,7 +171,7 @@ export function AgentList({
 
         void queryClient.prefetchQuery({
           queryKey,
-          queryFn: async () => await client.getCheckoutStatus(agent.id, { cwd: agent.cwd }),
+          queryFn: async () => await client.getCheckoutStatus(agent.cwd),
           staleTime: CHECKOUT_STATUS_STALE_TIME,
         });
       }
@@ -192,7 +192,6 @@ export function AgentList({
 
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
-        agentId: agent.id,
         cwd: agent.cwd,
       });
       const checkout = checkoutQuery.data ?? null;

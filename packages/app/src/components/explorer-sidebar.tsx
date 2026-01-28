@@ -251,7 +251,7 @@ function SidebarContent({
   isMobile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
-  const { status } = useCheckoutStatusQuery({ serverId, agentId, cwd });
+  const { status } = useCheckoutStatusQuery({ serverId, cwd });
   const isGit = status?.isGit ?? false;
 
   // If not a git repo, only show files tab

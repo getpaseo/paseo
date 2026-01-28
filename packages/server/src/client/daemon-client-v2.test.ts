@@ -75,14 +75,14 @@ describe("DaemonClientV2", () => {
     mock.triggerOpen();
     await connectPromise;
 
-    const p1 = client.getCheckoutStatus("agent-1");
-    const p2 = client.getCheckoutStatus("agent-1");
+    const p1 = client.getCheckoutStatus("/tmp/project");
+    const p2 = client.getCheckoutStatus("/tmp/project");
 
     expect(mock.sent).toHaveLength(1);
 
     const request = JSON.parse(mock.sent[0]) as {
       type: "session";
-      message: { type: "checkout_status_request"; agentId: string; requestId: string };
+      message: { type: "checkout_status_request"; cwd: string; requestId: string };
     };
 
     const response = {
@@ -90,8 +90,7 @@ describe("DaemonClientV2", () => {
       message: {
         type: "checkout_status_response",
         payload: {
-          agentId: "agent-1",
-          cwd: "/tmp",
+          cwd: "/tmp/project",
           error: null,
           requestId: request.message.requestId,
           isGit: false,
@@ -109,16 +108,16 @@ describe("DaemonClientV2", () => {
 
     mock.triggerMessage(JSON.stringify(response));
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1).toMatchObject({ agentId: "agent-1", requestId: request.message.requestId, isGit: false });
-    expect(r2).toMatchObject({ agentId: "agent-1", requestId: request.message.requestId, isGit: false });
+    expect(r1).toMatchObject({ cwd: "/tmp/project", requestId: request.message.requestId, isGit: false });
+    expect(r2).toMatchObject({ cwd: "/tmp/project", requestId: request.message.requestId, isGit: false });
 
     // After completion, a new call should issue a new request.
-    const p3 = client.getCheckoutStatus("agent-1");
+    const p3 = client.getCheckoutStatus("/tmp/project");
     expect(mock.sent).toHaveLength(2);
 
     const request2 = JSON.parse(mock.sent[1]) as {
       type: "session";
-      message: { type: "checkout_status_request"; agentId: string; requestId: string };
+      message: { type: "checkout_status_request"; cwd: string; requestId: string };
     };
 
     mock.triggerMessage(
