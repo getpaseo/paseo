@@ -1,0 +1,21 @@
+{
+  "name": "@paseo/cli",
+  "version": "0.1.0",
+  "description": "Paseo CLI - control your AI coding agents from the command line",
+  "type": "module",
+  "bin": {
+    "paseo": "./bin/paseo"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paseo/server": "*",
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "tsx": "^4.6.0"
+  }
+}
