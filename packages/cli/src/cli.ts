@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import { createAgentCommand } from './commands/agent/index.js'
 import { createDaemonCommand } from './commands/daemon/index.js'
 
 const VERSION = '0.1.0'
@@ -16,15 +17,10 @@ export function createCli(): Command {
     .option('--no-headers', 'omit table headers')
     .option('--no-color', 'disable colored output')
 
-  // Placeholder subcommands
-  program
-    .command('agent')
-    .description('Manage agents')
-    .action(() => {
-      console.log('agent command (not yet implemented)')
-    })
+  // Agent commands
+  program.addCommand(createAgentCommand())
 
-  // Real daemon command
+  // Daemon commands
   program.addCommand(createDaemonCommand())
 
   program
