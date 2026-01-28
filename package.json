@@ -18,6 +18,8 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "start": "npm run start --workspace=@paseo/server",
     "android": "npm run android --workspace=@paseo/app",
     "android:release": "ANDROID_VARIANT=productionRelease npm run android --workspace=@paseo/app",
@@ -30,6 +32,7 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "prettier": "^3.5.3",
     "get-port-cli": "^3.0.0",
     "knip": "^5.82.1",
     "patch-package": "^8.0.1",
