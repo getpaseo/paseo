@@ -7,15 +7,19 @@
     "paseo": "./bin/paseo"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "npx zx tests/run-all.mts"
   },
   "dependencies": {
     "@paseo/server": "*",
+    "chalk": "^5.3.0",
     "commander": "^12.0.0",
-    "chalk": "^5.3.0"
+    "ws": "^8.14.2"
   },
   "devDependencies": {
+    "@types/ws": "^8.5.8",
+    "tsx": "^4.6.0",
     "typescript": "^5.2.2",
-    "tsx": "^4.6.0"
+    "zx": "^8.8.5"
   }
 }

@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import { createDaemonCommand } from './commands/daemon/index.js'
 
 const VERSION = '0.1.0'
 
@@ -10,7 +11,7 @@ export function createCli(): Command {
     .description('Paseo CLI - control your AI coding agents from the command line')
     .version(VERSION, '-v, --version', 'output the version number')
 
-  // Placeholder subcommands for Phase 1
+  // Placeholder subcommands
   program
     .command('agent')
     .description('Manage agents')
@@ -18,12 +19,8 @@ export function createCli(): Command {
       console.log('agent command (not yet implemented)')
     })
 
-  program
-    .command('daemon')
-    .description('Manage the Paseo daemon')
-    .action(() => {
-      console.log('daemon command (not yet implemented)')
-    })
+  // Real daemon command
+  program.addCommand(createDaemonCommand())
 
   program
     .command('permit')
