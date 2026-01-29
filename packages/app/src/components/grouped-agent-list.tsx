@@ -743,6 +743,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   branchBadge: {
     minWidth: 20,
+    maxWidth: "30%",
     height: 20,
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,

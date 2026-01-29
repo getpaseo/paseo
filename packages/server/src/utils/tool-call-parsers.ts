@@ -1,3 +1,4 @@
+import stripAnsi from "strip-ansi";
 import { z } from "zod";
 
 // ---- Principal Parameter Extraction ----
@@ -18,9 +19,9 @@ const PrincipalParamSchema = z.union([
   z.object({ filePath: z.string() }).transform((d) => ({ type: "path" as const, value: d.filePath })),
   z.object({ path: z.string() }).transform((d) => ({ type: "path" as const, value: d.path })),
   // Command as string
-  z.object({ command: z.string() }).transform((d) => ({ type: "command" as const, value: d.command })),
+  z.object({ command: z.string() }).transform((d) => ({ type: "command" as const, value: stripAnsi(d.command) })),
   // Command as array (Codex sends this)
-  z.object({ command: z.array(z.string()).nonempty() }).transform((d) => ({ type: "command" as const, value: d.command.join(" ") })),
+  z.object({ command: z.array(z.string()).nonempty() }).transform((d) => ({ type: "command" as const, value: stripAnsi(d.command.join(" ")) })),
   // Other text params
   z.object({ title: z.string() }).transform((d) => ({ type: "text" as const, value: d.title })),
   z.object({ name: z.string() }).transform((d) => ({ type: "text" as const, value: d.name })),
