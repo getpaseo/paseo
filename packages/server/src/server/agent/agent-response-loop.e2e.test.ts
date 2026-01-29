@@ -154,7 +154,6 @@ describe("getStructuredAgentResponse (e2e)", () => {
     cwd = mkdtempSync(path.join(tmpdir(), "agent-response-loop-"));
     manager = new AgentManager({
       clients: createAllClients(logger),
-      agentControlMcp: { url: agentMcpServer.url },
       logger,
     });
   });

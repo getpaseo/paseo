@@ -16,7 +16,6 @@ function makeAgent(overrides: Partial<AggregatedAgent> = {}): AggregatedAgent {
     requiresAttention: overrides.requiresAttention ?? false,
     attentionReason: overrides.attentionReason ?? null,
     attentionTimestamp: overrides.attentionTimestamp ?? null,
-    parentAgentId: overrides.parentAgentId ?? null,
   } as AggregatedAgent;
 }
 

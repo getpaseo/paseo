@@ -10,11 +10,6 @@ import type pino from "pino";
 import type { WSOutboundMessage } from "./messages.js";
 import { WebSocketSessionBridge } from "./websocket-session-bridge.js";
 
-type AgentMcpClientConfig = {
-  agentMcpUrl: string;
-  agentMcpHeaders?: Record<string, string>;
-};
-
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
 };
@@ -34,7 +29,7 @@ export class VoiceAssistantWebSocketServer {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    agentMcpConfig: AgentMcpClientConfig,
+    agentMcpRoute: string,
     wsConfig: WebSocketServerConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
@@ -46,7 +41,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage,
       downloadTokenStore,
       paseoHome,
-      agentMcpConfig,
+      agentMcpRoute,
       speech,
       terminalManager
     );

@@ -1859,11 +1859,6 @@ const PermissionParamsSchema = z
 
 type PermissionParams = z.infer<typeof PermissionParamsSchema>;
 
-const AgentControlMcpConfigSchema = z.object({
-  url: z.string(),
-  headers: z.record(z.string()).optional(),
-});
-
 type AgentSessionExtra = NonNullable<AgentSessionConfig["extra"]>;
 
 const AgentSessionExtraSchema = z.object({
@@ -1883,10 +1878,8 @@ const AgentSessionConfigSchema = z
     networkAccess: z.boolean().optional(),
     webSearch: z.boolean().optional(),
     reasoningEffort: z.string().optional(),
-    agentControlMcp: AgentControlMcpConfigSchema.optional(),
     extra: AgentSessionExtraSchema.optional(),
     mcpServers: z.record(z.unknown()).optional(),
-    parentAgentId: z.string().optional(),
   })
   .passthrough();
 
@@ -2718,7 +2711,6 @@ function buildCodexMcpConfig(
   config: AgentSessionConfig,
   prompt: string,
   modeId: string,
-  managedAgentId?: string,
   experimentalResume?: string | null
 ): {
   prompt: string;
@@ -2761,21 +2753,6 @@ function buildCodexMcpConfig(
 
   // Build MCP servers configuration
   const mcpServers: Record<string, CodexMcpServerConfig> = {};
-
-  // Add agent-control MCP server (HTTP-based) if configured
-  if (config.agentControlMcp) {
-    let agentControlUrl = config.agentControlMcp.url;
-    // Append caller agent ID to URL if this is a managed agent
-    if (managedAgentId) {
-      const separator = agentControlUrl.includes("?") ? "&" : "?";
-      agentControlUrl = `${agentControlUrl}${separator}callerAgentId=${encodeURIComponent(managedAgentId)}`;
-    }
-    mcpServers["agent-control"] = {
-      url: agentControlUrl,
-      tool_timeout_sec: 600, // 10 min timeout for child agents
-      ...(config.agentControlMcp.headers ? { http_headers: config.agentControlMcp.headers } : {}),
-    };
-  }
 
   // Merge MCP servers from extra.codex.mcp_servers (legacy location)
   const extraCodex = config.extra?.codex as Record<string, unknown> | undefined;
@@ -3037,7 +3014,6 @@ class CodexMcpAgentSession implements AgentSession {
   private turnState: TurnState | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
   private patchChangesByCallId = new Map<string, PatchFileChange[]>();
-  private managedAgentId: string | null = null;
   private resumeHandle: AgentPersistenceHandle | null = null;
   private pendingResumeFile: string | null = null;
 
@@ -3541,10 +3517,6 @@ class CodexMcpAgentSession implements AgentSession {
     this.conversationId = null;
   }
 
-  setManagedAgentId(agentId: string): void {
-    this.managedAgentId = agentId;
-  }
-
   async listCommands(): Promise<AgentSlashCommand[]> {
     const [skills, prompts] = await Promise.all([
       listCodexSkills(this.config.cwd),
@@ -3591,7 +3563,6 @@ class CodexMcpAgentSession implements AgentSession {
           this.config,
           prompt,
           this.currentMode,
-          this.managedAgentId ?? undefined,
           resumeFile
         );
         const attempt = async (arguments_: CodexToolArguments) =>
@@ -3631,7 +3602,7 @@ class CodexMcpAgentSession implements AgentSession {
           );
           if (isMissingConversationIdResponse(response)) {
             const replayPrompt = this.buildResumePrompt(prompt);
-            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode, this.managedAgentId ?? undefined);
+            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
             const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
@@ -3654,7 +3625,7 @@ class CodexMcpAgentSession implements AgentSession {
         } catch (error) {
           if (isMissingConversationIdError(error)) {
             const replayPrompt = this.buildResumePrompt(prompt);
-            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode, this.managedAgentId ?? undefined);
+            const config = buildCodexMcpConfig(this.config, replayPrompt, this.currentMode);
             const attempt = async (arguments_: CodexToolArguments) =>
               this.client.callTool(
                 { name: "codex", arguments: arguments_ },
