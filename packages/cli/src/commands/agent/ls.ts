@@ -82,6 +82,10 @@ export interface AgentLsOptions extends CommandOptions {
   status?: string
   /** Filter by specific cwd (overrides default cwd filtering) */
   cwd?: string
+  /** Filter by labels (key=value format) */
+  label?: string[]
+  /** Filter to UI agents only (equivalent to --label ui=true) */
+  ui?: boolean
 }
 
 /**
@@ -142,6 +146,46 @@ export async function runLsCommand(
         const targetCwd = currentCwd.replace(/\/$/, '')
         // Match exact cwd or subdirectories
         return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + '/')
+      })
+    }
+
+    // Label filtering:
+    // Parse --label flags and --ui flag
+    // --ui is equivalent to --label ui=true
+    // By default (no --ui flag), show background agents (those WITHOUT ui=true)
+    const labelFilters: Record<string, string> = {}
+    if (options.label) {
+      for (const labelStr of options.label) {
+        const eqIndex = labelStr.indexOf('=')
+        if (eqIndex !== -1) {
+          const key = labelStr.slice(0, eqIndex)
+          const value = labelStr.slice(eqIndex + 1)
+          labelFilters[key] = value
+        }
+      }
+    }
+    // Add ui=true filter if --ui flag is set
+    if (options.ui) {
+      labelFilters['ui'] = 'true'
+    }
+
+    // Apply label filtering
+    if (Object.keys(labelFilters).length > 0) {
+      // Filter to agents that have ALL specified labels (AND semantics)
+      agents = agents.filter((a) => {
+        const agentLabels = (a as any).labels as Record<string, string> | undefined
+        for (const [key, value] of Object.entries(labelFilters)) {
+          if (!agentLabels || agentLabels[key] !== value) {
+            return false
+          }
+        }
+        return true
+      })
+    } else {
+      // Default: show background agents only (those without ui=true)
+      agents = agents.filter((a) => {
+        const agentLabels = (a as any).labels as Record<string, string> | undefined
+        return !agentLabels || agentLabels['ui'] !== 'true'
       })
     }
 

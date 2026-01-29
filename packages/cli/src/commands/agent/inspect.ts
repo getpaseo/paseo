@@ -34,7 +34,6 @@ interface AgentInspect {
     id: string
     tool: string
   }>
-  parentAgentId: string | null
 }
 
 /** Key-value row for table display */
@@ -122,7 +121,6 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
       id: p.id,
       tool: p.name ?? 'unknown',
     })),
-    parentAgentId: snapshot.parentAgentId ?? null,
   }
 }
 
@@ -176,11 +174,6 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
   } else {
     rows.push({ key: 'PendingPermissions', value: '[]' })
   }
-
-  rows.push({
-    key: 'ParentAgentId',
-    value: agent.parentAgentId ?? 'null',
-  })
 
   return rows
 }

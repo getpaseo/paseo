@@ -104,11 +104,6 @@ import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import type pino from "pino";
 
-type AgentMcpClientConfig = {
-  agentMcpUrl: string;
-  agentMcpHeaders?: Record<string, string>;
-};
-
 const execAsync = promisify(exec);
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
@@ -294,7 +289,7 @@ export class Session {
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
-  private readonly agentMcpConfig: AgentMcpClientConfig;
+  private readonly agentMcpRoute: string;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
@@ -317,7 +312,7 @@ export class Session {
     paseoHome: string,
     agentManager: AgentManager,
     agentStorage: AgentStorage,
-    agentMcpConfig: AgentMcpClientConfig,
+    agentMcpRoute: string,
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
@@ -331,7 +326,7 @@ export class Session {
     this.paseoHome = paseoHome;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    this.agentMcpConfig = agentMcpConfig;
+    this.agentMcpRoute = agentMcpRoute;
     this.terminalManager = terminalManager;
     this.voiceConversationStore = voiceConversationStore;
     this.abortController = new AbortController();
@@ -505,15 +500,10 @@ export class Session {
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
+      // Connect to the local MCP server using localhost
+      const agentMcpUrl = `http://127.0.0.1:6767${this.agentMcpRoute}`;
       const transport = new StreamableHTTPClientTransport(
-        new URL(this.agentMcpConfig.agentMcpUrl),
-        this.agentMcpConfig.agentMcpHeaders
-          ? {
-              requestInit: {
-                headers: this.agentMcpConfig.agentMcpHeaders,
-              },
-            }
-          : undefined
+        new URL(agentMcpUrl)
       );
 
       this.agentMcpClient = await experimental_createMCPClient({
@@ -632,7 +622,6 @@ export class Session {
       requiresAttention: record.requiresAttention ?? false,
       attentionReason: record.attentionReason ?? null,
       attentionTimestamp: record.attentionTimestamp ?? null,
-      parentAgentId: record.parentAgentId ?? null,
       archivedAt: record.archivedAt ?? null,
     };
   }
@@ -1326,7 +1315,7 @@ export class Session {
   private async handleCreateAgentRequest(
     msg: Extract<SessionInboundMessage, { type: "create_agent_request" }>
   ): Promise<void> {
-    const { config, worktreeName, requestId, initialPrompt, git, images } = msg;
+    const { config, worktreeName, requestId, initialPrompt, git, images, labels } = msg;
     this.sessionLogger.info(
       { cwd: config.cwd, provider: config.provider, worktreeName },
       `Creating agent in ${config.cwd} (${config.provider})${
@@ -1356,9 +1345,14 @@ export class Session {
       const { sessionConfig, worktreeConfig } = await this.buildAgentSessionConfig(
         config,
         git,
-        worktreeName
+        worktreeName,
+        labels
       );
-      const snapshot = await this.agentManager.createAgent(sessionConfig);
+      const snapshot = await this.agentManager.createAgent(
+        sessionConfig,
+        undefined,
+        { labels }
+      );
       await this.forwardAgentState(snapshot);
 
       const trimmedPrompt = initialPrompt?.trim();
@@ -1584,7 +1578,8 @@ export class Session {
   private async buildAgentSessionConfig(
     config: AgentSessionConfig,
     gitOptions?: GitSetupOptions,
-    legacyWorktreeName?: string
+    legacyWorktreeName?: string,
+    _labels?: Record<string, string>
   ): Promise<{ sessionConfig: AgentSessionConfig; worktreeConfig?: WorktreeConfig }> {
     let cwd = expandTilde(config.cwd);
     const normalized = this.normalizeGitOptions(gitOptions, legacyWorktreeName);

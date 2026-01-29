@@ -37,6 +37,8 @@ export interface AgentRunOptions extends CommandOptions {
   base?: string
   image?: string[]
   cwd?: string
+  label?: string[]
+  ui?: boolean
 }
 
 function toRunResult(agent: AgentSnapshotPayload): AgentRunResult {
@@ -127,6 +129,31 @@ export async function runRunCommand(
         }
       : undefined
 
+    // Build labels from --label and --ui flags
+    // --ui is syntactic sugar for --label ui=true
+    // If explicit --label ui=... is provided, it takes precedence over --ui
+    const labels: Record<string, string> = {}
+    if (options.label) {
+      for (const labelStr of options.label) {
+        const eqIndex = labelStr.indexOf('=')
+        if (eqIndex === -1) {
+          const error: CommandError = {
+            code: 'INVALID_LABEL',
+            message: `Invalid label format: ${labelStr}`,
+            details: 'Labels must be in key=value format',
+          }
+          throw error
+        }
+        const key = labelStr.slice(0, eqIndex)
+        const value = labelStr.slice(eqIndex + 1)
+        labels[key] = value
+      }
+    }
+    // Add ui=true if --ui flag is set and ui label not already set
+    if (options.ui && !('ui' in labels)) {
+      labels['ui'] = 'true'
+    }
+
     // Create the agent
     const agent = await client.createAgent({
       provider: (options.provider as 'claude' | 'codex' | 'opencode') ?? 'claude',
@@ -138,6 +165,7 @@ export async function runRunCommand(
       images,
       git,
       worktreeName: options.worktree,
+      labels: Object.keys(labels).length > 0 ? labels : undefined,
     })
 
     await client.close()

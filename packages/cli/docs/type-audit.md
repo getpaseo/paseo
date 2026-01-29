@@ -55,7 +55,7 @@ Notes:
 
 ### `packages/cli/src/commands/agent/inspect.ts`
 Inline types:
-- `AgentSnapshotLike` (snapshot fields + `lastUsage`, `capabilities`, `availableModes`, `pendingPermissions`, `parentAgentId`)
+- `AgentSnapshotLike` (snapshot fields + `lastUsage`, `capabilities`, `availableModes`, `pendingPermissions`)
 
 Recommended server types:
 - `AgentSnapshotPayload` (overall snapshot shape). **Not exported**.

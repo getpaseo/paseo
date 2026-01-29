@@ -26,9 +26,6 @@ const hasClaudeCredentials =
     provider: "claude",
     cwd: process.cwd(),
     modeId: "plan",
-    agentControlMcp: {
-      url: "http://localhost:6767/mcp", // Placeholder - not actually used in plan mode
-    },
   };
 
   beforeAll(async () => {

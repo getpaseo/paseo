@@ -24,7 +24,6 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
-  AgentControlMcpConfig,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
@@ -58,7 +57,6 @@ export type AgentManagerOptions = {
   maxTimelineItems?: number;
   idFactory?: () => string;
   registry?: AgentStorage;
-  agentControlMcp?: AgentControlMcpConfig;
   onAgentAttention?: AgentAttentionCallback;
   logger: Logger;
 };
@@ -101,11 +99,14 @@ type ManagedAgentBase = {
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
-  parentAgentId?: string;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    */
   internal?: boolean;
+  /**
+   * User-defined labels for categorizing agents (e.g., { ui: "true" }).
+   */
+  labels?: Record<string, string>;
 };
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -189,7 +190,6 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
-  private readonly agentControlMcp?: AgentControlMcpConfig;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
 
@@ -198,7 +198,6 @@ export class AgentManager {
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
-    this.agentControlMcp = options?.agentControlMcp;
     this.onAgentAttention = options?.onAgentAttention;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
@@ -311,15 +310,17 @@ export class AgentManager {
 
   async createAgent(
     config: AgentSessionConfig,
-    agentId?: string
+    agentId?: string,
+    options?: { labels?: Record<string, string> }
   ): Promise<ManagedAgent> {
-    const normalizedConfig = await this.normalizeConfig(config);
+    const normalizedConfig = await this.normalizeConfig(config, { labels: options?.labels });
     const client = this.requireClient(normalizedConfig.provider);
     const session = await client.createSession(normalizedConfig);
     return this.registerSession(
       session,
       normalizedConfig,
-      agentId ?? this.idFactory()
+      agentId ?? this.idFactory(),
+      { labels: options?.labels }
     );
   }
 
@@ -327,7 +328,12 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    timestamps?: { createdAt?: Date; updatedAt?: Date; lastUserMessageAt?: Date | null }
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+    }
   ): Promise<ManagedAgent> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const mergedConfig = {
@@ -346,7 +352,7 @@ export class AgentManager {
       session,
       normalizedConfig,
       agentId ?? this.idFactory(),
-      timestamps
+      options
     );
   }
 
@@ -795,14 +801,16 @@ export class AgentManager {
     session: AgentSession,
     config: AgentSessionConfig,
     agentId: string,
-    timestamps?: { createdAt?: Date; updatedAt?: Date; lastUserMessageAt?: Date | null }
+    options?: {
+      createdAt?: Date;
+      updatedAt?: Date;
+      lastUserMessageAt?: Date | null;
+      labels?: Record<string, string>;
+    }
   ): Promise<ManagedAgent> {
     if (this.agents.has(agentId)) {
       throw new Error(`Agent with id ${agentId} already exists`);
     }
-
-    // Inform the session of its managed agent ID for MCP parent-child relationships
-    session.setManagedAgentId?.(agentId);
 
     const now = new Date();
     const managed = {
@@ -814,8 +822,8 @@ export class AgentManager {
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: timestamps?.createdAt ?? now,
-      updatedAt: timestamps?.updatedAt ?? now,
+      createdAt: options?.createdAt ?? now,
+      updatedAt: options?.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map(),
@@ -823,10 +831,10 @@ export class AgentManager {
       timeline: [],
       persistence: session.describePersistence(),
       historyPrimed: false,
-      lastUserMessageAt: timestamps?.lastUserMessageAt ?? null,
+      lastUserMessageAt: options?.lastUserMessageAt ?? null,
       attention: { requiresAttention: false },
-      parentAgentId: config.parentAgentId,
       internal: config.internal ?? false,
+      labels: options?.labels,
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
@@ -1093,7 +1101,8 @@ export class AgentManager {
 
 
   private async normalizeConfig(
-    config: AgentSessionConfig
+    config: AgentSessionConfig,
+    options?: { labels?: Record<string, string> }
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
@@ -1107,14 +1116,9 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 ? trimmed : undefined;
     }
 
-    if (!normalized.agentControlMcp && this.agentControlMcp) {
-      normalized.agentControlMcp = this.agentControlMcp;
-    }
-
-    if (
-      normalized.paseoPromptInstructions === undefined &&
-      normalized.agentControlMcp
-    ) {
+    // Inject paseoPromptInstructions for UI agents (with ui=true label)
+    const isUiAgent = options?.labels?.ui === "true";
+    if (isUiAgent) {
       normalized.paseoPromptInstructions = getSelfIdentificationInstructions({
         cwd: normalized.cwd,
       });

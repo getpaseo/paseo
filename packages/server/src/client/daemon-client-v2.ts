@@ -163,6 +163,7 @@ export type CreateAgentRequestOptions = {
   git?: GitSetupOptions;
   worktreeName?: string;
   requestId?: string;
+  labels?: Record<string, string>;
 } & AgentConfigOverrides;
 
 type VoiceConversationLoadedPayload = VoiceConversationLoadedMessage["payload"];
@@ -774,6 +775,9 @@ export class DaemonClientV2 {
         : {}),
       ...(options.git ? { git: options.git } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
+      ...(options.labels && Object.keys(options.labels).length > 0
+        ? { labels: options.labels }
+        : {}),
     });
 
     const statusPromise = this.waitFor(
@@ -2587,6 +2591,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     git: _git,
     worktreeName: _worktreeName,
     requestId: _requestId,
+    labels: _labels,
     ...overrides
   } = options;
 

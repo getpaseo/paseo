@@ -14,12 +14,19 @@ import { withOutput } from '../../output/index.js'
 export function createAgentCommand(): Command {
   const agent = new Command('agent').description('Manage agents (advanced operations)')
 
+  // Helper function to collect multiple option values into an array
+  const collectMultiple = (value: string, previous: string[]): string[] => {
+    return previous.concat([value])
+  }
+
   // Primary agent commands (same as top-level)
   agent
     .command('ls')
-    .description('List agents. By default shows running agents in current directory.')
+    .description('List agents. By default shows background agents (without ui=true) in current directory.')
     .option('-a, --all', 'Include all statuses (not just running)')
     .option('-g, --global', 'Show agents from all directories (not just current)')
+    .option('--label <key=value>', 'Filter by label (can be used multiple times)', collectMultiple, [])
+    .option('--ui', 'Show only UI agents (equivalent to --label ui=true)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action((options, command) => {
@@ -39,6 +46,8 @@ export function createAgentCommand(): Command {
     .option('--model <model>', 'Model to use (e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022)')
     .option('--mode <mode>', 'Provider-specific mode (e.g., plan, default, bypass)')
     .option('--cwd <path>', 'Working directory (default: current)')
+    .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
+    .option('--ui', 'Mark as UI agent (equivalent to --label ui=true)')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runRunCommand))
 

@@ -37,9 +37,11 @@ export function createCli(): Command {
   // Primary agent commands (top-level)
   program
     .command('ls')
-    .description('List agents. By default shows running agents in current directory.')
+    .description('List agents. By default shows background agents (without ui=true) in current directory.')
     .option('-a, --all', 'Include all statuses (not just running)')
     .option('-g, --global', 'Show agents from all directories (not just current)')
+    .option('--label <key=value>', 'Filter by label (can be used multiple times)', collectMultiple, [])
+    .option('--ui', 'Show only UI agents (equivalent to --label ui=true)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action((options, command) => {
@@ -62,6 +64,8 @@ export function createCli(): Command {
     .option('--base <branch>', 'Base branch for worktree (default: current branch)')
     .option('--image <path>', 'Attach image(s) to the initial prompt (can be used multiple times)', collectMultiple, [])
     .option('--cwd <path>', 'Working directory (default: current)')
+    .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
+    .option('--ui', 'Mark as UI agent (equivalent to --label ui=true)')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runRunCommand))
 

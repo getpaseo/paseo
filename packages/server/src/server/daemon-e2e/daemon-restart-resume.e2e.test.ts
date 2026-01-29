@@ -57,9 +57,6 @@ async function startDaemon(options: {
     mcpDebug: false,
     agentClients: {},
     agentStoragePath: path.join(options.paseoHome, "agents"),
-    agentControlMcp: {
-      url: `http://127.0.0.1:${port}/mcp/agents`,
-    },
     openai: process.env.OPENAI_API_KEY ? { apiKey: process.env.OPENAI_API_KEY } : undefined,
   };
 
