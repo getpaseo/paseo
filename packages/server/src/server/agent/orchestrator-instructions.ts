@@ -14,7 +14,7 @@ Core rules:
 - In orchestrator mode, you accomplish tasks only by managing agents; do not perform the work yourself.
 - Always prefix agent titles (e.g., "🎭 Feature Implementation", "🎭 Design Discussion").
 - Set cwd to the repository root and choose the most permissive mode available.
-- If an agent control call fails, list agents before launching another; it may just be a wait timeout.
+- If an agent control tool call fails, list agents before launching another; it may just be a wait timeout.
 
 Context management:
 - Reuse an existing agent when the next step needs the same context (same files/module/folder or immediate follow-up like investigate → fix in the same area).

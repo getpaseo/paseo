@@ -5,7 +5,7 @@ import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '.
 /** Result type for agent wait command */
 export interface AgentWaitResult {
   agentId: string
-  status: 'idle' | 'timeout'
+  status: 'idle' | 'timeout' | 'permission'
   message: string
 }
 
@@ -140,11 +140,28 @@ export async function runWaitCommand(
       throw error
     }
 
-    // Wait for agent to become idle
+    // Wait for agent to become idle OR request permission (whichever comes first)
     try {
-      await client.waitForAgentIdle(agentId, timeoutMs)
+      const idlePromise = client.waitForAgentIdle(agentId, timeoutMs).then(() => ({ type: 'idle' as const }))
+      const permissionPromise = client
+        .waitForPermission(agentId, timeoutMs)
+        .then((request) => ({ type: 'permission' as const, request }))
+
+      const result = await Promise.race([idlePromise, permissionPromise])
 
       await client.close()
+
+      if (result.type === 'permission') {
+        return {
+          type: 'single',
+          data: {
+            agentId,
+            status: 'permission',
+            message: `Agent is waiting for permission: ${result.request.kind}`,
+          },
+          schema: agentWaitSchema,
+        }
+      }
 
       return {
         type: 'single',

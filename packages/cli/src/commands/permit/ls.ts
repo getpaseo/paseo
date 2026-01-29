@@ -8,10 +8,7 @@ export interface PermissionListItem {
   id: string
   agentId: string
   agentShortId: string
-  agentName: string
   name: string
-  kind: string
-  title: string
   description: string
 }
 
@@ -19,21 +16,10 @@ export interface PermissionListItem {
 export const permitLsSchema: OutputSchema<PermissionListItem> = {
   idField: 'id',
   columns: [
-    { header: 'REQUEST ID', field: 'id', width: 12 },
-    { header: 'AGENT', field: 'agentShortId', width: 10 },
-    { header: 'NAME', field: 'agentName', width: 20 },
+    { header: 'AGENT', field: 'agentShortId', width: 12 },
+    { header: 'REQ_ID', field: 'id', width: 12 },
     { header: 'TOOL', field: 'name', width: 20 },
-    {
-      header: 'KIND',
-      field: 'kind',
-      width: 8,
-      color: (value) => {
-        if (value === 'tool') return 'blue'
-        if (value === 'plan') return 'magenta'
-        return undefined
-      },
-    },
-    { header: 'TITLE', field: 'title', width: 30 },
+    { header: 'DESCRIPTION', field: 'description', width: 50 },
   ],
 }
 
@@ -43,10 +29,7 @@ function toListItem(agent: AgentSnapshotPayload, permission: AgentPermissionRequ
     id: permission.id.slice(0, 8),
     agentId: agent.id,
     agentShortId: agent.id.slice(0, 7),
-    agentName: agent.title ?? '-',
     name: permission.name,
-    kind: permission.kind,
-    title: permission.title ?? '-',
     description: permission.description ?? '-',
   }
 }

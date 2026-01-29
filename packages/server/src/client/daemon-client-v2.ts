@@ -1902,6 +1902,10 @@ export class DaemonClientV2 {
         sawRunningInQueue = true;
         queuedIdle = null; // Reset: any previous idle was before this run
       }
+      // Return immediately if we have pending permissions (even if still running)
+      if (sawRunningInQueue && hasPendingPermissions) {
+        return msg.payload;
+      }
       if (
         sawRunningInQueue &&
         (status === "idle" || status === "error") &&
@@ -1933,6 +1937,11 @@ export class DaemonClientV2 {
             pendingPermissionIds.size > 0;
           if (status === "running" || hasPendingPermissions) {
             sawRunning = true;
+          }
+          // Return if we have pending permissions (even if still running)
+          // OR if agent is idle/error with no pending permissions (after having run)
+          if (sawRunning && hasPendingPermissions) {
+            return msg.payload;
           }
           if (
             sawRunning &&

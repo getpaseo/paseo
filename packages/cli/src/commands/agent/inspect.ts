@@ -3,37 +3,39 @@ import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
-/** Agent inspect data for display */
+/** Agent inspect data for display (matches CLI spec format) */
 interface AgentInspect {
-  id: string
-  name: string
-  provider: string
-  model: string
-  status: string
-  mode: string
-  cwd: string
-  createdAt: string
-  archivedAt: string | null
-  lastUsage: {
-    inputTokens: number
-    outputTokens: number
-    cachedInputTokens: number
-    totalCostUsd: number
+  Id: string
+  Name: string
+  Provider: string
+  Model: string
+  Status: string
+  Mode: string
+  Cwd: string
+  CreatedAt: string
+  UpdatedAt: string
+  LastUsage: {
+    InputTokens: number
+    OutputTokens: number
+    CachedTokens: number
+    CostUsd: number
   } | null
-  capabilities: {
-    streaming: boolean
-    persistence: boolean
-    dynamicModes: boolean
-    mcpServers: boolean
+  Capabilities: {
+    Streaming: boolean
+    Persistence: boolean
+    DynamicModes: boolean
+    McpServers: boolean
   } | null
-  availableModes: Array<{
+  AvailableModes: Array<{
     id: string
     label: string
   }> | null
-  pendingPermissions: Array<{
+  PendingPermissions: Array<{
     id: string
     tool: string
   }>
+  Worktree: string | null
+  ParentAgentId: string | null
 }
 
 /** Key-value row for table display */
@@ -86,94 +88,94 @@ function formatCost(costUsd: number): string {
 function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
   const lastUsage = snapshot.lastUsage
     ? {
-        inputTokens: snapshot.lastUsage.inputTokens ?? 0,
-        outputTokens: snapshot.lastUsage.outputTokens ?? 0,
-        cachedInputTokens: snapshot.lastUsage.cachedInputTokens ?? 0,
-        totalCostUsd: snapshot.lastUsage.totalCostUsd ?? 0,
+        InputTokens: snapshot.lastUsage.inputTokens ?? 0,
+        OutputTokens: snapshot.lastUsage.outputTokens ?? 0,
+        CachedTokens: snapshot.lastUsage.cachedInputTokens ?? 0,
+        CostUsd: snapshot.lastUsage.totalCostUsd ?? 0,
       }
     : null
 
   const capabilities = snapshot.capabilities
     ? {
-        streaming: snapshot.capabilities.supportsStreaming ?? false,
-        persistence: snapshot.capabilities.supportsSessionPersistence ?? false,
-        dynamicModes: snapshot.capabilities.supportsDynamicModes ?? false,
-        mcpServers: snapshot.capabilities.supportsMcpServers ?? false,
+        Streaming: snapshot.capabilities.supportsStreaming ?? false,
+        Persistence: snapshot.capabilities.supportsSessionPersistence ?? false,
+        DynamicModes: snapshot.capabilities.supportsDynamicModes ?? false,
+        McpServers: snapshot.capabilities.supportsMcpServers ?? false,
       }
     : null
 
+  // Extract worktree and parentAgentId from labels if they exist
+  const worktree = snapshot.labels?.['paseo.worktree'] ?? null
+  const parentAgentId = snapshot.labels?.['paseo.parent-agent-id'] ?? null
+
   return {
-    id: snapshot.id,
-    name: snapshot.title ?? '-',
-    provider: snapshot.provider,
-    model: snapshot.model ?? '-',
-    status: snapshot.status,
-    mode: snapshot.currentModeId ?? 'default',
-    cwd: snapshot.cwd,
-    createdAt: snapshot.createdAt,
-    archivedAt: snapshot.archivedAt ?? null,
-    lastUsage,
-    capabilities,
-    availableModes: snapshot.availableModes
+    Id: snapshot.id,
+    Name: snapshot.title ?? '-',
+    Provider: snapshot.provider,
+    Model: snapshot.model ?? '-',
+    Status: snapshot.status,
+    Mode: snapshot.currentModeId ?? 'default',
+    Cwd: snapshot.cwd,
+    CreatedAt: snapshot.createdAt,
+    UpdatedAt: snapshot.updatedAt,
+    LastUsage: lastUsage,
+    Capabilities: capabilities,
+    AvailableModes: snapshot.availableModes
       ? snapshot.availableModes.map((m) => ({ id: m.id, label: m.label }))
       : null,
-    pendingPermissions: (snapshot.pendingPermissions ?? []).map((p) => ({
+    PendingPermissions: (snapshot.pendingPermissions ?? []).map((p) => ({
       id: p.id,
       tool: p.name ?? 'unknown',
     })),
+    Worktree: worktree,
+    ParentAgentId: parentAgentId,
   }
 }
 
 /** Convert agent to key-value rows for table display */
 function toInspectRows(agent: AgentInspect): InspectRow[] {
   const rows: InspectRow[] = [
-    { key: 'Id', value: agent.id },
-    { key: 'Name', value: agent.name },
-    { key: 'Provider', value: agent.provider },
-    { key: 'Model', value: agent.model },
-    { key: 'Status', value: agent.status },
-    { key: 'Mode', value: agent.mode },
-    { key: 'Cwd', value: shortenPath(agent.cwd) },
-    { key: 'CreatedAt', value: agent.createdAt },
+    { key: 'Id', value: agent.Id },
+    { key: 'Name', value: agent.Name },
+    { key: 'Provider', value: agent.Provider },
+    { key: 'Model', value: agent.Model },
+    { key: 'Status', value: agent.Status },
+    { key: 'Mode', value: agent.Mode },
+    { key: 'Cwd', value: shortenPath(agent.Cwd) },
+    { key: 'CreatedAt', value: agent.CreatedAt },
+    { key: 'UpdatedAt', value: agent.UpdatedAt },
   ]
 
-  if (agent.archivedAt) {
-    rows.push({ key: 'ArchivedAt', value: agent.archivedAt })
-  }
-
-  if (agent.lastUsage) {
+  if (agent.LastUsage) {
     rows.push({
       key: 'LastUsage',
-      value: `${agent.lastUsage.inputTokens} in, ${agent.lastUsage.outputTokens} out, ${formatCost(agent.lastUsage.totalCostUsd)}`,
+      value: `InputTokens: ${agent.LastUsage.InputTokens}, OutputTokens: ${agent.LastUsage.OutputTokens}, CachedTokens: ${agent.LastUsage.CachedTokens}, CostUsd: ${formatCost(agent.LastUsage.CostUsd)}`,
     })
   }
 
-  if (agent.capabilities) {
-    const caps = agent.capabilities
-    const capsList = [
-      caps.streaming ? 'Streaming' : null,
-      caps.persistence ? 'Persistence' : null,
-      caps.dynamicModes ? 'DynamicModes' : null,
-      caps.mcpServers ? 'McpServers' : null,
-    ].filter(Boolean)
-    rows.push({ key: 'Capabilities', value: capsList.join(', ') || 'none' })
+  if (agent.Capabilities) {
+    rows.push({
+      key: 'Capabilities',
+      value: `Streaming: ${agent.Capabilities.Streaming}, Persistence: ${agent.Capabilities.Persistence}, DynamicModes: ${agent.Capabilities.DynamicModes}, McpServers: ${agent.Capabilities.McpServers}`,
+    })
   }
 
-  if (agent.availableModes && agent.availableModes.length > 0) {
+  if (agent.AvailableModes && agent.AvailableModes.length > 0) {
     rows.push({
       key: 'AvailableModes',
-      value: agent.availableModes.map((m) => m.id).join(', '),
+      value: agent.AvailableModes.map((m) => `${m.id} (${m.label})`).join(', '),
     })
   }
 
-  if (agent.pendingPermissions.length > 0) {
-    rows.push({
-      key: 'PendingPermissions',
-      value: agent.pendingPermissions.length.toString(),
-    })
-  } else {
-    rows.push({ key: 'PendingPermissions', value: '[]' })
-  }
+  rows.push({
+    key: 'PendingPermissions',
+    value: agent.PendingPermissions.length > 0
+      ? agent.PendingPermissions.map(p => `${p.id} (${p.tool})`).join(', ')
+      : '[]'
+  })
+
+  rows.push({ key: 'Worktree', value: agent.Worktree ?? 'null' })
+  rows.push({ key: 'ParentAgentId', value: agent.ParentAgentId ?? 'null' })
 
   return rows
 }
