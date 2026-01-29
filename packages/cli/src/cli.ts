@@ -84,14 +84,8 @@ export function createCli(): Command {
     .option('--tail <n>', 'Show last n entries')
     .option('--filter <type>', 'Filter by event type (tools, text, errors, permissions)')
     .option('--since <time>', 'Show logs since timestamp')
-    .option('--json', 'Output in JSON format (only when not following)')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((id, options, command) => {
-      if (options.json && !options.follow) {
-        command.parent.opts().format = 'json'
-      }
-      return withOutput(runLogsCommand)(id, options, command)
-    })
+    .action(runLogsCommand)
 
   program
     .command('stop')

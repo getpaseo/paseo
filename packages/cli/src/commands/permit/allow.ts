@@ -48,15 +48,7 @@ export async function runAllowCommand(
 ): Promise<PermitAllowResult> {
   const host = getDaemonHost({ host: options.host })
 
-  // Validate arguments
-  if (!options.all && !reqId) {
-    const error: CommandError = {
-      code: 'MISSING_ARGUMENT',
-      message: 'Request ID is required unless --all is specified',
-      details: 'Usage: paseo permit allow <agent> <req_id> or paseo permit allow <agent> --all',
-    }
-    throw error
-  }
+  // No validation needed - if no reqId provided, allow all by default
 
   // Parse input JSON if provided
   let updatedInput: Record<string, unknown> | undefined
@@ -129,7 +121,9 @@ export async function runAllowCommand(
 
     // Determine which permissions to allow
     let permissionsToAllow: AgentPermissionRequest[]
-    if (options.all) {
+    if (!reqId || options.all) {
+      // Default: allow all pending permissions if no req_id specified
+      // --all flag is kept as an explicit alias for clarity
       permissionsToAllow = pendingPermissions
     } else {
       // Find permission by ID prefix

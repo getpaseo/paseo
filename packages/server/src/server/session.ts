@@ -623,6 +623,7 @@ export class Session {
       attentionReason: record.attentionReason ?? null,
       attentionTimestamp: record.attentionTimestamp ?? null,
       archivedAt: record.archivedAt ?? null,
+      labels: record.labels,
     };
   }
 
@@ -654,7 +655,7 @@ export class Session {
         );
       } else {
         const config = buildSessionConfig(record);
-        snapshot = await this.agentManager.createAgent(config, agentId);
+        snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
       }
 
       await this.agentManager.primeAgentHistory(agentId);

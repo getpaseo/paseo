@@ -15,6 +15,9 @@ export type {
   AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
 
+// Agent activity curator for CLI logs
+export { curateAgentActivity } from "./agent/activity-curator.js";
+
 // WebSocket message types for CLI streaming
 export type {
   AgentSnapshotPayload,

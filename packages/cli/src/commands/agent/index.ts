@@ -64,8 +64,9 @@ export function createAgentCommand(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .option('-f, --follow', 'Follow log output (streaming)')
     .option('--tail <n>', 'Show last n entries')
+    .option('--filter <type>', 'Filter by event type (tools, text, errors, permissions)')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action(withOutput(runLogsCommand))
+    .action(runLogsCommand)
 
   agent
     .command('stop')

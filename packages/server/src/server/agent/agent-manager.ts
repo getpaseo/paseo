@@ -384,7 +384,8 @@ export class AgentManager {
       );
     }
 
-    return this.registerSession(session, overrides, agentId);
+    // Preserve existing labels during refresh
+    return this.registerSession(session, overrides, agentId, { labels: existing.labels });
   }
 
   async closeAgent(agentId: string): Promise<void> {
