@@ -1,16 +1,10 @@
 import type { Command } from 'commander'
+import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
-
-/** Agent snapshot type returned from daemon client */
-interface AgentSnapshot {
-  id: string
-  provider: string
-  cwd: string
-  createdAt: string
-  status: string
-  title: string | null
-}
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { lookup } from 'mime-types'
 
 /** Result type for agent run command */
 export interface AgentRunResult {
@@ -37,11 +31,15 @@ export interface AgentRunOptions extends CommandOptions {
   detach?: boolean
   name?: string
   provider?: string
+  model?: string
   mode?: string
+  worktree?: string
+  base?: string
+  image?: string[]
   cwd?: string
 }
 
-function toRunResult(agent: AgentSnapshot): AgentRunResult {
+function toRunResult(agent: AgentSnapshotPayload): AgentRunResult {
   return {
     agentId: agent.id,
     status: agent.status === 'running' ? 'running' : 'created',
@@ -68,6 +66,16 @@ export async function runRunCommand(
     throw error
   }
 
+  // Validate --base is only used with --worktree
+  if (options.base && !options.worktree) {
+    const error: CommandError = {
+      code: 'INVALID_OPTIONS',
+      message: '--base can only be used with --worktree',
+      details: 'Usage: paseo agent run --worktree <name> --base <branch> <prompt>',
+    }
+    throw error
+  }
+
   let client
   try {
     client = await connectToDaemon({ host: options.host as string | undefined })
@@ -85,13 +93,51 @@ export async function runRunCommand(
     // Resolve working directory
     const cwd = options.cwd ?? process.cwd()
 
+    // Process images if provided
+    let images: Array<{ data: string; mimeType: string }> | undefined
+    if (options.image && options.image.length > 0) {
+      images = options.image.map((imagePath) => {
+        const resolvedPath = resolve(imagePath)
+        try {
+          const imageData = readFileSync(resolvedPath)
+          const mimeType = lookup(resolvedPath) || 'application/octet-stream'
+
+          // Verify it's an image MIME type
+          if (!mimeType.startsWith('image/')) {
+            throw new Error(`File is not an image: ${imagePath} (detected type: ${mimeType})`)
+          }
+
+          return {
+            data: imageData.toString('base64'),
+            mimeType,
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          throw new Error(`Failed to read image ${imagePath}: ${message}`)
+        }
+      })
+    }
+
+    // Build git options if worktree is specified
+    const git = options.worktree
+      ? {
+          createWorktree: true,
+          worktreeSlug: options.worktree,
+          baseBranch: options.base,
+        }
+      : undefined
+
     // Create the agent
     const agent = await client.createAgent({
       provider: (options.provider as 'claude' | 'codex' | 'opencode') ?? 'claude',
       cwd,
       title: options.name,
       modeId: options.mode,
+      model: options.model,
       initialPrompt: prompt,
+      images,
+      git,
+      worktreeName: options.worktree,
     })
 
     await client.close()

@@ -50,7 +50,7 @@ The CLI package depends on `@paseo/server` because it needs to:
 
 The `paseo` binary becomes the **unified entry point** for Paseo:
 - `paseo daemon start` → runs the server (foreground or daemonized)
-- `paseo agent ps` → connects to running daemon via WebSocket
+- `paseo agent ls` → connects to running daemon via WebSocket
 - `paseo agent run "..."` → connects and creates agent
 
 This replaces the need to run `npm run start` in the server package directly.
@@ -136,6 +136,27 @@ The key principle: **`index.ts` is for direct use (dev/prod), CLI wraps the same
 paseo <command> [subcommand] [options] [args]
 ```
 
+### Shorthand Commands
+
+Like Docker, common agent operations are lifted to the top level for convenience:
+
+| Shorthand | Full Command | Description |
+|-----------|--------------|-------------|
+| `paseo ls` | `paseo agent ls` | List agents |
+| `paseo run` | `paseo agent run` | Run an agent |
+| `paseo logs` | `paseo agent logs` | View agent logs |
+| `paseo stop` | `paseo agent stop` | Stop an agent |
+| `paseo attach` | `paseo agent attach` | Attach to agent output |
+| `paseo send` | `paseo agent send` | Send message to agent |
+| `paseo inspect` | `paseo agent inspect` | Inspect agent details |
+| `paseo wait` | `paseo agent wait` | Wait for agent |
+
+Both forms are equivalent:
+```bash
+paseo ls -ag          # shorthand
+paseo agent ls -ag    # full form
+```
+
 ---
 
 ## Agent Commands (`paseo agent`)
@@ -176,40 +197,54 @@ paseo agent run --image ./screenshot.png "Match this design"
 
 ---
 
-### `paseo agent ps`
-List running agents (models `docker ps`).
+### `paseo agent ls`
+List agents. By default shows running agents in current directory.
 
 ```bash
-# List running agents
-paseo agent ps
+# Running agents in current directory (default)
+paseo agent ls
 
-# List all agents (including finished/archived)
-paseo agent ps -a
+# All statuses (running, idle, error, archived) in current directory
+paseo agent ls -a
 
-# Filter by status
-paseo agent ps --status running
+# Running agents globally (all directories)
+paseo agent ls -g
 
-# Filter by project/cwd
-paseo agent ps --cwd ~/dev/paseo
+# Everything everywhere (all statuses, all directories)
+paseo agent ls -ag
 
 # JSON output for scripting
-paseo agent ps --json
+paseo agent ls --json
 ```
 
-**Output (default - running only):**
+**Options:**
+- `-a, --all` - Include all statuses (not just running)
+- `-g, --global` - Show agents from all directories (not just current)
+
+**Default behavior (no flags):**
+- Only `running` and `idle` agents
+- Only agents in current working directory (or subdirectories)
+
+**Sorting:**
+- Primary: Status (`running` first, then `idle`, then others)
+- Secondary: Created at (most recent first)
+
+**Output:**
 ```
-AGENT ID    NAME              PROVIDER  STATUS   CWD                    CREATED
-a1b2c3d     🎭 Test fixer     claude    running  ~/dev/paseo            2 minutes ago
-e4f5g6h     Debug auth        codex     idle     ~/dev/paseo            15 minutes ago
+AGENT ID    NAME              PROVIDER             STATUS   CWD                    CREATED
+a1b2c3d     🎭 Test fixer     claude/sonnet        running  ~/dev/paseo            2 minutes ago
+e4f5g6h     Debug auth        codex/gpt-5.2        idle     ~/dev/paseo            15 minutes ago
 ```
 
-**Output (-a includes finished):**
+The PROVIDER column shows `{provider}/{model}` format (e.g., `claude/opus`, `claude/sonnet`, `codex/gpt-5.2`).
+
+**Output with `-ag` (everything everywhere):**
 ```
-AGENT ID    NAME              PROVIDER  STATUS    CWD                    CREATED
-a1b2c3d     🎭 Test fixer     claude    running   ~/dev/paseo            2 minutes ago
-e4f5g6h     Debug auth        codex     idle      ~/dev/paseo            15 minutes ago
-i7j8k9l     -                 claude    error     ~/dev/other-project    1 hour ago
-m3n4o5p     Old task          claude    archived  ~/dev/paseo            2 days ago
+AGENT ID    NAME              PROVIDER             STATUS    CWD                    CREATED
+a1b2c3d     🎭 Test fixer     claude/sonnet        running   ~/dev/paseo            2 minutes ago
+e4f5g6h     Debug auth        codex/gpt-5.2        idle      ~/dev/paseo            15 minutes ago
+i7j8k9l     -                 claude/haiku         error     ~/dev/other-project    1 hour ago
+m3n4o5p     Old task          claude/opus          archived  ~/dev/paseo            2 days ago
 ```
 
 ---
@@ -549,9 +584,9 @@ paseo daemon restart
 paseo --host localhost:7777 agent ps
 
 # Output format
-paseo agent ps --format json
-paseo agent ps --format yaml
-paseo agent ps --format table  # default
+paseo agent ls --format json
+paseo agent ls --format yaml
+paseo agent ls --format table  # default
 
 # Quiet mode (minimal output, just IDs)
 paseo -q agent run "Fix tests"
@@ -617,7 +652,7 @@ paseo agent run -d --worktree feature/api --name "API" "Build REST endpoints"
 paseo agent run -d --worktree feature/ui --name "UI" "Build React components"
 
 # Monitor both
-paseo agent ps
+paseo agent ls
 paseo agent logs -f API
 ```
 
@@ -639,40 +674,51 @@ paseo agent logs $ID
 set -e
 
 # Run tests agent
-AGENT=$(paseo -q agent run -d "Run the test suite")
+AGENT=$(paseo -q run -d "Run the test suite")
 
 # Wait for completion or permission
-paseo agent wait --timeout 10m $AGENT
+paseo wait --timeout 10m $AGENT
 
 # Check for pending permissions
 if paseo permit ls | grep -q $AGENT; then
   paseo permit allow --all $AGENT
-  paseo agent wait --timeout 5m $AGENT
+  paseo wait --timeout 5m $AGENT
 fi
 
 # Get exit status from logs
-paseo agent logs --tail 10 $AGENT
+paseo logs --tail 10 $AGENT
 
 # Cleanup
-paseo agent stop $AGENT
+paseo stop $AGENT
 ```
 
 ---
 
 ## Command Summary
 
+### Shorthand Commands (top-level)
+
+| Shorthand | Full Form | Description |
+|-----------|-----------|-------------|
+| `paseo run <prompt>` | `paseo agent run` | Create and run agent with task |
+| `paseo ls` | `paseo agent ls` | List running agents in current directory |
+| `paseo ls -a` | `paseo agent ls -a` | Include all statuses (not just running) |
+| `paseo ls -g` | `paseo agent ls -g` | Show agents globally (all directories) |
+| `paseo ls -ag` | `paseo agent ls -ag` | Everything everywhere |
+| `paseo attach <id>` | `paseo agent attach` | Attach to agent output stream |
+| `paseo logs <id>` | `paseo agent logs` | View agent activity |
+| `paseo send <id> <prompt>` | `paseo agent send` | Send message to agent |
+| `paseo stop <id>` | `paseo agent stop` | Stop and terminate agent |
+| `paseo inspect <id>` | `paseo agent inspect` | Show agent details |
+| `paseo wait <id>` | `paseo agent wait` | Wait for agent state |
+
+### Full Commands
+
 | Command | Description |
 |---------|-------------|
 | `paseo agent run <prompt>` | Create and run agent with task |
-| `paseo agent ps` | List running agents |
-| `paseo agent ps -a` | List all agents including archived |
-| `paseo agent attach <id>` | Attach to agent output stream |
-| `paseo agent logs <id>` | View agent activity |
-| `paseo agent send <id> <prompt>` | Send message to agent |
-| `paseo agent stop <id>` | Stop and terminate agent |
-| `paseo agent inspect <id>` | Show agent details |
+| `paseo agent ls` | List running agents in current directory |
 | `paseo agent mode <id> <mode>` | Change agent mode |
-| `paseo agent wait <id>` | Wait for agent state |
 | `paseo agent archive <id>` | Archive agent |
 | `paseo permit ls` | List pending permissions |
 | `paseo permit allow <agent> <req>` | Approve permission |
@@ -985,7 +1031,7 @@ async function waitForDaemon(port: number, timeout = 30000) {
   while (Date.now() - start < timeout) {
     try {
       // Try to connect via WebSocket and list agents
-      const result = await $`PASEO_HOST=localhost:${port} paseo agent ps`.nothrow()
+      const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow()
       if (result.exitCode === 0) return
     } catch {}
     await sleep(100)
@@ -1068,28 +1114,33 @@ await $`rm -rf ${home}`
 
 ---
 
-### Phase 3: Agent List (`agent ps`)
-- [ ] **3.1** `paseo agent ps` returns empty list when no agents
-- [ ] **3.2** `paseo agent ps` shows created agents
-- [ ] **3.3** `paseo agent ps -a` includes archived agents
-- [ ] **3.4** `paseo agent ps --json` returns valid JSON
-- [ ] **3.5** `paseo agent ps --cwd <path>` filters by directory
+### Phase 3: Agent List (`agent ls`)
+- [ ] **3.1** `paseo agent ls` returns empty list when no agents
+- [ ] **3.2** `paseo agent ls` shows created agents in current directory
+- [ ] **3.3** `paseo agent ls -a` includes all statuses (running, idle, error, archived)
+- [ ] **3.4** `paseo agent ls -g` shows agents globally (all directories)
+- [ ] **3.5** `paseo agent ls -ag` shows everything everywhere
+- [ ] **3.6** `paseo agent ls --json` returns valid JSON
 
-**Test: `tests/03-agent-ps.test.mts`**
+**Test: `tests/03-agent-ls.test.ts`**
 ```typescript
 #!/usr/bin/env npx zx
 // ... setup daemon on random port ...
 
 // Empty list
-const empty = await paseo(['agent', 'ps', '--json'])
+const empty = await paseo(['agent', 'ls', '--json'])
 assert(JSON.parse(empty.stdout).length === 0)
 
 // Create agent (haiku for speed)
 await paseo(['agent', 'run', '-d', '--provider', 'claude', '--model', 'haiku', 'echo test'])
 
 // Should appear in list
-const list = await paseo(['agent', 'ps', '--json'])
+const list = await paseo(['agent', 'ls', '--json'])
 assert(JSON.parse(list.stdout).length === 1)
+
+// Global flag shows agents from all cwds
+const global = await paseo(['agent', 'ls', '-g', '--json'])
+// ...
 ```
 
 ---
@@ -1419,7 +1470,7 @@ assert(id.match(/^[a-z0-9-]+$/)) // Just the ID
 #!/usr/bin/env npx zx
 
 // Daemon not running (use port that's definitely not running)
-const result = await $`PASEO_HOST=localhost:59999 paseo agent ps`.nothrow()
+const result = await $`PASEO_HOST=localhost:59999 paseo agent ls`.nothrow()
 assert(result.exitCode !== 0)
 assert(result.stderr.includes('daemon') || result.stderr.includes('connect'))
 
@@ -1530,7 +1581,7 @@ The existing `DaemonClientV2` in `packages/server/src/client/daemon-client-v2.ts
 
 **Commands:**
 - `paseo daemon status` - Check if daemon is running (health endpoint)
-- `paseo agent ps` - List agents (uses `listAgents()`)
+- `paseo agent ls` - List agents (uses `listAgents()`)
 
 ### Phase 2: Core Agent Commands
 

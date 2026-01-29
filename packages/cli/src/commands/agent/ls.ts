@@ -1,17 +1,7 @@
 import type { Command } from 'commander'
+import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
-
-/** Minimal agent snapshot type (from daemon client) */
-interface AgentSnapshot {
-  id: string
-  provider: string
-  cwd: string
-  createdAt: string
-  status: string
-  title: string | null
-  archivedAt?: string | null
-}
 
 /** Agent list item for display */
 export interface AgentListItem {
@@ -45,13 +35,13 @@ function shortenPath(path: string): string {
   return path
 }
 
-/** Schema for agent ps output */
-export const agentPsSchema: OutputSchema<AgentListItem> = {
+/** Schema for agent ls output */
+export const agentLsSchema: OutputSchema<AgentListItem> = {
   idField: 'shortId',
   columns: [
     { header: 'AGENT ID', field: 'shortId', width: 12 },
     { header: 'NAME', field: 'name', width: 20 },
-    { header: 'PROVIDER', field: 'provider', width: 10 },
+    { header: 'PROVIDER', field: 'provider', width: 15 },
     {
       header: 'STATUS',
       field: 'status',
@@ -69,30 +59,42 @@ export const agentPsSchema: OutputSchema<AgentListItem> = {
 }
 
 /** Transform agent snapshot to AgentListItem */
-function toListItem(agent: AgentSnapshot): AgentListItem {
+function toListItem(agent: AgentSnapshotPayload): AgentListItem {
   return {
     id: agent.id,
     shortId: agent.id.slice(0, 7),
     name: agent.title ?? '-',
-    provider: agent.provider,
+    provider: agent.model ? `${agent.provider}/${agent.model}` : agent.provider,
     status: agent.status,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
   }
 }
 
-export type AgentPsResult = ListResult<AgentListItem>
+export type AgentLsResult = ListResult<AgentListItem>
 
-export interface AgentPsOptions extends CommandOptions {
+export interface AgentLsOptions extends CommandOptions {
+  /** -a: Include all statuses (not just running/idle) */
   all?: boolean
+  /** -g: Show agents globally (not just current directory) */
+  global?: boolean
+  /** Filter by specific status */
   status?: string
+  /** Filter by specific cwd (overrides default cwd filtering) */
   cwd?: string
 }
 
-export async function runPsCommand(
-  options: AgentPsOptions,
+/**
+ * Agent ls command with correct semantics from design doc:
+ * - `paseo agent ls`     → running/idle agents in current directory
+ * - `paseo agent ls -a`  → all statuses in current directory
+ * - `paseo agent ls -g`  → running/idle agents globally
+ * - `paseo agent ls -ag` → everything everywhere
+ */
+export async function runLsCommand(
+  options: AgentLsOptions,
   _command: Command
-): Promise<AgentPsResult> {
+): Promise<AgentLsResult> {
   const host = getDaemonHost({ host: options.host as string | undefined })
 
   let client
@@ -109,43 +111,62 @@ export async function runPsCommand(
   }
 
   try {
-    // Request session state to get agent information
-    client.requestSessionState()
-
-    // Wait a moment for the session state to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Request and wait for session state to get agent information
+    await client.waitForSessionState()
 
     let agents = client.listAgents()
 
-    // Filter out archived agents unless -a flag is set
+    // Status filtering:
+    // By default, only show running/idle agents (not error, archived, etc.)
+    // With -a flag, show all statuses
     if (!options.all) {
-      agents = agents.filter((a) => !a.archivedAt)
+      agents = agents.filter((a) => {
+        // Show running and idle agents, exclude archived
+        return (a.status === 'running' || a.status === 'idle') && !a.archivedAt
+      })
     }
 
-    // Filter by status if specified
+    // If explicit status filter is provided, use it
     if (options.status) {
       agents = agents.filter((a) => a.status === options.status)
     }
 
-    // Filter by cwd if specified
-    if (options.cwd) {
-      const filterCwd = options.cwd
+    // Directory filtering:
+    // By default, only show agents in current working directory
+    // With -g flag, show agents globally (all directories)
+    if (!options.global) {
+      const currentCwd = options.cwd ?? process.cwd()
       agents = agents.filter((a) => {
         // Normalize paths for comparison
         const agentCwd = a.cwd.replace(/\/$/, '')
-        const targetCwd = filterCwd.replace(/\/$/, '')
+        const targetCwd = currentCwd.replace(/\/$/, '')
+        // Match exact cwd or subdirectories
         return agentCwd === targetCwd || agentCwd.startsWith(targetCwd + '/')
       })
     }
 
     await client.close()
 
+    // Sort agents: running first, then idle, then others; within each group, most recent first
+    const statusOrder = { running: 0, idle: 1 } as Record<string, number>
+    agents.sort((a, b) => {
+      // Primary sort: by status
+      const aOrder = statusOrder[a.status] ?? 999
+      const bOrder = statusOrder[b.status] ?? 999
+      if (aOrder !== bOrder) return aOrder - bOrder
+
+      // Secondary sort: by creation time (most recent first)
+      const aTime = new Date(a.createdAt).getTime()
+      const bTime = new Date(b.createdAt).getTime()
+      return bTime - aTime
+    })
+
     const items = agents.map(toListItem)
 
     return {
       type: 'list',
       data: items,
-      schema: agentPsSchema,
+      schema: agentLsSchema,
     }
   } catch (err) {
     await client.close().catch(() => {})
