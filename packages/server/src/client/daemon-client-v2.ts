@@ -163,6 +163,7 @@ export type CreateAgentRequestOptions = {
   git?: GitSetupOptions;
   worktreeName?: string;
   requestId?: string;
+  labels?: Record<string, string>;
 } & AgentConfigOverrides;
 
 type VoiceConversationLoadedPayload = VoiceConversationLoadedMessage["payload"];
@@ -656,6 +657,29 @@ export class DaemonClientV2 {
     this.sendSessionMessage(message);
   }
 
+  async waitForSessionState(timeout = 5000, requestId?: string): Promise<void> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "request_session_state",
+      requestId: resolvedRequestId,
+    });
+
+    // First check the existing message queue in case session_state was already received
+    for (const msg of this.messageQueue) {
+      if (msg.type === "session_state") {
+        return;
+      }
+    }
+
+    // If not in queue, wait for the session_state message
+    await this.sendSessionMessageOrThrow(message);
+    return this.waitFor(
+      (msg) => msg.type === "session_state" ? undefined : null,
+      timeout,
+      { skipQueue: false }
+    );
+  }
+
   async loadVoiceConversation(
     voiceConversationId: string,
     requestId?: string
@@ -751,6 +775,9 @@ export class DaemonClientV2 {
         : {}),
       ...(options.git ? { git: options.git } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
+      ...(options.labels && Object.keys(options.labels).length > 0
+        ? { labels: options.labels }
+        : {}),
     });
 
     const statusPromise = this.waitFor(
@@ -1875,6 +1902,10 @@ export class DaemonClientV2 {
         sawRunningInQueue = true;
         queuedIdle = null; // Reset: any previous idle was before this run
       }
+      // Return immediately if we have pending permissions (even if still running)
+      if (sawRunningInQueue && hasPendingPermissions) {
+        return msg.payload;
+      }
       if (
         sawRunningInQueue &&
         (status === "idle" || status === "error") &&
@@ -1906,6 +1937,11 @@ export class DaemonClientV2 {
             pendingPermissionIds.size > 0;
           if (status === "running" || hasPendingPermissions) {
             sawRunning = true;
+          }
+          // Return if we have pending permissions (even if still running)
+          // OR if agent is idle/error with no pending permissions (after having run)
+          if (sawRunning && hasPendingPermissions) {
+            return msg.payload;
           }
           if (
             sawRunning &&
@@ -2564,6 +2600,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     git: _git,
     worktreeName: _worktreeName,
     requestId: _requestId,
+    labels: _labels,
     ...overrides
   } = options;
 

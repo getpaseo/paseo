@@ -1,0 +1,21 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+.next
+.expo
+build
+*.tsbuildinfo
+
+# Coverage
+coverage
+
+# Lock files
+*.lock
+package-lock.json
+
+# Generated
+android
+ios
+.turbo

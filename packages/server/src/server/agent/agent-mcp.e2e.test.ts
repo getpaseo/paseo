@@ -102,9 +102,6 @@ describe("agent MCP end-to-end", () => {
         mcpDebug: false,
         agentClients: {},
         agentStoragePath: path.join(paseoHome, "agents"),
-        agentControlMcp: {
-          url: `http://127.0.0.1:${port}/mcp/agents`,
-        },
       };
 
       const previousCodexSessionDir = process.env.CODEX_SESSION_DIR;
@@ -235,9 +232,6 @@ describe("agent MCP end-to-end", () => {
         mcpDebug: false,
         agentClients: {},
         agentStoragePath: path.join(paseoHome, "agents"),
-        agentControlMcp: {
-          url: `http://127.0.0.1:${port}/mcp/agents`,
-        },
       };
 
       const previousCodexSessionDir = process.env.CODEX_SESSION_DIR;

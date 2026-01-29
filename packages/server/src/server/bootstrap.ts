@@ -56,7 +56,6 @@ import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import type {
   AgentClient,
-  AgentControlMcpConfig,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
 
@@ -78,7 +77,6 @@ export type PaseoDaemonConfig = {
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentStoragePath: string;
-  agentControlMcp: AgentControlMcpConfig;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   appBaseUrl?: string;
@@ -211,7 +209,6 @@ export async function createPaseoDaemon(
       ...config.agentClients,
     },
     registry: agentStorage,
-    agentControlMcp: config.agentControlMcp,
     logger,
   });
 
@@ -378,10 +375,7 @@ export async function createPaseoDaemon(
     agentStorage,
     downloadTokenStore,
     config.paseoHome,
-    {
-      agentMcpUrl: config.agentControlMcp.url,
-      agentMcpHeaders: config.agentControlMcp.headers,
-    },
+    agentMcpRoute,
     { allowedOrigins },
     { stt: sttService, tts: ttsService },
     terminalManager

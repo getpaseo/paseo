@@ -4,6 +4,7 @@
   "description": "Paseo backend server",
   "type": "module",
   "exports": {
+    ".": "./src/server/exports.ts",
     "./utils/tool-call-parsers": "./src/utils/tool-call-parsers.ts"
   },
   "scripts": {

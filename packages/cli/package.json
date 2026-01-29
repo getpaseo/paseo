@@ -1,0 +1,29 @@
+{
+  "name": "@paseo/cli",
+  "version": "0.1.0",
+  "description": "Paseo CLI - control your AI coding agents from the command line",
+  "type": "module",
+  "bin": {
+    "paseo": "./bin/paseo"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "npx zx tests/run-all.ts",
+    "test:e2e:lifecycle": "npx tsx tests/e2e/agent-lifecycle.test.ts"
+  },
+  "dependencies": {
+    "@paseo/server": "*",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "mime-types": "^2.1.35",
+    "ws": "^8.14.2",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1",
+    "@types/ws": "^8.5.8",
+    "tsx": "^4.6.0",
+    "typescript": "^5.2.2",
+    "zx": "^8.8.5"
+  }
+}

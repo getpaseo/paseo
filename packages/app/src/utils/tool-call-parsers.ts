@@ -1162,12 +1162,8 @@ const TOOL_NAME_MAP: Record<string, string> = {
   read_file: "Read",
   apply_patch: "Edit",
   paseo_worktree_setup: "Setup",
-  "agent-control.set_title": "Set title",
-  "agent-control.set_branch": "Set branch",
   set_title: "Set title",
   set_branch: "Set branch",
-  "mcp__agent-control__set_title": "Set title",
-  "mcp__agent-control__set_branch": "Set branch",
   thinking: "Thinking",
 };
 

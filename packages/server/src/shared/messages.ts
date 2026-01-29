@@ -63,12 +63,6 @@ const AgentSessionConfigSchema = z.object({
   networkAccess: z.boolean().optional(),
   webSearch: z.boolean().optional(),
   reasoningEffort: z.string().optional(),
-  agentControlMcp: z
-    .object({
-      url: z.string(),
-      headers: z.record(z.string()).optional(),
-    })
-    .optional(),
   extra: z
     .object({
       codex: z.record(z.unknown()).optional(),
@@ -247,10 +241,10 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
+  labels: z.record(z.string()).optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
-  parentAgentId: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
 });
 
@@ -385,6 +379,7 @@ export const CreateAgentRequestMessageSchema = z.object({
     mimeType: z.string(), // e.g., "image/jpeg", "image/png"
   })).optional(),
   git: GitSetupOptionsSchema.optional(),
+  labels: z.record(z.string()).optional(),
   requestId: z.string(),
 });
 
