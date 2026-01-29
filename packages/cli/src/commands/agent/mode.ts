@@ -6,13 +6,7 @@ import type {
   CommandError,
   AnyCommandResult,
 } from '../../output/index.js'
-
-/** Mode item for list display */
-export interface ModeListItem {
-  id: string
-  label: string
-  description: string
-}
+import type { AgentMode } from '@paseo/server'
 
 /** Result for setting mode */
 export interface SetModeResult {
@@ -21,7 +15,7 @@ export interface SetModeResult {
 }
 
 /** Schema for mode list output */
-export const modeListSchema: OutputSchema<ModeListItem> = {
+export const modeListSchema: OutputSchema<AgentMode> = {
   idField: 'id',
   columns: [
     { header: 'MODE', field: 'id', width: 15 },
@@ -92,7 +86,7 @@ export async function runModeCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `No agent found matching: ${id}`,
-        details: 'Use `paseo agent ps` to list available agents',
+        details: 'Use `paseo ls` to list available agents',
       }
       throw error
     }
@@ -112,10 +106,10 @@ export async function runModeCommand(
 
       await client.close()
 
-      const items: ModeListItem[] = availableModes.map((m) => ({
+      const items: AgentMode[] = availableModes.map((m) => ({
         id: m.id,
-        label: m.label ?? m.id,
-        description: m.description ?? '',
+        label: m.label,
+        description: m.description,
       }))
 
       return {

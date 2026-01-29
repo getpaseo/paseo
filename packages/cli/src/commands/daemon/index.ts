@@ -13,8 +13,14 @@ export function createDaemonCommand(): Command {
   daemon
     .command('status')
     .description('Show daemon status')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action(withOutput(runStatusCommand))
+    .action((options, command) => {
+      if (options.json) {
+        command.parent.parent.opts().format = 'json'
+      }
+      return withOutput(runStatusCommand)(options, command)
+    })
 
   daemon
     .command('stop')

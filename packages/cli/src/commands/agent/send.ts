@@ -1,16 +1,9 @@
 import type { Command } from 'commander'
+import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
-
-/** Minimal agent snapshot type (from daemon client) */
-interface AgentSnapshot {
-  id: string
-  provider: string
-  cwd: string
-  createdAt: string
-  status: string
-  title: string | null
-}
+import { readFile } from 'node:fs/promises'
+import { extname } from 'node:path'
 
 /** Result type for agent send command */
 export interface AgentSendResult {
@@ -31,13 +24,14 @@ export const agentSendSchema: OutputSchema<AgentSendResult> = {
 
 export interface AgentSendOptions extends CommandOptions {
   noWait?: boolean
+  image?: string[]
 }
 
 /**
  * Resolve agent ID from prefix or full ID.
  * Supports exact match and prefix matching.
  */
-function resolveAgentId(agents: AgentSnapshot[], idOrPrefix: string): string | null {
+function resolveAgentId(agents: AgentSnapshotPayload[], idOrPrefix: string): string | null {
   // Exact match first
   const exact = agents.find((a) => a.id === idOrPrefix)
   if (exact) return exact.id
@@ -52,6 +46,57 @@ function resolveAgentId(agents: AgentSnapshot[], idOrPrefix: string): string | n
   }
 
   return null
+}
+
+/**
+ * Read image files and convert them to base64 data URIs
+ */
+async function readImageFiles(imagePaths: string[]): Promise<Array<{ data: string; mimeType: string }>> {
+  const images: Array<{ data: string; mimeType: string }> = []
+
+  for (const path of imagePaths) {
+    try {
+      const buffer = await readFile(path)
+      const ext = extname(path).toLowerCase()
+
+      // Determine media type from extension
+      let mimeType = 'image/jpeg'
+      switch (ext) {
+        case '.png':
+          mimeType = 'image/png'
+          break
+        case '.jpg':
+        case '.jpeg':
+          mimeType = 'image/jpeg'
+          break
+        case '.gif':
+          mimeType = 'image/gif'
+          break
+        case '.webp':
+          mimeType = 'image/webp'
+          break
+        default:
+          // Default to jpeg for unknown types
+          mimeType = 'image/jpeg'
+      }
+
+      const data = buffer.toString('base64')
+      images.push({
+        data,
+        mimeType,
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const error: CommandError = {
+        code: 'IMAGE_READ_ERROR',
+        message: `Failed to read image file: ${path}`,
+        details: message,
+      }
+      throw error
+    }
+  }
+
+  return images
 }
 
 export async function runSendCommand(
@@ -109,13 +154,18 @@ export async function runSendCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo agent ps" to list available agents',
+        details: 'Use "paseo ls" to list available agents',
       }
       throw error
     }
 
+    // Read image files if provided
+    const images = options.image && options.image.length > 0
+      ? await readImageFiles(options.image)
+      : undefined
+
     // Send the message
-    await client.sendAgentMessage(agentId, prompt)
+    await client.sendAgentMessage(agentId, prompt, { images })
 
     // If --no-wait, return immediately
     if (options.noWait) {

@@ -1,41 +1,7 @@
 import type { Command } from 'commander'
+import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
-
-/** Agent snapshot type (loose to allow any shape from daemon client) */
-interface AgentSnapshotLike {
-  id: string
-  provider: string
-  cwd: string
-  createdAt: string
-  status: string
-  title: string | null
-  archivedAt?: string | null
-  currentModeId?: string | null
-  model?: string | null
-  lastUsage?: {
-    inputTokens?: number
-    outputTokens?: number
-    cachedInputTokens?: number
-    totalCostUsd?: number
-  }
-  capabilities?: {
-    supportsStreaming?: boolean
-    supportsSessionPersistence?: boolean
-    supportsDynamicModes?: boolean
-    supportsMcpServers?: boolean
-  }
-  availableModes?: Array<{
-    id: string
-    label: string
-    description?: string
-  }>
-  pendingPermissions?: Array<{
-    id: string
-    tool?: string
-  }>
-  parentAgentId?: string | null
-}
 
 /** Agent inspect data for display */
 interface AgentInspect {
@@ -118,7 +84,7 @@ function formatCost(costUsd: number): string {
 }
 
 /** Convert agent snapshot to inspection data */
-function toInspectData(snapshot: AgentSnapshotLike): AgentInspect {
+function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
   const lastUsage = snapshot.lastUsage
     ? {
         inputTokens: snapshot.lastUsage.inputTokens ?? 0,
@@ -154,7 +120,7 @@ function toInspectData(snapshot: AgentSnapshotLike): AgentInspect {
       : null,
     pendingPermissions: (snapshot.pendingPermissions ?? []).map((p) => ({
       id: p.id,
-      tool: p.tool ?? 'unknown',
+      tool: p.name ?? 'unknown',
     })),
     parentAgentId: snapshot.parentAgentId ?? null,
   }
@@ -270,7 +236,7 @@ export async function runInspectCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo agent ps" to list available agents',
+        details: 'Use "paseo ls" to list available agents',
       }
       throw error
     }
@@ -281,7 +247,7 @@ export async function runInspectCommand(
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo agent ps" to list available agents',
+        details: 'Use "paseo ls" to list available agents',
       }
       throw error
     }

@@ -13,6 +13,7 @@ interface StartOptions {
   home?: string
   foreground?: boolean
   noRelay?: boolean
+  allowedHosts?: string
 }
 
 export function startCommand(): Command {
@@ -22,6 +23,7 @@ export function startCommand(): Command {
     .option('--home <path>', 'Paseo home directory (default: ~/.paseo)')
     .option('--foreground', 'Run in foreground (don\'t daemonize)')
     .option('--no-relay', 'Disable relay connection')
+    .option('--allowed-hosts <hosts>', 'Comma-separated list of allowed MCP hosts (e.g., "localhost:6767,127.0.0.1:6767")')
     .action(async (options: StartOptions) => {
       await runStart(options)
     })
@@ -44,6 +46,10 @@ async function runStart(options: StartOptions): Promise<void> {
   // Apply CLI overrides
   if (options.noRelay) {
     config.relayEnabled = false
+  }
+
+  if (options.allowedHosts) {
+    config.agentMcpAllowedHosts = options.allowedHosts.split(',').map(h => h.trim())
   }
 
   // For now, only foreground mode is supported

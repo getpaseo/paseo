@@ -656,6 +656,29 @@ export class DaemonClientV2 {
     this.sendSessionMessage(message);
   }
 
+  async waitForSessionState(timeout = 5000, requestId?: string): Promise<void> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "request_session_state",
+      requestId: resolvedRequestId,
+    });
+
+    // First check the existing message queue in case session_state was already received
+    for (const msg of this.messageQueue) {
+      if (msg.type === "session_state") {
+        return;
+      }
+    }
+
+    // If not in queue, wait for the session_state message
+    await this.sendSessionMessageOrThrow(message);
+    return this.waitFor(
+      (msg) => msg.type === "session_state" ? undefined : null,
+      timeout,
+      { skipQueue: false }
+    );
+  }
+
   async loadVoiceConversation(
     voiceConversationId: string,
     requestId?: string

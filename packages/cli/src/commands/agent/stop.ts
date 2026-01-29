@@ -81,7 +81,7 @@ export async function runStopCommand(
         const error: CommandError = {
           code: 'AGENT_NOT_FOUND',
           message: `No agent found matching: ${id}`,
-          details: 'Use `paseo agent ps` to list available agents',
+          details: 'Use `paseo ls` to list available agents',
         }
         throw error
       }
