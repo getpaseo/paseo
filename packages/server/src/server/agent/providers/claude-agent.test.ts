@@ -240,7 +240,6 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
     provider: "claude",
     cwd,
     modeId: options?.modeId,
-    agentControlMcp: { url: agentMcpServer.url },
     extra: {
       claude: {
         sandbox: { enabled: true, autoAllowBashIfSandboxed: false },

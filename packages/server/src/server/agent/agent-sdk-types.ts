@@ -171,11 +171,6 @@ export type AgentCommandResult = {
   usage?: AgentUsage;
 };
 
-export type AgentControlMcpConfig = {
-  url: string;
-  headers?: Record<string, string>;
-};
-
 export type ListPersistedAgentsOptions = {
   limit?: number;
 };
@@ -201,7 +196,6 @@ export type AgentSessionConfig = {
   networkAccess?: boolean;
   webSearch?: boolean;
   reasoningEffort?: string;
-  agentControlMcp?: AgentControlMcpConfig;
   /**
    * Paseo-owned instructions injected into the first user prompt via
    * <paseo-instructions>...</paseo-instructions>.
@@ -215,7 +209,6 @@ export type AgentSessionConfig = {
     claude?: Partial<ClaudeAgentOptions>;
   };
   mcpServers?: AgentMetadata;
-  parentAgentId?: string;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
@@ -239,12 +232,6 @@ export interface AgentSession {
   describePersistence(): AgentPersistenceHandle | null;
   interrupt(): Promise<void>;
   close(): Promise<void>;
-  /**
-   * Set the managed agent ID for this session. This is called by AgentManager
-   * after registration to allow the session to include its ID in MCP requests
-   * (for parent-child agent relationships).
-   */
-  setManagedAgentId?(agentId: string): void;
   /**
    * List available slash commands for this session.
    * Commands are provider-specific - Claude supports skills and built-in commands.

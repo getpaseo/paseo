@@ -246,7 +246,6 @@ function normalizeAgentSnapshot(
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
-    parentAgentId: snapshot.parentAgentId,
     archivedAt,
   };
 }

@@ -40,7 +40,7 @@ export interface AgentMcpServerOptions {
   paseoHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
-   * When set, create_agent will auto-inject this as parentAgentId.
+   * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
   logger: Logger;
@@ -350,12 +350,6 @@ export async function createAgentMcpServer(
       .describe(
         "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately."
       ),
-    parentAgentId: z
-      .string()
-      .optional()
-      .describe(
-        "Optional parent agent ID. When set, this agent is a child of the specified parent agent."
-      ),
   };
 
   const createAgentInputSchema = callerAgentId
@@ -400,12 +394,10 @@ export async function createAgentMcpServer(
         worktreeName?: string;
         background?: boolean;
         title: string;
-        parentAgentId?: string;
       };
 
       let resolvedCwd: string;
       let resolvedMode: string | undefined;
-      let resolvedParentAgentId: string | undefined;
 
       if (callerAgentId) {
         const parentAgent = agentManager.getAgent(callerAgentId);
@@ -413,7 +405,6 @@ export async function createAgentMcpServer(
           throw new Error(`Parent agent ${callerAgentId} not found`);
         }
         resolvedCwd = parentAgent.cwd;
-        resolvedParentAgentId = callerAgentId;
 
         const provider: AgentProvider = agentType ?? "claude";
         const parentMode = parentAgent.currentModeId;
@@ -430,14 +421,12 @@ export async function createAgentMcpServer(
           initialMode: string;
           worktreeName?: string;
           baseBranch?: string;
-          parentAgentId?: string;
         };
         const {
           cwd,
           initialMode,
           worktreeName,
           baseBranch,
-          parentAgentId,
         } = topLevelArgs;
 
         resolvedCwd = expandPath(cwd);
@@ -457,7 +446,6 @@ export async function createAgentMcpServer(
         }
 
         resolvedMode = initialMode;
-        resolvedParentAgentId = parentAgentId;
       }
 
       const provider: AgentProvider = agentType ?? "claude";
@@ -467,7 +455,6 @@ export async function createAgentMcpServer(
         cwd: resolvedCwd,
         modeId: resolvedMode,
         title: normalizedTitle ?? undefined,
-        parentAgentId: resolvedParentAgentId,
       });
 
       if (initialPrompt) {

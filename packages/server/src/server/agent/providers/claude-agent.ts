@@ -116,16 +116,6 @@ type ClaudeAgentSessionOptions = {
   logger: Logger;
 };
 
-function appendCallerAgentId(url: string, agentId: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("callerAgentId", agentId);
-    return parsed.toString();
-  } catch {
-    const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}callerAgentId=${encodeURIComponent(agentId)}`;
-  }
-}
 
 export function extractUserMessageText(content: unknown): string | null {
   if (typeof content === "string") {
@@ -228,25 +218,6 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   if (typeof metadata.reasoningEffort === "string") {
     result.reasoningEffort = metadata.reasoningEffort;
   }
-  if (isMetadata(metadata.agentControlMcp)) {
-    const url = metadata.agentControlMcp.url;
-    const headers = metadata.agentControlMcp.headers;
-    if (typeof url === "string") {
-      const agentControlMcp: AgentSessionConfig["agentControlMcp"] = { url };
-      if (isMetadata(headers)) {
-        const normalizedHeaders: { [key: string]: string } = {};
-        for (const [key, value] of Object.entries(headers)) {
-          if (typeof value === "string") {
-            normalizedHeaders[key] = value;
-          }
-        }
-        if (Object.keys(normalizedHeaders).length > 0) {
-          agentControlMcp.headers = normalizedHeaders;
-        }
-      }
-      result.agentControlMcp = agentControlMcp;
-    }
-  }
   if (isMetadata(metadata.extra)) {
     const extra: AgentSessionConfig["extra"] = {};
     if (isMetadata(metadata.extra.codex)) {
@@ -261,9 +232,6 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   }
   if (isMetadata(metadata.mcpServers)) {
     result.mcpServers = metadata.mcpServers;
-  }
-  if (typeof metadata.parentAgentId === "string") {
-    result.parentAgentId = metadata.parentAgentId;
   }
 
   return result;
@@ -432,7 +400,6 @@ class ClaudeAgentSession implements AgentSession {
   private activeTurnPromise: Promise<void> | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
-  private managedAgentId: string | null = null;
 
   constructor(
     config: ClaudeAgentConfig,
@@ -722,10 +689,6 @@ class ClaudeAgentSession implements AgentSession {
     this.input = null;
   }
 
-  setManagedAgentId(agentId: string): void {
-    this.managedAgentId = agentId;
-  }
-
   async listCommands(): Promise<AgentSlashCommand[]> {
     const q = await this.ensureQuery();
     const commands = await q.supportedCommands();
@@ -819,28 +782,11 @@ class ClaudeAgentSession implements AgentSession {
       ...this.config.extra?.claude,
     };
 
-    // Always include the agent-control MCP server so agents can launch other agents
-    if (!this.config.agentControlMcp) {
-      throw new Error("agentControlMcp is required for ClaudeAgentSession");
-    }
-    const agentControlConfig = this.config.agentControlMcp;
-    const agentControlUrl = this.managedAgentId
-      ? appendCallerAgentId(agentControlConfig.url, this.managedAgentId)
-      : agentControlConfig.url;
-    const defaultMcpServers: Record<string, ClaudeMcpServerConfig> = {
-      "agent-control": {
-        type: "http",
-        url: agentControlUrl,
-        ...(agentControlConfig.headers ? { headers: agentControlConfig.headers } : {}),
-      },
-    };
-
     if (this.config.mcpServers) {
       const normalizedUserServers = this.normalizeMcpServers(this.config.mcpServers);
-      // Merge user-provided MCP servers with defaults, user servers take precedence
-      base.mcpServers = { ...defaultMcpServers, ...normalizedUserServers };
-    } else {
-      base.mcpServers = defaultMcpServers;
+      if (normalizedUserServers) {
+        base.mcpServers = normalizedUserServers;
+      }
     }
 
     if (this.config.model) {

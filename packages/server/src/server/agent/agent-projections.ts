@@ -44,6 +44,7 @@ export function toStoredAgentRecord(
       ? agent.lastUserMessageAt.toISOString()
       : null,
     title: options?.title ?? null,
+    labels: agent.labels && Object.keys(agent.labels).length > 0 ? agent.labels : undefined,
     lastStatus: agent.lifecycle,
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
@@ -56,7 +57,6 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
-    parentAgentId: agent.parentAgentId ?? null,
     internal: options?.internal,
   } satisfies StoredAgentRecord;
 }
@@ -85,7 +85,7 @@ export function toAgentPayload(
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
-    parentAgentId: agent.parentAgentId ?? null,
+    labels: agent.labels && Object.keys(agent.labels).length > 0 ? agent.labels : undefined,
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
