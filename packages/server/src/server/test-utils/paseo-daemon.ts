@@ -64,9 +64,6 @@ export async function createTestPaseoDaemon(
       mcpDebug: false,
       agentClients: {},
       agentStoragePath: path.join(paseoHome, "agents"),
-      agentControlMcp: {
-        url: `http://127.0.0.1:${port}/mcp/agents`,
-      },
       relayEnabled: options.relayEnabled ?? false,
       relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",

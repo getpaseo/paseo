@@ -80,9 +80,6 @@ export function loadConfig(
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
     agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],
     mcpDebug: env.MCP_DEBUG === "1",
-    agentControlMcp: {
-      url: `http://${mcpListen}${DEFAULT_AGENT_MCP_ROUTE}`,
-    },
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},

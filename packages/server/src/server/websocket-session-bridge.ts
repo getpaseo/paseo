@@ -19,11 +19,6 @@ import type { OpenAITTS } from "./agent/tts-openai.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 
-type AgentMcpClientConfig = {
-  agentMcpUrl: string;
-  agentMcpHeaders?: Record<string, string>;
-};
-
 export class WebSocketSessionBridge {
   private readonly logger: pino.Logger;
   private readonly sessions: Map<WebSocket, Session> = new Map();
@@ -34,7 +29,7 @@ export class WebSocketSessionBridge {
   private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
-  private readonly agentMcpConfig: AgentMcpClientConfig;
+  private readonly agentMcpRoute: string;
   private readonly stt: OpenAISTT | null;
   private readonly tts: OpenAITTS | null;
   private readonly terminalManager: TerminalManager | null;
@@ -46,7 +41,7 @@ export class WebSocketSessionBridge {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    agentMcpConfig: AgentMcpClientConfig,
+    agentMcpRoute: string,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
   ) {
@@ -55,7 +50,7 @@ export class WebSocketSessionBridge {
     this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.agentMcpConfig = agentMcpConfig;
+    this.agentMcpRoute = agentMcpRoute;
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
@@ -91,7 +86,7 @@ export class WebSocketSessionBridge {
       this.paseoHome,
       this.agentManager,
       this.agentStorage,
-      this.agentMcpConfig,
+      this.agentMcpRoute,
       this.stt,
       this.tts,
       this.terminalManager,
