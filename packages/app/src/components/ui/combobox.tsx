@@ -27,6 +27,7 @@ import {
   size as floatingSize,
   useFloating,
 } from "@floating-ui/react-native";
+import { getNextActiveIndex } from "./combobox-keyboard";
 
 const IS_WEB = Platform.OS === "web";
 
@@ -113,6 +114,7 @@ export interface ComboboxItemProps {
   label: string;
   description?: string;
   selected?: boolean;
+  active?: boolean;
   onPress: () => void;
   testID?: string;
 }
@@ -121,6 +123,7 @@ export function ComboboxItem({
   label,
   description,
   selected,
+  active,
   onPress,
   testID,
 }: ComboboxItemProps): ReactElement {
@@ -132,6 +135,7 @@ export function ComboboxItem({
       style={({ pressed }) => [
         styles.comboboxItem,
         pressed && styles.comboboxItemPressed,
+        active && styles.comboboxItemActive,
       ]}
     >
       <View style={styles.comboboxItemCheckSlot}>
@@ -174,6 +178,7 @@ export function Combobox({
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(null);
   const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState<number>(-1);
 
   const isControlled = typeof open === "boolean";
   const [internalOpen, setInternalOpen] = useState(false);
@@ -294,7 +299,6 @@ export function Combobox({
     );
   }, [options, normalizedSearch]);
 
-  const hasMatches = filteredOptions.length > 0;
   const sanitizedSearchValue = searchQuery.trim();
   const showCustomOption =
     allowCustomValue &&
@@ -304,6 +308,56 @@ export function Combobox({
         opt.id.toLowerCase() === sanitizedSearchValue.toLowerCase() ||
         opt.label.toLowerCase() === sanitizedSearchValue.toLowerCase()
     );
+
+  const visibleOptions = useMemo(() => {
+    const next: Array<{
+      id: string;
+      label: string;
+      description?: string;
+    }> = [];
+
+    if (showCustomOption) {
+      next.push({
+        id: sanitizedSearchValue,
+        label: `${customValuePrefix} "${sanitizedSearchValue}"`,
+        description: customValueDescription,
+      });
+    }
+
+    for (const opt of filteredOptions) {
+      next.push({
+        id: opt.id,
+        label: opt.label,
+        description: opt.description,
+      });
+    }
+
+    return next;
+  }, [
+    customValueDescription,
+    customValuePrefix,
+    filteredOptions,
+    sanitizedSearchValue,
+    showCustomOption,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!IS_WEB && isMobile) return;
+
+    if (visibleOptions.length === 0) {
+      setActiveIndex(-1);
+      return;
+    }
+
+    if (normalizedSearch) {
+      setActiveIndex(0);
+      return;
+    }
+
+    const selectedIndex = visibleOptions.findIndex((opt) => opt.id === value);
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+  }, [isMobile, isOpen, normalizedSearch, value, visibleOptions]);
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -319,6 +373,58 @@ export function Combobox({
     }
   }, [handleSelect, sanitizedSearchValue, showCustomOption]);
 
+  const handleDesktopKey = useCallback(
+    (key: "ArrowDown" | "ArrowUp" | "Enter" | "Escape", event?: KeyboardEvent) => {
+      if (!isOpen) return;
+      if (!IS_WEB && isMobile) return;
+
+      if (key === "ArrowDown" || key === "ArrowUp") {
+        event?.preventDefault();
+        setActiveIndex((currentIndex) =>
+          getNextActiveIndex({
+            currentIndex,
+            itemCount: visibleOptions.length,
+            key,
+          })
+        );
+        return;
+      }
+
+      if (key === "Enter") {
+        if (visibleOptions.length === 0) return;
+        event?.preventDefault();
+        const index =
+          activeIndex >= 0 && activeIndex < visibleOptions.length ? activeIndex : 0;
+        handleSelect(visibleOptions[index]!.id);
+        return;
+      }
+
+      if (key === "Escape") {
+        event?.preventDefault();
+        handleClose();
+      }
+    },
+    [activeIndex, handleClose, handleSelect, isMobile, isOpen, visibleOptions]
+  );
+
+  useEffect(() => {
+    if (!IS_WEB || !isOpen) return;
+
+    const handler = (event: KeyboardEvent) => {
+      const key = event.key;
+      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
+        return;
+      }
+      handleDesktopKey(key, event);
+    };
+
+    // react-native-web's TextInput can stop propagation on key events, so listen in capture phase.
+    window.addEventListener("keydown", handler, true);
+    return () => {
+      window.removeEventListener("keydown", handler, true);
+    };
+  }, [handleDesktopKey, isOpen]);
+
   const searchInput = (
     <SearchInput
       placeholder={searchPlaceholder ?? placeholder}
@@ -331,26 +437,20 @@ export function Combobox({
 
   const optionsList = (
     <>
-      {showCustomOption ? (
-        <ComboboxItem
-          label={`${customValuePrefix} "${sanitizedSearchValue}"`}
-          description={customValueDescription}
-          onPress={() => handleSelect(sanitizedSearchValue)}
-        />
-      ) : null}
-      {hasMatches ? (
-        filteredOptions.map((opt) => (
+      {visibleOptions.length > 0 ? (
+        visibleOptions.map((opt, index) => (
           <ComboboxItem
             key={opt.id}
             label={opt.label}
             description={opt.description}
             selected={opt.id === value}
+            active={index === activeIndex}
             onPress={() => handleSelect(opt.id)}
           />
         ))
-      ) : !showCustomOption ? (
+      ) : (
         <ComboboxEmpty>{emptyText}</ComboboxEmpty>
-      ) : null}
+      )}
     </>
   );
 
@@ -412,6 +512,7 @@ export function Combobox({
               width: referenceWidth ?? undefined,
             },
             floatingStyles,
+            referenceWidth === null ? { opacity: 0 } : null,
             typeof availableSize?.height === "number" ? { maxHeight: Math.min(availableSize.height, 400) } : null,
             typeof availableSize?.width === "number" ? { maxWidth: availableSize.width } : null,
           ]}
@@ -473,6 +574,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   comboboxItemPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  comboboxItemActive: {
     backgroundColor: theme.colors.surface2,
   },
   comboboxItemCheckSlot: {

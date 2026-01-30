@@ -134,11 +134,44 @@ export function SelectField({
   valueEllipsizeMode,
   testID,
 }: SelectFieldProps): ReactElement {
+  const getWebKey = useCallback((event: unknown): string | null => {
+    if (!event || typeof event !== "object") return null;
+    const eventWithNative = event as { nativeEvent?: unknown; key?: unknown };
+    if (typeof eventWithNative.key === "string") return eventWithNative.key;
+    const nativeEvent = eventWithNative.nativeEvent as { key?: unknown } | undefined;
+    return typeof nativeEvent?.key === "string" ? nativeEvent.key : null;
+  }, []);
+
+  const preventWebDefault = useCallback((event: unknown) => {
+    if (!event || typeof event !== "object") return;
+    const candidate = event as { preventDefault?: unknown };
+    if (typeof candidate.preventDefault === "function") {
+      candidate.preventDefault();
+    }
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: unknown) => {
+      if (Platform.OS !== "web") return;
+      const key = getWebKey(event);
+      if (key === "Enter" || key === " ") {
+        preventWebDefault(event);
+        onPress();
+      }
+    },
+    [getWebKey, onPress, preventWebDefault]
+  );
+
   return (
     <View style={styles.selectFieldContainer}>
       <Pressable
         ref={controlRef}
         onPress={onPress}
+        // @ts-ignore - tabIndex is web-only
+        tabIndex={0}
+        accessibilityRole="button"
+        // @ts-ignore - onKeyDown is web-only
+        onKeyDown={handleKeyDown}
         disabled={disabled}
         testID={testID}
         style={[styles.selectFieldControl, disabled && styles.selectFieldControlDisabled]}
@@ -332,10 +365,43 @@ function CompactSelectField({
   isLoading,
   controlRef,
 }: CompactSelectFieldProps): ReactElement {
+  const getWebKey = useCallback((event: unknown): string | null => {
+    if (!event || typeof event !== "object") return null;
+    const eventWithNative = event as { nativeEvent?: unknown; key?: unknown };
+    if (typeof eventWithNative.key === "string") return eventWithNative.key;
+    const nativeEvent = eventWithNative.nativeEvent as { key?: unknown } | undefined;
+    return typeof nativeEvent?.key === "string" ? nativeEvent.key : null;
+  }, []);
+
+  const preventWebDefault = useCallback((event: unknown) => {
+    if (!event || typeof event !== "object") return;
+    const candidate = event as { preventDefault?: unknown };
+    if (typeof candidate.preventDefault === "function") {
+      candidate.preventDefault();
+    }
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: unknown) => {
+      if (Platform.OS !== "web") return;
+      const key = getWebKey(event);
+      if (key === "Enter" || key === " ") {
+        preventWebDefault(event);
+        onPress();
+      }
+    },
+    [getWebKey, onPress, preventWebDefault]
+  );
+
   return (
     <Pressable
       ref={controlRef}
       onPress={onPress}
+      // @ts-ignore - tabIndex is web-only
+      tabIndex={0}
+      accessibilityRole="button"
+      // @ts-ignore - onKeyDown is web-only
+      onKeyDown={handleKeyDown}
       disabled={disabled}
       style={[styles.compactSelectControl, disabled && styles.compactSelectControlDisabled]}
     >

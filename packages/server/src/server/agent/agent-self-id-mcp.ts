@@ -13,6 +13,7 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { basename } from "path";
 import { z } from "zod";
 import { ensureValidJson } from "../json-utils.js";
 import type { Logger } from "pino";
@@ -25,6 +26,7 @@ import {
 import {
   NotGitRepoError,
   renameCurrentBranch,
+  getCheckoutStatus,
 } from "../../utils/checkout-git.js";
 
 export interface AgentSelfIdMcpOptions {
@@ -162,6 +164,21 @@ export async function createAgentSelfIdMcpServer(
         throw new AgentSelfIdToolError(
           "NOT_ALLOWED",
           "Branch renames are only allowed inside Paseo-owned worktrees"
+        );
+      }
+
+      const status = await getCheckoutStatus(agent.cwd, {
+        paseoHome: options.paseoHome,
+      });
+      if (!status.isGit || !status.currentBranch) {
+        throw new AgentSelfIdToolError("NOT_GIT_REPO", "Unable to determine current branch");
+      }
+
+      const worktreeDirName = basename(status.repoRoot);
+      if (status.currentBranch !== worktreeDirName) {
+        throw new AgentSelfIdToolError(
+          "NOT_ALLOWED",
+          "Branch has already been renamed. Use git commands for subsequent renames."
         );
       }
 

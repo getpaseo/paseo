@@ -224,6 +224,72 @@ describe("self-identification MCP tools", () => {
     }
   });
 
+  test("set_branch rejects subsequent renames after initial rename", async () => {
+    const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-self-ident-"));
+    const paseoHome = path.join(repoDir, "paseo-home");
+
+    try {
+      initGitRepo(repoDir);
+      const worktree = await createWorktree({
+        branchName: "initial-branch",
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug: "initial-branch",
+        paseoHome,
+      });
+
+      const storagePath = path.join(repoDir, "agents");
+      const storage = new AgentStorage(storagePath, logger);
+      const manager = new AgentManager({
+        clients: { codex: new TestAgentClient() },
+        registry: storage,
+        logger,
+        idFactory: () => "agent-subsequent-rename",
+      });
+
+      const agent = await manager.createAgent({
+        provider: "codex",
+        cwd: worktree.worktreePath,
+      });
+
+      const server = await createAgentSelfIdMcpServer({
+        agentManager: manager,
+        paseoHome,
+        callerAgentId: agent.id,
+        logger,
+      });
+      const tool = (server as any)._registeredTools["set_branch"];
+
+      // First rename should succeed
+      await tool.callback({ name: "first-rename" });
+
+      const branchAfterFirst = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      expect(branchAfterFirst).toBe("first-rename");
+
+      // Second rename should fail
+      await expect(tool.callback({ name: "second-rename" })).rejects.toMatchObject({
+        code: "NOT_ALLOWED",
+        message: expect.stringContaining("already been renamed"),
+      });
+
+      // Branch should still be first-rename
+      const branchAfterSecond = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      expect(branchAfterSecond).toBe("first-rename");
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   test("set_branch rejects non-Paseo checkouts", async () => {
     const repoDir = mkdtempSync(path.join(tmpdir(), "paseo-self-ident-"));
 
