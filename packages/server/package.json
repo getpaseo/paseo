@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/server/exports.ts",
-    "./utils/tool-call-parsers": "./src/utils/tool-call-parsers.ts"
+    "./utils/tool-call-parsers": "./src/utils/tool-call-parsers.ts",
+    "./self-id-bridge": "./src/self-id-bridge/index.ts"
   },
   "scripts": {
     "dev": "NODE_ENV=development tsx scripts/dev-runner.ts",

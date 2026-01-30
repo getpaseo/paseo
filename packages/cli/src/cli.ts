@@ -1,4 +1,6 @@
 import { Command } from 'commander'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { createAgentCommand } from './commands/agent/index.js'
 import { createDaemonCommand } from './commands/daemon/index.js'
 import { createPermitCommand } from './commands/permit/index.js'
@@ -13,6 +15,7 @@ import { runInspectCommand } from './commands/agent/inspect.js'
 import { runWaitCommand } from './commands/agent/wait.js'
 import { runAttachCommand } from './commands/agent/attach.js'
 import { withOutput } from './output/index.js'
+import { runSelfIdBridge } from '@paseo/server/self-id-bridge'
 
 const VERSION = '0.1.0'
 
@@ -141,6 +144,21 @@ export function createCli(): Command {
 
   // Worktree commands
   program.addCommand(createWorktreeCommand())
+
+  // Self-ID bridge command (for internal use by agents to call set_title/set_branch)
+  program
+    .command('self-id-bridge')
+    .description('Stdio-to-HTTP bridge for Agent Self-ID MCP (internal use)')
+    .option('--socket <path>', 'Unix socket path', join(process.env.PASEO_HOME ?? join(homedir(), '.paseo'), 'self-id-mcp.sock'))
+    .option('--agent-id <id>', 'Caller agent ID')
+    .option('--debug', 'Enable debug logging to stderr')
+    .action(async (options) => {
+      await runSelfIdBridge({
+        socketPath: options.socket,
+        agentId: options.agentId,
+        debug: options.debug,
+      })
+    })
 
   return program
 }

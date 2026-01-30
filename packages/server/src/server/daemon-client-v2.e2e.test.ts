@@ -80,9 +80,9 @@ describe("daemon client v2 E2E", () => {
   test("handles session actions", async () => {
     expect(ctx.client.isConnected).toBe(true);
 
-    const sessionStatePromise = waitForSignal(15000, (resolve) => {
-      const unsubscribe = ctx.client.on("session_state", (message) => {
-        if (message.type !== "session_state") {
+    const agentListPromise = waitForSignal(15000, (resolve) => {
+      const unsubscribe = ctx.client.on("agent_list", (message) => {
+        if (message.type !== "agent_list") {
           return;
         }
         resolve(message);
@@ -95,8 +95,8 @@ describe("daemon client v2 E2E", () => {
     expect(loadResult.voiceConversationId).toBe(voiceConversationId);
     expect(typeof loadResult.messageCount).toBe("number");
 
-    const sessionState = await sessionStatePromise;
-    expect(Array.isArray(sessionState.payload.agents)).toBe(true);
+    const agentList = await agentListPromise;
+    expect(Array.isArray(agentList.payload.agents)).toBe(true);
 
     const listResult = await ctx.client.listVoiceConversations();
     expect(Array.isArray(listResult.conversations)).toBe(true);
@@ -128,9 +128,12 @@ describe("daemon client v2 E2E", () => {
     async () => {
       const cwd = tmpCwd();
 
-      const agentStatePromise = waitForSignal(15000, (resolve) => {
-        const unsubscribe = ctx.client.on("agent_state", (message) => {
-          if (message.type !== "agent_state") {
+      const agentUpdatePromise = waitForSignal(15000, (resolve) => {
+        const unsubscribe = ctx.client.on("agent_update", (message) => {
+          if (message.type !== "agent_update") {
+            return;
+          }
+          if (message.payload.kind !== "upsert") {
             return;
           }
           resolve(message);
@@ -173,8 +176,8 @@ describe("daemon client v2 E2E", () => {
         ctx.client.listAgents().some((entry) => entry.id === agent.id)
       ).toBe(true);
 
-      const agentState = await agentStatePromise;
-      expect(agentState.payload.id).toBe(agent.id);
+      const agentUpdate = await agentUpdatePromise;
+      expect(agentUpdate.payload.agent.id).toBe(agent.id);
       const createdStatus = await createdStatusPromise;
       expect(
         (createdStatus.payload as { agentId?: string }).agentId
@@ -253,7 +256,7 @@ describe("daemon client v2 E2E", () => {
 
       if (nextMode) {
         await ctx.client.setAgentMode(agent.id, nextMode);
-        const modeState = await ctx.client.waitForAgentState(
+        const modeState = await ctx.client.waitForAgentUpsert(
           agent.id,
           (snapshot) => snapshot.currentModeId === nextMode,
           15000

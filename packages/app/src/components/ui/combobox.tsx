@@ -78,11 +78,23 @@ function SearchInput({
   autoFocus = false,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
+  const inputRef = useRef<TextInput>(null);
   const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+
+  useEffect(() => {
+    if (autoFocus && IS_WEB && inputRef.current) {
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [autoFocus]);
+
   return (
     <View style={styles.searchInputContainer}>
       <Search size={16} color={theme.colors.foregroundMuted} />
       <InputComponent
+        ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
         style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
         placeholder={placeholder}
@@ -91,7 +103,6 @@ function SearchInput({
         onChangeText={onChangeText}
         autoCapitalize="none"
         autoCorrect={false}
-        autoFocus={autoFocus}
         onSubmitEditing={onSubmitEditing}
       />
     </View>

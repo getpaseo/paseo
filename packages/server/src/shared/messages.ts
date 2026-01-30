@@ -241,7 +241,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string()).default({}),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -279,9 +279,25 @@ export const AudioPlayedMessageSchema = z.object({
   id: z.string(),
 });
 
-export const RequestSessionStateMessageSchema = z.object({
-  type: z.literal("request_session_state"),
+export const RequestAgentListMessageSchema = z.object({
+  type: z.literal("request_agent_list"),
   requestId: z.string(),
+  filter: z.object({
+    labels: z.record(z.string()).optional(),
+  }).optional(),
+});
+
+export const SubscribeAgentUpdatesMessageSchema = z.object({
+  type: z.literal("subscribe_agent_updates"),
+  subscriptionId: z.string(),
+  filter: z.object({
+    labels: z.record(z.string()).optional(),
+  }).optional(),
+});
+
+export const UnsubscribeAgentUpdatesMessageSchema = z.object({
+  type: z.literal("unsubscribe_agent_updates"),
+  subscriptionId: z.string(),
 });
 
 export const LoadVoiceConversationRequestMessageSchema = z.object({
@@ -379,7 +395,7 @@ export const CreateAgentRequestMessageSchema = z.object({
     mimeType: z.string(), // e.g., "image/jpeg", "image/png"
   })).optional(),
   git: GitSetupOptionsSchema.optional(),
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string()).default({}),
   requestId: z.string(),
 });
 
@@ -720,7 +736,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RealtimeAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
-  RequestSessionStateMessageSchema,
+  RequestAgentListMessageSchema,
+  SubscribeAgentUpdatesMessageSchema,
+  UnsubscribeAgentUpdatesMessageSchema,
   LoadVoiceConversationRequestMessageSchema,
   ListVoiceConversationsRequestMessageSchema,
   DeleteVoiceConversationRequestMessageSchema,
@@ -945,9 +963,18 @@ export const VoiceConversationLoadedMessageSchema = z.object({
   }),
 });
 
-export const AgentStateMessageSchema = z.object({
-  type: z.literal("agent_state"),
-  payload: AgentSnapshotPayloadSchema,
+export const AgentUpdateMessageSchema = z.object({
+  type: z.literal("agent_update"),
+  payload: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("upsert"),
+      agent: AgentSnapshotPayloadSchema,
+    }),
+    z.object({
+      kind: z.literal("remove"),
+      agentId: z.string(),
+    }),
+  ]),
 });
 
 export const AgentStreamMessageSchema = z.object({
@@ -981,8 +1008,8 @@ export const AgentStatusMessageSchema = z.object({
   }),
 });
 
-export const SessionStateMessageSchema = z.object({
-  type: z.literal("session_state"),
+export const AgentListMessageSchema = z.object({
+  type: z.literal("agent_list"),
   payload: z.object({
     agents: z.array(AgentSnapshotPayloadSchema),
   }),
@@ -1419,11 +1446,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
   VoiceConversationLoadedMessageSchema,
-  AgentStateMessageSchema,
+  AgentUpdateMessageSchema,
   AgentStreamMessageSchema,
   AgentStreamSnapshotMessageSchema,
   AgentStatusMessageSchema,
-  SessionStateMessageSchema,
+  AgentListMessageSchema,
   ListVoiceConversationsResponseMessageSchema,
   DeleteVoiceConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
@@ -1470,13 +1497,13 @@ export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type VoiceConversationLoadedMessage = z.infer<
   typeof VoiceConversationLoadedMessageSchema
 >;
-export type AgentStateMessage = z.infer<typeof AgentStateMessageSchema>;
+export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
 export type AgentStreamMessage = z.infer<typeof AgentStreamMessageSchema>;
 export type AgentStreamSnapshotMessage = z.infer<
   typeof AgentStreamSnapshotMessageSchema
 >;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
-export type SessionStateMessage = z.infer<typeof SessionStateMessageSchema>;
+export type AgentListMessage = z.infer<typeof AgentListMessageSchema>;
 export type ListVoiceConversationsResponseMessage = z.infer<
   typeof ListVoiceConversationsResponseMessageSchema
 >;

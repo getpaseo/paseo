@@ -47,7 +47,7 @@ async function testMultiAgentSequence() {
   // Subscribe to all events for debugging
   const unsub = client.subscribe((event) => {
     console.log(`[Event] type=${event.type}`);
-    if (event.type === "session_state") {
+    if (event.type === "agent_list") {
       console.log(`  ${event.agents.length} agents`);
       agents.length = 0;
       for (const a of event.agents) {
@@ -57,8 +57,8 @@ async function testMultiAgentSequence() {
   });
 
   // Also log ALL raw messages
-  client.on("session_state", (msg: any) => {
-    console.log(`[RAW session_state] agents=${msg.agents?.length}`);
+  client.on("agent_list", (msg: any) => {
+    console.log(`[RAW agent_list] agents=${msg.agents?.length}`);
   });
 
   // Also log raw messages for debugging
@@ -76,12 +76,12 @@ async function testMultiAgentSequence() {
     console.log("Connected to daemon");
     console.log(`Connection state: ${JSON.stringify(client.getConnectionState())}`);
 
-    // Request session state (the app does this after connecting)
-    console.log("Requesting session state...");
-    client.requestSessionState();
+    // Request agent list (the app does this after connecting)
+    console.log("Requesting agent list...");
+    client.requestAgentList();
 
-    // Wait a bit for session state to arrive
-    console.log("Waiting 3s for session state...");
+    // Wait a bit for agent list to arrive
+    console.log("Waiting 3s for agent list...");
     await new Promise((r) => setTimeout(r, 3000));
 
     if (agents.length === 0) {

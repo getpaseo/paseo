@@ -75,6 +75,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
           attentionReason: agent.attentionReason,
           attentionTimestamp: agent.attentionTimestamp,
           archivedAt: agent.archivedAt,
+          labels: agent.labels,
         };
         allAgents.push(nextAgent);
       }
@@ -103,23 +104,23 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     const isConnecting = Array.from(connectionStates.entries()).some(([id, c]) => {
       const shortId = id.substring(0, 20);
 
-      // First-time connection (never received session state)
-      if (c.status === 'connecting' && !c.hasEverReceivedSessionState) {
+      // First-time connection (never received agent list)
+      if (c.status === 'connecting' && !c.hasEverReceivedAgentList) {
         connectingReasons.push(`${shortId}: first-time connecting`);
         return true;
       }
-      if (c.status === 'online' && !c.hasEverReceivedSessionState) {
-        connectingReasons.push(`${shortId}: online but no session_state yet`);
+      if (c.status === 'online' && !c.hasEverReceivedAgentList) {
+        connectingReasons.push(`${shortId}: online but no agent_list yet`);
         return true;
       }
 
-      // Reconnecting (have received session state before)
-      if (c.status === 'connecting' && c.hasEverReceivedSessionState) {
+      // Reconnecting (have received agent list before)
+      if (c.status === 'connecting' && c.hasEverReceivedAgentList) {
         connectingReasons.push(`${shortId}: reconnecting`);
         return true;
       }
-      if (c.status === 'online' && !c.sessionReady && c.hasEverReceivedSessionState) {
-        connectingReasons.push(`${shortId}: online but sessionReady=false (waiting for session_state)`);
+      if (c.status === 'online' && !c.agentListReady && c.hasEverReceivedAgentList) {
+        connectingReasons.push(`${shortId}: online but agentListReady=false (waiting for agent_list)`);
         return true;
       }
 
@@ -139,8 +140,8 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
       const connectionStatesArray = Array.from(connectionStates.entries()).map(([id, state]) => ({
         id: id.substring(0, 20) + (id.length > 20 ? '...' : ''),
         status: state.status,
-        sessionReady: state.sessionReady,
-        hasEverReceivedSessionState: state.hasEverReceivedSessionState,
+        agentListReady: state.agentListReady,
+        hasEverReceivedAgentList: state.hasEverReceivedAgentList,
       }));
 
       console.log('[useAggregatedAgents] States:', {

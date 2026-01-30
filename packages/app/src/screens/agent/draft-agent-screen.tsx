@@ -273,13 +273,20 @@ export function DraftAgentScreen({
     if (!selectedServerId || !sessionAgents) {
       return [];
     }
-    const uniquePaths = new Set<string>();
+    const pathLastCreated = new Map<string, Date>();
     sessionAgents.forEach((agent) => {
-      if (agent.cwd) {
-        uniquePaths.add(agent.cwd);
+      if (agent.cwd && !agent.cwd.includes(".paseo/worktrees")) {
+        const existing = pathLastCreated.get(agent.cwd);
+        if (!existing || agent.createdAt > existing) {
+          pathLastCreated.set(agent.cwd, agent.createdAt);
+        }
       }
     });
-    return Array.from(uniquePaths).sort();
+    return Array.from(pathLastCreated.keys()).sort((a, b) => {
+      const aTime = pathLastCreated.get(a)!.getTime();
+      const bTime = pathLastCreated.get(b)!.getTime();
+      return bTime - aTime;
+    });
   }, [selectedServerId, sessionAgents]);
 
   const sessionClient = useSessionStore((state) =>
@@ -600,6 +607,7 @@ export function DraftAgentScreen({
       title: "New agent",
       cwd,
       model,
+      labels: {},
     };
   }, [
     machine.tag,

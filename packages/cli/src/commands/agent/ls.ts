@@ -115,8 +115,8 @@ export async function runLsCommand(
   }
 
   try {
-    // Request and wait for session state to get agent information
-    await client.waitForSessionState()
+    // Request and wait for agent list
+    await client.waitForAgentList()
 
     let agents = client.listAgents()
 

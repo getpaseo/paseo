@@ -79,8 +79,8 @@ export async function runAllowCommand(
   }
 
   try {
-    // Request session state to get agent information
-    client.requestSessionState()
+    // Request agent list
+    client.requestAgentList()
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     const agents = client.listAgents()

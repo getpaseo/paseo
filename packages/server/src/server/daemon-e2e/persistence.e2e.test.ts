@@ -381,7 +381,13 @@ describe("daemon E2E", () => {
           return null;
         }
 
-        const transcriptFile = findTranscriptFile(sessionsDir, sessionId!);
+        let transcriptFile: string | null = null;
+        const transcriptWaitStart = Date.now();
+        while (Date.now() - transcriptWaitStart < 10000) {
+          transcriptFile = findTranscriptFile(sessionsDir, sessionId!);
+          if (transcriptFile) break;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
 
         // Verify transcript file exists
         expect(transcriptFile).not.toBeNull();

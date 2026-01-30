@@ -99,6 +99,7 @@ export interface Agent {
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
+  labels: Record<string, string>;
 }
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -838,6 +839,7 @@ export const useSessionStore = create<SessionStore>()(
           requiresAttention: agent.requiresAttention ?? false,
           attentionReason: agent.attentionReason ?? null,
           attentionTimestamp: agent.attentionTimestamp ?? null,
+          labels: agent.labels,
         });
       }
       return entries;

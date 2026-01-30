@@ -616,7 +616,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   listContent: {
-    paddingHorizontal: theme.spacing[4],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[4],
   },
@@ -626,7 +625,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    marginHorizontal: -theme.spacing[2],
     marginTop: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
   },
@@ -643,6 +641,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   sectionContainer: {
+    marginHorizontal: theme.spacing[2],
     marginBottom: theme.spacing[2],
   },
   sectionDragging: {
@@ -701,7 +700,7 @@ const styles = StyleSheet.create((theme) => ({
   agentItem: {
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    marginHorizontal: -theme.spacing[2],
+    marginLeft: theme.spacing[1],
     borderRadius: theme.borderRadius.lg,
     marginBottom: theme.spacing[1],
   },

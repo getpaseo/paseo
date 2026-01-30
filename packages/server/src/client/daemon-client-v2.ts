@@ -110,14 +110,20 @@ export type ConnectionState =
   | { status: "disconnected"; reason?: string };
 
 export type DaemonEvent =
-  | { type: "agent_state"; agentId: string; payload: AgentSnapshotPayload }
+  | {
+      type: "agent_update";
+      agentId: string;
+      payload:
+        | { kind: "upsert"; agent: AgentSnapshotPayload }
+        | { kind: "remove"; agentId: string };
+    }
   | {
       type: "agent_stream";
       agentId: string;
       event: AgentStreamEventPayload;
       timestamp: string;
     }
-  | { type: "session_state"; agents: AgentSnapshotPayload[] }
+  | { type: "agent_list"; agents: AgentSnapshotPayload[] }
   | { type: "status"; payload: { status: string } & Record<string, unknown> }
   | { type: "agent_deleted"; agentId: string }
   | {
@@ -249,6 +255,10 @@ export class DaemonClientV2 {
   private connectionState: ConnectionState = { status: "idle" };
   private messageQueueLimit: number | null;
   private agentIndex: Map<string, AgentSnapshotPayload> = new Map();
+  private agentUpdateSubscriptions = new Map<
+    string,
+    { labels?: Record<string, string> } | undefined
+  >();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
 
@@ -321,6 +331,7 @@ export class DaemonClientV2 {
           this.lastErrorValue = null;
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" });
+          this.resubscribeAgentUpdates();
           this.flushPendingSendQueue();
           this.resolveConnect();
         }),
@@ -645,40 +656,84 @@ export class DaemonClientV2 {
   }
 
   // ============================================================================
-  // Voice Conversation RPC
+  // Agent List RPC
   // ============================================================================
 
-  requestSessionState(requestId?: string): void {
-    const resolvedRequestId = this.createRequestId(requestId);
+  requestAgentList(options?: { filter?: { labels?: Record<string, string> }; requestId?: string }): void {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
-      type: "request_session_state",
+      type: "request_agent_list",
       requestId: resolvedRequestId,
+      ...(options?.filter ? { filter: options.filter } : {}),
     });
     this.sendSessionMessage(message);
   }
 
-  async waitForSessionState(timeout = 5000, requestId?: string): Promise<void> {
-    const resolvedRequestId = this.createRequestId(requestId);
+  subscribeAgentUpdates(options?: {
+    subscriptionId?: string;
+    filter?: { labels?: Record<string, string> };
+  }): string {
+    const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
+    this.agentUpdateSubscriptions.set(subscriptionId, options?.filter?.labels);
     const message = SessionInboundMessageSchema.parse({
-      type: "request_session_state",
+      type: "subscribe_agent_updates",
+      subscriptionId,
+      ...(options?.filter ? { filter: options.filter } : {}),
+    });
+    this.sendSessionMessage(message);
+    return subscriptionId;
+  }
+
+  unsubscribeAgentUpdates(subscriptionId: string): void {
+    this.agentUpdateSubscriptions.delete(subscriptionId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "unsubscribe_agent_updates",
+      subscriptionId,
+    });
+    this.sendSessionMessage(message);
+  }
+
+  private resubscribeAgentUpdates(): void {
+    if (this.agentUpdateSubscriptions.size === 0) {
+      return;
+    }
+    for (const [subscriptionId, labels] of this.agentUpdateSubscriptions) {
+      const message = SessionInboundMessageSchema.parse({
+        type: "subscribe_agent_updates",
+        subscriptionId,
+        ...(labels ? { filter: { labels } } : {}),
+      });
+      this.sendSessionMessage(message);
+    }
+  }
+
+  async waitForAgentList(timeout = 5000, options?: { filter?: { labels?: Record<string, string> }; requestId?: string }): Promise<void> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "request_agent_list",
       requestId: resolvedRequestId,
+      ...(options?.filter ? { filter: options.filter } : {}),
     });
 
-    // First check the existing message queue in case session_state was already received
+    // First check the existing message queue in case agent_list was already received
     for (const msg of this.messageQueue) {
-      if (msg.type === "session_state") {
+      if (msg.type === "agent_list") {
         return;
       }
     }
 
-    // If not in queue, wait for the session_state message
+    // If not in queue, wait for the agent_list message
     await this.sendSessionMessageOrThrow(message);
     return this.waitFor(
-      (msg) => msg.type === "session_state" ? undefined : null,
+      (msg) => msg.type === "agent_list" ? undefined : null,
       timeout,
       { skipQueue: false }
     );
   }
+
+  // ============================================================================
+  // Voice Conversation RPC
+  // ============================================================================
 
   async loadVoiceConversation(
     voiceConversationId: string,
@@ -805,7 +860,7 @@ export class DaemonClientV2 {
       throw new Error(status.error);
     }
 
-    return this.waitForAgentState(
+    return this.waitForAgentUpsert(
       status.agentId,
       (snapshot) => snapshot.status === "idle",
       60000
@@ -935,7 +990,7 @@ export class DaemonClientV2 {
     await this.sendSessionMessageOrThrow(message);
     const status = await statusPromise;
 
-    return this.waitForAgentState(
+    return this.waitForAgentUpsert(
       status.agentId,
       (snapshot) => snapshot.status === "idle",
       60000
@@ -998,7 +1053,7 @@ export class DaemonClientV2 {
     if (payload.error) {
       throw new Error(payload.error);
     }
-    return this.waitForAgentState(agentId, () => true, 10000);
+    return this.waitForAgentUpsert(agentId, () => true, 10000);
   }
 
   // ============================================================================
@@ -1824,7 +1879,7 @@ export class DaemonClientV2 {
   // Waiting / Streaming Helpers
   // ============================================================================
 
-  async waitForAgentState(
+  async waitForAgentUpsert(
     agentId: string,
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000
@@ -1835,9 +1890,13 @@ export class DaemonClientV2 {
     }
     return this.waitFor(
       (msg) => {
-        if (msg.type === "agent_state" && msg.payload.id === agentId) {
-          if (predicate(msg.payload)) {
-            return msg.payload;
+        if (
+          msg.type === "agent_update" &&
+          msg.payload.kind === "upsert" &&
+          msg.payload.agent.id === agentId
+        ) {
+          if (predicate(msg.payload.agent)) {
+            return msg.payload.agent;
           }
         }
         return null;
@@ -1891,12 +1950,16 @@ export class DaemonClientV2 {
 
     for (const msg of this.messageQueue) {
       updatePendingPermissions(msg);
-      if (msg.type !== "agent_state" || msg.payload.id !== agentId) {
+      if (
+        msg.type !== "agent_update" ||
+        msg.payload.kind !== "upsert" ||
+        msg.payload.agent.id !== agentId
+      ) {
         continue;
       }
-      const status = msg.payload.status;
+      const status = msg.payload.agent.status;
       const hasPendingPermissions =
-        (msg.payload.pendingPermissions?.length ?? 0) > 0 ||
+        (msg.payload.agent.pendingPermissions?.length ?? 0) > 0 ||
         pendingPermissionIds.size > 0;
       if (status === "running" || hasPendingPermissions) {
         sawRunningInQueue = true;
@@ -1904,14 +1967,14 @@ export class DaemonClientV2 {
       }
       // Return immediately if we have pending permissions (even if still running)
       if (sawRunningInQueue && hasPendingPermissions) {
-        return msg.payload;
+        return msg.payload.agent;
       }
       if (
         sawRunningInQueue &&
         (status === "idle" || status === "error") &&
         !hasPendingPermissions
       ) {
-        queuedIdle = msg.payload;
+        queuedIdle = msg.payload.agent;
       }
     }
     if (queuedIdle) {
@@ -1930,10 +1993,14 @@ export class DaemonClientV2 {
     return this.waitFor(
       (msg) => {
         updatePendingPermissions(msg);
-        if (msg.type === "agent_state" && msg.payload.id === agentId) {
-          const status = msg.payload.status;
+        if (
+          msg.type === "agent_update" &&
+          msg.payload.kind === "upsert" &&
+          msg.payload.agent.id === agentId
+        ) {
+          const status = msg.payload.agent.status;
           const hasPendingPermissions =
-            (msg.payload.pendingPermissions?.length ?? 0) > 0 ||
+            (msg.payload.agent.pendingPermissions?.length ?? 0) > 0 ||
             pendingPermissionIds.size > 0;
           if (status === "running" || hasPendingPermissions) {
             sawRunning = true;
@@ -1941,14 +2008,14 @@ export class DaemonClientV2 {
           // Return if we have pending permissions (even if still running)
           // OR if agent is idle/error with no pending permissions (after having run)
           if (sawRunning && hasPendingPermissions) {
-            return msg.payload;
+            return msg.payload.agent;
           }
           if (
             sawRunning &&
             (status === "idle" || status === "error") &&
             !hasPendingPermissions
           ) {
-            return msg.payload;
+            return msg.payload.agent;
           }
         }
         return null;
@@ -2298,12 +2365,16 @@ export class DaemonClientV2 {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    if (msg.type === "session_state") {
+    if (msg.type === "agent_list") {
       this.agentIndex = new Map(
         msg.payload.agents.map((agent) => [agent.id, agent])
       );
-    } else if (msg.type === "agent_state") {
-      this.agentIndex.set(msg.payload.id, msg.payload);
+    } else if (msg.type === "agent_update") {
+      if (msg.payload.kind === "upsert") {
+        this.agentIndex.set(msg.payload.agent.id, msg.payload.agent);
+      } else if (msg.payload.kind === "remove") {
+        this.agentIndex.delete(msg.payload.agentId);
+      }
     } else if (msg.type === "agent_deleted") {
       this.agentIndex.delete(msg.payload.agentId);
     }
@@ -2367,10 +2438,13 @@ export class DaemonClientV2 {
 
   private toEvent(msg: SessionOutboundMessage): DaemonEvent | null {
     switch (msg.type) {
-      case "agent_state":
+      case "agent_update":
         return {
-          type: "agent_state",
-          agentId: msg.payload.id,
+          type: "agent_update",
+          agentId:
+            msg.payload.kind === "upsert"
+              ? msg.payload.agent.id
+              : msg.payload.agentId,
           payload: msg.payload,
         };
       case "agent_stream":
@@ -2380,8 +2454,8 @@ export class DaemonClientV2 {
           event: msg.payload.event,
           timestamp: msg.payload.timestamp,
         };
-      case "session_state":
-        return { type: "session_state", agents: msg.payload.agents };
+      case "agent_list":
+        return { type: "agent_list", agents: msg.payload.agents };
       case "status":
         return { type: "status", payload: msg.payload };
       case "agent_deleted":

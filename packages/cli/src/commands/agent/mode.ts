@@ -72,10 +72,10 @@ export async function runModeCommand(
   }
 
   try {
-    // Request session state to get agent information
-    client.requestSessionState()
+    // Request agent list
+    client.requestAgentList()
 
-    // Wait a moment for the session state to be populated
+    // Wait a moment for the agent list to be populated
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     const agents = client.listAgents()

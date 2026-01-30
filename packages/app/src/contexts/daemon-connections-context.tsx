@@ -3,18 +3,18 @@ import type { ReactNode } from "react";
 import { useDaemonRegistry, type DaemonProfile } from "./daemon-registry-context";
 
 export type ConnectionState =
-  | { status: "idle"; lastError: null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: false }
-  | { status: "connecting"; lastError: null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean }
-  | { status: "online"; lastError: null; lastOnlineAt: string; sessionReady: boolean; hasEverReceivedSessionState: boolean }
-  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean }
-  | { status: "error"; lastError: string; lastOnlineAt: string | null; sessionReady: false; hasEverReceivedSessionState: boolean };
+  | { status: "idle"; lastError: null; lastOnlineAt: string | null; agentListReady: false; hasEverReceivedAgentList: false }
+  | { status: "connecting"; lastError: null; lastOnlineAt: string | null; agentListReady: false; hasEverReceivedAgentList: boolean }
+  | { status: "online"; lastError: null; lastOnlineAt: string; agentListReady: boolean; hasEverReceivedAgentList: boolean }
+  | { status: "offline"; lastError: string | null; lastOnlineAt: string | null; agentListReady: false; hasEverReceivedAgentList: boolean }
+  | { status: "error"; lastError: string; lastOnlineAt: string | null; agentListReady: false; hasEverReceivedAgentList: boolean };
 
 export type ConnectionStatus = ConnectionState["status"];
 
 type ConnectionStateUpdate =
   | { status: "idle" }
   | { status: "connecting"; lastOnlineAt?: string | null }
-  | { status: "online"; lastOnlineAt: string; sessionReady?: boolean }
+  | { status: "online"; lastOnlineAt: string; agentListReady?: boolean }
   | { status: "offline"; lastError?: string | null; lastOnlineAt?: string | null }
   | { status: "error"; lastError: string; lastOnlineAt?: string | null };
 
@@ -35,8 +35,8 @@ function createDefaultConnectionState(): ConnectionState {
     status: "idle",
     lastError: null,
     lastOnlineAt: null,
-    sessionReady: false,
-    hasEverReceivedSessionState: false,
+    agentListReady: false,
+    hasEverReceivedAgentList: false,
   };
 }
 
@@ -50,43 +50,43 @@ function resolveNextConnectionState(
         status: "idle",
         lastError: null,
         lastOnlineAt: existing.lastOnlineAt,
-        sessionReady: false,
-        hasEverReceivedSessionState: false,
+        agentListReady: false,
+        hasEverReceivedAgentList: false,
       };
     case "connecting":
       return {
         status: "connecting",
         lastError: null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
-        sessionReady: false,
-        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
+        agentListReady: false,
+        hasEverReceivedAgentList: existing.hasEverReceivedAgentList ?? false,
       };
     case "online":
-      const currentSessionReady = update.sessionReady ?? (existing.status === "online" ? existing.sessionReady : false);
+      const currentAgentListReady = update.agentListReady ?? (existing.status === "online" ? existing.agentListReady : false);
 
       return {
         status: "online",
         lastError: null,
         lastOnlineAt: update.lastOnlineAt,
-        sessionReady: currentSessionReady,
-        hasEverReceivedSessionState:
-          currentSessionReady || existing.hasEverReceivedSessionState || false,
+        agentListReady: currentAgentListReady,
+        hasEverReceivedAgentList:
+          currentAgentListReady || existing.hasEverReceivedAgentList || false,
       };
     case "offline":
       return {
         status: "offline",
         lastError: update.lastError ?? null,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
-        sessionReady: false,
-        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
+        agentListReady: false,
+        hasEverReceivedAgentList: existing.hasEverReceivedAgentList ?? false,
       };
     case "error":
       return {
         status: "error",
         lastError: update.lastError,
         lastOnlineAt: update.lastOnlineAt ?? existing.lastOnlineAt,
-        sessionReady: false,
-        hasEverReceivedSessionState: existing.hasEverReceivedSessionState ?? false,
+        agentListReady: false,
+        hasEverReceivedAgentList: existing.hasEverReceivedAgentList ?? false,
       };
   }
 }

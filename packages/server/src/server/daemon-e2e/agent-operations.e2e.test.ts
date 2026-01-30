@@ -156,8 +156,12 @@ describe("daemon E2E", () => {
             const queue = ctx.client.getMessageQueue();
             for (let i = startPosition; i < queue.length; i++) {
               const msg = queue[i];
-              if (msg.type === "agent_state" && msg.payload.id === agent.id) {
-                if (msg.payload.status === "running") {
+              if (
+                msg.type === "agent_update" &&
+                msg.payload.kind === "upsert" &&
+                msg.payload.agent.id === agent.id
+              ) {
+                if (msg.payload.agent.status === "running") {
                   sawRunning = true;
                   clearTimeout(timeout);
                   resolve();
@@ -206,14 +210,18 @@ describe("daemon E2E", () => {
               const queue = ctx.client.getMessageQueue();
               for (let i = queueStart; i < queue.length; i++) {
                 const msg = queue[i];
-                if (msg.type === "agent_state" && msg.payload.id === agent.id) {
+                if (
+                  msg.type === "agent_update" &&
+                  msg.payload.kind === "upsert" &&
+                  msg.payload.agent.id === agent.id
+                ) {
                   if (
-                    msg.payload.status === "idle" ||
-                    msg.payload.status === "error"
+                    msg.payload.agent.status === "idle" ||
+                    msg.payload.agent.status === "error"
                   ) {
                     clearTimeout(timeout);
                     clearInterval(interval);
-                    resolve(msg.payload);
+                    resolve(msg.payload.agent);
                     return;
                   }
                 }
@@ -284,11 +292,11 @@ describe("daemon E2E", () => {
         // Switch to "read-only" mode
         await ctx.client.setAgentMode(agent.id, "read-only");
 
-        // Wait for agent_state update reflecting the new mode
+        // Wait for agent_update upsert reflecting the new mode
         const stateAfterModeSwitch = await new Promise<AgentSnapshotPayload>(
           (resolve, reject) => {
             const timeout = setTimeout(() => {
-              reject(new Error("Timeout waiting for mode change in agent_state"));
+              reject(new Error("Timeout waiting for mode change in agent_update"));
             }, 10000);
 
             const checkForModeChange = (): void => {
@@ -296,13 +304,14 @@ describe("daemon E2E", () => {
               for (let i = startPosition; i < queue.length; i++) {
                 const msg = queue[i];
                 if (
-                  msg.type === "agent_state" &&
-                  msg.payload.id === agent.id &&
-                  msg.payload.currentModeId === "read-only"
+                  msg.type === "agent_update" &&
+                  msg.payload.kind === "upsert" &&
+                  msg.payload.agent.id === agent.id &&
+                  msg.payload.agent.currentModeId === "read-only"
                 ) {
                   clearTimeout(timeout);
                   clearInterval(interval);
-                  resolve(msg.payload);
+                  resolve(msg.payload.agent);
                   return;
                 }
               }
@@ -333,7 +342,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.setAgentMode(agent.id, "full-access");
 
-        // Wait for agent_state update
+        // Wait for agent_update upsert
         const stateAfterFullAccess = await new Promise<AgentSnapshotPayload>(
           (resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -345,13 +354,14 @@ describe("daemon E2E", () => {
               for (let i = position2; i < queue.length; i++) {
                 const msg = queue[i];
                 if (
-                  msg.type === "agent_state" &&
-                  msg.payload.id === agent.id &&
-                  msg.payload.currentModeId === "full-access"
+                  msg.type === "agent_update" &&
+                  msg.payload.kind === "upsert" &&
+                  msg.payload.agent.id === agent.id &&
+                  msg.payload.agent.currentModeId === "full-access"
                 ) {
                   clearTimeout(timeout);
                   clearInterval(interval);
-                  resolve(msg.payload);
+                  resolve(msg.payload.agent);
                   return;
                 }
               }

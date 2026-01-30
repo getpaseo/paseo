@@ -497,6 +497,7 @@ function AgentScreenContent({
       title: "Agent",
       cwd: ".",
       model: null,
+      labels: {},
     };
   }, [resolvedAgentId, serverId, shouldUseOptimisticStream]);
 

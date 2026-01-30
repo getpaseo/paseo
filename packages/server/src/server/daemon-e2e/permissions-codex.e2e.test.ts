@@ -180,7 +180,7 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, "List the files in the current directory.");
 
         // Wait for agent to start running
-        await ctx.client.waitForAgentState(
+        await ctx.client.waitForAgentUpsert(
           agent.id,
           (snapshot) => snapshot.status === "running",
           10000
@@ -192,7 +192,7 @@ describe("daemon E2E", () => {
         // Wait for agent to become idle after cancellation
         // Don't use waitForAgentIdle because it requires seeing "running" first,
         // but we already saw it above. Just wait for "idle" or "error".
-        await ctx.client.waitForAgentState(
+        await ctx.client.waitForAgentUpsert(
           agent.id,
           (snapshot) =>
             snapshot.status === "idle" || snapshot.status === "error",
@@ -317,7 +317,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.setAgentMode(agent.id, "full-access");
 
-        // Wait for mode change to be reflected in agent_state
+        // Wait for mode change to be reflected in agent_update
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("Timeout waiting for full-access mode change"));
@@ -328,9 +328,10 @@ describe("daemon E2E", () => {
             for (let i = modeStartPosition; i < queue.length; i++) {
               const msg = queue[i];
               if (
-                msg.type === "agent_state" &&
-                msg.payload.id === agent.id &&
-                msg.payload.currentModeId === "full-access"
+                msg.type === "agent_update" &&
+                msg.payload.kind === "upsert" &&
+                msg.payload.agent.id === agent.id &&
+                msg.payload.agent.currentModeId === "full-access"
               ) {
                 clearTimeout(timeout);
                 clearInterval(interval);

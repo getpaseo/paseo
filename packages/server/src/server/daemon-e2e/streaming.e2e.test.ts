@@ -348,7 +348,7 @@ describeWithClaude("daemon E2E", () => {
         let lastState: AgentSnapshotPayload | null = null;
 
         while (Date.now() - startTime < maxWaitMs) {
-          // Check agent_state messages in the queue
+          // Check agent_update upserts in the queue
           const queue = ctx.client.getMessageQueue();
 
           // Look for pattern: user_message (msg2) -> ... -> running -> ... -> idle/error
@@ -368,13 +368,21 @@ describeWithClaude("daemon E2E", () => {
                 sawMsg2UserMessage = true;
               }
             }
-            if (msg.type === "agent_state" && msg.payload.id === agent.id) {
-              if (sawMsg2UserMessage && msg.payload.status === "running") {
+            if (
+              msg.type === "agent_update" &&
+              msg.payload.kind === "upsert" &&
+              msg.payload.agent.id === agent.id
+            ) {
+              if (sawMsg2UserMessage && msg.payload.agent.status === "running") {
                 sawRunningAfterMsg2 = true;
               }
-              if (sawRunningAfterMsg2 && (msg.payload.status === "idle" || msg.payload.status === "error")) {
+              if (
+                sawRunningAfterMsg2 &&
+                (msg.payload.agent.status === "idle" ||
+                  msg.payload.agent.status === "error")
+              ) {
                 sawIdleAfterRunning = true;
-                lastState = msg.payload;
+                lastState = msg.payload.agent;
               }
             }
           }
@@ -502,8 +510,12 @@ describeWithClaude("daemon E2E", () => {
 
         // Subscribe to all messages for logging
         const unsubscribe = ctx.client.on((event) => {
-          if (event.type === "agent_state" && event.agentId === agent.id) {
-            log(`[EVENT] agent_state: status=${event.payload.status}`);
+          if (
+            event.type === "agent_update" &&
+            event.agentId === agent.id &&
+            event.payload.kind === "upsert"
+          ) {
+            log(`[EVENT] agent_update: status=${event.payload.agent.status}`);
           } else if (event.type === "agent_stream" && event.agentId === agent.id) {
             const evt = event.event;
             if (evt.type === "timeline") {
@@ -564,8 +576,12 @@ describeWithClaude("daemon E2E", () => {
         const queueBeforeStop = ctx.client.getMessageQueue();
         let lastStatus = "unknown";
         for (const msg of queueBeforeStop) {
-          if (msg.type === "agent_state" && msg.payload.id === agent.id) {
-            lastStatus = msg.payload.status;
+          if (
+            msg.type === "agent_update" &&
+            msg.payload.kind === "upsert" &&
+            msg.payload.agent.id === agent.id
+          ) {
+            lastStatus = msg.payload.agent.status;
           }
         }
         log(`agent status before Stop: ${lastStatus}`);
@@ -670,9 +686,13 @@ describeWithClaude("daemon E2E", () => {
 
           for (let i = startPosition; i < queue.length; i++) {
             const m = queue[i];
-            if (m.type === "agent_state" && m.payload.id === agent.id) {
-              if (m.payload.status === "running") currentRunningCount++;
-              lastState = m.payload;
+            if (
+              m.type === "agent_update" &&
+              m.payload.kind === "upsert" &&
+              m.payload.agent.id === agent.id
+            ) {
+              if (m.payload.agent.status === "running") currentRunningCount++;
+              lastState = m.payload.agent;
             }
           }
 
@@ -695,8 +715,12 @@ describeWithClaude("daemon E2E", () => {
 
         for (let i = startPosition; i < queue.length; i++) {
           const m = queue[i];
-          if (m.type === "agent_state" && m.payload.id === agent.id) {
-            stateChanges.push(m.payload.status);
+          if (
+            m.type === "agent_update" &&
+            m.payload.kind === "upsert" &&
+            m.payload.agent.id === agent.id
+          ) {
+            stateChanges.push(m.payload.agent.status);
           }
           if (
             m.type === "agent_stream" &&

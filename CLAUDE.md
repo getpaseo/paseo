@@ -64,3 +64,9 @@ Run `npx expo-doctor` to diagnose version mismatches and native module issues.
 
 
 **CRITICAL: ALWAYS RUN TYPECHECK AFTER EVERY CHANGE.**
+
+## NEVER DO THESE THINGS
+
+- **NEVER restart the Paseo daemon/server** - The daemon is running in Tmux and managed by the user. Restarting it disrupts active sessions, loses state, and breaks workflows. If there's a connectivity issue, investigate the cause - do not restart.
+- **NEVER kill or restart processes in Tmux** without explicit user permission
+- **NEVER assume a timeout means the service needs restarting** - Timeouts can be transient network issues, not service failures

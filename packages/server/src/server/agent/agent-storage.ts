@@ -37,7 +37,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,

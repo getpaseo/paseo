@@ -3,6 +3,7 @@ import { readFile, mkdir, writeFile, stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify, inspect } from "util";
 import { join, resolve, sep } from "path";
+import http from "http";
 import invariant from "tiny-invariant";
 import { z } from "zod";
 import { streamText, stepCountIs } from "ai";
@@ -290,10 +291,17 @@ export class Session {
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly agentMcpRoute: string;
+  private readonly mcpSocketPath: string;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private agentUpdatesSubscription:
+    | {
+        subscriptionId: string;
+        filter?: { labels?: Record<string, string> };
+      }
+    | null = null;
   private clientActivity: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -313,6 +321,7 @@ export class Session {
     agentManager: AgentManager,
     agentStorage: AgentStorage,
     agentMcpRoute: string,
+    mcpSocketPath: string,
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
@@ -327,6 +336,7 @@ export class Session {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMcpRoute = agentMcpRoute;
+    this.mcpSocketPath = mcpSocketPath;
     this.terminalManager = terminalManager;
     this.voiceConversationStore = voiceConversationStore;
     this.abortController = new AbortController();
@@ -369,7 +379,7 @@ export class Session {
    * Send initial state to client after connection
    */
   public async sendInitialState(): Promise<void> {
-    await this.sendSessionState();
+    await this.sendAgentList();
   }
 
   /**
@@ -500,10 +510,56 @@ export class Session {
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
-      // Connect to the local MCP server using localhost
-      const agentMcpUrl = `http://127.0.0.1:6767${this.agentMcpRoute}`;
+      // Create a custom fetch that uses the Unix socket
+      const socketFetch = async (
+        input: string | URL,
+        init?: RequestInit
+      ): Promise<Response> => {
+        const url = new URL(input.toString());
+        const path = url.pathname + url.search;
+
+        return new Promise((resolve, reject) => {
+          const req = http.request(
+            {
+              socketPath: this.mcpSocketPath,
+              path,
+              method: init?.method ?? "GET",
+              headers: {
+                ...Object.fromEntries(
+                  new Headers(init?.headers).entries()
+                ),
+              },
+            },
+            (res: import("http").IncomingMessage) => {
+              const chunks: Buffer[] = [];
+              res.on("data", (chunk: Buffer) => chunks.push(chunk));
+              res.on("end", () => {
+                const body = Buffer.concat(chunks);
+                resolve(
+                  new Response(body, {
+                    status: res.statusCode ?? 500,
+                    statusText: res.statusMessage ?? "",
+                    headers: new Headers(
+                      res.headers as Record<string, string>
+                    ),
+                  })
+                );
+              });
+              res.on("error", reject);
+            }
+          );
+          req.on("error", reject);
+          if (init?.body) {
+            req.write(init.body);
+          }
+          req.end();
+        });
+      };
+
+      // Connect to the local MCP server using Unix socket
       const transport = new StreamableHTTPClientTransport(
-        new URL(agentMcpUrl)
+        new URL(`http://localhost${this.agentMcpRoute}`),
+        { fetch: socketFetch as typeof fetch }
       );
 
       this.agentMcpClient = await experimental_createMCPClient({
@@ -535,7 +591,7 @@ export class Session {
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
         if (event.type === "agent_state") {
-          void this.forwardAgentState(event.agent);
+          void this.forwardAgentUpdate(event.agent);
           return;
         }
 
@@ -674,18 +730,42 @@ export class Session {
     }
   }
 
-  private async forwardAgentState(agent: ManagedAgent): Promise<void> {
+  private matchesAgentFilter(
+    agent: AgentSnapshotPayload,
+    filter?: { labels?: Record<string, string> }
+  ): boolean {
+    if (!filter?.labels) {
+      return true;
+    }
+    return Object.entries(filter.labels).every(
+      ([key, value]) => agent.labels[key] === value
+    );
+  }
+
+  private async forwardAgentUpdate(agent: ManagedAgent): Promise<void> {
     try {
+      const subscription = this.agentUpdatesSubscription;
+      if (!subscription) {
+        return;
+      }
+
       const payload = await this.buildAgentPayload(agent);
+      const matches = this.matchesAgentFilter(payload, subscription.filter);
+
+      if (matches) {
+        this.emit({
+          type: "agent_update",
+          payload: { kind: "upsert", agent: payload },
+        });
+        return;
+      }
+
       this.emit({
-        type: "agent_state",
-        payload,
+        type: "agent_update",
+        payload: { kind: "remove", agentId: payload.id },
       });
     } catch (error) {
-      this.sessionLogger.error(
-        { err: error },
-        "Failed to emit agent state"
-      );
+      this.sessionLogger.error({ err: error }, "Failed to emit agent update");
     }
   }
 
@@ -711,8 +791,23 @@ export class Session {
           this.handleAudioPlayed(msg.id);
           break;
 
-        case "request_session_state":
-          await this.sendSessionState();
+        case "request_agent_list":
+          await this.sendAgentList(msg.filter);
+          break;
+
+        case "subscribe_agent_updates":
+          this.agentUpdatesSubscription = {
+            subscriptionId: msg.subscriptionId,
+            filter: msg.filter,
+          };
+          break;
+
+        case "unsubscribe_agent_updates":
+          if (
+            this.agentUpdatesSubscription?.subscriptionId === msg.subscriptionId
+          ) {
+            this.agentUpdatesSubscription = null;
+          }
           break;
 
         case "load_voice_conversation_request":
@@ -966,8 +1061,8 @@ export class Session {
       },
     });
 
-    // Send current session state (live agents and commands)
-    await this.sendSessionState();
+    // Send current agent list
+    await this.sendAgentList();
   }
 
   /**
@@ -1117,6 +1212,13 @@ export class Session {
         requestId,
       },
     });
+
+    if (this.agentUpdatesSubscription) {
+      this.emit({
+        type: "agent_update",
+        payload: { kind: "remove", agentId },
+      });
+    }
   }
 
   private async handleArchiveAgentRequest(
@@ -1275,7 +1377,7 @@ export class Session {
 
     try {
       const snapshot = await this.ensureAgentLoaded(agentId);
-      await this.forwardAgentState(snapshot);
+      await this.forwardAgentUpdate(snapshot);
 
       // Send timeline snapshot after hydration (if any)
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
@@ -1354,7 +1456,7 @@ export class Session {
         undefined,
         { labels }
       );
-      await this.forwardAgentState(snapshot);
+      await this.forwardAgentUpdate(snapshot);
 
       const trimmedPrompt = initialPrompt?.trim();
       if (trimmedPrompt) {
@@ -1459,7 +1561,7 @@ export class Session {
         overrides
       );
       await this.agentManager.primeAgentHistory(snapshot.id);
-      await this.forwardAgentState(snapshot);
+      await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
         this.emit({
@@ -1529,7 +1631,7 @@ export class Session {
         );
       }
       await this.agentManager.primeAgentHistory(agentId);
-      await this.forwardAgentState(snapshot);
+      await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
         this.emit({
@@ -3403,9 +3505,9 @@ export class Session {
   }
 
   /**
-   * Send current session state (live agents and commands) to client
+   * Send agent list to client, optionally filtered by labels
    */
-  private async sendSessionState(): Promise<void> {
+  private async sendAgentList(filter?: { labels?: Record<string, string> }): Promise<void> {
     try {
       // Get live agents with session modes
       const agentSnapshots = this.agentManager.listAgents();
@@ -3421,24 +3523,32 @@ export class Session {
         .filter((record) => !liveIds.has(record.id) && !record.internal)
         .map((record) => this.buildStoredAgentPayload(record));
 
-      const agents = [...liveAgents, ...persistedAgents];
+      let agents = [...liveAgents, ...persistedAgents];
 
-      // Emit session state
+      // Filter by labels if filter provided
+      if (filter?.labels) {
+        const filterLabels = filter.labels;
+        agents = agents.filter((agent) =>
+          Object.entries(filterLabels).every(([key, value]) => agent.labels[key] === value)
+        );
+      }
+
+      // Emit agent list
       this.emit({
-        type: "session_state",
+        type: "agent_list",
         payload: {
           agents,
         },
       });
 
       this.sessionLogger.debug(
-        { agentCount: agents.length },
-        `Sent session state: ${agents.length} agents`
+        { agentCount: agents.length, filter },
+        `Sent agent list: ${agents.length} agents`
       );
     } catch (error) {
       this.sessionLogger.error(
         { err: error },
-        "Failed to send session state"
+        "Failed to send agent list"
       );
     }
   }

@@ -56,6 +56,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
 
   try {
     await Promise.race([connectPromise, timeoutPromise])
+    client.subscribeAgentUpdates({ subscriptionId: `cli:${process.pid}` })
     return client
   } catch (err) {
     await client.close().catch(() => {})

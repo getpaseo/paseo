@@ -247,6 +247,7 @@ function normalizeAgentSnapshot(
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,
+    labels: snapshot.labels,
   };
 }
 
@@ -411,6 +412,7 @@ export function SessionProvider({
     | null
   >(null);
   const hasRequestedInitialSnapshotRef = useRef(false);
+  const agentUpdatesSubscriptionIdRef = useRef<string | null>(null);
   const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -674,6 +676,15 @@ export function SessionProvider({
   useEffect(() => {
     if (!connectionSnapshot.isConnected) {
       hasRequestedInitialSnapshotRef.current = false;
+      const subscriptionId = agentUpdatesSubscriptionIdRef.current;
+      if (subscriptionId && client) {
+        try {
+          client.unsubscribeAgentUpdates(subscriptionId);
+        } catch {
+          // no-op
+        }
+      }
+      agentUpdatesSubscriptionIdRef.current = null;
       return;
     }
     if (hasRequestedInitialSnapshotRef.current) {
@@ -687,15 +698,21 @@ export function SessionProvider({
 
     let retryCount = 0;
 
-    const requestSessionState = () => {
+    const requestAgentList = () => {
       console.log(
-        `[Session] Requesting session_state (attempt ${retryCount + 1}/${
+        `[Session] Requesting agent_list (attempt ${retryCount + 1}/${
           MAX_RETRIES + 1
         })`,
         { serverId }
       );
       void client
-        .requestSessionState();
+        .requestAgentList({ filter: { labels: { ui: "true" } } });
+      if (!agentUpdatesSubscriptionIdRef.current) {
+        agentUpdatesSubscriptionIdRef.current = client.subscribeAgentUpdates({
+          subscriptionId: `app:${serverId}`,
+          filter: { labels: { ui: "true" } },
+        });
+      }
 
       if (sessionStateTimeoutRef.current) {
         clearTimeout(sessionStateTimeoutRef.current);
@@ -705,7 +722,7 @@ export function SessionProvider({
         if (retryCount < MAX_RETRIES) {
           retryCount++;
           console.warn(
-            `[Session] session_state timeout, retrying in ${RETRY_DELAY_MS}ms`,
+            `[Session] agent_list timeout, retrying in ${RETRY_DELAY_MS}ms`,
             {
               serverId,
               attempt: retryCount,
@@ -714,11 +731,11 @@ export function SessionProvider({
           );
 
           setTimeout(() => {
-            requestSessionState();
+            requestAgentList();
           }, RETRY_DELAY_MS);
         } else {
           console.error(
-            `[Session] session_state failed after ${MAX_RETRIES} retries`,
+            `[Session] agent_list failed after ${MAX_RETRIES} retries`,
             { serverId }
           );
 
@@ -726,13 +743,13 @@ export function SessionProvider({
           updateConnectionStatus(serverId, {
             status: "online",
             lastOnlineAt: new Date().toISOString(),
-            sessionReady: true,
+            agentListReady: true,
           });
         }
       }, TIMEOUT_MS);
     };
 
-    requestSessionState();
+    requestAgentList();
 
     return () => {
       if (sessionStateTimeoutRef.current) {
@@ -744,10 +761,10 @@ export function SessionProvider({
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
-    console.log("[Session] Setting up session_state listener for", serverId);
+    console.log("[Session] Setting up agent_list listener for", serverId);
 
-    const unsubSessionState = client.on("session_state", (message) => {
-      if (message.type !== "session_state") return;
+    const unsubAgentList = client.on("agent_list", (message) => {
+      if (message.type !== "agent_list") return;
 
       if (sessionStateTimeoutRef.current) {
         clearTimeout(sessionStateTimeoutRef.current);
@@ -757,7 +774,7 @@ export function SessionProvider({
       const { agents: agentsList } = message.payload;
 
       console.log(
-        "[Session] ✅ Received session_state:",
+        "[Session] ✅ Received agent_list:",
         agentsList.length,
         "agents"
       );
@@ -849,16 +866,57 @@ export function SessionProvider({
       updateConnectionStatus(serverId, {
         status: "online",
         lastOnlineAt: new Date().toISOString(),
-        sessionReady: true,
+        agentListReady: true,
       });
     });
 
-    const unsubAgentState = client.on("agent_state", (message) => {
-      if (message.type !== "agent_state") return;
-      const snapshot = message.payload;
-      const agent = normalizeAgentSnapshot(snapshot, serverId);
+    const unsubAgentUpdate = client.on("agent_update", (message) => {
+      if (message.type !== "agent_update") return;
+      const update = message.payload;
 
-      console.log("[Session] Agent state update:", agent.id, agent.status);
+      if (update.kind === "remove") {
+        const agentId = update.agentId;
+        previousAgentStatusRef.current.delete(agentId);
+
+        setAgents(serverId, (prev) => {
+          if (!prev.has(agentId)) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.delete(agentId);
+          return next;
+        });
+
+        setPendingPermissions(serverId, (prev) => {
+          if (prev.size === 0) {
+            return prev;
+          }
+          let changed = false;
+          const next = new Map(prev);
+          for (const [key, pending] of Array.from(next.entries())) {
+            if (pending.agentId === agentId) {
+              next.delete(key);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+
+        setQueuedMessages(serverId, (prev) => {
+          if (!prev.has(agentId)) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.delete(agentId);
+          return next;
+        });
+
+        return;
+      }
+
+      const agent = normalizeAgentSnapshot(update.agent, serverId);
+
+      console.log("[Session] Agent update:", agent.id, agent.status);
 
       setAgents(serverId, (prev) => {
         const next = new Map(prev);
@@ -967,7 +1025,7 @@ export function SessionProvider({
       });
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
-      // cascading rerenders. The agent_state handler updates agent.lastActivityAt
+      // cascading rerenders. The agent_update handler updates agent.lastActivityAt
       // on status changes, which is sufficient for sorting and display purposes.
     });
 
@@ -1462,8 +1520,8 @@ export function SessionProvider({
     });
 
     return () => {
-      unsubSessionState();
-      unsubAgentState();
+      unsubAgentList();
+      unsubAgentUpdate();
       unsubAgentStream();
       unsubAgentStreamSnapshot();
       unsubStatus();
@@ -1834,7 +1892,7 @@ export function SessionProvider({
     [encodeImages, serverId, client, setAgentStreamTail]
   );
 
-  // Keep the ref updated so the agent_state handler can call it
+  // Keep the ref updated so the agent_update handler can call it
   sendAgentMessageRef.current = sendAgentMessage;
 
   const cancelAgentRun = useCallback(
@@ -1934,6 +1992,7 @@ export function SessionProvider({
       }
       return client.createAgent({
         config,
+        labels: { ui: "true" },
         ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
         ...(git ? { git } : {}),
@@ -2166,9 +2225,9 @@ export function SessionProvider({
       return;
     }
     try {
-      client.requestSessionState();
+      client.requestAgentList({ filter: { labels: { ui: "true" } } });
     } catch (error: any) {
-      console.error("[Session] Failed to refresh session:", error);
+      console.error("[Session] Failed to refresh agent list:", error);
     }
   }, [client, serverId]);
 

@@ -118,10 +118,10 @@ export async function runAttachCommand(
   }
 
   try {
-    // Request session state to get agent information
-    client.requestSessionState()
+    // Request agent list
+    client.requestAgentList()
 
-    // Wait for session state to be populated
+    // Wait for agent list to be populated
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     const agents = client.listAgents()
