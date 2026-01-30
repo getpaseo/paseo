@@ -140,35 +140,33 @@ export async function runWaitCommand(
       throw error
     }
 
-    // Wait for agent to become idle OR request permission (whichever comes first)
+    // Wait for agent to finish (idle, error, or permission)
     try {
-      const idlePromise = client.waitForAgentIdle(agentId, timeoutMs).then(() => ({ type: 'idle' as const }))
-      const permissionPromise = client
-        .waitForPermission(agentId, timeoutMs)
-        .then((request) => ({ type: 'permission' as const, request }))
-
-      const result = await Promise.race([idlePromise, permissionPromise])
+      const state = await client.waitForFinish(agentId, timeoutMs)
 
       await client.close()
 
-      if (result.type === 'permission') {
+      // Check if agent has pending permissions
+      if (state.pendingPermissions && state.pendingPermissions.length > 0) {
+        const permission = state.pendingPermissions[0]
         return {
           type: 'single',
           data: {
             agentId,
             status: 'permission',
-            message: `Agent is waiting for permission: ${result.request.kind}`,
+            message: `Agent is waiting for permission: ${permission.kind}`,
           },
           schema: agentWaitSchema,
         }
       }
 
+      // Agent is idle or error
       return {
         type: 'single',
         data: {
           agentId,
           status: 'idle',
-          message: 'Agent is now idle',
+          message: state.status === 'error' ? 'Agent finished with error' : 'Agent is now idle',
         },
         schema: agentWaitSchema,
       }

@@ -294,7 +294,7 @@ describe("daemon client v2 E2E", () => {
         }
       });
       await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else");
-      const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+      const finalState = await ctx.client.waitForFinish(agent.id, 120000);
       unsubscribeStream();
       unsubscribeRawStream();
       expect(finalState.status).toBe("idle");
@@ -446,7 +446,9 @@ describe("daemon client v2 E2E", () => {
           ].join("\n")
         );
 
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).toBeTruthy();
         expect(permission.id).toBeTruthy();
 
@@ -460,7 +462,7 @@ describe("daemon client v2 E2E", () => {
         const permissionResolved = await permissionResolvedPromise;
         expect(permissionResolved.payload.requestId).toBe(permission.id);
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
         expect(existsSync(filePath)).toBe(true);
       } finally {
@@ -485,7 +487,7 @@ describe("daemon client v2 E2E", () => {
       });
 
       await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else");
-      await ctx.client.waitForAgentIdle(agent.id, 120000);
+      await ctx.client.waitForFinish(agent.id, 120000);
 
       const snapshotPromise = waitForSignal(15000, (resolve) => {
         const unsubscribe = ctx.client.on("agent_stream_snapshot", (message) => {

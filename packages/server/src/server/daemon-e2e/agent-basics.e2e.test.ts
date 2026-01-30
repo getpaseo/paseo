@@ -46,7 +46,7 @@ describe("daemon E2E", () => {
     await ctx.client.sendMessage(agent.id, "Say 'hello world' and nothing else");
 
     // Wait for the agent to complete
-    const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+    const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
     // Verify agent completed without error
     expect(finalState.status).toBe("idle");

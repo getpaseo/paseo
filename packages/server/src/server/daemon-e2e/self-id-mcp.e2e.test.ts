@@ -33,31 +33,19 @@ describe("self-id MCP e2e", () => {
       "Use the set_title MCP tool to change your title to 'Updated via MCP'. Only call set_title, nothing else."
     );
 
-    // Wait for agent to complete (MCP tools may auto-approve without permission)
-    // If a permission is requested, approve it
-    let finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+    // Wait for permission request (default mode requires permission for MCP tools)
+    const state = await ctx.client.waitForFinish(agent.id, 60000);
+    expect(state.pendingPermissions?.length).toBeGreaterThan(0);
+    expect(state.pendingPermissions![0].name).toBe("mcp__paseo-self-id__set_title");
 
-    // Check if we got blocked on permission
-    if (finalState.status === "running" && finalState.pendingPermissions?.length) {
-      const permission = finalState.pendingPermissions[0];
-      await ctx.client.respondToPermission(agent.id, permission.id, {
-        behavior: "allow",
-      });
-      finalState = await ctx.client.waitForAgentIdle(agent.id, 60000);
-    }
+    // Approve the permission
+    await ctx.client.respondToPermission(agent.id, state.pendingPermissions![0].id, {
+      behavior: "allow",
+    });
 
-    // Log final state for debugging if not idle
-    if (finalState.status !== "idle") {
-      console.error(
-        "Agent did not reach idle state:",
-        JSON.stringify(finalState, null, 2)
-      );
-    }
-
+    // Wait for agent to complete
+    const finalState = await ctx.client.waitForFinish(agent.id, 60000);
     expect(finalState.status).toBe("idle");
-    expect(finalState.lastError).toBeUndefined();
-
-    // Verify the title was changed via set_title
     expect(finalState.title).toBe("Updated via MCP");
   }, 180000);
 });

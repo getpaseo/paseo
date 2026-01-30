@@ -52,7 +52,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for agent to complete
-        const afterMessage = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const afterMessage = await ctx.client.waitForFinish(agent.id, 120000);
         expect(afterMessage.status).toBe("idle");
 
         // Get the timeline to verify we have messages
@@ -118,7 +118,7 @@ describe("daemon E2E", () => {
           "What did I ask you to say earlier?"
         );
 
-        const afterResume = await ctx.client.waitForAgentIdle(
+        const afterResume = await ctx.client.waitForFinish(
           resumedAgent.id,
           120000
         );
@@ -166,7 +166,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for agent to complete
-        const afterMessage = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const afterMessage = await ctx.client.waitForFinish(agent.id, 120000);
         expect(afterMessage.status).toBe("idle");
 
         // Verify we have timeline items before restart
@@ -424,7 +424,7 @@ describe("daemon E2E", () => {
           "What was the number I asked you to remember earlier? Reply with just the number and nothing else."
         );
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
         expect(finalState.lastError).toBeUndefined();
@@ -495,7 +495,7 @@ describe("daemon E2E", () => {
         ctx.client.clearMessageQueue();
         await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else.");
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 60000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 60000);
 
         // Agent should complete (possibly with Codex warning about missing file,
         // but should still function)
@@ -680,7 +680,7 @@ describe("daemon E2E", () => {
           `Remember this number: ${magicNumber}. Just confirm you've remembered it and reply with a single short sentence.`
         );
 
-        const afterRemember = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const afterRemember = await ctx.client.waitForFinish(agent.id, 120000);
         expect(afterRemember.status).toBe("idle");
         expect(afterRemember.lastError).toBeUndefined();
 
@@ -729,7 +729,7 @@ describe("daemon E2E", () => {
           "What was the number I asked you to remember earlier? Reply with just the number and nothing else."
         );
 
-        const afterRecall = await ctx.client.waitForAgentIdle(resumedAgent.id, 120000);
+        const afterRecall = await ctx.client.waitForFinish(resumedAgent.id, 120000);
         expect(afterRecall.status).toBe("idle");
         expect(afterRecall.lastError).toBeUndefined();
 

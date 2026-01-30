@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
@@ -9,6 +10,8 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { WSOutboundMessage } from "./messages.js";
 import { WebSocketSessionBridge } from "./websocket-session-bridge.js";
+
+export type AgentMcpTransportFactory = () => Promise<Transport>;
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
@@ -29,8 +32,7 @@ export class VoiceAssistantWebSocketServer {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    agentMcpRoute: string,
-    selfIdMcpSocketPath: string,
+    createAgentMcpTransport: AgentMcpTransportFactory,
     wsConfig: WebSocketServerConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
@@ -42,8 +44,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage,
       downloadTokenStore,
       paseoHome,
-      agentMcpRoute,
-      selfIdMcpSocketPath,
+      createAgentMcpTransport,
       speech,
       terminalManager
     );

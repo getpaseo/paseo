@@ -12,10 +12,10 @@ function tmpCwd(): string {
 }
 
 /**
- * Tests for waitForAgentIdle edge cases.
+ * Tests for waitForFinish edge cases.
  * Uses haiku for speed. Allow higher timeouts in CI / congested environments.
  */
-describe("waitForAgentIdle edge cases", () => {
+describe("waitForFinish edge cases", () => {
   let ctx: DaemonTestContext;
 
   beforeEach(async () => {
@@ -26,7 +26,7 @@ describe("waitForAgentIdle edge cases", () => {
     await ctx.cleanup();
   }, 30000);
 
-  test("waitForAgentIdle immediately after sendMessage", async () => {
+  test("waitForFinish immediately after sendMessage", async () => {
     const cwd = tmpCwd();
 
     const agent = await ctx.client.createAgent({
@@ -37,9 +37,9 @@ describe("waitForAgentIdle edge cases", () => {
       modeId: "bypassPermissions",
     });
 
-    // This was the original bug: waitForAgentIdle returned old idle states
+    // This was the original bug: waitForFinish returned old idle states
     await ctx.client.sendMessage(agent.id, "Say 'hello'");
-    const state = await ctx.client.waitForAgentIdle(agent.id, 30000);
+    const state = await ctx.client.waitForFinish(agent.id, 30000);
 
     expect(state.status).toBe("idle");
 
@@ -58,13 +58,13 @@ describe("waitForAgentIdle edge cases", () => {
       modeId: "bypassPermissions",
     });
 
-    // Send 3 messages without waiting - tests that waitForAgentIdle
+    // Send 3 messages without waiting - tests that waitForFinish
     // finds the idle AFTER the last running state
     await ctx.client.sendMessage(agent.id, "Say 'one'");
     await ctx.client.sendMessage(agent.id, "Say 'two'");
     await ctx.client.sendMessage(agent.id, "Say 'three'");
 
-    const state = await ctx.client.waitForAgentIdle(agent.id, 30000);
+    const state = await ctx.client.waitForFinish(agent.id, 30000);
     expect(state.status).toBe("idle");
 
     // Verify all 3 messages were recorded
@@ -82,7 +82,7 @@ describe("waitForAgentIdle edge cases", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 45000);
 
-  test("two agents: waitForAgentIdle filters by agent", async () => {
+  test("two agents: waitForFinish filters by agent", async () => {
     const cwd1 = tmpCwd();
     const cwd2 = tmpCwd();
 
@@ -107,11 +107,11 @@ describe("waitForAgentIdle edge cases", () => {
     await ctx.client.sendMessage(agent2.id, "Say 'agent two'");
 
     // Wait for each - should not be confused by the other's state
-    const state2 = await ctx.client.waitForAgentIdle(agent2.id, 30000);
+    const state2 = await ctx.client.waitForFinish(agent2.id, 30000);
     expect(state2.status).toBe("idle");
     expect(state2.id).toBe(agent2.id);
 
-    const state1 = await ctx.client.waitForAgentIdle(agent1.id, 30000);
+    const state1 = await ctx.client.waitForFinish(agent1.id, 30000);
     expect(state1.status).toBe("idle");
     expect(state1.id).toBe(agent1.id);
 

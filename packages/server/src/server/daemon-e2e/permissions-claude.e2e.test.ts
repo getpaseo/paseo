@@ -18,9 +18,6 @@ function tmpCwd(): string {
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_REASONING_EFFORT = "low";
 
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
 
@@ -32,7 +29,7 @@ describe("daemon E2E", () => {
     await ctx.cleanup();
   }, 60000);
 
-  (hasClaudeCredentials ? describe : describe.skip)("permission flow: Claude", () => {
+  describe("permission flow: Claude", () => {
     // Use isolated Claude config to ensure permission prompts are triggered
     // (user's real config may have allow rules that auto-approve commands)
     let restoreClaudeConfig: () => void;
@@ -81,7 +78,9 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, prompt);
 
         // Wait for permission request
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
         expect(permission.kind).toBe("tool");
@@ -92,7 +91,7 @@ describe("daemon E2E", () => {
         });
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
 
         // Verify the file was deleted
@@ -152,7 +151,9 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, prompt);
 
         // Wait for permission request
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
 
@@ -163,7 +164,7 @@ describe("daemon E2E", () => {
         });
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
 
         // Verify the file was NOT deleted

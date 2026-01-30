@@ -182,8 +182,8 @@ export async function runSendCommand(
       }
     }
 
-    // Wait for agent to become idle
-    await client.waitForAgentIdle(agentId, 600000) // 10 minute timeout
+    // Wait for agent to finish
+    const state = await client.waitForFinish(agentId, 600000) // 10 minute timeout
 
     await client.close()
 
@@ -192,7 +192,7 @@ export async function runSendCommand(
       data: {
         agentId,
         status: 'completed',
-        message: 'Agent completed processing the message',
+        message: state.status === 'error' ? 'Agent finished with error' : 'Agent completed processing the message',
       },
       schema: agentSendSchema,
     }

@@ -65,8 +65,15 @@ Run `npx expo-doctor` to diagnose version mismatches and native module issues.
 
 **CRITICAL: ALWAYS RUN TYPECHECK AFTER EVERY CHANGE.**
 
+## Agent Authentication
+
+All agent providers (Claude, Codex, OpenCode) handle their own authentication outside of environment variables. They are authenticated without providing any extra configuration—Paseo does not manage API keys or tokens for agents.
+
+**Do not add auth checks to tests.** If auth fails for whatever reason, let the user know instead of patching the code or adding conditional skips.
+
 ## NEVER DO THESE THINGS
 
 - **NEVER restart the Paseo daemon/server** - The daemon is running in Tmux and managed by the user. Restarting it disrupts active sessions, loses state, and breaks workflows. If there's a connectivity issue, investigate the cause - do not restart.
 - **NEVER kill or restart processes in Tmux** without explicit user permission
 - **NEVER assume a timeout means the service needs restarting** - Timeouts can be transient network issues, not service failures
+- **NEVER add authentication checks to tests** - Agent providers handle their own auth. If tests fail due to auth issues, report it rather than adding conditional skips or env var checks

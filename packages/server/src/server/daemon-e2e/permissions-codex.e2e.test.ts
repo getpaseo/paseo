@@ -58,7 +58,9 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, prompt);
 
         // Wait for permission request
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
         expect(permission.kind).toBe("tool");
@@ -69,7 +71,7 @@ describe("daemon E2E", () => {
         });
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
 
         // Verify the file was created
@@ -122,7 +124,9 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, prompt);
 
         // Wait for permission request
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
 
@@ -133,7 +137,7 @@ describe("daemon E2E", () => {
         });
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
 
         // Verify the file was NOT created
@@ -207,7 +211,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for this to complete
-        await ctx.client.waitForAgentIdle(agent.id, 60000);
+        await ctx.client.waitForFinish(agent.id, 60000);
 
         // Verify we got an assistant message in the queue
         const queue = ctx.client.getMessageQueue();
@@ -295,7 +299,9 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, writePrompt);
 
         // Step 3: Wait for permission request
-        const permission = await ctx.client.waitForPermission(agent.id, 60000);
+        const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
+        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
 
@@ -306,7 +312,7 @@ describe("daemon E2E", () => {
         });
 
         // Wait for agent to complete after denial
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         // Verify file was NOT created after denial
         expect(existsSync(filePath)).toBe(false);
@@ -353,7 +359,7 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, writePrompt2);
 
         // Wait for agent to complete
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         // Step 7: Verify file was created (mode switch worked)
         expect(existsSync(filePath)).toBe(true);

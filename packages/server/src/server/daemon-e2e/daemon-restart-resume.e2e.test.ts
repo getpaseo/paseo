@@ -143,7 +143,7 @@ describe("daemon restart and agent resume", () => {
         `Remember this marker string for a test: "${marker}". Just confirm you've remembered it with a short reply.`
       );
 
-      const afterRemember = await currentDaemon.client.waitForAgentIdle(agent.id, 120000);
+      const afterRemember = await currentDaemon.client.waitForFinish(agent.id, 120000);
       expect(afterRemember.status).toBe("idle");
       expect(afterRemember.lastError).toBeUndefined();
 
@@ -208,7 +208,7 @@ describe("daemon restart and agent resume", () => {
         "What was the marker string I asked you to remember earlier? Just reply with the exact string."
       );
 
-      const afterMessage = await currentDaemon.client.waitForAgentIdle(resumedAgent.id, 120000);
+      const afterMessage = await currentDaemon.client.waitForFinish(resumedAgent.id, 120000);
       expect(afterMessage.status).toBe("idle");
       expect(afterMessage.lastError).toBeUndefined();
 

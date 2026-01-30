@@ -17,12 +17,7 @@ function tmpCwd(): string {
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_REASONING_EFFORT = "low";
 
-const hasClaudeCredentials =
-  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-
-const describeWithClaude = hasClaudeCredentials ? describe : describe.skip;
-
-describeWithClaude("daemon E2E", () => {
+describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeEach(async () => {
@@ -57,7 +52,7 @@ describeWithClaude("daemon E2E", () => {
         );
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
         expect(finalState.lastError).toBeUndefined();
@@ -179,7 +174,7 @@ describeWithClaude("daemon E2E", () => {
           "Remember the number 42. Just confirm you remember it."
         );
 
-        let state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        let state = await ctx.client.waitForFinish(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
 
@@ -191,7 +186,7 @@ describeWithClaude("daemon E2E", () => {
           "Now remember the word 'elephant'. Just confirm you remember both the number and the word."
         );
 
-        state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        state = await ctx.client.waitForFinish(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
 
@@ -204,7 +199,7 @@ describeWithClaude("daemon E2E", () => {
           "Write a complete sentence using both the number (42) and the word (elephant) you remembered. The sentence should be grammatically correct English."
         );
 
-        state = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        state = await ctx.client.waitForFinish(agent.id, 120000);
         expect(state.status).toBe("idle");
         expect(state.lastError).toBeUndefined();
 
@@ -594,7 +589,7 @@ describeWithClaude("daemon E2E", () => {
 
         // Agent should go idle within 5 seconds after interrupt
         log(`waiting for idle...`);
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 10000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 10000);
         const idleReceivedAt = Date.now();
         log(`got idle state: ${finalState.status} (took ${idleReceivedAt - stopSentAt}ms after Stop)`);
         expect(finalState.status).toBe("idle");

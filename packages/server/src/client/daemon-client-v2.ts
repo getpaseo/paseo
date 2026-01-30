@@ -1906,196 +1906,79 @@ export class DaemonClientV2 {
     );
   }
 
-  async waitForAgentIdle(
+  async waitForFinish(
     agentId: string,
     timeout = 60000
   ): Promise<AgentSnapshotPayload> {
-    const current = this.agentIndex.get(agentId);
-    const pendingPermissionIds = new Set<string>();
-    if (current?.pendingPermissions) {
-      for (const request of current.pendingPermissions) {
-        pendingPermissionIds.add(request.id);
-      }
-    }
+    // We need to see the agent start (running/initializing) before we can
+    // consider idle/error as "finished". Otherwise we'd return the old idle
+    // state from before the task started.
+    //
+    // Permission requests are different - if there are pending permissions,
+    // the agent needs attention NOW regardless of whether we saw it start.
+    let sawStart = false;
+    let finishedState: AgentSnapshotPayload | null = null;
 
-    // Track whether we've seen a running state. Important: we only set this
-    // when we see running IN THE QUEUE, not based on current state. This prevents
-    // finding old idle states that occurred before the current run started.
-    let sawRunningInQueue = false;
-    let queuedIdle: AgentSnapshotPayload | null = null;
+    // Scan message queue for state changes
+    // We need to scan the ENTIRE queue to find the final state, not return early
+    for (const msg of this.messageQueue) {
+      if (
+        msg.type === "agent_update" &&
+        msg.payload.kind === "upsert" &&
+        msg.payload.agent.id === agentId
+      ) {
+        const agent = msg.payload.agent;
 
-    const updatePendingPermissions = (msg: SessionOutboundMessage): void => {
-      if (
-        msg.type === "agent_permission_request" &&
-        msg.payload.agentId === agentId
-      ) {
-        pendingPermissionIds.add(msg.payload.request.id);
-        return;
-      }
-      if (
-        msg.type === "agent_permission_resolved" &&
-        msg.payload.agentId === agentId
-      ) {
-        pendingPermissionIds.delete(msg.payload.requestId);
-        return;
-      }
-      if (msg.type === "agent_stream" && msg.payload.agentId === agentId) {
-        if (msg.payload.event.type === "permission_requested") {
-          pendingPermissionIds.add(msg.payload.event.request.id);
-        } else if (msg.payload.event.type === "permission_resolved") {
-          pendingPermissionIds.delete(msg.payload.event.requestId);
+        // Track if agent has started processing a task
+        // Only "running" counts - "initializing" is the agent process starting up
+        if (agent.status === "running") {
+          sawStart = true;
+          finishedState = null; // Reset - any previous finished state was before this run
+        }
+
+        // Check for finished state - save it but don't return yet
+        // We need to scan the whole queue to find the FINAL state
+        const hasPendingPermissions = (agent.pendingPermissions?.length ?? 0) > 0;
+        if (hasPendingPermissions) {
+          // Permission means agent needs attention
+          finishedState = agent;
+        } else if (sawStart && (agent.status === "idle" || agent.status === "error")) {
+          finishedState = agent;
         }
       }
-    };
-
-    for (const msg of this.messageQueue) {
-      updatePendingPermissions(msg);
-      if (
-        msg.type !== "agent_update" ||
-        msg.payload.kind !== "upsert" ||
-        msg.payload.agent.id !== agentId
-      ) {
-        continue;
-      }
-      const status = msg.payload.agent.status;
-      const hasPendingPermissions =
-        (msg.payload.agent.pendingPermissions?.length ?? 0) > 0 ||
-        pendingPermissionIds.size > 0;
-      if (status === "running" || hasPendingPermissions) {
-        sawRunningInQueue = true;
-        queuedIdle = null; // Reset: any previous idle was before this run
-      }
-      // Return immediately if we have pending permissions (even if still running)
-      if (sawRunningInQueue && hasPendingPermissions) {
-        return msg.payload.agent;
-      }
-      if (
-        sawRunningInQueue &&
-        (status === "idle" || status === "error") &&
-        !hasPendingPermissions
-      ) {
-        queuedIdle = msg.payload.agent;
-      }
-    }
-    if (queuedIdle) {
-      return queuedIdle;
     }
 
-    // If current state is running (or has pending permissions), we need to wait
-    // for the next idle. If current is already idle and we didn't see running
-    // in the queue, this is an edge case - the agent might not have started yet
-    // or was already idle. Use the current state's running status to seed the waiter.
-    let sawRunning =
-      sawRunningInQueue ||
-      current?.status === "running" ||
-      pendingPermissionIds.size > 0;
+    // Only return from queue if we have a definitive finished state (idle/error)
+    // Don't return from queue if the latest state has pending permissions -
+    // the permission might be getting resolved right now, so wait for new messages
+    const hasPendingPermissionsInQueue = (finishedState?.pendingPermissions?.length ?? 0) > 0;
+    if (finishedState && !hasPendingPermissionsInQueue) {
+      return finishedState;
+    }
 
+    // Wait for agent to finish
     return this.waitFor(
       (msg) => {
-        updatePendingPermissions(msg);
         if (
           msg.type === "agent_update" &&
           msg.payload.kind === "upsert" &&
           msg.payload.agent.id === agentId
         ) {
-          const status = msg.payload.agent.status;
-          const hasPendingPermissions =
-            (msg.payload.agent.pendingPermissions?.length ?? 0) > 0 ||
-            pendingPermissionIds.size > 0;
-          if (status === "running" || hasPendingPermissions) {
-            sawRunning = true;
-          }
-          // Return if we have pending permissions (even if still running)
-          // OR if agent is idle/error with no pending permissions (after having run)
-          if (sawRunning && hasPendingPermissions) {
-            return msg.payload.agent;
-          }
-          if (
-            sawRunning &&
-            (status === "idle" || status === "error") &&
-            !hasPendingPermissions
-          ) {
-            return msg.payload.agent;
-          }
-        }
-        return null;
-      },
-      timeout,
-      { skipQueue: true }
-    );
-  }
+          const agent = msg.payload.agent;
 
-  async waitForPermission(
-    agentId: string,
-    timeout = 30000
-  ): Promise<AgentPermissionRequest> {
-    const snapshotPending = this.agentIndex.get(agentId)?.pendingPermissions?.[0];
-    if (snapshotPending) {
-      return snapshotPending;
-    }
-
-    let queuedRequest: AgentPermissionRequest | null = null;
-    const pendingById = new Map<string, AgentPermissionRequest>();
-    for (const msg of this.messageQueue) {
-      if (
-        msg.type === "agent_permission_request" &&
-        msg.payload.agentId === agentId
-      ) {
-        pendingById.set(msg.payload.request.id, msg.payload.request);
-        queuedRequest = msg.payload.request;
-        continue;
-      }
-      if (msg.type === "agent_permission_resolved") {
-        if (msg.payload.agentId === agentId) {
-          pendingById.delete(msg.payload.requestId);
-          if (queuedRequest?.id === msg.payload.requestId) {
-            queuedRequest = null;
+          // Track if agent has started processing a task
+          // Only "running" counts - "initializing" is the agent process starting up
+          if (agent.status === "running") {
+            sawStart = true;
           }
-        }
-        continue;
-      }
-      if (msg.type === "agent_stream" && msg.payload.agentId === agentId) {
-        if (msg.payload.event.type === "permission_requested") {
-          pendingById.set(
-            msg.payload.event.request.id,
-            msg.payload.event.request
-          );
-          queuedRequest = msg.payload.event.request;
-          continue;
-        }
-        if (msg.payload.event.type === "permission_resolved") {
-          pendingById.delete(msg.payload.event.requestId);
-          if (queuedRequest?.id === msg.payload.event.requestId) {
-            queuedRequest = null;
+
+          // Check for finished state
+          const hasPendingPermissions = (agent.pendingPermissions?.length ?? 0) > 0;
+          if (hasPendingPermissions) {
+            return agent;
           }
-        }
-      }
-    }
-
-    if (queuedRequest && pendingById.has(queuedRequest.id)) {
-      return queuedRequest;
-    }
-    if (pendingById.size > 0) {
-      let mostRecent: AgentPermissionRequest | null = null;
-      for (const request of pendingById.values()) {
-        mostRecent = request;
-      }
-      if (mostRecent) {
-        return mostRecent;
-      }
-    }
-
-    return this.waitFor(
-      (msg) => {
-        if (
-          msg.type === "agent_permission_request" &&
-          msg.payload.agentId === agentId
-        ) {
-          return msg.payload.request;
-        }
-        if (msg.type === "agent_stream" && msg.payload.agentId === agentId) {
-          if (msg.payload.event.type === "permission_requested") {
-            return msg.payload.event.request;
+          if (sawStart && (agent.status === "idle" || agent.status === "error")) {
+            return agent;
           }
         }
         return null;

@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "http";
 import type { WebSocket } from "ws";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "path";
 import {
   WSInboundMessageSchema,
@@ -19,6 +20,8 @@ import type { OpenAITTS } from "./agent/tts-openai.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 
+export type AgentMcpTransportFactory = () => Promise<Transport>;
+
 export class WebSocketSessionBridge {
   private readonly logger: pino.Logger;
   private readonly sessions: Map<WebSocket, Session> = new Map();
@@ -29,8 +32,7 @@ export class WebSocketSessionBridge {
   private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
-  private readonly agentMcpRoute: string;
-  private readonly selfIdMcpSocketPath: string;
+  private readonly createAgentMcpTransport: AgentMcpTransportFactory;
   private readonly stt: OpenAISTT | null;
   private readonly tts: OpenAITTS | null;
   private readonly terminalManager: TerminalManager | null;
@@ -42,8 +44,7 @@ export class WebSocketSessionBridge {
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
-    agentMcpRoute: string,
-    selfIdMcpSocketPath: string,
+    createAgentMcpTransport: AgentMcpTransportFactory,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
   ) {
@@ -52,8 +53,7 @@ export class WebSocketSessionBridge {
     this.agentStorage = agentStorage;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.agentMcpRoute = agentMcpRoute;
-    this.selfIdMcpSocketPath = selfIdMcpSocketPath;
+    this.createAgentMcpTransport = createAgentMcpTransport;
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
@@ -89,8 +89,7 @@ export class WebSocketSessionBridge {
       this.paseoHome,
       this.agentManager,
       this.agentStorage,
-      this.agentMcpRoute,
-      this.selfIdMcpSocketPath,
+      this.createAgentMcpTransport,
       this.stt,
       this.tts,
       this.terminalManager,

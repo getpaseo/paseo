@@ -64,7 +64,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
         expect(finalState.lastError).toBeUndefined();
@@ -135,7 +135,7 @@ describe("daemon E2E", () => {
         );
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
         expect(finalState.lastError).toBeUndefined();

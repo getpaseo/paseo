@@ -422,7 +422,7 @@ export const denyPermission = async (page: Page) => {
   await denyButton.click();
 };
 
-export async function waitForAgentIdle(page: Page, timeout = 30000) {
+export async function waitForAgentFinishUI(page: Page, timeout = 30000) {
   const stopButton = page.getByRole('button', { name: /stop|cancel/i });
   await expect(stopButton).not.toBeVisible({ timeout });
 }

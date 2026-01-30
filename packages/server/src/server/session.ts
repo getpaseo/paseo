@@ -3,7 +3,6 @@ import { readFile, mkdir, writeFile, stat } from "fs/promises";
 import { exec } from "child_process";
 import { promisify, inspect } from "util";
 import { join, resolve, sep } from "path";
-import http from "http";
 import invariant from "tiny-invariant";
 import { z } from "zod";
 import { streamText, stepCountIs } from "ai";
@@ -46,7 +45,9 @@ import {
   extractTimestamps,
 } from "./persistence-hooks.js";
 import { experimental_createMCPClient } from "ai";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+
+export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
@@ -290,8 +291,7 @@ export class Session {
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
-  private readonly agentMcpRoute: string;
-  private readonly mcpSocketPath: string;
+  private readonly createAgentMcpTransport: AgentMcpTransportFactory;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private readonly providerRegistry: ReturnType<typeof buildProviderRegistry>;
@@ -320,8 +320,7 @@ export class Session {
     paseoHome: string,
     agentManager: AgentManager,
     agentStorage: AgentStorage,
-    agentMcpRoute: string,
-    mcpSocketPath: string,
+    createAgentMcpTransport: AgentMcpTransportFactory,
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
@@ -335,8 +334,7 @@ export class Session {
     this.paseoHome = paseoHome;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    this.agentMcpRoute = agentMcpRoute;
-    this.mcpSocketPath = mcpSocketPath;
+    this.createAgentMcpTransport = createAgentMcpTransport;
     this.terminalManager = terminalManager;
     this.voiceConversationStore = voiceConversationStore;
     this.abortController = new AbortController();
@@ -506,61 +504,12 @@ export class Session {
   }
 
   /**
-   * Initialize Agent MCP client for this session
+   * Initialize Agent MCP client for this session using in-memory transport
    */
   private async initializeAgentMcp(): Promise<void> {
     try {
-      // Create a custom fetch that uses the Unix socket
-      const socketFetch = async (
-        input: string | URL,
-        init?: RequestInit
-      ): Promise<Response> => {
-        const url = new URL(input.toString());
-        const path = url.pathname + url.search;
-
-        return new Promise((resolve, reject) => {
-          const req = http.request(
-            {
-              socketPath: this.mcpSocketPath,
-              path,
-              method: init?.method ?? "GET",
-              headers: {
-                ...Object.fromEntries(
-                  new Headers(init?.headers).entries()
-                ),
-              },
-            },
-            (res: import("http").IncomingMessage) => {
-              const chunks: Buffer[] = [];
-              res.on("data", (chunk: Buffer) => chunks.push(chunk));
-              res.on("end", () => {
-                const body = Buffer.concat(chunks);
-                resolve(
-                  new Response(body, {
-                    status: res.statusCode ?? 500,
-                    statusText: res.statusMessage ?? "",
-                    headers: new Headers(
-                      res.headers as Record<string, string>
-                    ),
-                  })
-                );
-              });
-              res.on("error", reject);
-            }
-          );
-          req.on("error", reject);
-          if (init?.body) {
-            req.write(init.body);
-          }
-          req.end();
-        });
-      };
-
-      // Connect to the local MCP server using Unix socket
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://localhost${this.agentMcpRoute}`),
-        { fetch: socketFetch as typeof fetch }
-      );
+      // Create an in-memory transport connected to the Agent MCP server
+      const transport = await this.createAgentMcpTransport();
 
       this.agentMcpClient = await experimental_createMCPClient({
         transport,

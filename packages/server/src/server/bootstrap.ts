@@ -4,6 +4,7 @@ import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 
@@ -264,6 +265,22 @@ export async function createPaseoDaemon(
     return transport;
   };
 
+  // Create in-memory transport for Session's Agent MCP client (voice assistant tools)
+  const createInMemoryAgentMcpTransport = async (): Promise<InMemoryTransport> => {
+    const agentMcpServer = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      paseoHome: config.paseoHome,
+      logger,
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await agentMcpServer.connect(serverTransport);
+
+    return clientTransport;
+  };
+
   const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
     if (config.mcpDebug) {
       logger.debug(
@@ -491,8 +508,7 @@ export async function createPaseoDaemon(
     agentStorage,
     downloadTokenStore,
     config.paseoHome,
-    agentMcpRoute,
-    config.selfIdMcpSocketPath,
+    createInMemoryAgentMcpTransport,
     { allowedOrigins },
     { stt: sttService, tts: ttsService },
     terminalManager

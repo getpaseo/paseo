@@ -53,7 +53,7 @@ describe("two-cycle Codex agent resume", () => {
         `For this test session, remember this project name: "${MARKER}". Just confirm you've noted it.`
       );
 
-      const afterSecret = await ctx.client.waitForAgentIdle(agent.id, 120000);
+      const afterSecret = await ctx.client.waitForFinish(agent.id, 120000);
       expect(afterSecret.status).toBe("idle");
       expect(afterSecret.lastError).toBeUndefined();
 
@@ -103,7 +103,7 @@ describe("two-cycle Codex agent resume", () => {
         "Acknowledge you still remember the project name. Just say yes or no."
       );
 
-      const afterAck = await ctx.client.waitForAgentIdle(resumed1.id, 120000);
+      const afterAck = await ctx.client.waitForFinish(resumed1.id, 120000);
       expect(afterAck.status).toBe("idle");
       expect(afterAck.lastError).toBeUndefined();
 
@@ -134,7 +134,7 @@ describe("two-cycle Codex agent resume", () => {
         "What was the project name I asked you to remember at the very beginning of our conversation? Reply with the exact name."
       );
 
-      const afterRecall = await ctx.client.waitForAgentIdle(resumed2.id, 120000);
+      const afterRecall = await ctx.client.waitForFinish(resumed2.id, 120000);
       expect(afterRecall.status).toBe("idle");
       expect(afterRecall.lastError).toBeUndefined();
 

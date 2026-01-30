@@ -105,7 +105,7 @@ describe("daemon E2E", () => {
         await ctx.client.sendMessage(agent.id, "Say 'test' and nothing else");
 
         // Wait for agent to complete
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
         expect(finalState.status).toBe("idle");
 
         // The timestamp SHOULD have been updated (should be later than initial)
@@ -328,7 +328,7 @@ describe("daemon E2E", () => {
         ctx.client.clearMessageQueue();
         await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else");
 
-        const finalState = await ctx.client.waitForAgentIdle(agent.id, 120000);
+        const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         // Mode should still be "read-only" after the message
         expect(finalState.currentModeId).toBe("read-only");

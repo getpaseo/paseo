@@ -6,7 +6,7 @@ import {
   waitForPermissionPrompt,
   allowPermission,
   denyPermission,
-  waitForAgentIdle,
+  waitForAgentFinishUI,
   getToolCallCount,
 } from './helpers/app';
 import { createTempGitRepo } from './helpers/workspace';
@@ -63,7 +63,7 @@ test.describe('permission prompts', () => {
 
       await waitForPermissionPrompt(page, 30000);
       await denyPermission(page);
-      await waitForAgentIdle(page);
+      await waitForAgentFinishUI(page);
 
       expect(existsSync(filePath)).toBe(false);
 

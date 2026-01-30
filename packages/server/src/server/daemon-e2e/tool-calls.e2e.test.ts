@@ -81,7 +81,7 @@ describe("daemon E2E", () => {
           "Read the file /etc/hosts and tell me how many lines it has. Be brief."
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
@@ -120,7 +120,7 @@ describe("daemon E2E", () => {
           "Run `echo hello` and tell me what it outputs. Be brief."
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
@@ -164,7 +164,7 @@ describe("daemon E2E", () => {
           `Edit the file ${testFile} and change "hello" to "goodbye". Be brief.`
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
@@ -202,7 +202,7 @@ describe("daemon E2E", () => {
           "Run `echo hello` and tell me what it outputs. Be brief."
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
@@ -248,7 +248,7 @@ describe("daemon E2E", () => {
           "Read the file /etc/hosts and tell me how many lines it has. Be brief."
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
@@ -292,7 +292,7 @@ describe("daemon E2E", () => {
           `Edit the file ${testFile} and change "hello" to "goodbye". Be brief.`
         );
 
-        await ctx.client.waitForAgentIdle(agent.id, 120000);
+        await ctx.client.waitForFinish(agent.id, 120000);
 
         const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
