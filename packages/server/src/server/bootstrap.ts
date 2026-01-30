@@ -55,7 +55,7 @@ import {
 } from "./connection-offer.js";
 import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
-import { acquirePidLock, releasePidLock } from "./pid-lock.js";
+import { releasePidLock } from "./pid-lock.js";
 import type {
   AgentClient,
   AgentProvider,
@@ -499,9 +499,6 @@ export async function createPaseoDaemon(
   );
 
   const start = async () => {
-    // Acquire PID lock to prevent multiple daemon instances
-    await acquirePidLock(config.paseoHome, selfIdMcpSocketPath);
-
     // Start Self-ID MCP socket server first
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error) => {
