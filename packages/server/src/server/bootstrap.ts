@@ -59,6 +59,7 @@ import type {
   AgentClient,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
+import { acquirePidLock, releasePidLock } from "./pid-lock.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -498,6 +499,9 @@ export async function createPaseoDaemon(
   );
 
   const start = async () => {
+    // Acquire PID lock
+    await acquirePidLock(config.paseoHome, selfIdMcpSocketPath);
+
     // Start Self-ID MCP socket server first
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error) => {
@@ -604,6 +608,8 @@ export async function createPaseoDaemon(
     if (existsSync(selfIdMcpSocketPath)) {
       unlinkSync(selfIdMcpSocketPath);
     }
+    // Release PID lock
+    await releasePidLock(config.paseoHome);
   };
 
   return {
