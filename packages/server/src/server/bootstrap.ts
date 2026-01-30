@@ -55,7 +55,6 @@ import {
 } from "./connection-offer.js";
 import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
-import { releasePidLock } from "./pid-lock.js";
 import type {
   AgentClient,
   AgentProvider,
@@ -605,8 +604,6 @@ export async function createPaseoDaemon(
     if (existsSync(selfIdMcpSocketPath)) {
       unlinkSync(selfIdMcpSocketPath);
     }
-    // Release PID lock
-    await releasePidLock(config.paseoHome);
   };
 
   return {
