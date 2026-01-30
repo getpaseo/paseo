@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { createAgentMcpServer } from "./mcp-server.js";
+import { createAgentSelfIdMcpServer } from "./agent-self-id-mcp.js";
 import { createWorktree } from "../../utils/worktree.js";
 import type {
   AgentClient,
@@ -148,9 +148,8 @@ describe("self-identification MCP tools", () => {
         cwd: worktree.worktreePath,
       });
 
-      const server = await createAgentMcpServer({
+      const server = await createAgentSelfIdMcpServer({
         agentManager: manager,
-        agentStorage: storage,
         paseoHome,
         callerAgentId: agent.id,
         logger,
@@ -202,9 +201,8 @@ describe("self-identification MCP tools", () => {
         cwd: nestedDir,
       });
 
-      const server = await createAgentMcpServer({
+      const server = await createAgentSelfIdMcpServer({
         agentManager: manager,
-        agentStorage: storage,
         paseoHome,
         callerAgentId: agent.id,
         logger,
@@ -245,9 +243,8 @@ describe("self-identification MCP tools", () => {
         cwd: repoDir,
       });
 
-      const server = await createAgentMcpServer({
+      const server = await createAgentSelfIdMcpServer({
         agentManager: manager,
-        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });
@@ -279,9 +276,8 @@ describe("self-identification MCP tools", () => {
         cwd: repoDir,
       });
 
-      const server = await createAgentMcpServer({
+      const server = await createAgentSelfIdMcpServer({
         agentManager: manager,
-        agentStorage: storage,
         callerAgentId: agent.id,
         logger,
       });

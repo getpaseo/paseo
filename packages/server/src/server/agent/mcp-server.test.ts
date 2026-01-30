@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
+import { createAgentSelfIdMcpServer } from "./agent-self-id-mcp.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 
@@ -104,14 +105,13 @@ describe("create_agent MCP tool", () => {
   });
 
   it("set_title trims and persists titles for caller agent", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
+    const { agentManager, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "agent-1",
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({
+    const server = await createAgentSelfIdMcpServer({
       agentManager,
-      agentStorage,
       logger,
       callerAgentId: "agent-1",
     });
