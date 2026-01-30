@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import { loadPersistedConfig } from "./persisted-config.js";
+import { PidLockError } from "./pid-lock.js";
 
 async function main() {
   const paseoHome = resolvePaseoHome();
@@ -21,7 +22,15 @@ async function main() {
   }
   const daemon = await createPaseoDaemon(config, logger);
 
-  await daemon.start();
+  try {
+    await daemon.start();
+  } catch (err) {
+    if (err instanceof PidLockError) {
+      logger.error({ pid: err.existingLock?.pid }, err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
 
   let shuttingDown = false;
   const handleShutdown = async (signal: string) => {
