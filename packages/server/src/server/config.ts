@@ -15,12 +15,7 @@ function getDefaultListen(): string {
   return `127.0.0.1:${DEFAULT_PORT}`;
 }
 
-function getSelfIdMcpSocketPath(paseoHome: string, env: NodeJS.ProcessEnv): string {
-  // Allow override via PASEO_SELF_ID_MCP_SOCK for testing
-  if (env.PASEO_SELF_ID_MCP_SOCK) {
-    return env.PASEO_SELF_ID_MCP_SOCK;
-  }
-  // Default to ${PASEO_HOME}/self-id-mcp.sock
+function getSelfIdMcpSocketPath(paseoHome: string): string {
   return path.join(paseoHome, "self-id-mcp.sock");
 }
 
@@ -87,7 +82,7 @@ export function loadConfig(
   // Default is TCP at 127.0.0.1:6767
   const listen = env.PASEO_LISTEN ?? persisted.listen ?? getDefaultListen();
   const mcpListen = getListenForMcp(listen);
-  const selfIdMcpSocketPath = getSelfIdMcpSocketPath(paseoHome, env);
+  const selfIdMcpSocketPath = getSelfIdMcpSocketPath(paseoHome);
 
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
