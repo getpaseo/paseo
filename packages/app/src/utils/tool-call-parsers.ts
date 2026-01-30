@@ -1,3 +1,4 @@
+import stripAnsi from "strip-ansi";
 import { z } from "zod";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "./perf";
 
@@ -973,7 +974,7 @@ const ShellToolCallSchema = z
       return {
         type: "shell" as const,
         command,
-        output: resultParsed.data.output,
+        output: stripAnsi(resultParsed.data.output),
       };
     }
 
@@ -983,7 +984,7 @@ const ShellToolCallSchema = z
       return {
         type: "shell" as const,
         command,
-        output: errorParsed.data.content,
+        output: stripAnsi(errorParsed.data.content),
       };
     }
 
