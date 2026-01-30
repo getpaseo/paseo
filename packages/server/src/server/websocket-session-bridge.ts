@@ -30,6 +30,7 @@ export class WebSocketSessionBridge {
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
   private readonly agentMcpRoute: string;
+  private readonly selfIdMcpSocketPath: string;
   private readonly stt: OpenAISTT | null;
   private readonly tts: OpenAITTS | null;
   private readonly terminalManager: TerminalManager | null;
@@ -42,6 +43,7 @@ export class WebSocketSessionBridge {
     downloadTokenStore: DownloadTokenStore,
     paseoHome: string,
     agentMcpRoute: string,
+    selfIdMcpSocketPath: string,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null
   ) {
@@ -51,6 +53,7 @@ export class WebSocketSessionBridge {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.agentMcpRoute = agentMcpRoute;
+    this.selfIdMcpSocketPath = selfIdMcpSocketPath;
     this.stt = speech?.stt ?? null;
     this.tts = speech?.tts ?? null;
     this.terminalManager = terminalManager ?? null;
@@ -87,6 +90,7 @@ export class WebSocketSessionBridge {
       this.agentManager,
       this.agentStorage,
       this.agentMcpRoute,
+      this.selfIdMcpSocketPath,
       this.stt,
       this.tts,
       this.terminalManager,

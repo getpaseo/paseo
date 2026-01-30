@@ -59,6 +59,8 @@ export type AgentManagerOptions = {
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
   logger: Logger;
+  /** Path to the Self-ID MCP Unix socket for UI agent injection */
+  selfIdMcpSocketPath?: string;
 };
 
 export type WaitForAgentOptions = {
@@ -106,7 +108,7 @@ type ManagedAgentBase = {
   /**
    * User-defined labels for categorizing agents (e.g., { ui: "true" }).
    */
-  labels?: Record<string, string>;
+  labels: Record<string, string>;
 };
 
 type ManagedAgentWithSession = ManagedAgentBase & {
@@ -190,6 +192,7 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  private readonly selfIdMcpSocketPath?: string;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
 
@@ -198,6 +201,7 @@ export class AgentManager {
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.selfIdMcpSocketPath = options?.selfIdMcpSocketPath;
     this.onAgentAttention = options?.onAgentAttention;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
@@ -313,13 +317,18 @@ export class AgentManager {
     agentId?: string,
     options?: { labels?: Record<string, string> }
   ): Promise<ManagedAgent> {
-    const normalizedConfig = await this.normalizeConfig(config, { labels: options?.labels });
+    // Generate agent ID early so we can use it in MCP config
+    const resolvedAgentId = agentId ?? this.idFactory();
+    const normalizedConfig = await this.normalizeConfig(config, {
+      labels: options?.labels,
+      agentId: resolvedAgentId,
+    });
     const client = this.requireClient(normalizedConfig.provider);
     const session = await client.createSession(normalizedConfig);
     return this.registerSession(
       session,
       normalizedConfig,
-      agentId ?? this.idFactory(),
+      resolvedAgentId,
       { labels: options?.labels }
     );
   }
@@ -835,7 +844,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       attention: { requiresAttention: false },
       internal: config.internal ?? false,
-      labels: options?.labels,
+      labels: options?.labels ?? {},
     } as ActiveManagedAgent;
 
     this.agents.set(agentId, managed);
@@ -1103,7 +1112,7 @@ export class AgentManager {
 
   private async normalizeConfig(
     config: AgentSessionConfig,
-    options?: { labels?: Record<string, string> }
+    options?: { labels?: Record<string, string>; agentId?: string }
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
@@ -1117,12 +1126,29 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 ? trimmed : undefined;
     }
 
-    // Inject paseoPromptInstructions for UI agents (with ui=true label)
+    // Inject paseoPromptInstructions and MCP config for UI agents (with ui=true label)
     const isUiAgent = options?.labels?.ui === "true";
     if (isUiAgent) {
       normalized.paseoPromptInstructions = getSelfIdentificationInstructions({
         cwd: normalized.cwd,
       });
+
+      // Inject Self-ID MCP server config (stdio bridge to self-id-mcp.sock)
+      if (this.selfIdMcpSocketPath && options?.agentId) {
+        const existingMcpServers = normalized.mcpServers ?? {};
+        normalized.mcpServers = {
+          ...existingMcpServers,
+          "paseo-self-id": {
+            type: "stdio",
+            command: "paseo",
+            args: [
+              "self-id-bridge",
+              "--socket", this.selfIdMcpSocketPath,
+              "--agent-id", options.agentId,
+            ],
+          },
+        };
+      }
     }
 
     return normalized;

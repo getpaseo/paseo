@@ -25,13 +25,8 @@ import { toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
 import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import { AgentStorage } from "./agent-storage.js";
-import {
-  createWorktree,
-  isPaseoOwnedWorktreeCwd,
-  validateBranchSlug,
-} from "../../utils/worktree.js";
+import { createWorktree } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
-import { NotGitRepoError, renameCurrentBranch } from "../../utils/checkout-git.js";
 import { injectLeadingPaseoInstructionTag } from "./paseo-instructions-tag.js";
 
 export interface AgentMcpServerOptions {
@@ -110,18 +105,6 @@ function expandPath(path: string): string {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
-}
-
-type ToolErrorCode = "NOT_ALLOWED" | "NOT_GIT_REPO" | "INVALID_BRANCH";
-
-class AgentMcpToolError extends Error {
-  readonly code: ToolErrorCode;
-
-  constructor(code: ToolErrorCode, message: string) {
-    super(message);
-    this.name = "AgentMcpToolError";
-    this.code = code;
-  }
 }
 
 /**
@@ -898,134 +881,6 @@ export async function createAgentMcpServer(
           updateCount: timeline.length,
           currentModeId: snapshot?.currentModeId ?? null,
           content: contentWithCount,
-        }),
-      };
-    }
-  );
-
-  server.registerTool(
-    "set_title",
-    {
-      title: "Set Agent Title",
-      description: "Update the agent's title in the registry.",
-      inputSchema: {
-        title: z
-          .string()
-          .min(1)
-          .max(60)
-          .describe("Short descriptive title (<= 60 chars)."),
-      },
-      outputSchema: {
-        success: z.boolean(),
-        title: z.string(),
-      },
-    },
-    async ({ title }) => {
-      if (!callerAgentId) {
-        throw new AgentMcpToolError(
-          "NOT_ALLOWED",
-          "set_title can only be called by a managed agent"
-        );
-      }
-
-      const agent = agentManager.getAgent(callerAgentId);
-      if (!agent) {
-        throw new Error(`Agent ${callerAgentId} not found`);
-      }
-
-      const normalizedTitle = title.trim();
-      if (!normalizedTitle) {
-        throw new AgentMcpToolError("NOT_ALLOWED", "Title cannot be empty");
-      }
-      if (normalizedTitle.length > 60) {
-        throw new AgentMcpToolError(
-          "NOT_ALLOWED",
-          "Title must be 60 characters or fewer"
-        );
-      }
-
-      await agentManager.setTitle(agent.id, normalizedTitle);
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          success: true,
-          title: normalizedTitle,
-        }),
-      };
-    }
-  );
-
-  server.registerTool(
-    "set_branch",
-    {
-      title: "Set Agent Branch",
-      description:
-        "Rename the current git branch. Allowed only inside Paseo-owned worktrees.",
-      inputSchema: {
-        name: z
-          .string()
-          .min(1)
-          .describe("Git branch name (lowercase letters, numbers, hyphens, slashes)."),
-      },
-      outputSchema: {
-        success: z.boolean(),
-        branch: z.string(),
-      },
-    },
-    async ({ name }) => {
-      if (!callerAgentId) {
-        throw new AgentMcpToolError(
-          "NOT_ALLOWED",
-          "set_branch can only be called by a managed agent"
-        );
-      }
-
-      const agent = agentManager.getAgent(callerAgentId);
-      if (!agent) {
-        throw new Error(`Agent ${callerAgentId} not found`);
-      }
-
-      const validation = validateBranchSlug(name);
-      if (!validation.valid) {
-        throw new AgentMcpToolError(
-          "INVALID_BRANCH",
-          validation.error ?? "Invalid branch name"
-        );
-      }
-
-      let ownership;
-      try {
-        ownership = await isPaseoOwnedWorktreeCwd(agent.cwd, { paseoHome: options.paseoHome });
-      } catch (error) {
-        const notGitError =
-          error instanceof NotGitRepoError
-            ? error
-            : new NotGitRepoError(agent.cwd);
-        throw new AgentMcpToolError(
-          "NOT_GIT_REPO",
-          notGitError.message
-        );
-      }
-
-      if (!ownership.allowed) {
-        throw new AgentMcpToolError(
-          "NOT_ALLOWED",
-          "Branch renames are only allowed inside Paseo-owned worktrees"
-        );
-      }
-
-      const result = await renameCurrentBranch(agent.cwd, name);
-      if (result.currentBranch !== name) {
-        throw new Error(
-          `Branch rename failed (expected ${name}, got ${result.currentBranch ?? "unknown"})`
-        );
-      }
-
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          success: true,
-          branch: name,
         }),
       };
     }

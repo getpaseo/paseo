@@ -5,10 +5,24 @@ import type { STTConfig } from "./agent/stt-openai.js";
 import type { TTSConfig } from "./agent/tts-openai.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
-const DEFAULT_LISTEN = "127.0.0.1:6767";
+const DEFAULT_PORT = 6767;
 const DEFAULT_AGENT_MCP_ROUTE = "/mcp/agents";
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+
+function getDefaultListen(): string {
+  // Main HTTP server defaults to TCP
+  return `127.0.0.1:${DEFAULT_PORT}`;
+}
+
+function getSelfIdMcpSocketPath(paseoHome: string, env: NodeJS.ProcessEnv): string {
+  // Allow override via PASEO_SELF_ID_MCP_SOCK for testing
+  if (env.PASEO_SELF_ID_MCP_SOCK) {
+    return env.PASEO_SELF_ID_MCP_SOCK;
+  }
+  // Default to ${PASEO_HOME}/self-id-mcp.sock
+  return path.join(paseoHome, "self-id-mcp.sock");
+}
 
 function parseOpenAIConfig(env: NodeJS.ProcessEnv) {
   const apiKey = env.OPENAI_API_KEY;
@@ -66,8 +80,14 @@ export function loadConfig(
 ): PaseoDaemonConfig {
   const persisted = loadPersistedConfig(paseoHome);
 
-  const listen = env.PASEO_LISTEN ?? persisted.listen ?? DEFAULT_LISTEN;
+  // PASEO_LISTEN can be:
+  // - host:port (TCP)
+  // - /path/to/socket (Unix socket)
+  // - unix:///path/to/socket (Unix socket)
+  // Default is TCP at 127.0.0.1:6767
+  const listen = env.PASEO_LISTEN ?? persisted.listen ?? getDefaultListen();
   const mcpListen = getListenForMcp(listen);
+  const selfIdMcpSocketPath = getSelfIdMcpSocketPath(paseoHome, env);
 
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
@@ -76,6 +96,7 @@ export function loadConfig(
   return {
     listen,
     paseoHome,
+    selfIdMcpSocketPath,
     corsAllowedOrigins: [...persisted.cors.allowedOrigins, ...envCorsOrigins],
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
     agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],
