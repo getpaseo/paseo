@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
@@ -13,7 +14,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   header: {
     paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[6],
     paddingBottom: theme.spacing[4],
     flexDirection: "row",
     justifyContent: "space-between",
@@ -32,7 +32,6 @@ const styles = StyleSheet.create((theme) => ({
   body: {
     flex: 1,
     paddingHorizontal: theme.spacing[6],
-    paddingBottom: theme.spacing[6],
   },
   cameraWrap: {
     flex: 1,
@@ -132,6 +131,7 @@ function extractOfferUrlFromScan(result: BarcodeScanningResult): string | null {
 
 export default function PairScanScreen() {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { upsertDaemonFromOfferUrl } = useDaemonRegistry();
 
@@ -172,17 +172,17 @@ export default function PairScanScreen() {
   if (Platform.OS === "web") {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: insets.top + theme.spacing[2] }]}>
           <Text style={styles.headerTitle}>Scan QR</Text>
           <Pressable onPress={() => router.back()}>
             <Text style={styles.headerButtonText}>Close</Text>
           </Pressable>
         </View>
-        <View style={styles.body}>
+        <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Not available on web</Text>
             <Text style={styles.permissionBody}>
-              QR scanning isn’t supported in the web build. Use “Paste link” instead.
+              QR scanning isn't supported in the web build. Use "Paste link" instead.
             </Text>
             <Pressable style={styles.permissionButton} onPress={() => router.replace("/settings")}>
               <Text style={styles.permissionButtonText}>Back to Settings</Text>
@@ -197,14 +197,14 @@ export default function PairScanScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + theme.spacing[2] }]}>
         <Text style={styles.headerTitle}>Scan QR</Text>
         <Pressable onPress={() => router.back()}>
           <Text style={styles.headerButtonText}>Close</Text>
         </Pressable>
       </View>
 
-      <View style={styles.body}>
+      <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
         {!granted ? (
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Camera permission</Text>

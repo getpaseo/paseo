@@ -12,6 +12,7 @@ import {
   Platform,
 } from "react-native";
 import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Sun, Moon, Monitor } from "lucide-react-native";
 import { Fonts } from "@/constants/theme";
@@ -378,6 +379,8 @@ const styles = StyleSheet.create((theme) => ({
 
 
 export default function SettingsScreen() {
+  const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const { settings, isLoading: settingsLoading, updateSettings, resetSettings } = useAppSettings();
   const {
     daemons,
@@ -561,7 +564,7 @@ export default function SettingsScreen() {
     <View style={styles.container}>
       <MenuHeader title="Settings" />
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: insets.bottom }}>
         <View style={styles.content}>
           {/* Host Management */}
           <View style={styles.section}>

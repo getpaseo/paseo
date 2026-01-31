@@ -617,14 +617,25 @@ function AgentScreenContent({
             <View style={styles.headerRightContent}>
               <Pressable onPress={toggleFileExplorer} style={styles.menuButton}>
                 {isMobile ? (
-                  <Folder
-                    size={20}
-                    color={
-                      isExplorerOpen
-                        ? theme.colors.foreground
-                        : theme.colors.foregroundMuted
-                    }
-                  />
+                  checkout?.isGit ? (
+                    <GitBranch
+                      size={20}
+                      color={
+                        isExplorerOpen
+                          ? theme.colors.foreground
+                          : theme.colors.foregroundMuted
+                      }
+                    />
+                  ) : (
+                    <Folder
+                      size={20}
+                      color={
+                        isExplorerOpen
+                          ? theme.colors.foreground
+                          : theme.colors.foregroundMuted
+                      }
+                    />
+                  )
                 ) : (
                   <PanelRight
                     size={16}

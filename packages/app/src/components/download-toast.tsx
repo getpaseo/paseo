@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, X, XCircle } from "lucide-react-native";
 import { useDownloadStore, formatSpeed, formatEta } from "@/stores/download-store";
@@ -8,6 +9,7 @@ const AUTO_DISMISS_DELAY = 3000;
 
 export function DownloadToast() {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const downloads = useDownloadStore((state) => state.downloads);
   const activeDownloadId = useDownloadStore((state) => state.activeDownloadId);
   const dismissDownload = useDownloadStore((state) => state.dismissDownload);
@@ -39,7 +41,7 @@ export function DownloadToast() {
   }
 
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={[styles.container, { bottom: theme.spacing[4] + insets.bottom }]} pointerEvents="box-none">
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (
           <ActivityIndicator size="small" color={theme.colors.foreground} />
@@ -89,7 +91,6 @@ export function DownloadToast() {
 const styles = StyleSheet.create((theme) => ({
   container: {
     position: "absolute",
-    bottom: theme.spacing[4],
     left: theme.spacing[4],
     right: theme.spacing[4],
     zIndex: 1000,

@@ -649,6 +649,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   sectionDragging: {
     opacity: 0.9,
+    transform: [{ scale: 1.02 }],
   },
   chevron: {
     opacity: 0.5,

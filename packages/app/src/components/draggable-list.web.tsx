@@ -61,10 +61,14 @@ function SortableItem<T>({
     // Trigger drag - handled by dnd-kit's listeners
   };
 
+  const baseTransform = CSS.Transform.toString(transform);
+  const scaleTransform = isDragging ? "scale(1.02)" : "";
+  const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
+
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: combinedTransform || undefined,
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.9 : 1,
     zIndex: isDragging ? 1000 : 1,
   };
 
