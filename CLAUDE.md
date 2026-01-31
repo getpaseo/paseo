@@ -39,6 +39,63 @@ PASEO_HOME=~/.paseo-blue PASEO_PORT=7777 npm run dev
 
 Both the server and Expo app are running in a Tmux session. See CLAUDE.local.md for system-specific session details.
 
+## Debugging
+
+### Daemon and CLI
+
+The Paseo daemon communicates via WebSocket. In the main checkout:
+- Daemon runs at `localhost:6767`
+- Expo app at `localhost:8081`
+- State lives in `~/.paseo`
+
+In worktrees or when running `npm run dev`, ports and home directories may differ. Never assume the defaults.
+
+Use `npm run cli` to run the local CLI (instead of the globally linked `paseo` which points to the main checkout). Always run `npm run cli -- --help` or load the `/paseo` skill before using it - do not guess commands.
+
+Use `--host <host:port>` to point the CLI at a different daemon (e.g., `--host localhost:7777`).
+
+### Quick reference CLI commands
+
+```bash
+npm run cli -- ls -a -g              # List all agents globally
+npm run cli -- ls -a -g --json       # Same, as JSON
+npm run cli -- inspect <id>          # Show detailed agent info
+npm run cli -- logs <id>             # View agent timeline
+npm run cli -- daemon status         # Check daemon status
+```
+
+### Agent state
+
+Agent data is stored at:
+```
+~/.paseo/agents/{cwd-with-dashes}/{agent-id}.json
+```
+
+To find an agent by ID:
+```bash
+find ~/.paseo/agents -name "{agent-id}.json"
+```
+
+To find an agent by title or other content:
+```bash
+rg -l "some title text" ~/.paseo/agents/
+rg -l "spiteful-toad" ~/.paseo/agents/
+```
+
+### Provider session files
+
+Get the session ID from the agent JSON file (`persistence.sessionId`), then:
+
+**Claude sessions:**
+```
+~/.claude/projects/{cwd-with-dashes}/{session-id}.jsonl
+```
+
+**Codex sessions:**
+```
+~/.codex/sessions/{YYYY}/{MM}/{DD}/rollout-{timestamp}-{session-id}.jsonl
+```
+
 ## Android
 
 Take screenshots like this: `adb exec-out screencap -p > screenshot.png`
