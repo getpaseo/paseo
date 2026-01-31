@@ -117,6 +117,8 @@ describe("checkout git utilities", () => {
     expect(status.isGit).toBe(true);
     expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isDirty).toBe(true);
+    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.mainRepoRoot).toBe(repoDir);
 
     const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });
     expect(diff.diff).toContain("-hello");
@@ -132,6 +134,29 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("worktree update");
+  });
+
+  it("returns mainRepoRoot pointing to first non-bare worktree for bare repos", async () => {
+    const bareRepoDir = join(tempDir, "bare-repo");
+    execSync(`git clone --bare ${repoDir} ${bareRepoDir}`);
+
+    const mainCheckoutDir = join(tempDir, "main-checkout");
+    execSync(`git -C ${bareRepoDir} worktree add ${mainCheckoutDir} main`);
+    execSync("git config user.email 'test@test.com'", { cwd: mainCheckoutDir });
+    execSync("git config user.name 'Test'", { cwd: mainCheckoutDir });
+
+    const worktree = await createWorktree({
+      branchName: "feature",
+      cwd: mainCheckoutDir,
+      baseBranch: "main",
+      worktreeSlug: "feature-worktree",
+      paseoHome,
+    });
+
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status.isGit).toBe(true);
+    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.mainRepoRoot).toBe(mainCheckoutDir);
   });
 
   it("merges the current branch into base from a worktree checkout", async () => {

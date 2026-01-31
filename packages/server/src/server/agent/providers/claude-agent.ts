@@ -1260,7 +1260,8 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const sanitized = cwd.replace(/[\\/]/g, "-").replace(/_/g, "-");
+    // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
+    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);

@@ -1218,7 +1218,8 @@ function assertHydratedReplica(
 }
 
 function sanitizeClaudeProjectName(cwd: string): string {
-  return cwd.replace(/[\\/]/g, "-").replace(/_/g, "-");
+  // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
+  return cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
 }
 
 function resolveClaudeHistoryPath(cwd: string, sessionId: string): string {

@@ -121,14 +121,17 @@ function SectionHeader({
     }
   }
 
+  const createAgentWorkingDir =
+    (checkout?.isPaseoOwnedWorktree ? checkout.mainRepoRoot : null) ?? section.workingDir;
+
   const handleCreatePress = useCallback(
     (e: { stopPropagation: () => void }) => {
       e.stopPropagation();
-      if (section.workingDir) {
-        onCreateAgent(section.workingDir);
+      if (createAgentWorkingDir) {
+        onCreateAgent(createAgentWorkingDir);
       }
     },
-    [onCreateAgent, section.workingDir]
+    [onCreateAgent, createAgentWorkingDir]
   );
 
   return (
@@ -171,7 +174,7 @@ function SectionHeader({
         </Text>
       </View>
       <View style={styles.sectionHeaderRight}>
-        {section.workingDir && (
+        {createAgentWorkingDir && (
           <Pressable
             style={styles.createAgentButton}
             onPress={handleCreatePress}

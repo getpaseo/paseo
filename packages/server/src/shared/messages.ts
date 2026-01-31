@@ -1124,6 +1124,7 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(true),
   isPaseoOwnedWorktree: z.literal(true),
   repoRoot: z.string(),
+  mainRepoRoot: z.string(),
   currentBranch: z.string().nullable(),
   isDirty: z.boolean(),
   baseRef: z.string(),

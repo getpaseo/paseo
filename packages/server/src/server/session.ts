@@ -2503,6 +2503,7 @@ export class Session {
             cwd,
             isGit: true,
             repoRoot: status.repoRoot ?? null,
+            mainRepoRoot: status.mainRepoRoot,
             currentBranch: status.currentBranch ?? null,
             isDirty: status.isDirty ?? null,
             baseRef: status.baseRef,

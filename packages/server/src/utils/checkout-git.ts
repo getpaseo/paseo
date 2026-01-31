@@ -1,6 +1,7 @@
 import { exec, execFile } from "child_process";
 import { promisify } from "util";
-import { resolve } from "path";
+import { resolve, dirname, basename } from "path";
+import { realpathSync } from "fs";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
@@ -79,6 +80,7 @@ export type CheckoutStatusGitNonPaseo = {
 export type CheckoutStatusGitPaseo = {
   isGit: true;
   repoRoot: string;
+  mainRepoRoot: string;
   currentBranch: string | null;
   isDirty: boolean;
   baseRef: string;
@@ -156,9 +158,37 @@ async function getWorktreeRoot(cwd: string): Promise<string | null> {
   }
 }
 
+async function getMainRepoRoot(cwd: string): Promise<string> {
+  const { stdout: commonDirOut } = await execAsync(
+    "git rev-parse --path-format=absolute --git-common-dir",
+    { cwd, env: READ_ONLY_GIT_ENV }
+  );
+  const commonDir = commonDirOut.trim();
+  const normalized = realpathSync(commonDir);
+
+  if (basename(normalized) === ".git") {
+    return dirname(normalized);
+  }
+
+  const { stdout: worktreeOut } = await execAsync("git worktree list --porcelain", {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const worktrees = parseWorktreeList(worktreeOut);
+  const nonBareNonPaseo = worktrees.filter(
+    (wt) => !wt.isBare && !wt.path.includes("/.paseo/worktrees/")
+  );
+  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) =>
+    wt.path.startsWith(normalized + "/")
+  );
+  const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
+  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
+}
+
 type GitWorktreeEntry = {
   path: string;
   branchRef?: string;
+  isBare?: boolean;
 };
 
 function parseWorktreeList(output: string): GitWorktreeEntry[] {
@@ -178,6 +208,9 @@ function parseWorktreeList(output: string): GitWorktreeEntry[] {
     }
     if (current && trimmed.startsWith("branch ")) {
       current.branchRef = trimmed.slice("branch ".length).trim();
+    }
+    if (current && trimmed === "bare") {
+      current.isBare = true;
     }
   }
   if (current) {
@@ -460,9 +493,11 @@ export async function getCheckoutStatus(
     hasRemote && currentBranch ? await getAheadOfOrigin(cwd, currentBranch) : null;
 
   if (configured.isPaseoOwnedWorktree) {
+    const mainRepoRoot = await getMainRepoRoot(cwd);
     return {
       isGit: true,
       repoRoot: worktreeRoot,
+      mainRepoRoot,
       currentBranch,
       isDirty,
       baseRef: configured.baseRef,
