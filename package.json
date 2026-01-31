@@ -28,7 +28,8 @@
     "web": "npm run web --workspace=@paseo/app",
     "desktop": "npm run dev --workspace=@paseo/desktop",
     "desktop:build": "npm run build --workspace=@paseo/desktop",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "cli": "npx tsx packages/cli/src/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
