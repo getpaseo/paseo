@@ -35,17 +35,18 @@ describe("self-id MCP e2e", () => {
 
     // Wait for permission request (default mode requires permission for MCP tools)
     const state = await ctx.client.waitForFinish(agent.id, 60000);
-    expect(state.pendingPermissions?.length).toBeGreaterThan(0);
-    expect(state.pendingPermissions![0].name).toBe("mcp__paseo-self-id__set_title");
+    expect(state.status).toBe("permission");
+    expect(state.final?.pendingPermissions?.length).toBeGreaterThan(0);
+    expect(state.final?.pendingPermissions?.[0]?.name).toBe("mcp__paseo-self-id__set_title");
 
     // Approve the permission
-    await ctx.client.respondToPermission(agent.id, state.pendingPermissions![0].id, {
+    await ctx.client.respondToPermission(agent.id, state.final!.pendingPermissions![0]!.id, {
       behavior: "allow",
     });
 
     // Wait for agent to complete
     const finalState = await ctx.client.waitForFinish(agent.id, 60000);
     expect(finalState.status).toBe("idle");
-    expect(finalState.title).toBe("Updated via MCP");
+    expect(finalState.final?.title).toBe("Updated via MCP");
   }, 180000);
 });

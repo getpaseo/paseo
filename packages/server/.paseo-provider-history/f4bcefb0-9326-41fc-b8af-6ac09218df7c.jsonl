@@ -1,0 +1,10 @@
+{"type":"thread_started","provider":"codex","sessionId":"f4bcefb0-9326-41fc-b8af-6ac09218df7c"}
+{"type":"turn_started","provider":"codex"}
+{"type":"timeline","provider":"codex","item":{"type":"assistant_message","text":"projec"}}
+{"type":"timeline","provider":"codex","item":{"type":"assistant_message","text":"t-unicorn-1769952280852"}}
+{"type":"turn_completed","provider":"codex","usage":{"inputTokens":1,"outputTokens":1}}
+{"type":"thread_started","provider":"codex","sessionId":"f4bcefb0-9326-41fc-b8af-6ac09218df7c"}
+{"type":"turn_started","provider":"codex"}
+{"type":"timeline","provider":"codex","item":{"type":"assistant_message","text":"projec"}}
+{"type":"timeline","provider":"codex","item":{"type":"assistant_message","text":"t-unicorn-1769952280852"}}
+{"type":"turn_completed","provider":"codex","usage":{"inputTokens":1,"outputTokens":1}}

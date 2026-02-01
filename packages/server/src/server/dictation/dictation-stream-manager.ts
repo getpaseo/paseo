@@ -12,7 +12,7 @@ import { OpenAIRealtimeTranscriptionSession } from "../agent/openai-realtime-tra
 const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
 const DICTATION_PCM_OUTPUT_RATE = 24000;
-const DICTATION_FINAL_TIMEOUT_MS = 30000;
+const DEFAULT_DICTATION_FINAL_TIMEOUT_MS = 30000;
 const DICTATION_SILENCE_PEAK_THRESHOLD = Number.parseInt(
   process.env.OPENAI_REALTIME_DICTATION_SILENCE_PEAK_THRESHOLD ?? "300",
   10
@@ -84,6 +84,23 @@ function parseDictationTurnDetection(): OpenAITurnDetection {
   return { type: "semantic_vad", create_response: false, eagerness };
 }
 
+export type RealtimeTranscriptionSession = {
+  connect(): Promise<void>;
+  appendPcm16Base64(base64Audio: string): void;
+  commit(): void;
+  clear(): void;
+  close(): void;
+  on(
+    event: "committed",
+    handler: (payload: { itemId: string; previousItemId: string | null }) => void
+  ): unknown;
+  on(
+    event: "transcript",
+    handler: (payload: { itemId: string; transcript: string; isFinal: boolean }) => void
+  ): unknown;
+  on(event: "error", handler: (err: unknown) => void): unknown;
+};
+
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
   sampleRate: number,
@@ -117,7 +134,7 @@ type DictationStreamState = {
   dictationId: string;
   sessionId: string;
   inputFormat: string;
-  openai: OpenAIRealtimeTranscriptionSession;
+  openai: RealtimeTranscriptionSession;
   inputRate: number;
   resampler: Pcm16MonoResampler | null;
   debugAudioChunks: Buffer[];
@@ -158,16 +175,22 @@ export class DictationStreamManager {
   private readonly logger: pino.Logger;
   private readonly emit: (msg: DictationStreamOutboundMessage) => void;
   private readonly sessionId: string;
+  private readonly openaiApiKey: string | null;
+  private readonly finalTimeoutMs: number;
   private readonly streams = new Map<string, DictationStreamState>();
 
   constructor(params: {
     logger: pino.Logger;
     emit: (msg: DictationStreamOutboundMessage) => void;
     sessionId: string;
+    openaiApiKey?: string | null;
+    finalTimeoutMs?: number;
   }) {
     this.logger = params.logger.child({ component: "dictation-stream-manager" });
     this.emit = params.emit;
     this.sessionId = params.sessionId;
+    this.openaiApiKey = params.openaiApiKey ?? null;
+    this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
   }
 
   public cleanupAll(): void {
@@ -179,7 +202,7 @@ export class DictationStreamManager {
   public async handleStart(dictationId: string, format: string): Promise<void> {
     this.cleanupDictationStream(dictationId);
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = this.openaiApiKey ?? process.env.OPENAI_API_KEY;
     if (!apiKey) {
       this.failDictationStream(dictationId, "OPENAI_API_KEY not set", false);
       return;
@@ -413,7 +436,7 @@ export class DictationStreamManager {
         "Timed out waiting for final transcription",
         true
       );
-    }, DICTATION_FINAL_TIMEOUT_MS);
+    }, this.finalTimeoutMs);
 
     this.maybeSealDictationStreamFinish(dictationId);
     this.maybeFinalizeDictationStream(dictationId);

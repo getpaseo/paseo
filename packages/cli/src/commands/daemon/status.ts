@@ -72,13 +72,7 @@ export async function runStatusCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
+    const agents = await client.fetchAgents()
     const runningAgents = agents.filter((a) => a.status === 'running')
     const idleAgents = agents.filter((a) => a.status === 'idle')
 

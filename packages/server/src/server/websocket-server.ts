@@ -35,7 +35,11 @@ export class VoiceAssistantWebSocketServer {
     createAgentMcpTransport: AgentMcpTransportFactory,
     wsConfig: WebSocketServerConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
-    terminalManager?: TerminalManager | null
+    terminalManager?: TerminalManager | null,
+    dictation?: {
+      openaiApiKey?: string | null;
+      finalTimeoutMs?: number;
+    }
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.bridge = new WebSocketSessionBridge(
@@ -46,7 +50,8 @@ export class VoiceAssistantWebSocketServer {
       paseoHome,
       createAgentMcpTransport,
       speech,
-      terminalManager
+      terminalManager,
+      dictation
     );
 
     const { allowedOrigins } = wsConfig;

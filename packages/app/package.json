@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "build": "npm run build:web",
     "build:web": "expo export --platform web",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app"
   },

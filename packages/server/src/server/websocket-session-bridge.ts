@@ -37,6 +37,10 @@ export class WebSocketSessionBridge {
   private readonly tts: OpenAITTS | null;
   private readonly terminalManager: TerminalManager | null;
   private readonly voiceConversationStore: VoiceConversationStore;
+  private readonly dictation: {
+    openaiApiKey?: string | null;
+    finalTimeoutMs?: number;
+  } | null;
 
   constructor(
     logger: pino.Logger,
@@ -46,7 +50,11 @@ export class WebSocketSessionBridge {
     paseoHome: string,
     createAgentMcpTransport: AgentMcpTransportFactory,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
-    terminalManager?: TerminalManager | null
+    terminalManager?: TerminalManager | null,
+    dictation?: {
+      openaiApiKey?: string | null;
+      finalTimeoutMs?: number;
+    }
   ) {
     this.logger = logger.child({ module: "websocket-session-bridge" });
     this.agentManager = agentManager;
@@ -60,6 +68,7 @@ export class WebSocketSessionBridge {
     this.voiceConversationStore = new VoiceConversationStore(
       join(paseoHome, "voice-conversations")
     );
+    this.dictation = dictation ?? null;
 
     const pushLogger = this.logger.child({ module: "push" });
     this.pushTokenStore = new PushTokenStore(pushLogger);
@@ -93,7 +102,8 @@ export class WebSocketSessionBridge {
       this.stt,
       this.tts,
       this.terminalManager,
-      this.voiceConversationStore
+      this.voiceConversationStore,
+      this.dictation ?? undefined
     );
 
     this.sessions.set(ws, session);

@@ -19,12 +19,19 @@ const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
+  let messages: SessionOutboundMessage[] = [];
+  let unsubscribe: (() => void) | null = null;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    messages = [];
+    unsubscribe = ctx.client.subscribeRawMessages((message) => {
+      messages.push(message);
+    });
   });
 
   afterEach(async () => {
+    unsubscribe?.();
     await ctx.cleanup();
   }, 60000);
 
@@ -47,7 +54,7 @@ describe("daemon E2E", () => {
         expect(agent.status).toBe("idle");
 
         // Clear message queue before sending prompt
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
 
         // Send a prompt that requires permission
         const prompt = [
@@ -59,8 +66,8 @@ describe("daemon E2E", () => {
 
         // Wait for permission request
         const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
-        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
-        const permission = permissionState.pendingPermissions[0];
+        expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.final!.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
         expect(permission.kind).toBe("tool");
@@ -78,7 +85,7 @@ describe("daemon E2E", () => {
         expect(existsSync(filePath)).toBe(true);
 
         // Verify permission_resolved event was received
-        const queue = ctx.client.getMessageQueue();
+        const queue = messages;
         const hasPermissionResolved = queue.some((m) => {
           if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
             return (
@@ -93,7 +100,7 @@ describe("daemon E2E", () => {
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      180000
+      30_000
     );
 
     test(
@@ -113,7 +120,7 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
 
         // Clear message queue before sending prompt
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
 
         // Send a prompt that requires permission
         const prompt = [
@@ -125,8 +132,8 @@ describe("daemon E2E", () => {
 
         // Wait for permission request
         const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
-        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
-        const permission = permissionState.pendingPermissions[0];
+        expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.final!.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
 
@@ -144,7 +151,7 @@ describe("daemon E2E", () => {
         expect(existsSync(filePath)).toBe(false);
 
         // Verify permission_resolved event was received with deny
-        const queue = ctx.client.getMessageQueue();
+        const queue = messages;
         const hasPermissionDenied = queue.some((m) => {
           if (m.type === "agent_stream" && m.payload.agentId === agent.id) {
             return (
@@ -159,11 +166,10 @@ describe("daemon E2E", () => {
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      180000
+      30_000
     );
 
-    // TODO: Fix this test - there's a race condition causing agent not found errors
-    test.skip(
+    test(
       "Codex agent can complete a new turn after interrupt",
       async () => {
         const cwd = tmpCwd();
@@ -179,16 +185,10 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
         expect(agent.currentModeId).toBe("full-access");
 
-        // Send first message to start the agent
-        ctx.client.clearMessageQueue();
-        await ctx.client.sendMessage(agent.id, "List the files in the current directory.");
-
-        // Wait for agent to start running
-        await ctx.client.waitForAgentUpsert(
-          agent.id,
-          (snapshot) => snapshot.status === "running",
-          10000
-        );
+        // Send first message to start a long-running operation so we can interrupt it.
+        messages.length = 0;
+        await ctx.client.sendMessage(agent.id, "Run: sleep 30");
+        await ctx.client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 5_000);
 
         // Cancel while running
         await ctx.client.cancelAgent(agent.id);
@@ -204,7 +204,7 @@ describe("daemon E2E", () => {
         );
 
         // Now send another message - this should work
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
         await ctx.client.sendMessage(
           agent.id,
           "Say 'hello from interrupt test' and nothing else."
@@ -214,19 +214,19 @@ describe("daemon E2E", () => {
         await ctx.client.waitForFinish(agent.id, 60000);
 
         // Verify we got an assistant message in the queue
-        const queue = ctx.client.getMessageQueue();
+        const queue = messages;
         const hasAssistantMessage = queue.some(
           (m) =>
             m.type === "agent_stream" &&
-            m.agentId === agent.id &&
-            m.event?.type === "timeline" &&
-            m.event?.item?.type === "assistant_message"
+            m.payload.agentId === agent.id &&
+            m.payload.event.type === "timeline" &&
+            m.payload.event.item.type === "assistant_message"
         );
         expect(hasAssistantMessage).toBe(true);
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      120000
+      30_000
     );
 
     test(
@@ -245,22 +245,18 @@ describe("daemon E2E", () => {
 
         expect(agent.id).toBeTruthy();
 
-        // Ask Codex to sleep 15 seconds then write a file
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
         await ctx.client.sendMessage(
           agent.id,
           "Run this bash command: sleep 15 && echo 'abort-test-completed' > abort-test-file.txt"
         );
 
-        // Wait 3 seconds for the command to start
-        await new Promise((r) => setTimeout(r, 3000));
+        await ctx.client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running", 5_000);
 
         // Cancel/interrupt the agent
         await ctx.client.cancelAgent(agent.id);
 
-        // Wait 10 seconds - if abort works, file should NOT be written
-        // (sleep would have completed at 15s if not interrupted)
-        await new Promise((r) => setTimeout(r, 10000));
+        await ctx.client.waitForFinish(agent.id, 5_000);
 
         // Assert the file was NOT created (proving Codex actually stopped)
         const fileExists = existsSync(filePath);
@@ -268,11 +264,10 @@ describe("daemon E2E", () => {
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      30000 // 30 second timeout
+      30_000
     );
 
-    // TODO: Fix this test - there's a race condition causing timeout errors
-    test.skip(
+    test(
       "switching from auto to full-access mode allows writes without permission",
       async () => {
         const cwd = tmpCwd();
@@ -292,16 +287,16 @@ describe("daemon E2E", () => {
         // Step 2: Ask agent to write a file - this should trigger permission request
         // Note: We DON'T tell the agent to "stop" if denied - this keeps the conversation
         // alive and tests the real scenario where mode switch must work mid-conversation.
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
         const writePrompt =
-          "Write a file called mode-switch-test.txt with the content 'first'";
+          "Request approval to run the command `printf \"ok\" > mode-switch-test.txt`. After approval, run it and stop.";
 
         await ctx.client.sendMessage(agent.id, writePrompt);
 
         // Step 3: Wait for permission request
         const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
-        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
-        const permission = permissionState.pendingPermissions[0];
+        expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.final!.pendingPermissions[0];
         expect(permission).not.toBeNull();
         expect(permission.id).toBeTruthy();
 
@@ -318,8 +313,8 @@ describe("daemon E2E", () => {
         expect(existsSync(filePath)).toBe(false);
 
         // Step 5: Switch to "full-access" mode
-        ctx.client.clearMessageQueue();
-        const modeStartPosition = ctx.client.getMessageQueue().length;
+        messages.length = 0;
+        const modeStartPosition = messages.length;
 
         await ctx.client.setAgentMode(agent.id, "full-access");
 
@@ -330,7 +325,7 @@ describe("daemon E2E", () => {
           }, 15000);
 
           const checkForModeChange = (): void => {
-            const queue = ctx.client.getMessageQueue();
+            const queue = messages;
             for (let i = modeStartPosition; i < queue.length; i++) {
               const msg = queue[i];
               if (
@@ -352,9 +347,9 @@ describe("daemon E2E", () => {
 
         // Step 6: Ask agent to write file again - should succeed WITHOUT permission request
         // In full-access mode, the agent should just execute without asking.
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
         const writePrompt2 =
-          "Write a file called mode-switch-test.txt with the content 'success'";
+          "Run the command `printf \"ok\" > mode-switch-test.txt` and reply DONE.";
 
         await ctx.client.sendMessage(agent.id, writePrompt2);
 
@@ -364,20 +359,20 @@ describe("daemon E2E", () => {
         // Step 7: Verify file was created (mode switch worked)
         expect(existsSync(filePath)).toBe(true);
         const content = readFileSync(filePath, "utf-8");
-        expect(content).toBe("success");
+        expect(content).toBe("ok");
 
         // Verify no permission was requested in this second attempt
-        const queue = ctx.client.getMessageQueue();
+        const queue = messages;
         const hasPermissionRequest = queue.some(
           (m) =>
             m.type === "agent_permission_request" &&
-            m.agentId === agent.id
+            m.payload.agentId === agent.id
         );
         expect(hasPermissionRequest).toBe(false);
 
         rmSync(cwd, { recursive: true, force: true });
       },
-      240000
+      30_000
     );
   });
 

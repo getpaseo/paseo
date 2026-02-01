@@ -1079,7 +1079,23 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
 
-    const newSessionId = message.session_id;
+    const msg = message as unknown as {
+      session_id?: unknown;
+      sessionId?: unknown;
+      session?: { id?: unknown } | null;
+    };
+    const newSessionIdRaw =
+      typeof msg.session_id === "string"
+        ? msg.session_id
+        : typeof msg.sessionId === "string"
+          ? msg.sessionId
+          : typeof msg.session?.id === "string"
+            ? msg.session.id
+            : "";
+    const newSessionId = newSessionIdRaw.trim();
+    if (!newSessionId) {
+      return;
+    }
     const existingSessionId = this.claudeSessionId;
 
     if (existingSessionId === null) {

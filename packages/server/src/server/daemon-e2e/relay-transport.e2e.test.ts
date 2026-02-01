@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import WebSocket from "ws";
 import pino from "pino";
 import { Writable } from "node:stream";
+import net from "node:net";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createRelayServer } from "@paseo/relay/node";
 
 function createCapturingLogger() {
   const lines: string[] = [];
@@ -45,6 +47,21 @@ function decodeOfferFromFragmentUrl(url: string): { sessionId: string } {
   return { sessionId: offer.sessionId };
 }
 
+async function getAvailablePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to acquire port")));
+        return;
+      }
+      server.close(() => resolve(address.port));
+    });
+  });
+}
+
 describe("Relay transport (plaintext) - daemon E2E", () => {
   test(
     "daemon connects to relay and client ping/pong works through relay",
@@ -52,11 +69,15 @@ describe("Relay transport (plaintext) - daemon E2E", () => {
       process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
       const { logger, lines } = createCapturingLogger();
+      const relayPort = await getAvailablePort();
+      const relay = createRelayServer({ host: "127.0.0.1", port: relayPort });
+      await relay.start();
+
       const daemon = await createTestPaseoDaemon({
         listen: "127.0.0.1",
         logger,
         relayEnabled: true,
-        relayEndpoint: "relay.paseo.sh:443",
+        relayEndpoint: `127.0.0.1:${relayPort}`,
       });
 
       try {
@@ -64,7 +85,7 @@ describe("Relay transport (plaintext) - daemon E2E", () => {
         const { sessionId } = decodeOfferFromFragmentUrl(offerUrl);
 
         const ws = new WebSocket(
-          `wss://relay.paseo.sh/ws?session=${encodeURIComponent(
+          `ws://127.0.0.1:${relayPort}/ws?session=${encodeURIComponent(
             sessionId
           )}&role=client`
         );
@@ -99,9 +120,9 @@ describe("Relay transport (plaintext) - daemon E2E", () => {
         expect(received).toEqual({ type: "pong" });
       } finally {
         await daemon.close();
+        await relay.stop();
       }
     },
-    60000
+    30000
   );
 });
-

@@ -57,13 +57,7 @@ export async function runLsCommand(options: PermitLsOptions, _command: Command):
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
+    const agents = await client.fetchAgents()
     await client.close()
 
     // Collect all pending permissions from all agents

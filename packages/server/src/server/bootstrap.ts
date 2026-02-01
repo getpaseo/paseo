@@ -85,6 +85,7 @@ export type PaseoDaemonConfig = {
   relayEndpoint?: string;
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
+  dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
 };
 
@@ -219,7 +220,11 @@ export async function createPaseoDaemon(
 
   const terminalManager = createTerminalManager();
 
-  attachAgentStoragePersistence(logger, agentManager, agentStorage);
+  const detachAgentStoragePersistence = attachAgentStoragePersistence(
+    logger,
+    agentManager,
+    agentStorage
+  );
   const persistedRecords = await agentStorage.list();
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
@@ -511,7 +516,11 @@ export async function createPaseoDaemon(
     createInMemoryAgentMcpTransport,
     { allowedOrigins },
     { stt: sttService, tts: ttsService },
-    terminalManager
+    terminalManager,
+    {
+      openaiApiKey: config.openai?.apiKey ?? null,
+      finalTimeoutMs: config.dictationFinalTimeoutMs,
+    }
   );
 
   const start = async () => {
@@ -607,6 +616,9 @@ export async function createPaseoDaemon(
 
   const stop = async () => {
     await closeAllAgents(logger, agentManager);
+    await agentManager.flush().catch(() => undefined);
+    detachAgentStoragePersistence();
+    await agentStorage.flush().catch(() => undefined);
     await shutdownProviders(logger);
     terminalManager.killAll();
     await relayTransport?.stop().catch(() => undefined);

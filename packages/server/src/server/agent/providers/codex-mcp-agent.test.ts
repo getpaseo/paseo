@@ -1220,10 +1220,10 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       try {
         session = await client.createSession(config);
 
-      const prompt = [
-        "Request approval to run the command `printf \"ok\" > permission.txt`.",
-        "After approval, run it and reply DONE.",
-      ].join(" ");
+        const prompt = [
+          "Use the `shell` tool to run exactly: printf \"ok\" > permission.txt",
+          "After approval, run it and reply DONE.",
+        ].join(" ");
 
         for await (const event of session.stream(prompt)) {
           if (event.type === "permission_requested" && !captured) {
@@ -1414,6 +1414,7 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       let durationMs = 0;
       let sawSleepCommand = false;
       let interruptIssued = false;
+      let sawTurnCanceled = false;
 
       try {
         session = await client.createSession(config);
@@ -1444,6 +1445,11 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
             }
           }
 
+          if (event.type === "turn_canceled") {
+            sawTurnCanceled = true;
+            break;
+          }
+
           if (event.type === "turn_completed" || event.type === "turn_failed") {
             break;
           }
@@ -1470,9 +1476,9 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
     90_000
   );
 
-  test(
-    "interrupts long-running commands and leaves a clean session",
-    async () => {
+	  test(
+	    "interrupts long-running commands and leaves a clean session",
+	    async () => {
       const cwd = tmpCwd();
       const restoreSessionDir = useTempCodexSessionDir();
       const { CodexMcpAgentClient } = await loadCodexMcpAgentClient();
@@ -1492,38 +1498,39 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
       let interruptAt: number | null = null;
       let stoppedAt: number | null = null;
 
-      try {
-        session = await client.createSession(config);
-        const prompt = [
-          `Run the exact shell command \`python3 -c "import time; time.sleep(300)"\` using your shell tool.`,
-          "Do not run any additional commands or send a response until that command finishes.",
-        ].join(" ");
+	      try {
+	        session = await client.createSession(config);
+	        const prompt = [
+	          "Run the exact shell command `sleep 60` using your shell tool.",
+	          "Do not run any additional commands or send a response until that command finishes.",
+	        ].join(" ");
 
-        const stream = session.stream(prompt);
+	        const stream = session.stream(prompt);
 
-        for await (const event of stream) {
-          if (event.type === "permission_requested" && session) {
-            await session.respondToPermission(event.request.id, { behavior: "allow" });
-          }
+	        for await (const event of stream) {
+	          if (event.type === "permission_requested" && session) {
+	            await session.respondToPermission(event.request.id, { behavior: "allow" });
+	          }
 
-          if (
-            event.type === "timeline" &&
-            providerFromEvent(event) === "codex" &&
-            event.item.type === "tool_call" &&
-            event.item.name === "shell"
-          ) {
-            sawCommand = true;
-            if (!interruptAt) {
-              interruptAt = Date.now();
-              await session.interrupt();
-            }
-          }
+	          if (
+	            event.type === "timeline" &&
+	            providerFromEvent(event) === "codex" &&
+	            event.item.type === "tool_call" &&
+	            event.item.name === "shell" &&
+	            isSleepCommandToolCall(event.item)
+	          ) {
+	            sawCommand = true;
+	            if (!interruptAt) {
+	              interruptAt = Date.now();
+	              await session.interrupt();
+	            }
+	          }
 
-          if (event.type === "turn_completed" || event.type === "turn_failed") {
-            stoppedAt = Date.now();
-            break;
-          }
-        }
+	          if (event.type === "turn_canceled" || event.type === "turn_completed" || event.type === "turn_failed") {
+	            stoppedAt = Date.now();
+	            break;
+	          }
+	        }
 
         if (!interruptAt) {
           throw new Error("Did not issue interrupt for long-running command");

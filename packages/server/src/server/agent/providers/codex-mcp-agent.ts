@@ -45,6 +45,7 @@ import { curateAgentActivity } from "../activity-curator.js";
 type CodexMcpAgentConfig = AgentSessionConfig & { provider: "codex" };
 
 type TurnState = {
+  startedAtMs: number;
   sawAssistant: boolean;
   sawReasoning: boolean;
   sawError: boolean;
@@ -529,6 +530,7 @@ const ResponseBaseSchema = z
     conversationId: z.string().optional(),
     conversation_id: z.string().optional(),
     thread_id: z.string().optional(),
+    threadId: z.string().optional(),
     model: z.string().optional(),
     meta: z.unknown().optional(),
     content: z.array(z.unknown()).optional(),
@@ -542,6 +544,7 @@ const SessionIdentifiersSchema = z
     conversationId: z.string().optional(),
     conversation_id: z.string().optional(),
     thread_id: z.string().optional(),
+    threadId: z.string().optional(),
     model: z.string().optional(),
   })
   .passthrough()
@@ -563,13 +566,15 @@ const SessionIdentifiersSchema = z
     const hasConversationCandidate =
       data.conversationId !== undefined ||
       data.conversation_id !== undefined ||
-      data.thread_id !== undefined;
+      data.thread_id !== undefined ||
+      data.threadId !== undefined;
     const conversationId = resolveExclusiveString(
       ctx,
       [
         { key: "conversationId", value: data.conversationId },
         { key: "conversation_id", value: data.conversation_id },
         { key: "thread_id", value: data.thread_id },
+        { key: "threadId", value: data.threadId },
       ],
       "conversation id",
       hasConversationCandidate
@@ -585,6 +590,45 @@ const SessionIdentifiersSchema = z
   });
 
 type SessionIdentifiers = z.infer<typeof SessionIdentifiersSchema>;
+
+function inferSessionIdentifiersFromUnknown(response: unknown): SessionIdentifiers {
+  const found: SessionIdentifiers = {
+    sessionId: undefined,
+    conversationId: undefined,
+    model: undefined,
+  };
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 5) return;
+    if (!value) return;
+    if (typeof value === "string") return;
+    if (typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, depth + 1);
+      return;
+    }
+    const obj = value as Record<string, unknown>;
+    const read = (key: string): string | null => {
+      const v = obj[key];
+      return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+    };
+
+    found.sessionId ??= read("sessionId") ?? read("session_id") ?? undefined;
+    found.conversationId ??=
+      read("conversationId") ??
+      read("conversation_id") ??
+      read("thread_id") ??
+      read("threadId") ??
+      undefined;
+    found.model ??= read("model") ?? undefined;
+
+    for (const v of Object.values(obj)) {
+      visit(v, depth + 1);
+    }
+  };
+
+  visit(response, 0);
+  return found;
+}
 
 const RawMcpEventSchema = z
   .object({
@@ -904,14 +948,26 @@ const TurnAbortedEventSchema = z.object({
 
 const ThreadStartedEventSchema = z
   .object({
-    type: z.literal("thread.started"),
-    thread_id: z.string().min(1),
+    type: z.union([z.literal("thread.started"), z.literal("thread_started")]),
+    thread_id: z.string().optional(),
+    threadId: z.string().optional(),
   })
   .passthrough()
-  .transform((data) => ({
-    type: data.type,
-    threadId: data.thread_id,
-  }));
+  .transform((data, ctx) => {
+    const threadId = resolveExclusiveString(
+      ctx,
+      [
+        { key: "thread_id", value: data.thread_id },
+        { key: "threadId", value: data.threadId },
+      ],
+      "thread id",
+      true
+    );
+    if (!threadId) {
+      return z.NEVER;
+    }
+    return { type: "thread.started" as const, threadId };
+  });
 
 const TurnStartedEventSchema = z.object({
   type: z.literal("turn.started"),
@@ -2758,7 +2814,8 @@ function buildCodexMcpConfig(
   config: AgentSessionConfig,
   prompt: string,
   modeId: string,
-  experimentalResume?: string | null
+  experimentalResume?: string | null,
+  rolloutPath?: string | null
 ): {
   prompt: string;
   cwd?: string;
@@ -2766,6 +2823,7 @@ function buildCodexMcpConfig(
   sandbox: string;
   config?: CodexConfigPayload;
   model?: string;
+  "developer-instructions"?: string;
 } {
   const preset =
     MODE_PRESETS[modeId] !== undefined
@@ -2791,8 +2849,9 @@ function buildCodexMcpConfig(
   // Note: experimental_resume was deprecated/removed from Codex MCP server.
   // Instead, we parse the rollout file and inject history as developer instructions.
   let developerInstructions: string | undefined;
-  if (experimentalResume) {
-    const history = parseRolloutHistory(experimentalResume);
+  const historyPath = rolloutPath ?? experimentalResume;
+  if (historyPath) {
+    const history = parseRolloutHistory(historyPath);
     if (history) {
       developerInstructions = history;
     }
@@ -2883,8 +2942,10 @@ function isMissingConversationIdResponse(response: unknown): boolean {
 function findCodexResumeFile(sessionId: string | null): string | null {
   if (!sessionId) return null;
   try {
-    const codexHomeDir = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-    const rootDir = path.join(codexHomeDir, "sessions");
+    const rootDir = resolveCodexSessionRoot();
+    if (!rootDir) {
+      return null;
+    }
 
     // Recursively collect all files under the sessions directory
     function collectFilesRecursive(dir: string, acc: string[] = []): string[] {
@@ -2920,6 +2981,63 @@ function findCodexResumeFile(sessionId: string | null): string | null {
         return sb - sa; // newest first
       });
     return candidates[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function findMostRecentCodexSessionIdSince(sinceMs: number): string | null {
+  try {
+    const rootDir = resolveCodexSessionRoot();
+    if (!rootDir) {
+      return null;
+    }
+
+    let best: { sessionId: string; mtimeMs: number } | null = null;
+
+    const stack: Array<{ dir: string; depth: number }> = [{ dir: rootDir, depth: 0 }];
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+      if (next.depth > 6) continue;
+
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(next.dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const full = path.join(next.dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push({ dir: full, depth: next.depth + 1 });
+          continue;
+        }
+        if (!entry.isFile() || !full.endsWith(".jsonl")) {
+          continue;
+        }
+
+        const match = full.match(
+          /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
+        );
+        if (!match) continue;
+
+        let mtimeMs = 0;
+        try {
+          mtimeMs = statSync(full).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (mtimeMs < sinceMs - 2000) continue;
+
+        const sessionId = match[1]!;
+        if (!best || mtimeMs > best.mtimeMs) {
+          best = { sessionId, mtimeMs };
+        }
+      }
+    }
+
+    return best ? best.sessionId : null;
   } catch {
     return null;
   }
@@ -3047,6 +3165,7 @@ class CodexMcpAgentSession implements AgentSession {
   private previousCuratedHistory: string | null = null;
   private pendingHistory: AgentTimelineItem[] = [];
   private turnState: TurnState | null = null;
+  private lastTurnStartedAtMs: number | null = null;
   private pendingPatchChanges = new Map<string, PatchFileChange[]>();
   private patchChangesByCallId = new Map<string, PatchFileChange[]>();
   private resumeHandle: AgentPersistenceHandle | null = null;
@@ -3224,7 +3343,10 @@ class CodexMcpAgentSession implements AgentSession {
     await this.connect();
     const queue = new Pushable<AgentStreamEvent>();
     this.eventQueue = queue;
+    const startedAtMs = Date.now();
+    this.lastTurnStartedAtMs = startedAtMs;
     this.turnState = {
+      startedAtMs,
       sawAssistant: false,
       sawReasoning: false,
       sawError: false,
@@ -3469,6 +3591,13 @@ class CodexMcpAgentSession implements AgentSession {
       this.updatePersistenceConversationId();
       this.updatePersistenceCuratedHistory();
       return this.persistence;
+    }
+    if (!this.sessionId && !this.conversationId && this.lastTurnStartedAtMs) {
+      const inferred = findMostRecentCodexSessionIdSince(this.lastTurnStartedAtMs);
+      if (inferred) {
+        this.sessionId = inferred;
+        this.conversationId = inferred;
+      }
     }
     const persistenceId = this.sessionId ?? this.conversationId;
     if (!persistenceId) {
@@ -3814,6 +3943,27 @@ class CodexMcpAgentSession implements AgentSession {
         const itemParsed = SessionIdentifiersSchema.safeParse(item);
         if (itemParsed.success) {
           this.applySessionIdentifiers(itemParsed.data);
+        }
+      }
+    }
+
+    if (!this.sessionId && !this.conversationId) {
+      const inferred = inferSessionIdentifiersFromUnknown(response);
+      if (inferred.sessionId || inferred.conversationId || inferred.model) {
+        this.applySessionIdentifiers(inferred);
+      }
+    }
+
+    if (!this.sessionId && !this.conversationId) {
+      const startedAtMs = this.lastTurnStartedAtMs;
+      if (startedAtMs) {
+        const inferred = findMostRecentCodexSessionIdSince(startedAtMs);
+        if (inferred) {
+          this.applySessionIdentifiers({
+            sessionId: inferred,
+            conversationId: inferred,
+            model: undefined,
+          });
         }
       }
     }

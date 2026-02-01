@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type {
   DaemonClientV2,
   AgentStreamMessage,
@@ -118,28 +118,14 @@ export async function runAttachCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait for agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-    const resolvedId = resolveAgentId(id, agents)
-
-    if (!resolvedId) {
+    const agent = await client.fetchAgent(id)
+    if (!agent) {
       console.error(`Error: No agent found matching: ${id}`)
       console.error('Use `paseo ls` to list available agents')
       await client.close()
       process.exit(1)
     }
-
-    const agent = agents.find((a) => a.id === resolvedId)
-    if (!agent) {
-      console.error(`Error: Agent not found: ${resolvedId}`)
-      await client.close()
-      process.exit(1)
-    }
+    const resolvedId = agent.id
 
     // Print header
     console.log(`Attaching to agent ${resolvedId.substring(0, 7)}...`)

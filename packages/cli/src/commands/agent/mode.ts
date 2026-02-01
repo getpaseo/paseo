@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type {
   CommandOptions,
   OutputSchema,
@@ -72,17 +72,8 @@ export async function runModeCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID
-    const resolvedId = resolveAgentId(id, agents)
-    if (!resolvedId) {
+    const agent = await client.fetchAgent(id)
+    if (!agent) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
         message: `No agent found matching: ${id}`,
@@ -90,15 +81,7 @@ export async function runModeCommand(
       }
       throw error
     }
-
-    const agent = agents.find((a) => a.id === resolvedId)
-    if (!agent) {
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found after resolution: ${resolvedId}`,
-      }
-      throw error
-    }
+    const resolvedId = agent.id
 
     if (options.list) {
       // List available modes for this agent

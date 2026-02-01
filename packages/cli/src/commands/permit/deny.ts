@@ -1,6 +1,6 @@
 import type { Command } from 'commander'
 import type { AgentPermissionRequest } from '@paseo/server'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, CommandError } from '../../output/index.js'
 import { permitResponseSchema, type PermissionResponseItem } from './allow.js'
 
@@ -45,15 +45,8 @@ export async function runDenyCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID
-    const resolvedAgentId = resolveAgentId(agentIdOrPrefix, agents)
-    if (!resolvedAgentId) {
+    const agent = await client.fetchAgent(agentIdOrPrefix)
+    if (!agent) {
       await client.close()
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
@@ -62,17 +55,7 @@ export async function runDenyCommand(
       }
       throw error
     }
-
-    // Find the agent
-    const agent = agents.find((a) => a.id === resolvedAgentId)
-    if (!agent) {
-      await client.close()
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found: ${resolvedAgentId}`,
-      }
-      throw error
-    }
+    const resolvedAgentId = agent.id
 
     // Get pending permissions for this agent
     const pendingPermissions = agent.pendingPermissions || []

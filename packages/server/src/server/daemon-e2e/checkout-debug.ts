@@ -44,23 +44,6 @@ async function testMultiAgentSequence() {
 
   const agents: Array<{ id: string; title: string }> = [];
 
-  // Subscribe to all events for debugging
-  const unsub = client.subscribe((event) => {
-    console.log(`[Event] type=${event.type}`);
-    if (event.type === "agent_list") {
-      console.log(`  ${event.agents.length} agents`);
-      agents.length = 0;
-      for (const a of event.agents) {
-        agents.push({ id: a.id, title: a.title ?? "(untitled)" });
-      }
-    }
-  });
-
-  // Also log ALL raw messages
-  client.on("agent_list", (msg: any) => {
-    console.log(`[RAW agent_list] agents=${msg.agents?.length}`);
-  });
-
   // Also log raw messages for debugging
   client.on("checkout_status_response", (msg: any) => {
     console.log(`[RAW checkout_status_response] requestId=${msg.payload.requestId} agentId=${msg.payload.agentId}`);
@@ -76,13 +59,12 @@ async function testMultiAgentSequence() {
     console.log("Connected to daemon");
     console.log(`Connection state: ${JSON.stringify(client.getConnectionState())}`);
 
-    // Request agent list (the app does this after connecting)
-    console.log("Requesting agent list...");
-    client.requestAgentList();
-
-    // Wait a bit for agent list to arrive
-    console.log("Waiting 3s for agent list...");
-    await new Promise((r) => setTimeout(r, 3000));
+    console.log("Fetching agents...");
+    const agentsList = await client.fetchAgents();
+    agents.length = 0;
+    for (const a of agentsList) {
+      agents.push({ id: a.id, title: a.title ?? "(untitled)" });
+    }
 
     if (agents.length === 0) {
       console.log("No agents found!");
@@ -150,7 +132,6 @@ async function testMultiAgentSequence() {
   } catch (error) {
     console.error("Test failed:", error);
   } finally {
-    unsub();
     await client.close();
   }
 }

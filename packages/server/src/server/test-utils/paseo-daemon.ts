@@ -4,7 +4,9 @@ import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 
 import pino from "pino";
-import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import { createPaseoDaemon, type PaseoDaemonConfig, type PaseoOpenAIConfig } from "../bootstrap.js";
+import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
+import { createTestAgentClients } from "./fake-agent-client.js";
 
 type TestPaseoDaemonOptions = {
   downloadTokenTtlMs?: number;
@@ -13,6 +15,12 @@ type TestPaseoDaemonOptions = {
   logger?: Parameters<typeof createPaseoDaemon>[1];
   relayEnabled?: boolean;
   relayEndpoint?: string;
+  agentClients?: Partial<Record<AgentProvider, AgentClient>>;
+  paseoHomeRoot?: string;
+  staticDir?: string;
+  cleanup?: boolean;
+  openai?: PaseoOpenAIConfig;
+  dictationFinalTimeoutMs?: number;
 };
 
 export type TestPaseoDaemon = {
@@ -42,15 +50,15 @@ async function getAvailablePort(): Promise<number> {
 export async function createTestPaseoDaemon(
   options: TestPaseoDaemonOptions = {}
 ): Promise<TestPaseoDaemon> {
-  const openaiApiKey = process.env.OPENAI_API_KEY;
   const maxAttempts = 5;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const paseoHomeRoot =
+      options.paseoHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-home-")));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     await mkdir(paseoHome, { recursive: true });
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
     const port = await getAvailablePort();
 
     const listenHost = options.listen ?? '127.0.0.1';
@@ -63,12 +71,13 @@ export async function createTestPaseoDaemon(
       agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `${listenHost}:${port}`],
       staticDir,
       mcpDebug: false,
-      agentClients: {},
+      agentClients: options.agentClients ?? createTestAgentClients(),
       agentStoragePath: path.join(paseoHome, "agents"),
       relayEnabled: options.relayEnabled ?? false,
       relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
-      openai: openaiApiKey ? { apiKey: openaiApiKey } : undefined,
+      openai: options.openai,
+      dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
     };
 
@@ -79,9 +88,12 @@ export async function createTestPaseoDaemon(
 
       const close = async (): Promise<void> => {
         await daemon.stop().catch(() => undefined);
-        await new Promise((r) => setTimeout(r, 200));
-        await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-        await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        await daemon.agentManager.flush().catch(() => undefined);
+        if (options.cleanup ?? true) {
+          await new Promise((r) => setTimeout(r, 50));
+          await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        }
       };
 
       return {

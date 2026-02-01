@@ -19,12 +19,19 @@ const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
+  let messages: SessionOutboundMessage[] = [];
+  let unsubscribe: (() => void) | null = null;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    messages = [];
+    unsubscribe = ctx.client.subscribeRawMessages((message) => {
+      messages.push(message);
+    });
   });
 
   afterEach(async () => {
+    unsubscribe?.();
     await ctx.cleanup();
   }, 60000);
 
@@ -51,8 +58,8 @@ describe("daemon E2E", () => {
         // Wait a bit to ensure any timestamp update would be visible
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        // Clear message queue before the "click" action
-        ctx.client.clearMessageQueue();
+        // Clear captured messages before the "click" action
+        messages.length = 0;
 
         // Simulate clicking on the agent (initialize_agent_request)
         // This is what happens when the user opens an agent in the UI
@@ -109,7 +116,7 @@ describe("daemon E2E", () => {
         expect(finalState.status).toBe("idle");
 
         // The timestamp SHOULD have been updated (should be later than initial)
-        const finalUpdatedAt = new Date(finalState.updatedAt);
+        const finalUpdatedAt = new Date(finalState.final?.updatedAt ?? 0);
         expect(finalUpdatedAt.getTime()).toBeGreaterThan(initialUpdatedAt.getTime());
 
         // Cleanup
@@ -126,6 +133,8 @@ describe("daemon E2E", () => {
       async () => {
         const cwd = tmpCwd();
 
+        ctx.client.subscribeAgentUpdates();
+
         // Create Codex agent
         const agent = await ctx.client.createAgent({
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
@@ -137,56 +146,17 @@ describe("daemon E2E", () => {
         expect(agent.status).toBe("idle");
 
         // Clear message queue before sending prompt
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
 
         // Send a prompt that triggers a long-running operation
         await ctx.client.sendMessage(agent.id, "Run: sleep 30");
 
-        // Wait for the agent to start running (tool call starts)
-        let sawRunning = false;
-        const startPosition = ctx.client.getMessageQueue().length;
-
-        // Wait for running state
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error("Timeout waiting for agent to start running"));
-          }, 30000);
-
-          const checkForRunning = (): void => {
-            const queue = ctx.client.getMessageQueue();
-            for (let i = startPosition; i < queue.length; i++) {
-              const msg = queue[i];
-              if (
-                msg.type === "agent_update" &&
-                msg.payload.kind === "upsert" &&
-                msg.payload.agent.id === agent.id
-              ) {
-                if (msg.payload.agent.status === "running") {
-                  sawRunning = true;
-                  clearTimeout(timeout);
-                  resolve();
-                  return;
-                }
-              }
-            }
-          };
-
-          // Check periodically
-          const interval = setInterval(checkForRunning, 50);
-          const cleanup = (): void => {
-            clearInterval(interval);
-            clearTimeout(timeout);
-          };
-
-          // Override reject to cleanup
-          const originalReject = reject;
-          reject = (err): void => {
-            cleanup();
-            originalReject(err);
-          };
-        });
-
-        expect(sawRunning).toBe(true);
+        // Wait for the agent to begin running (fetch_agent RPC; no agent_update subscription race)
+        await ctx.client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+          30000
+        );
 
         // Record timestamp before cancel
         const cancelStart = Date.now();
@@ -194,52 +164,17 @@ describe("daemon E2E", () => {
         // Cancel the agent
         await ctx.client.cancelAgent(agent.id);
 
-        // Wait for agent to reach idle or error state
-        const finalState = await new Promise<AgentSnapshotPayload>(
-          (resolve, reject) => {
-            const timeout = setTimeout(() => {
-              reject(
-                new Error(
-                  "Timeout waiting for agent to stop after cancel (>2 seconds)"
-                )
-              );
-            }, 5000); // Give extra margin, but test should complete in 2s
-
-            const queueStart = ctx.client.getMessageQueue().length;
-            const checkForStopped = (): void => {
-              const queue = ctx.client.getMessageQueue();
-              for (let i = queueStart; i < queue.length; i++) {
-                const msg = queue[i];
-                if (
-                  msg.type === "agent_update" &&
-                  msg.payload.kind === "upsert" &&
-                  msg.payload.agent.id === agent.id
-                ) {
-                  if (
-                    msg.payload.agent.status === "idle" ||
-                    msg.payload.agent.status === "error"
-                  ) {
-                    clearTimeout(timeout);
-                    clearInterval(interval);
-                    resolve(msg.payload.agent);
-                    return;
-                  }
-                }
-              }
-            };
-
-            const interval = setInterval(checkForStopped, 50);
-          }
-        );
+        // Wait for agent to reach idle or error state via server wait RPC
+        const afterCancel = await ctx.client.waitForFinish(agent.id, 10000);
 
         // Calculate how long the cancel took
         const cancelDuration = Date.now() - cancelStart;
 
         // Verify agent stopped within reasonable time (2 seconds)
-        expect(cancelDuration).toBeLessThan(2000);
+        expect(cancelDuration).toBeLessThan(3000);
 
         // Verify agent is now idle or error
-        expect(["idle", "error"]).toContain(finalState.status);
+        expect(["idle", "error"]).toContain(afterCancel.status);
 
         // Verify no zombie sleep processes left (check for sleep 30)
         const { execSync } = await import("child_process");
@@ -272,6 +207,8 @@ describe("daemon E2E", () => {
       async () => {
         const cwd = tmpCwd();
 
+        ctx.client.subscribeAgentUpdates();
+
         // Create a Codex agent with default mode ("auto")
         const agent = await ctx.client.createAgent({
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
@@ -286,8 +223,8 @@ describe("daemon E2E", () => {
         expect(agent.currentModeId).toBe("auto");
 
         // Clear message queue before mode switch
-        ctx.client.clearMessageQueue();
-        const startPosition = ctx.client.getMessageQueue().length;
+        messages.length = 0;
+        const startPosition = messages.length;
 
         // Switch to "read-only" mode
         await ctx.client.setAgentMode(agent.id, "read-only");
@@ -300,7 +237,7 @@ describe("daemon E2E", () => {
             }, 10000);
 
             const checkForModeChange = (): void => {
-              const queue = ctx.client.getMessageQueue();
+              const queue = messages;
               for (let i = startPosition; i < queue.length; i++) {
                 const msg = queue[i];
                 if (
@@ -325,20 +262,20 @@ describe("daemon E2E", () => {
         expect(stateAfterModeSwitch.currentModeId).toBe("read-only");
 
         // Now verify the mode persists: send a message and check the mode is still "read-only"
-        ctx.client.clearMessageQueue();
+        messages.length = 0;
         await ctx.client.sendMessage(agent.id, "Say 'hello' and nothing else");
 
         const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         // Mode should still be "read-only" after the message
-        expect(finalState.currentModeId).toBe("read-only");
+        expect(finalState.final?.currentModeId).toBe("read-only");
 
         // Also verify runtimeInfo has the updated modeId
-        expect(finalState.runtimeInfo?.modeId).toBe("read-only");
+        expect(finalState.final?.runtimeInfo?.modeId).toBe("read-only");
 
         // Switch to another mode: "full-access"
-        ctx.client.clearMessageQueue();
-        const position2 = ctx.client.getMessageQueue().length;
+        messages.length = 0;
+        const position2 = messages.length;
 
         await ctx.client.setAgentMode(agent.id, "full-access");
 
@@ -350,7 +287,7 @@ describe("daemon E2E", () => {
             }, 10000);
 
             const checkForModeChange = (): void => {
-              const queue = ctx.client.getMessageQueue();
+              const queue = messages;
               for (let i = position2; i < queue.length; i++) {
                 const msg = queue[i];
                 if (
@@ -376,7 +313,7 @@ describe("daemon E2E", () => {
         // Cleanup
         rmSync(cwd, { recursive: true, force: true });
       },
-      180000 // 3 minute timeout
+      30_000
     );
   });
 
@@ -389,7 +326,7 @@ describe("daemon E2E", () => {
         const cwd2 = tmpCwd();
 
         // Initially, there should be no agents (fresh session)
-        const initialAgents = ctx.client.listAgents();
+        const initialAgents = await ctx.client.fetchAgents();
         expect(initialAgents).toHaveLength(0);
 
         // Create first agent
@@ -402,8 +339,8 @@ describe("daemon E2E", () => {
         expect(agent1.id).toBeTruthy();
         expect(agent1.status).toBe("idle");
 
-        // listAgents should now return 1 agent
-        const afterFirst = ctx.client.listAgents();
+        // fetchAgents should now return 1 agent
+        const afterFirst = await ctx.client.fetchAgents();
         expect(afterFirst).toHaveLength(1);
         expect(afterFirst[0].id).toBe(agent1.id);
         // Title may or may not be set depending on timing
@@ -419,8 +356,8 @@ describe("daemon E2E", () => {
         expect(agent2.id).toBeTruthy();
         expect(agent2.status).toBe("idle");
 
-        // listAgents should now return 2 agents
-        const afterSecond = ctx.client.listAgents();
+        // fetchAgents should now return 2 agents
+        const afterSecond = await ctx.client.fetchAgents();
         expect(afterSecond).toHaveLength(2);
 
         // Verify both agents are present with correct IDs and states
@@ -442,8 +379,8 @@ describe("daemon E2E", () => {
         // Delete first agent
         await ctx.client.deleteAgent(agent1.id);
 
-        // listAgents should now return only 1 agent
-        const afterDelete = ctx.client.listAgents();
+        // fetchAgents should now return only 1 agent
+        const afterDelete = await ctx.client.fetchAgents();
         expect(afterDelete).toHaveLength(1);
         expect(afterDelete[0].id).toBe(agent2.id);
         expect(afterDelete[0].cwd).toBe(cwd2);

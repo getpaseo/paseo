@@ -1,6 +1,5 @@
 import type { Command } from 'commander'
-import type { AgentSnapshotPayload } from '@paseo/server'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 
 /** Result type for agent archive command */
@@ -58,27 +57,7 @@ export async function runArchiveCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID (supports prefix matching)
-    const agentId = resolveAgentId(agentIdArg, agents)
-    if (!agentId) {
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
-      }
-      throw error
-    }
-
-    // Get the agent snapshot to check status
-    const agent = agents.find((a: AgentSnapshotPayload) => a.id === agentId)
+    const agent = await client.fetchAgent(agentIdArg)
     if (!agent) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',
@@ -87,6 +66,7 @@ export async function runArchiveCommand(
       }
       throw error
     }
+    const agentId = agent.id
 
     // Check if agent is already archived
     if (agent.archivedAt) {

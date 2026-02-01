@@ -20,7 +20,6 @@ export class DaemonClient extends SharedDaemonClient {
   constructor(config: DaemonClientConfig) {
     super({
       ...config,
-      messageQueueLimit: config.messageQueueLimit ?? null,
       webSocketFactory: (url, options) =>
         new WebSocket(url, { headers: options?.headers }) as unknown as WebSocketLike,
     });

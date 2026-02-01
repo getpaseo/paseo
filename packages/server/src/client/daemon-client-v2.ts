@@ -42,7 +42,6 @@ import type {
   TerminalOutput,
   KillTerminalResponse,
   TerminalInput,
-  SendAgentMessage,
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "../shared/messages.js";
@@ -123,7 +122,6 @@ export type DaemonEvent =
       event: AgentStreamEventPayload;
       timestamp: string;
     }
-  | { type: "agent_list"; agents: AgentSnapshotPayload[] }
   | { type: "status"; payload: { status: string } & Record<string, unknown> }
   | { type: "agent_deleted"; agentId: string }
   | {
@@ -153,10 +151,12 @@ export type DaemonClientV2Config = {
     baseDelayMs?: number;
     maxDelayMs?: number;
   };
-  messageQueueLimit?: number | null;
 };
 
-export type SendMessageOptions = Pick<SendAgentMessage, "messageId" | "images">;
+export type SendMessageOptions = {
+  messageId?: string;
+  images?: Array<{ data: string; mimeType: string }>;
+};
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
@@ -210,6 +210,12 @@ type RestartRequestedStatusPayload = z.infer<
   typeof RestartRequestedStatusPayloadSchema
 >;
 
+export type WaitForFinishResult = {
+  status: "idle" | "error" | "permission" | "timeout";
+  final: AgentSnapshotPayload | null;
+  error: string | null;
+};
+
 type Waiter<T> = {
   predicate: (msg: SessionOutboundMessage) => T | null;
   resolve: (value: T) => void;
@@ -219,7 +225,6 @@ type Waiter<T> = {
 
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
-const DEFAULT_MESSAGE_QUEUE_LIMIT = 0;
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
@@ -234,7 +239,7 @@ interface PendingSend {
 export class DaemonClientV2 {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
-  private messageQueue: SessionOutboundMessage[] = [];
+  private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
   private messageHandlers: Map<
     SessionOutboundMessage["type"],
     Set<(message: SessionOutboundMessage) => void>
@@ -253,20 +258,14 @@ export class DaemonClientV2 {
   private connectReject: ((error: Error) => void) | null = null;
   private lastErrorValue: string | null = null;
   private connectionState: ConnectionState = { status: "idle" };
-  private messageQueueLimit: number | null;
-  private agentIndex: Map<string, AgentSnapshotPayload> = new Map();
   private agentUpdateSubscriptions = new Map<
     string,
-    { labels?: Record<string, string> } | undefined
+    { labels?: Record<string, string>; agentId?: string } | undefined
   >();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
 
   constructor(private config: DaemonClientV2Config) {
-    this.messageQueueLimit =
-      config.messageQueueLimit === undefined
-        ? DEFAULT_MESSAGE_QUEUE_LIMIT
-        : config.messageQueueLimit;
     this.logger = config.logger ?? consoleLogger;
   }
 
@@ -484,6 +483,13 @@ export class DaemonClientV2 {
     return () => this.eventListeners.delete(handler);
   }
 
+  subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void {
+    this.rawMessageListeners.add(handler);
+    return () => {
+      this.rawMessageListeners.delete(handler);
+    };
+  }
+
   on(type: SessionOutboundMessage["type"], handler: (message: SessionOutboundMessage) => void): () => void;
   on(handler: DaemonEventHandler): () => void;
   on(
@@ -656,25 +662,72 @@ export class DaemonClientV2 {
   }
 
   // ============================================================================
-  // Agent List RPC
+  // Agent RPCs (requestId-correlated)
   // ============================================================================
 
-  requestAgentList(options?: { filter?: { labels?: Record<string, string> }; requestId?: string }): void {
+  async fetchAgents(options?: {
+    filter?: { labels?: Record<string, string> };
+    requestId?: string;
+  }): Promise<AgentSnapshotPayload[]> {
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
-      type: "request_agent_list",
+      type: "fetch_agents_request",
       requestId: resolvedRequestId,
       ...(options?.filter ? { filter: options.filter } : {}),
     });
-    this.sendSessionMessage(message);
+
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "fetch_agents_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload.agents;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    return response;
+  }
+
+  async fetchAgent(agentId: string, requestId?: string): Promise<AgentSnapshotPayload | null> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_agent_request",
+      requestId: resolvedRequestId,
+      agentId,
+    });
+
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "fetch_agent_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      10000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload.agent;
   }
 
   subscribeAgentUpdates(options?: {
     subscriptionId?: string;
-    filter?: { labels?: Record<string, string> };
+    filter?: { labels?: Record<string, string>; agentId?: string };
   }): string {
     const subscriptionId = options?.subscriptionId ?? crypto.randomUUID();
-    this.agentUpdateSubscriptions.set(subscriptionId, options?.filter?.labels);
+    this.agentUpdateSubscriptions.set(subscriptionId, options?.filter);
     const message = SessionInboundMessageSchema.parse({
       type: "subscribe_agent_updates",
       subscriptionId,
@@ -697,38 +750,14 @@ export class DaemonClientV2 {
     if (this.agentUpdateSubscriptions.size === 0) {
       return;
     }
-    for (const [subscriptionId, labels] of this.agentUpdateSubscriptions) {
+    for (const [subscriptionId, filter] of this.agentUpdateSubscriptions) {
       const message = SessionInboundMessageSchema.parse({
         type: "subscribe_agent_updates",
         subscriptionId,
-        ...(labels ? { filter: { labels } } : {}),
+        ...(filter ? { filter } : {}),
       });
       this.sendSessionMessage(message);
     }
-  }
-
-  async waitForAgentList(timeout = 5000, options?: { filter?: { labels?: Record<string, string> }; requestId?: string }): Promise<void> {
-    const resolvedRequestId = this.createRequestId(options?.requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "request_agent_list",
-      requestId: resolvedRequestId,
-      ...(options?.filter ? { filter: options.filter } : {}),
-    });
-
-    // First check the existing message queue in case agent_list was already received
-    for (const msg of this.messageQueue) {
-      if (msg.type === "agent_list") {
-        return;
-      }
-    }
-
-    // If not in queue, wait for the agent_list message
-    await this.sendSessionMessageOrThrow(message);
-    return this.waitFor(
-      (msg) => msg.type === "agent_list" ? undefined : null,
-      timeout,
-      { skipQueue: false }
-    );
   }
 
   // ============================================================================
@@ -948,18 +977,6 @@ export class DaemonClientV2 {
     return { archivedAt: result.archivedAt };
   }
 
-  listAgents(): AgentSnapshotPayload[] {
-    return Array.from(this.agentIndex.values());
-  }
-
-  getMessageQueue(): SessionOutboundMessage[] {
-    return [...this.messageQueue];
-  }
-
-  clearMessageQueue(): void {
-    this.messageQueue = [];
-  }
-
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>
@@ -1053,7 +1070,11 @@ export class DaemonClientV2 {
     if (payload.error) {
       throw new Error(payload.error);
     }
-    return this.waitForAgentUpsert(agentId, () => true, 10000);
+    const agent = await this.fetchAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent not found after initialize: ${agentId}`);
+    }
+    return agent;
   }
 
   // ============================================================================
@@ -1065,15 +1086,34 @@ export class DaemonClientV2 {
     text: string,
     options?: SendMessageOptions
   ): Promise<void> {
+    const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
-      type: "send_agent_message",
+      type: "send_agent_message_request",
+      requestId,
       agentId,
       text,
-      messageId,
-      images: options?.images,
+      ...(messageId ? { messageId } : {}),
+      ...(options?.images ? { images: options.images } : {}),
     });
-    this.sendSessionMessage(message);
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "send_agent_message_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      15000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "sendAgentMessage rejected");
+    }
   }
 
   async sendMessage(
@@ -1609,8 +1649,7 @@ export class DaemonClientV2 {
     const cwd =
       "cwd" in normalizedInput
         ? normalizedInput.cwd
-        : this.listAgents().find((agent) => agent.id === normalizedInput.agentId)
-            ?.cwd;
+        : (await this.fetchAgent(normalizedInput.agentId).catch(() => null))?.cwd;
 
     if (!cwd) {
       return {
@@ -1884,108 +1923,48 @@ export class DaemonClientV2 {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000
   ): Promise<AgentSnapshotPayload> {
-    const current = this.agentIndex.get(agentId);
-    if (current && predicate(current)) {
-      return current;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeout) {
+      const snapshot = await this.fetchAgent(agentId).catch(() => null);
+      if (snapshot && predicate(snapshot)) {
+        return snapshot;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    return this.waitFor(
-      (msg) => {
-        if (
-          msg.type === "agent_update" &&
-          msg.payload.kind === "upsert" &&
-          msg.payload.agent.id === agentId
-        ) {
-          if (predicate(msg.payload.agent)) {
-            return msg.payload.agent;
-          }
-        }
-        return null;
-      },
-      timeout,
-      { skipQueue: true }
-    );
+    throw new Error(`Timed out waiting for agent ${agentId}`);
   }
 
   async waitForFinish(
     agentId: string,
     timeout = 60000
-  ): Promise<AgentSnapshotPayload> {
-    // We need to see the agent start (running/initializing) before we can
-    // consider idle/error as "finished". Otherwise we'd return the old idle
-    // state from before the task started.
-    //
-    // Permission requests are different - if there are pending permissions,
-    // the agent needs attention NOW regardless of whether we saw it start.
-    let sawStart = false;
-    let finishedState: AgentSnapshotPayload | null = null;
-
-    // Scan message queue for state changes
-    // We need to scan the ENTIRE queue to find the final state, not return early
-    for (const msg of this.messageQueue) {
-      if (
-        msg.type === "agent_update" &&
-        msg.payload.kind === "upsert" &&
-        msg.payload.agent.id === agentId
-      ) {
-        const agent = msg.payload.agent;
-
-        // Track if agent has started processing a task
-        // Only "running" counts - "initializing" is the agent process starting up
-        if (agent.status === "running") {
-          sawStart = true;
-          finishedState = null; // Reset - any previous finished state was before this run
-        }
-
-        // Check for finished state - save it but don't return yet
-        // We need to scan the whole queue to find the FINAL state
-        const hasPendingPermissions = (agent.pendingPermissions?.length ?? 0) > 0;
-        if (hasPendingPermissions) {
-          // Permission means agent needs attention
-          finishedState = agent;
-        } else if (sawStart && (agent.status === "idle" || agent.status === "error")) {
-          finishedState = agent;
-        }
-      }
-    }
-
-    // Only return from queue if we have a definitive finished state (idle/error)
-    // Don't return from queue if the latest state has pending permissions -
-    // the permission might be getting resolved right now, so wait for new messages
-    const hasPendingPermissionsInQueue = (finishedState?.pendingPermissions?.length ?? 0) > 0;
-    if (finishedState && !hasPendingPermissionsInQueue) {
-      return finishedState;
-    }
-
-    // Wait for agent to finish
-    return this.waitFor(
+  ): Promise<WaitForFinishResult> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "wait_for_finish_request",
+      requestId,
+      agentId,
+      timeoutMs: timeout,
+    });
+    const response = this.waitFor(
       (msg) => {
-        if (
-          msg.type === "agent_update" &&
-          msg.payload.kind === "upsert" &&
-          msg.payload.agent.id === agentId
-        ) {
-          const agent = msg.payload.agent;
-
-          // Track if agent has started processing a task
-          // Only "running" counts - "initializing" is the agent process starting up
-          if (agent.status === "running") {
-            sawStart = true;
-          }
-
-          // Check for finished state
-          const hasPendingPermissions = (agent.pendingPermissions?.length ?? 0) > 0;
-          if (hasPendingPermissions) {
-            return agent;
-          }
-          if (sawStart && (agent.status === "idle" || agent.status === "error")) {
-            return agent;
-          }
+        if (msg.type !== "wait_for_finish_response") {
+          return null;
         }
-        return null;
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
       },
-      timeout,
+      timeout + 5000,
       { skipQueue: true }
     );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    return {
+      status: payload.status,
+      final: payload.final,
+      error: payload.error,
+    };
   }
 
   // ============================================================================
@@ -2248,30 +2227,13 @@ export class DaemonClientV2 {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    if (msg.type === "agent_list") {
-      this.agentIndex = new Map(
-        msg.payload.agents.map((agent) => [agent.id, agent])
-      );
-    } else if (msg.type === "agent_update") {
-      if (msg.payload.kind === "upsert") {
-        this.agentIndex.set(msg.payload.agent.id, msg.payload.agent);
-      } else if (msg.payload.kind === "remove") {
-        this.agentIndex.delete(msg.payload.agentId);
-      }
-    } else if (msg.type === "agent_deleted") {
-      this.agentIndex.delete(msg.payload.agentId);
-    }
-
-    if (this.messageQueueLimit !== 0) {
-      this.messageQueue.push(msg);
-      if (
-        this.messageQueueLimit !== null &&
-        this.messageQueue.length > this.messageQueueLimit
-      ) {
-        this.messageQueue.splice(
-          0,
-          this.messageQueue.length - this.messageQueueLimit
-        );
+    if (this.rawMessageListeners.size > 0) {
+      for (const handler of this.rawMessageListeners) {
+        try {
+          handler(msg);
+        } catch {
+          // no-op
+        }
       }
     }
 
@@ -2337,8 +2299,6 @@ export class DaemonClientV2 {
           event: msg.payload.event,
           timestamp: msg.payload.timestamp,
         };
-      case "agent_list":
-        return { type: "agent_list", agents: msg.payload.agents };
       case "status":
         return { type: "status", payload: msg.payload };
       case "agent_deleted":
@@ -2364,17 +2324,8 @@ export class DaemonClientV2 {
   private async waitFor<T>(
     predicate: (msg: SessionOutboundMessage) => T | null,
     timeout = 30000,
-    options?: { skipQueue?: boolean }
+    _options?: { skipQueue?: boolean }
   ): Promise<T> {
-    if (!options?.skipQueue && this.messageQueue.length > 0) {
-      for (const msg of this.messageQueue) {
-        const result = predicate(msg);
-        if (result !== null) {
-          return result;
-        }
-      }
-    }
-
     // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
 

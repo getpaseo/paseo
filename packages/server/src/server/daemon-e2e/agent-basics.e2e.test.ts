@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
@@ -19,12 +20,15 @@ const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
+  let collector: MessageCollector;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    collector = createMessageCollector(ctx.client);
   });
 
   afterEach(async () => {
+    collector.unsubscribe();
     await ctx.cleanup();
   }, 60000);
 
@@ -50,11 +54,11 @@ describe("daemon E2E", () => {
 
     // Verify agent completed without error
     expect(finalState.status).toBe("idle");
-    expect(finalState.lastError).toBeUndefined();
-    expect(finalState.id).toBe(agent.id);
+    expect(finalState.final?.lastError).toBeUndefined();
+    expect(finalState.final?.id).toBe(agent.id);
 
     // Verify we received some stream events
-    const queue = ctx.client.getMessageQueue();
+    const queue = collector.messages;
     const streamEvents = queue.filter(
       (m) => m.type === "agent_stream" && m.payload.agentId === agent.id
     );

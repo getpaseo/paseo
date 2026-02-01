@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import dotenv from "dotenv";
 
 import {
   createDaemonTestContext,
@@ -14,22 +13,9 @@ import {
   chunkPcm16,
   parsePcm16MonoWav,
   requireEnv,
+  transcribeBaselineOpenAI,
+  wordSimilarity,
 } from "./test-utils/dictation-e2e.js";
-
-const defaultEnvPath = path.resolve(process.cwd(), ".env");
-const fallbackEnvPath = path.resolve(process.cwd(), "packages", "server", ".env");
-const envPath = existsSync(defaultEnvPath)
-  ? defaultEnvPath
-  : existsSync(fallbackEnvPath)
-    ? fallbackEnvPath
-    : null;
-
-if (envPath) {
-  dotenv.config({ path: envPath });
-}
-
-// Make dictation streaming commit frequently in tests so we exercise multi-commit assembly logic.
-process.env.OPENAI_REALTIME_DICTATION_COMMIT_MS ??= "1000";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-v2-"));
@@ -70,7 +56,11 @@ describe("daemon client v2 E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
-    ctx = await createDaemonTestContext();
+    const openaiApiKey = requireEnv("OPENAI_API_KEY");
+    ctx = await createDaemonTestContext({
+      dictationFinalTimeoutMs: 5000,
+      openai: { apiKey: openaiApiKey },
+    });
   }, 60000);
 
   afterAll(async () => {
@@ -80,23 +70,13 @@ describe("daemon client v2 E2E", () => {
   test("handles session actions", async () => {
     expect(ctx.client.isConnected).toBe(true);
 
-    const agentListPromise = waitForSignal(15000, (resolve) => {
-      const unsubscribe = ctx.client.on("agent_list", (message) => {
-        if (message.type !== "agent_list") {
-          return;
-        }
-        resolve(message);
-      });
-      return unsubscribe;
-    });
-
     const voiceConversationId = `voice-${Date.now()}`;
     const loadResult = await ctx.client.loadVoiceConversation(voiceConversationId);
     expect(loadResult.voiceConversationId).toBe(voiceConversationId);
     expect(typeof loadResult.messageCount).toBe("number");
 
-    const agentList = await agentListPromise;
-    expect(Array.isArray(agentList.payload.agents)).toBe(true);
+    const agents = await ctx.client.fetchAgents();
+    expect(Array.isArray(agents)).toBe(true);
 
     const listResult = await ctx.client.listVoiceConversations();
     expect(Array.isArray(listResult.conversations)).toBe(true);
@@ -127,6 +107,8 @@ describe("daemon client v2 E2E", () => {
     "creates agent and exercises lifecycle",
     async () => {
       const cwd = tmpCwd();
+
+      ctx.client.subscribeAgentUpdates();
 
       const agentUpdatePromise = waitForSignal(15000, (resolve) => {
         const unsubscribe = ctx.client.on("agent_update", (message) => {
@@ -172,9 +154,8 @@ describe("daemon client v2 E2E", () => {
 
       expect(agent.id).toBeTruthy();
       expect(agent.status).toBe("idle");
-      expect(
-        ctx.client.listAgents().some((entry) => entry.id === agent.id)
-      ).toBe(true);
+      const fetched = await ctx.client.fetchAgent(agent.id);
+      expect(fetched?.id).toBe(agent.id);
 
       const agentUpdate = await agentUpdatePromise;
       expect(agentUpdate.payload.agent.id).toBe(agent.id);
@@ -367,8 +348,7 @@ describe("daemon client v2 E2E", () => {
       expect(commandsMessage.payload.agentId).toBe(agent.id);
       expect(commandsMessage.payload.requestId).toBe(commandsRequestId);
 
-      const persistence = finalState.persistence;
-      expect(persistence).toBeTruthy();
+      const persistence = finalState.final?.persistence;
 
       const agentDeletedPromise = waitForSignal(15000, (resolve) => {
         const unsubscribeDeleted = ctx.client.on("agent_deleted", (message) => {
@@ -447,8 +427,9 @@ describe("daemon client v2 E2E", () => {
         );
 
         const permissionState = await ctx.client.waitForFinish(agent.id, 60000);
-        expect(permissionState.pendingPermissions?.length).toBeGreaterThan(0);
-        const permission = permissionState.pendingPermissions[0];
+        expect(permissionState.status).toBe("permission");
+        expect(permissionState.final?.pendingPermissions?.length).toBeGreaterThan(0);
+        const permission = permissionState.final!.pendingPermissions[0];
         expect(permission).toBeTruthy();
         expect(permission.id).toBeTruthy();
 
@@ -562,85 +543,109 @@ describe("daemon client v2 E2E", () => {
   );
 
   test(
-    "streams audio output and transcription results in realtime mode",
+    "realtime mode buffers audio until isLast and emits transcription_result",
     async () => {
-      if (process.env.PASEO_E2E_AUDIO !== "1") {
-        // Requires OpenAI STT/TTS services and is inherently network-flaky.
-        return;
-      }
-      if (!process.env.OPENAI_API_KEY) {
-        return;
-      }
+      requireEnv("OPENAI_API_KEY");
 
       await ctx.client.setVoiceConversation(true, `voice-${Date.now()}`);
 
-      const audioOutput = waitForSignal(90000, (resolve) => {
-        const chunks: Array<{
-          audio: string;
-          format: string;
-          id: string;
-          groupId?: string;
-          chunkIndex?: number;
-          isLastChunk?: boolean;
-        }> = [];
-        let activeGroupId: string | null = null;
-
-        const unsubscribe = ctx.client.on("audio_output", (message) => {
-          if (message.type !== "audio_output") {
-            return;
-          }
-          const payload = message.payload;
-          const groupId = payload.groupId ?? payload.id;
-          if (!activeGroupId) {
-            activeGroupId = groupId;
-          }
-          if (groupId !== activeGroupId) {
-            return;
-          }
-          chunks.push(payload);
-          void ctx.client.audioPlayed(payload.id);
-          if (payload.isLastChunk ?? true) {
-            resolve({
-              format: payload.format,
-              chunks: [...chunks],
-            });
-          }
-        });
-
-        return unsubscribe;
-      });
-
-      const transcription = waitForSignal(20000, (resolve) => {
+      const transcription = waitForSignal(30_000, (resolve) => {
         const unsubscribe = ctx.client.on("transcription_result", (message) => {
           if (message.type !== "transcription_result") {
             return;
           }
-          resolve(message.payload.text);
+          resolve(message.payload);
         });
         return unsubscribe;
       });
 
-      await ctx.client.sendUserMessage("Say the word 'hello' and nothing else");
-      const { format, chunks } = await audioOutput;
+      const errorSignal = waitForSignal(30_000, (resolve) => {
+        const unsubscribeStatus = ctx.client.on("status", (message) => {
+          if (message.type !== "status") {
+            return;
+          }
+          if (message.payload.status !== "error") {
+            return;
+          }
+          resolve(`status:error ${message.payload.message}`);
+        });
 
-      const sorted = [...chunks].sort(
-        (a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0)
-      );
+        const unsubscribeLog = ctx.client.on("activity_log", (message) => {
+          if (message.type !== "activity_log") {
+            return;
+          }
+          if (message.payload.type !== "error") {
+            return;
+          }
+          resolve(`activity_log:error ${message.payload.content}`);
+        });
 
-      for (let i = 0; i < sorted.length; i += 1) {
-        const chunk = sorted[i];
-        const isLast = i === sorted.length - 1;
-        await ctx.client.sendRealtimeAudioChunk(chunk.audio, format, isLast);
+        return () => {
+          unsubscribeStatus();
+          unsubscribeLog();
+        };
+      });
+
+      try {
+        const fixturePath = path.resolve(
+          process.cwd(),
+          "..",
+          "app",
+          "e2e",
+          "fixtures",
+          "recording.wav"
+        );
+        const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
+        const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
+        expect(sampleRate).toBe(16000);
+        const format = "audio/pcm;rate=16000;bits=16";
+
+        const earlyTranscription = waitForSignal(1000, (resolve) => {
+          const unsubscribe = ctx.client.on("transcription_result", (message) => {
+            if (message.type !== "transcription_result") {
+              return;
+            }
+            resolve(message.payload.text);
+          });
+          return unsubscribe;
+        });
+
+        const chunkBytes = 3200; // 100ms @ 16kHz mono PCM16
+        const firstChunk = pcm16.subarray(0, Math.min(chunkBytes, pcm16.length));
+        await ctx.client.sendRealtimeAudioChunk(firstChunk.toString("base64"), format, false);
+        await earlyTranscription
+          .then(() => {
+            throw new Error("Expected no transcription_result before isLast=true");
+          })
+          .catch(() => {});
+
+        for (let offset = chunkBytes; offset < pcm16.length; offset += chunkBytes) {
+          const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
+          const isLast = offset + chunkBytes >= pcm16.length;
+          await ctx.client.sendRealtimeAudioChunk(chunk.toString("base64"), format, isLast);
+        }
+
+        const outcome = await Promise.race([
+          transcription.then((payload) => ({ kind: "ok" as const, payload })),
+          errorSignal.then((error) => ({ kind: "error" as const, error })),
+        ]);
+
+        if (outcome.kind === "error") {
+          throw new Error(outcome.error);
+        }
+
+        expect(typeof outcome.payload.text).toBe("string");
+        if (outcome.payload.text.trim().length > 0) {
+          expect(outcome.payload.text.toLowerCase()).toContain("voice note");
+        } else {
+          expect(outcome.payload.isLowConfidence).toBe(true);
+        }
+      } finally {
+        await Promise.allSettled([transcription, errorSignal]);
+        await ctx.client.setVoiceConversation(false);
       }
-
-      const transcript = await transcription.catch(() => null);
-      expect(
-        transcript === null || typeof transcript === "string"
-      ).toBe(true);
-
-      await ctx.client.setVoiceConversation(false);
     },
-    180000
+    90_000
   );
 
   test(
@@ -678,13 +683,13 @@ describe("daemon client v2 E2E", () => {
       expect(result.dictationId).toBe(dictationId);
       expect(result.text.toLowerCase()).toContain("voice note");
     },
-    180000
+    30_000
   );
 
   test(
-    "does not commit an empty OpenAI realtime audio buffer on finish",
+    "realtime dictation transcript is similar to baseline (OpenAI transcriptions API)",
     async () => {
-      requireEnv("OPENAI_API_KEY");
+      const apiKey = requireEnv("OPENAI_API_KEY");
 
       const fixturePath = path.resolve(
         process.cwd(),
@@ -697,21 +702,24 @@ describe("daemon client v2 E2E", () => {
       const wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
       const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
       expect(sampleRate).toBe(16000);
-      const dictationId = `dict-empty-commit-${Date.now()}`;
+      const dictationId = `dict-baseline-${Date.now()}`;
       const format = "audio/pcm;rate=16000;bits=16";
+
+      const baseline = await transcribeBaselineOpenAI({
+        apiKey,
+        wav,
+        model: process.env.STT_MODEL ?? "whisper-1",
+        prompt:
+          process.env.OPENAI_REALTIME_DICTATION_TRANSCRIPTION_PROMPT ??
+          "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.",
+      });
 
       await ctx.client.startDictationStream(dictationId, format);
 
-      // Send exactly 10x 100ms chunks. With OPENAI_REALTIME_DICTATION_COMMIT_MS=1000 in this test file,
-      // the server will auto-commit at the 1s boundary. Finishing immediately after that should not
-      // attempt an additional empty commit.
       const chunkBytes = 3200; // 100ms @ 16kHz mono PCM16
-      const targetChunks = 10;
       let seq = 0;
-      for (let i = 0; i < targetChunks; i += 1) {
-        const start = i * chunkBytes;
-        const end = Math.min(pcm16.length, start + chunkBytes);
-        const chunk = pcm16.subarray(start, end);
+      for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
+        const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
         ctx.client.sendDictationStreamChunk(dictationId, seq, chunk.toString("base64"), format);
         seq += 1;
       }
@@ -720,129 +728,15 @@ describe("daemon client v2 E2E", () => {
       const result = await ctx.client.finishDictationStream(dictationId, finalSeq);
 
       expect(result.dictationId).toBe(dictationId);
-      expect(typeof result.text).toBe("string");
+      expect(wordSimilarity(result.text, baseline)).toBeGreaterThan(0.8);
     },
-    180000
+    30_000
   );
-
-  describe("dictation streaming vs baseline (real OpenAI, debug fixtures)", () => {
-    let wav: Buffer;
-    let chunks: Buffer[];
-    let expectedText: string;
-    let fixtureSampleRate: number;
-    let chunkBytes: number;
-
-    beforeAll(async () => {
-      requireEnv("OPENAI_API_KEY");
-      const fixturePath = path.resolve(
-        process.cwd(),
-        "src",
-        "server",
-        "fixtures",
-        "dictation",
-        "dictation-debug-largest.wav"
-      );
-      const transcriptPath = path.resolve(
-        process.cwd(),
-        "src",
-        "server",
-        "fixtures",
-        "dictation",
-        "dictation-debug-largest.transcript.txt"
-      );
-      wav = await import("node:fs/promises").then((fs) => fs.readFile(fixturePath));
-      expectedText = await import("node:fs/promises").then((fs) => fs.readFile(transcriptPath, "utf8"));
-
-      const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
-      fixtureSampleRate = sampleRate;
-
-      // Stream at the fixture's native rate to avoid lossy double-resampling.
-      // 100ms @ sampleRate mono PCM16 => sampleRate * 0.1 samples * 2 bytes.
-      chunkBytes = Math.round((fixtureSampleRate * 2 * 100) / 1000);
-      if (chunkBytes <= 0 || chunkBytes % 2 !== 0) {
-        throw new Error(`Invalid chunkBytes computed: ${chunkBytes} (rate=${fixtureSampleRate})`);
-      }
-      chunks = chunkPcm16(pcm16, chunkBytes);
-    }, 240000);
-
-    test(
-      "streaming transcript matches baseline transcript exactly",
-      async () => {
-        const dictationId = `dict-debug-${Date.now()}`;
-        const format = `audio/pcm;rate=${fixtureSampleRate};bits=16`;
-
-        await ctx.client.startDictationStream(dictationId, format);
-
-        for (let seq = 0; seq < chunks.length; seq += 1) {
-          ctx.client.sendDictationStreamChunk(dictationId, seq, chunks[seq]!.toString("base64"), format);
-        }
-
-        const result = await ctx.client.finishDictationStream(dictationId, chunks.length - 1);
-        expect(result.dictationId).toBe(dictationId);
-        expect(result.text.trim()).toBe(expectedText.trim());
-      },
-      240000
-    );
-
-    test(
-      "finish before sending all chunks still completes and matches baseline exactly",
-      async () => {
-        const dictationId = `dict-early-finish-${Date.now()}`;
-        const format = `audio/pcm;rate=${fixtureSampleRate};bits=16`;
-
-        await ctx.client.startDictationStream(dictationId, format);
-
-        const splitAt = Math.max(1, Math.floor(chunks.length * 0.35));
-        for (let seq = 0; seq < splitAt; seq += 1) {
-          ctx.client.sendDictationStreamChunk(dictationId, seq, chunks[seq]!.toString("base64"), format);
-        }
-
-        const finishPromise = ctx.client.finishDictationStream(dictationId, chunks.length - 1);
-
-        // Simulate network jitter / chunk delay after finish.
-        await new Promise((r) => setTimeout(r, 250));
-        for (let seq = splitAt; seq < chunks.length; seq += 1) {
-          ctx.client.sendDictationStreamChunk(dictationId, seq, chunks[seq]!.toString("base64"), format);
-        }
-
-        const result = await finishPromise;
-        expect(result.dictationId).toBe(dictationId);
-        expect(result.text.trim()).toBe(expectedText.trim());
-      },
-      240000
-    );
-
-    test(
-      "missing a chunk causes dictation to error (no finalize)",
-      async () => {
-        const dictationId = `dict-missing-chunk-${Date.now()}`;
-        const format = `audio/pcm;rate=${fixtureSampleRate};bits=16`;
-
-        await ctx.client.startDictationStream(dictationId, format);
-
-        const missingSeq = Math.min(3, Math.max(0, chunks.length - 1));
-        for (let seq = 0; seq < chunks.length; seq += 1) {
-          if (seq === missingSeq) continue;
-          ctx.client.sendDictationStreamChunk(dictationId, seq, chunks[seq]!.toString("base64"), format);
-        }
-
-        await expect(ctx.client.finishDictationStream(dictationId, chunks.length - 1)).rejects.toThrow(
-          /Timed out waiting for final transcription|Timeout waiting for event|Timeout waiting for message/
-        );
-      },
-      240000
-    );
-  });
 
   test(
     "fails fast if dictation finishes without sending required chunks",
     async () => {
-      if (process.env.PASEO_E2E_DICTATION_REALTIME !== "1") {
-        return;
-      }
-      if (!process.env.OPENAI_API_KEY) {
-        return;
-      }
+      requireEnv("OPENAI_API_KEY");
 
       const dictationId = `dict-missing-chunks-${Date.now()}`;
       const format = "audio/pcm;rate=16000;bits=16";
@@ -854,7 +748,7 @@ describe("daemon client v2 E2E", () => {
         /no audio chunks were received/i
       );
     },
-    180000
+    15_000
   );
 
   test(

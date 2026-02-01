@@ -1,11 +1,11 @@
 import type { Command } from 'commander'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 
 /** Result type for agent wait command */
 export interface AgentWaitResult {
   agentId: string
-  status: 'idle' | 'timeout' | 'permission'
+  status: 'idle' | 'timeout' | 'permission' | 'error'
   message: string
 }
 
@@ -121,52 +121,56 @@ export async function runWaitCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID (supports prefix matching)
-    const agentId = resolveAgentId(agentIdArg, agents)
-    if (!agentId) {
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
-      }
-      throw error
-    }
-
-    // Wait for agent to finish (idle, error, or permission)
     try {
-      const state = await client.waitForFinish(agentId, timeoutMs)
-
+      const state = await client.waitForFinish(agentIdArg, timeoutMs)
       await client.close()
 
-      // Check if agent has pending permissions
-      if (state.pendingPermissions && state.pendingPermissions.length > 0) {
-        const permission = state.pendingPermissions[0]
+      if (state.status === 'timeout') {
         return {
           type: 'single',
           data: {
-            agentId,
-            status: 'permission',
-            message: `Agent is waiting for permission: ${permission.kind}`,
+            agentId: agentIdArg,
+            status: 'timeout',
+            message: `Timed out waiting for agent after ${timeoutSeconds} seconds`,
           },
           schema: agentWaitSchema,
         }
       }
 
-      // Agent is idle or error
+      if (state.status === 'permission') {
+        const permission = state.final?.pendingPermissions?.[0]
+        return {
+          type: 'single',
+          data: {
+            agentId: state.final?.id ?? agentIdArg,
+            status: 'permission',
+            message: permission
+              ? `Agent is waiting for permission: ${permission.kind}`
+              : 'Agent is waiting for permission',
+          },
+          schema: agentWaitSchema,
+        }
+      }
+
+      if (state.status === 'error') {
+        return {
+          type: 'single',
+          data: {
+            agentId: state.final?.id ?? agentIdArg,
+            status: 'error',
+            message: state.error ?? 'Agent finished with error',
+          },
+          schema: agentWaitSchema,
+        }
+      }
+
+      // Agent is idle
       return {
         type: 'single',
         data: {
-          agentId,
+          agentId: state.final?.id ?? agentIdArg,
           status: 'idle',
-          message: state.status === 'error' ? 'Agent finished with error' : 'Agent is now idle',
+          message: 'Agent is now idle',
         },
         schema: agentWaitSchema,
       }
@@ -174,19 +178,6 @@ export async function runWaitCommand(
       await client.close().catch(() => {})
 
       const waitMessage = waitErr instanceof Error ? waitErr.message : String(waitErr)
-
-      // Check if it's a timeout error
-      if (waitMessage.toLowerCase().includes('timeout')) {
-        return {
-          type: 'single',
-          data: {
-            agentId,
-            status: 'timeout',
-            message: `Timed out waiting for agent after ${timeoutSeconds} seconds`,
-          },
-          schema: agentWaitSchema,
-        }
-      }
 
       // Other errors
       const error: CommandError = {

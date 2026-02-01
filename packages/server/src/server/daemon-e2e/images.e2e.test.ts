@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
@@ -19,12 +20,15 @@ const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
+  let collector: MessageCollector;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    collector = createMessageCollector(ctx.client);
   });
 
   afterEach(async () => {
+    collector.unsubscribe();
     await ctx.cleanup();
   }, 60000);
 
@@ -67,10 +71,10 @@ describe("daemon E2E", () => {
         const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
-        expect(finalState.lastError).toBeUndefined();
+        expect(finalState.final?.lastError).toBeUndefined();
 
         // Verify stream events show the agent processed the message
-        const queue = ctx.client.getMessageQueue();
+        const queue = collector.messages;
         const streamEvents = queue.filter(
           (m) => m.type === "agent_stream" && m.payload.agentId === agent.id
         );
@@ -138,10 +142,10 @@ describe("daemon E2E", () => {
         const finalState = await ctx.client.waitForFinish(agent.id, 120000);
 
         expect(finalState.status).toBe("idle");
-        expect(finalState.lastError).toBeUndefined();
+        expect(finalState.final?.lastError).toBeUndefined();
 
         // Verify turn completed
-        const queue = ctx.client.getMessageQueue();
+        const queue = collector.messages;
         const hasTurnCompleted = queue.some(
           (m) =>
             m.type === "agent_stream" &&

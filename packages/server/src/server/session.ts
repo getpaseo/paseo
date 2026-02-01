@@ -37,7 +37,9 @@ import type { OpenAISTT } from "./agent/stt-openai.js";
 import type { OpenAITTS } from "./agent/tts-openai.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
-import { DictationStreamManager } from "./dictation/dictation-stream-manager.js";
+import {
+  DictationStreamManager,
+} from "./dictation/dictation-stream-manager.js";
 import type { VoiceConversationStore } from "./voice-conversation-store.js";
 import {
   buildConfigOverrides,
@@ -299,7 +301,7 @@ export class Session {
   private agentUpdatesSubscription:
     | {
         subscriptionId: string;
-        filter?: { labels?: Record<string, string> };
+        filter?: { labels?: Record<string, string>; agentId?: string };
       }
     | null = null;
   private clientActivity: {
@@ -324,7 +326,11 @@ export class Session {
     stt: OpenAISTT | null,
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
-    voiceConversationStore: VoiceConversationStore
+    voiceConversationStore: VoiceConversationStore,
+    dictation?: {
+      openaiApiKey?: string | null;
+      finalTimeoutMs?: number;
+    }
   ) {
     this.clientId = clientId;
     this.sessionId = uuidv4();
@@ -352,6 +358,8 @@ export class Session {
       logger: this.sessionLogger,
       sessionId: this.sessionId,
       emit: (msg) => this.emit(msg as unknown as SessionOutboundMessage),
+      openaiApiKey: dictation?.openaiApiKey ?? null,
+      finalTimeoutMs: dictation?.finalTimeoutMs,
     });
 
     // Initialize agent MCP client asynchronously
@@ -377,7 +385,7 @@ export class Session {
    * Send initial state to client after connection
    */
   public async sendInitialState(): Promise<void> {
-    await this.sendAgentList();
+    // No unsolicited agent list hydration. Callers must use fetch_agents_request.
   }
 
   /**
@@ -403,8 +411,7 @@ export class Session {
 
   /**
    * Interrupt the agent's active run so the next prompt starts a fresh turn.
-   * Returns once the manager confirms the stream has been cancelled AND
-   * the agent has fully transitioned to idle state.
+   * Returns once the manager confirms the stream has been cancelled.
    */
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
     const snapshot = this.agentManager.getAgent(agentId);
@@ -413,41 +420,32 @@ export class Session {
     }
 
     if (snapshot.lifecycle !== "running" && !snapshot.pendingRun) {
-      console.error(`[INTERRUPT:${agentId.substring(0, 8)}] not running, skipping. lifecycle=${snapshot.lifecycle} pendingRun=${!!snapshot.pendingRun}`);
+      this.sessionLogger.debug(
+        { agentId, lifecycle: snapshot.lifecycle, pendingRun: Boolean(snapshot.pendingRun) },
+        "interruptAgentIfRunning: not running, skipping"
+      );
       return;
     }
 
-    console.error(`[INTERRUPT:${agentId.substring(0, 8)}] starting interrupt. lifecycle=${snapshot.lifecycle} pendingRun=${!!snapshot.pendingRun}`);
+    this.sessionLogger.debug(
+      { agentId, lifecycle: snapshot.lifecycle, pendingRun: Boolean(snapshot.pendingRun) },
+      "interruptAgentIfRunning: interrupting"
+    );
 
     try {
       const t0 = Date.now();
       const cancelled = await this.agentManager.cancelAgentRun(agentId);
-      console.error(`[INTERRUPT] cancelAgentRun returned cancelled=${cancelled} in ${Date.now() - t0}ms`);
+      this.sessionLogger.debug(
+        { agentId, cancelled, durationMs: Date.now() - t0 },
+        "interruptAgentIfRunning: cancelAgentRun completed"
+      );
       if (!cancelled) {
-        console.error(`[INTERRUPT] WARNING: reported running but no active run was cancelled`);
-      }
-
-      // Wait for the agent to become idle after cancellation
-      const maxWaitMs = 5000;
-      const pollIntervalMs = 50;
-      const startTime = Date.now();
-      while (Date.now() - startTime < maxWaitMs) {
-        const current = this.agentManager.getAgent(agentId);
-        if (!current) {
-          throw new Error(`Agent ${agentId} not found during cancellation wait`);
-        }
-        if (current.lifecycle !== "running" && !current.pendingRun) {
-          console.error(`[INTERRUPT] agent became idle after ${Date.now() - startTime}ms`);
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      }
-      const finalState = this.agentManager.getAgent(agentId);
-      if (finalState?.lifecycle === "running" || finalState?.pendingRun) {
-        console.error(`[INTERRUPT] WARNING: agent still running after 5s wait! lifecycle=${finalState?.lifecycle} pendingRun=${!!finalState?.pendingRun}`);
+        this.sessionLogger.warn(
+          { agentId },
+          "interruptAgentIfRunning: reported running but no active run was cancelled"
+        );
       }
     } catch (error) {
-      console.error(`[INTERRUPT] ERROR:`, error);
       throw error;
     }
   }
@@ -455,8 +453,10 @@ export class Session {
   /**
    * Start streaming an agent run and forward results via the websocket broadcast
    */
-  private startAgentStream(agentId: string, prompt: AgentPromptInput): void {
-    console.error(`[SESSION:startAgentStream] starting for agent ${agentId.substring(0, 8)}, prompt="${typeof prompt === 'string' ? prompt.substring(0, 40) : 'object'}"`);
+  private startAgentStream(
+    agentId: string,
+    prompt: AgentPromptInput
+  ): { ok: true } | { ok: false; error: string } {
     this.sessionLogger.info(
       { agentId },
       `Starting agent stream for ${agentId}`
@@ -467,7 +467,9 @@ export class Session {
       iterator = this.agentManager.streamAgent(agentId, prompt);
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to start agent run");
-      return;
+      const message =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+      return { ok: false, error: message };
     }
 
     void (async () => {
@@ -479,6 +481,8 @@ export class Session {
         this.handleAgentRunError(agentId, error, "Agent stream failed");
       }
     })();
+
+    return { ok: true };
   }
 
   private handleAgentRunError(
@@ -681,8 +685,11 @@ export class Session {
 
   private matchesAgentFilter(
     agent: AgentSnapshotPayload,
-    filter?: { labels?: Record<string, string> }
+    filter?: { labels?: Record<string, string>; agentId?: string }
   ): boolean {
+    if (filter?.agentId && agent.id !== filter.agentId) {
+      return false;
+    }
     if (!filter?.labels) {
       return true;
     }
@@ -740,8 +747,12 @@ export class Session {
           this.handleAudioPlayed(msg.id);
           break;
 
-        case "request_agent_list":
-          await this.sendAgentList(msg.filter);
+        case "fetch_agents_request":
+          await this.handleFetchAgents(msg.requestId, msg.filter);
+          break;
+
+        case "fetch_agent_request":
+          await this.handleFetchAgent(msg.agentId, msg.requestId);
           break;
 
         case "subscribe_agent_updates":
@@ -786,13 +797,12 @@ export class Session {
           await this.handleSetVoiceConversation(msg.enabled, msg.voiceConversationId);
           break;
 
-        case "send_agent_message":
-          await this.handleSendAgentMessage(
-            msg.agentId,
-            msg.text,
-            msg.messageId,
-            msg.images
-          );
+        case "send_agent_message_request":
+          await this.handleSendAgentMessageRequest(msg);
+          break;
+
+        case "wait_for_finish_request":
+          await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
           break;
 
         case "dictation_stream_start":
@@ -1009,9 +1019,6 @@ export class Session {
         requestId,
       },
     });
-
-    // Send current agent list
-    await this.sendAgentList();
   }
 
   /**
@@ -1261,18 +1268,14 @@ export class Session {
     messageId?: string,
     images?: Array<{ data: string; mimeType: string }>
   ): Promise<void> {
-    console.error(`[SESSION:handleSendAgentMessage] ENTERED agentId=${agentId.substring(0, 8)} text="${text.substring(0, 40)}"`);
     this.sessionLogger.info(
       { agentId, textPreview: text.substring(0, 50), imageCount: images?.length ?? 0 },
       `Sending text to agent ${agentId}${images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ''}`
     );
 
     try {
-      console.error(`[SESSION:handleSendAgentMessage] calling ensureAgentLoaded...`);
       await this.ensureAgentLoaded(agentId);
-      console.error(`[SESSION:handleSendAgentMessage] ensureAgentLoaded done`);
     } catch (error) {
-      console.error(`[SESSION:handleSendAgentMessage] ensureAgentLoaded FAILED:`, error);
       this.handleAgentRunError(
         agentId,
         error,
@@ -1282,12 +1285,8 @@ export class Session {
     }
 
     try {
-      const snapshotBeforeInterrupt = this.agentManager.getAgent(agentId);
-      console.error(`[SESSION:handleSendAgentMessage] before interrupt: lifecycle=${snapshotBeforeInterrupt?.lifecycle} pendingRun=${!!snapshotBeforeInterrupt?.pendingRun}`);
       await this.interruptAgentIfRunning(agentId);
-      console.error(`[SESSION:handleSendAgentMessage] interrupt done`);
     } catch (error) {
-      console.error(`[SESSION:handleSendAgentMessage] interrupt FAILED:`, error);
       this.handleAgentRunError(
         agentId,
         error,
@@ -1297,7 +1296,6 @@ export class Session {
     }
 
     const prompt = this.buildAgentPrompt(text, images);
-    console.error(`[SESSION:handleSendAgentMessage] calling recordUserMessage...`);
 
     try {
       this.agentManager.recordUserMessage(agentId, text, { messageId });
@@ -1308,7 +1306,6 @@ export class Session {
       );
     }
 
-    console.error(`[SESSION:handleSendAgentMessage] calling startAgentStream...`);
     this.startAgentStream(agentId, prompt);
   }
 
@@ -3455,51 +3452,341 @@ export class Session {
   }
 
   /**
-   * Send agent list to client, optionally filtered by labels
+   * Build the current agent list payload (live + persisted), optionally filtered by labels.
    */
-  private async sendAgentList(filter?: { labels?: Record<string, string> }): Promise<void> {
-    try {
-      // Get live agents with session modes
-      const agentSnapshots = this.agentManager.listAgents();
-      const liveAgents = await Promise.all(
-        agentSnapshots.map((agent) => this.buildAgentPayload(agent))
+  private async listAgentPayloads(filter?: { labels?: Record<string, string> }): Promise<AgentSnapshotPayload[]> {
+    // Get live agents with session modes
+    const agentSnapshots = this.agentManager.listAgents();
+    const liveAgents = await Promise.all(
+      agentSnapshots.map((agent) => this.buildAgentPayload(agent))
+    );
+
+    // Add persisted agents that have not been lazily initialized yet
+    // (excluding internal agents which are for ephemeral system tasks)
+    const registryRecords = await this.agentStorage.list();
+    const liveIds = new Set(agentSnapshots.map((a) => a.id));
+    const persistedAgents = registryRecords
+      .filter((record) => !liveIds.has(record.id) && !record.internal)
+      .map((record) => this.buildStoredAgentPayload(record));
+
+    let agents = [...liveAgents, ...persistedAgents];
+
+    // Filter by labels if filter provided
+    if (filter?.labels) {
+      const filterLabels = filter.labels;
+      agents = agents.filter((agent) =>
+        Object.entries(filterLabels).every(([key, value]) => agent.labels[key] === value)
       );
+    }
 
-      // Add persisted agents that have not been lazily initialized yet
-      // (excluding internal agents which are for ephemeral system tasks)
-      const registryRecords = await this.agentStorage.list();
-      const liveIds = new Set(agentSnapshots.map((a) => a.id));
-      const persistedAgents = registryRecords
-        .filter((record) => !liveIds.has(record.id) && !record.internal)
-        .map((record) => this.buildStoredAgentPayload(record));
+    return agents;
+  }
 
-      let agents = [...liveAgents, ...persistedAgents];
+  private async resolveAgentIdentifier(
+    identifier: string
+  ): Promise<{ ok: true; agentId: string } | { ok: false; error: string }> {
+    const trimmed = identifier.trim();
+    if (!trimmed) {
+      return { ok: false, error: "Agent identifier cannot be empty" };
+    }
 
-      // Filter by labels if filter provided
-      if (filter?.labels) {
-        const filterLabels = filter.labels;
-        agents = agents.filter((agent) =>
-          Object.entries(filterLabels).every(([key, value]) => agent.labels[key] === value)
+    const stored = await this.agentStorage.list();
+    const storedRecords = stored.filter((record) => !record.internal);
+    const knownIds = new Set<string>();
+    for (const record of storedRecords) {
+      knownIds.add(record.id);
+    }
+    for (const agent of this.agentManager.listAgents()) {
+      knownIds.add(agent.id);
+    }
+
+    if (knownIds.has(trimmed)) {
+      return { ok: true, agentId: trimmed };
+    }
+
+    const prefixMatches = Array.from(knownIds).filter((id) => id.startsWith(trimmed));
+    if (prefixMatches.length === 1) {
+      return { ok: true, agentId: prefixMatches[0] };
+    }
+    if (prefixMatches.length > 1) {
+      return {
+        ok: false,
+        error: `Agent identifier "${trimmed}" is ambiguous (${prefixMatches
+          .slice(0, 5)
+          .map((id) => id.slice(0, 8))
+          .join(", ")}${prefixMatches.length > 5 ? ", …" : ""})`,
+      };
+    }
+
+    const titleMatches = storedRecords.filter((record) => record.title === trimmed);
+    if (titleMatches.length === 1) {
+      return { ok: true, agentId: titleMatches[0].id };
+    }
+    if (titleMatches.length > 1) {
+      return {
+        ok: false,
+        error: `Agent title "${trimmed}" is ambiguous (${titleMatches
+          .slice(0, 5)
+          .map((r) => r.id.slice(0, 8))
+          .join(", ")}${titleMatches.length > 5 ? ", …" : ""})`,
+      };
+    }
+
+    return { ok: false, error: `Agent not found: ${trimmed}` };
+  }
+
+  private async getAgentPayloadById(agentId: string): Promise<AgentSnapshotPayload | null> {
+    const live = this.agentManager.getAgent(agentId);
+    if (live) {
+      return await this.buildAgentPayload(live);
+    }
+
+    const record = await this.agentStorage.get(agentId);
+    if (!record || record.internal) {
+      return null;
+    }
+    return this.buildStoredAgentPayload(record);
+  }
+
+  private async handleFetchAgents(
+    requestId: string,
+    filter?: { labels?: Record<string, string> }
+  ): Promise<void> {
+    try {
+      const agents = await this.listAgentPayloads(filter);
+      this.emit({
+        type: "fetch_agents_response",
+        payload: { requestId, agents },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle fetch_agents_request");
+      this.emit({
+        type: "fetch_agents_response",
+        payload: { requestId, agents: [] },
+      });
+    }
+  }
+
+  private async handleFetchAgent(agentIdOrIdentifier: string, requestId: string): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(agentIdOrIdentifier);
+    if (!resolved.ok) {
+      this.emit({
+        type: "fetch_agent_response",
+        payload: { requestId, agent: null, error: resolved.error },
+      });
+      return;
+    }
+
+    const agent = await this.getAgentPayloadById(resolved.agentId);
+    if (!agent) {
+      this.emit({
+        type: "fetch_agent_response",
+        payload: { requestId, agent: null, error: `Agent not found: ${resolved.agentId}` },
+      });
+      return;
+    }
+
+    this.emit({
+      type: "fetch_agent_response",
+      payload: { requestId, agent, error: null },
+    });
+  }
+
+  private async handleSendAgentMessageRequest(
+    msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) {
+      this.emit({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          accepted: false,
+          error: resolved.error,
+        },
+      });
+      return;
+    }
+
+    try {
+      const agentId = resolved.agentId;
+
+      await this.ensureAgentLoaded(agentId);
+      await this.interruptAgentIfRunning(agentId);
+
+      try {
+        this.agentManager.recordUserMessage(agentId, msg.text, { messageId: msg.messageId });
+      } catch (error) {
+        this.sessionLogger.error(
+          { err: error, agentId },
+          "Failed to record user message for send_agent_message_request"
         );
       }
 
-      // Emit agent list
+      const prompt = this.buildAgentPrompt(msg.text, msg.images);
+      const started = this.startAgentStream(agentId, prompt);
+      if (!started.ok) {
+        this.emit({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: started.error,
+          },
+        });
+        return;
+      }
+
+      const startAbort = new AbortController();
+      const startTimeoutMs = 15_000;
+      const startTimeout = setTimeout(() => startAbort.abort("timeout"), startTimeoutMs);
+      try {
+        await this.agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+        this.emit({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: message,
+          },
+        });
+        return;
+      } finally {
+        clearTimeout(startTimeout);
+      }
+
       this.emit({
-        type: "agent_list",
+        type: "send_agent_message_response",
         payload: {
-          agents,
+          requestId: msg.requestId,
+          agentId,
+          accepted: true,
+          error: null,
         },
       });
-
-      this.sessionLogger.debug(
-        { agentCount: agents.length, filter },
-        `Sent agent list: ${agents.length} agents`
-      );
     } catch (error) {
-      this.sessionLogger.error(
-        { err: error },
-        "Failed to send agent list"
-      );
+      const message =
+        error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+      this.emit({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: resolved.agentId,
+          accepted: false,
+          error: message,
+        },
+      });
+    }
+  }
+
+  private async handleWaitForFinish(
+    agentIdOrIdentifier: string,
+    requestId: string,
+    timeoutMs?: number
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(agentIdOrIdentifier);
+    if (!resolved.ok) {
+      this.emit({
+        type: "wait_for_finish_response",
+        payload: { requestId, status: "error", final: null, error: resolved.error },
+      });
+      return;
+    }
+
+    const agentId = resolved.agentId;
+    const live = this.agentManager.getAgent(agentId);
+    if (!live) {
+      const record = await this.agentStorage.get(agentId);
+      if (!record || record.internal) {
+        this.emit({
+          type: "wait_for_finish_response",
+          payload: {
+            requestId,
+            status: "error",
+            final: null,
+            error: `Agent not found: ${agentId}`,
+          },
+        });
+        return;
+      }
+      const final = this.buildStoredAgentPayload(record);
+      const status =
+        record.attentionReason === "permission"
+          ? "permission"
+          : record.lastStatus === "error"
+            ? "error"
+            : "idle";
+      this.emit({
+        type: "wait_for_finish_response",
+        payload: { requestId, status, final, error: null },
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    const effectiveTimeoutMs = timeoutMs ?? 600_000; // 10 minutes default
+    const timeoutHandle = setTimeout(() => {
+      abortController.abort("timeout");
+    }, effectiveTimeoutMs);
+
+    try {
+      const result = await this.agentManager.waitForAgentEvent(agentId, {
+        signal: abortController.signal,
+      });
+
+      const final = await this.getAgentPayloadById(agentId);
+      if (!final) {
+        throw new Error(`Agent ${agentId} disappeared while waiting`);
+      }
+
+      const status =
+        result.permission
+          ? "permission"
+          : result.status === "error"
+            ? "error"
+            : "idle";
+
+      this.emit({
+        type: "wait_for_finish_response",
+        payload: { requestId, status, final, error: null },
+      });
+    } catch (error) {
+      const isAbort =
+        error instanceof Error &&
+        (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
+      if (!isAbort) {
+        const message =
+          error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+        this.sessionLogger.error({ err: error, agentId }, "wait_for_finish_request failed");
+        const final = await this.getAgentPayloadById(agentId);
+        this.emit({
+          type: "wait_for_finish_response",
+          payload: {
+            requestId,
+            status: "error",
+            final,
+            error: message,
+          },
+        });
+        return;
+      }
+
+      const final = await this.getAgentPayloadById(agentId);
+      if (!final) {
+        throw new Error(`Agent ${agentId} disappeared while waiting`);
+      }
+      this.emit({
+        type: "wait_for_finish_response",
+        payload: { requestId, status: "timeout", final, error: null },
+      });
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 
@@ -3752,21 +4039,6 @@ export class Session {
       });
 
       const transcriptText = result.text.trim();
-      if (!transcriptText) {
-        this.sessionLogger.debug("Empty transcription (false positive), not aborting");
-        this.setPhase("idle");
-        this.clearSpeechInProgress("empty transcription");
-        return;
-      }
-
-      // Has content - abort any in-progress stream now
-      this.createAbortController();
-
-      // Wait for aborted stream to finish cleanup (save partial response)
-      if (this.currentStreamPromise) {
-        this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
-        await this.currentStreamPromise;
-      }
 
       // Emit transcription result
       this.emit({
@@ -3783,6 +4055,22 @@ export class Session {
           debugRecordingPath: result.debugRecordingPath,
         },
       });
+
+      if (!transcriptText) {
+        this.sessionLogger.debug("Empty transcription (false positive), not aborting");
+        this.setPhase("idle");
+        this.clearSpeechInProgress("empty transcription");
+        return;
+      }
+
+      // Has content - abort any in-progress stream now
+      this.createAbortController();
+
+      // Wait for aborted stream to finish cleanup (save partial response)
+      if (this.currentStreamPromise) {
+        this.sessionLogger.debug("Waiting for aborted stream to finish cleanup");
+        await this.currentStreamPromise;
+      }
 
       if (result.debugRecordingPath) {
         this.emit({

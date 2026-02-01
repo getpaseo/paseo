@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { createMessageCollector } from "../test-utils/message-collector.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
 
@@ -66,6 +67,7 @@ describe("daemon E2E", () => {
       "Claude agent: Read tool",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
 
         const agent = await ctx.client.createAgent({
           provider: "claude",
@@ -74,7 +76,7 @@ describe("daemon E2E", () => {
           modeId: "bypassPermissions",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -83,7 +85,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -96,6 +98,7 @@ describe("daemon E2E", () => {
         expect(readCall?.input).toBeDefined();
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
@@ -105,6 +108,7 @@ describe("daemon E2E", () => {
       "Claude agent: Bash tool",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
 
         const agent = await ctx.client.createAgent({
           provider: "claude",
@@ -113,7 +117,7 @@ describe("daemon E2E", () => {
           modeId: "bypassPermissions",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -122,7 +126,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -138,6 +142,7 @@ describe("daemon E2E", () => {
         expect(bashInput?.command).toContain("echo");
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
@@ -147,6 +152,7 @@ describe("daemon E2E", () => {
       "Claude agent: Edit tool",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "hello world\n");
 
@@ -157,7 +163,7 @@ describe("daemon E2E", () => {
           modeId: "bypassPermissions",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -166,7 +172,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -178,6 +184,7 @@ describe("daemon E2E", () => {
         expect(editCall?.input).toBeDefined();
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
@@ -187,6 +194,7 @@ describe("daemon E2E", () => {
       "Codex agent: shell command",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
 
         const agent = await ctx.client.createAgent({
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
@@ -195,7 +203,7 @@ describe("daemon E2E", () => {
           modeId: "full-access",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -204,7 +212,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -224,6 +232,7 @@ describe("daemon E2E", () => {
         expect(echoCall).toBeDefined();
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
@@ -233,6 +242,7 @@ describe("daemon E2E", () => {
       "Codex agent: file read",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
 
         const agent = await ctx.client.createAgent({
           provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
@@ -241,7 +251,7 @@ describe("daemon E2E", () => {
           modeId: "full-access",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -250,7 +260,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -266,6 +276,7 @@ describe("daemon E2E", () => {
         }
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000
@@ -275,6 +286,7 @@ describe("daemon E2E", () => {
       "Codex agent: file edit",
       async () => {
         const cwd = tmpCwd();
+        const collector = createMessageCollector(ctx.client);
         const testFile = path.join(cwd, "test.txt");
         writeFileSync(testFile, "hello world\n");
 
@@ -285,7 +297,7 @@ describe("daemon E2E", () => {
           modeId: "full-access",
         });
 
-        ctx.client.clearMessageQueue();
+        collector.clear();
 
         await ctx.client.sendMessage(
           agent.id,
@@ -294,7 +306,7 @@ describe("daemon E2E", () => {
 
         await ctx.client.waitForFinish(agent.id, 120000);
 
-        const toolCalls = extractToolCalls(ctx.client.getMessageQueue(), agent.id);
+        const toolCalls = extractToolCalls(collector.messages, agent.id);
         expect(toolCalls.length).toBeGreaterThan(0);
 
         for (const tc of toolCalls) {
@@ -310,6 +322,7 @@ describe("daemon E2E", () => {
         }
 
         await ctx.client.deleteAgent(agent.id);
+        collector.unsubscribe();
         rmSync(cwd, { recursive: true, force: true });
       },
       180000

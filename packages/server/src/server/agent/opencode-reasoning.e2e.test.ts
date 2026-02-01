@@ -57,7 +57,7 @@ describe("OpenCode reasoning events (e2e)", () => {
       await ctx.client.sendMessage(agent.id, "What is 2+2? Think step by step.");
 
       // Wait for agent to complete
-      const finalState = await ctx.client.waitForAgentIdle(agent.id, 120_000);
+      const finalState = await ctx.client.waitForFinish(agent.id, 120_000);
 
 
       // Log all events

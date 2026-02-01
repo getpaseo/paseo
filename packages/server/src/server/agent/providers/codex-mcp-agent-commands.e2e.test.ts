@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -75,15 +75,10 @@ describe("codex agent commands E2E", () => {
       process.env.CODEX_HOME = prevCodexHome;
     }
     rmSync(codexHome, { recursive: true, force: true });
-  }, 120000);
+  }, 30_000);
 
   test("executes a custom prompt command (prompts:*)", async () => {
     const codexHome = process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "/tmp", ".codex");
-    const authPath = path.join(codexHome, "auth.json");
-    if (!existsSync(authPath) && !process.env.OPENAI_API_KEY) {
-      // Skip when Codex isn't authenticated in this environment.
-      return;
-    }
 
     const promptsDir = path.join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true });
@@ -109,7 +104,7 @@ describe("codex agent commands E2E", () => {
     expect(result.result?.text).toContain("PASEO_OK");
 
     rmSync(promptPath, { force: true });
-  }, 180000);
+  }, 30_000);
 
   test("returns error for non-existent agent", async () => {
     const result = await ctx.client.listCommands("non-existent-agent-id");

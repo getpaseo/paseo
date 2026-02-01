@@ -110,7 +110,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
         return true;
       }
       if (c.status === 'online' && !c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: online but no agent_list yet`);
+        connectingReasons.push(`${shortId}: online but no fetch_agents yet`);
         return true;
       }
 
@@ -120,7 +120,7 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
         return true;
       }
       if (c.status === 'online' && !c.agentListReady && c.hasEverReceivedAgentList) {
-        connectingReasons.push(`${shortId}: online but agentListReady=false (waiting for agent_list)`);
+        connectingReasons.push(`${shortId}: online but agentListReady=false (waiting for fetch_agents)`);
         return true;
       }
 

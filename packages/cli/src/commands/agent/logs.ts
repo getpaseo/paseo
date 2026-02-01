@@ -1,5 +1,5 @@
 import type { Command } from 'commander'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions } from '../../output/index.js'
 import type {
   DaemonClientV2,
@@ -67,16 +67,6 @@ function extractTimelineFromSnapshot(message: AgentStreamSnapshotMessage): Agent
   return items
 }
 
-/**
- * Extract a timeline item from an agent_stream message
- */
-function extractTimelineFromStream(message: AgentStreamMessage): AgentTimelineItem | null {
-  if (message.payload.event.type === 'timeline') {
-    return message.payload.event.item
-  }
-  return null
-}
-
 export async function runLogsCommand(
   id: string,
   options: AgentLogsOptions,
@@ -101,21 +91,14 @@ export async function runLogsCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait for agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-    const resolvedId = resolveAgentId(id, agents)
-
-    if (!resolvedId) {
+    const agent = await client.fetchAgent(id)
+    if (!agent) {
       console.error(`Error: No agent found matching: ${id}`)
       console.error('Use `paseo ls` to list available agents')
       await client.close()
       process.exit(1)
     }
+    const resolvedId = agent.id
 
     // For follow mode, we stream events continuously
     if (options.follow) {
@@ -154,20 +137,6 @@ export async function runLogsCommand(
 
     // Get timeline from snapshot
     let timelineItems = await snapshotPromise
-
-    // Also check message queue for any stream events
-    const queue = client.getMessageQueue()
-    for (const msg of queue) {
-      if (msg.type === 'agent_stream') {
-        const streamMsg = msg as AgentStreamMessage
-        if (streamMsg.payload.agentId === resolvedId) {
-          const item = extractTimelineFromStream(streamMsg)
-          if (item) {
-            timelineItems.push(item)
-          }
-        }
-      }
-    }
 
     // Apply filter
     if (options.filter) {

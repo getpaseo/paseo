@@ -74,6 +74,10 @@ export type WaitForAgentResult = {
   lastMessage: string | null;
 };
 
+export type WaitForAgentStartOptions = {
+  signal?: AbortSignal;
+};
+
 type AttentionState =
   | { requiresAttention: false }
   | {
@@ -155,6 +159,22 @@ type ActiveManagedAgent =
   | ManagedAgentRunning
   | ManagedAgentError;
 
+function attachPersistenceCwd(
+  handle: AgentPersistenceHandle | null,
+  cwd: string
+): AgentPersistenceHandle | null {
+  if (!handle) {
+    return null;
+  }
+  return {
+    ...handle,
+    metadata: {
+      ...(handle.metadata ?? {}),
+      cwd,
+    },
+  };
+}
+
 type SubscriptionRecord = {
   callback: AgentSubscriber;
   agentId: string | null;
@@ -192,6 +212,7 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly selfIdMcpSocketPath?: string;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
@@ -527,10 +548,7 @@ export class AgentManager {
 
     const agent = existingAgent as ActiveManagedAgent;
     const iterator = agent.session.stream(prompt, options);
-    agent.lifecycle = "running";
-    agent.pendingRun = iterator;
     agent.lastError = undefined;
-    this.emitState(agent);
 
     let finalized = false;
     const finalize = (error?: string) => {
@@ -539,7 +557,7 @@ export class AgentManager {
       }
       finalized = true;
 
-      if (agent.pendingRun !== iterator) {
+      if (agent.pendingRun !== streamForwarder) {
         if (error) {
           agent.lastError = error;
         }
@@ -550,13 +568,19 @@ export class AgentManager {
       mutableAgent.pendingRun = null;
       mutableAgent.lifecycle = error ? "error" : "idle";
       mutableAgent.lastError = error;
-      mutableAgent.persistence = mutableAgent.session.describePersistence();
+      mutableAgent.persistence = attachPersistenceCwd(
+        mutableAgent.session.describePersistence() ??
+          (mutableAgent.runtimeInfo?.sessionId
+            ? { provider: mutableAgent.provider, sessionId: mutableAgent.runtimeInfo.sessionId }
+            : null),
+        mutableAgent.cwd
+      );
       this.emitState(mutableAgent);
     };
 
     const self = this;
 
-    return (async function* streamForwarder() {
+    const streamForwarder = (async function* streamForwarder() {
       let finalizeError: string | undefined;
       try {
         for await (const event of iterator) {
@@ -574,6 +598,99 @@ export class AgentManager {
         finalize(finalizeError);
       }
     })();
+
+    agent.pendingRun = streamForwarder;
+    agent.lifecycle = "running";
+    self.emitState(agent);
+
+    return streamForwarder;
+  }
+
+  async waitForAgentRunStart(agentId: string, options?: WaitForAgentStartOptions): Promise<void> {
+    const snapshot = this.getAgent(agentId);
+    if (!snapshot) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+
+    if (snapshot.lifecycle === "running") {
+      return;
+    }
+
+    if (!("pendingRun" in snapshot) || !snapshot.pendingRun) {
+      throw new Error(`Agent ${agentId} has no pending run`);
+    }
+
+    if (options?.signal?.aborted) {
+      throw createAbortError(options.signal, "wait_for_agent_start aborted");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      if (options?.signal?.aborted) {
+        reject(createAbortError(options.signal, "wait_for_agent_start aborted"));
+        return;
+      }
+
+      let unsubscribe: (() => void) | null = null;
+      let abortHandler: (() => void) | null = null;
+
+      const cleanup = () => {
+        if (unsubscribe) {
+          try {
+            unsubscribe();
+          } catch {
+            // ignore cleanup errors
+          }
+          unsubscribe = null;
+        }
+        if (abortHandler && options?.signal) {
+          try {
+            options.signal.removeEventListener("abort", abortHandler);
+          } catch {
+            // ignore cleanup errors
+          }
+          abortHandler = null;
+        }
+      };
+
+      const finishOk = () => {
+        cleanup();
+        resolve();
+      };
+
+      const finishErr = (error: unknown) => {
+        cleanup();
+        reject(error);
+      };
+
+      if (options?.signal) {
+        abortHandler = () => finishErr(createAbortError(options.signal!, "wait_for_agent_start aborted"));
+        options.signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      unsubscribe = this.subscribe(
+        (event) => {
+          if (event.type === "agent_state") {
+            if (event.agent.id !== agentId) {
+              return;
+            }
+            if (event.agent.lifecycle === "running") {
+              finishOk();
+              return;
+            }
+            if (event.agent.lifecycle === "error") {
+              finishErr(new Error(event.agent.lastError ?? `Agent ${agentId} failed to start`));
+              return;
+            }
+            if ("pendingRun" in event.agent && !event.agent.pendingRun) {
+              finishErr(new Error(`Agent ${agentId} run finished before starting`));
+              return;
+            }
+            return;
+          }
+        },
+        { agentId, replayState: true }
+      );
+    });
   }
 
   async respondToPermission(
@@ -667,6 +784,8 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
+    const hasPendingRun =
+      "pendingRun" in snapshot && Boolean(snapshot.pendingRun);
 
     const immediatePermission = this.peekPendingPermission(snapshot);
     if (immediatePermission) {
@@ -678,10 +797,8 @@ export class AgentManager {
     }
 
     const initialStatus = snapshot.lifecycle;
-    const initialBusy = isAgentBusy(initialStatus);
+    const initialBusy = isAgentBusy(initialStatus) || hasPendingRun;
     const waitForActive = options?.waitForActive ?? false;
-    const hasPendingRun =
-      "pendingRun" in snapshot && Boolean(snapshot.pendingRun);
     if (!waitForActive && !initialBusy) {
       return {
         status: initialStatus,
@@ -839,7 +956,7 @@ export class AgentManager {
       pendingPermissions: new Map(),
       pendingRun: null,
       timeline: [],
-      persistence: session.describePersistence(),
+      persistence: attachPersistenceCwd(session.describePersistence(), config.cwd),
       historyPrimed: false,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       attention: { requiresAttention: false },
@@ -911,6 +1028,12 @@ export class AgentManager {
         newInfo.sessionId !== agent.runtimeInfo?.sessionId ||
         newInfo.modeId !== agent.runtimeInfo?.modeId;
       agent.runtimeInfo = newInfo;
+      if (!agent.persistence && newInfo.sessionId) {
+        agent.persistence = attachPersistenceCwd(
+          { provider: agent.provider, sessionId: newInfo.sessionId },
+          agent.cwd
+        );
+      }
       // Emit state if runtimeInfo changed so clients get the updated model
       if (changed) {
         this.emitState(agent);
@@ -948,7 +1071,7 @@ export class AgentManager {
       case "thread_started":
         // Update persistence with the new session ID from the provider.
         // persistence.sessionId is the single source of truth for session identity.
-        agent.persistence = agent.session.describePersistence();
+        agent.persistence = attachPersistenceCwd(agent.session.describePersistence(), agent.cwd);
         break;
       case "timeline":
         this.recordTimeline(agent, event.item);
@@ -1033,7 +1156,7 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "finished");
-      void this.persistSnapshot(agent);
+      this.enqueueBackgroundPersist(agent);
       return;
     }
 
@@ -1045,7 +1168,7 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "error");
-      void this.persistSnapshot(agent);
+      this.enqueueBackgroundPersist(agent);
       return;
     }
 
@@ -1057,8 +1180,34 @@ export class AgentManager {
         attentionTimestamp: new Date(),
       };
       this.broadcastAgentAttention(agent, "permission");
-      void this.persistSnapshot(agent);
+      this.enqueueBackgroundPersist(agent);
       return;
+    }
+  }
+
+  private enqueueBackgroundPersist(agent: ManagedAgent): void {
+    const task = this.persistSnapshot(agent).catch((err) => {
+      this.logger.error({ err, agentId: agent.id }, "Failed to persist agent snapshot");
+    });
+    this.trackBackgroundTask(task);
+  }
+
+  private trackBackgroundTask(task: Promise<void>): void {
+    this.backgroundTasks.add(task);
+    void task.finally(() => {
+      this.backgroundTasks.delete(task);
+    });
+  }
+
+  /**
+   * Flush any background persistence work (best-effort).
+   * Used by daemon shutdown paths to avoid unhandled rejections after cleanup.
+   */
+  async flush(): Promise<void> {
+    // Drain tasks, including tasks spawned while awaiting.
+    while (this.backgroundTasks.size > 0) {
+      const pending = Array.from(this.backgroundTasks);
+      await Promise.allSettled(pending);
     }
   }
 

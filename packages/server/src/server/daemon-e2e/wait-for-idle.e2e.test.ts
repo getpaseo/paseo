@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "wait-for-idle-e2e-"));
@@ -17,12 +18,15 @@ function tmpCwd(): string {
  */
 describe("waitForFinish edge cases", () => {
   let ctx: DaemonTestContext;
+  let collector: MessageCollector;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    collector = createMessageCollector(ctx.client);
   });
 
   afterEach(async () => {
+    collector.unsubscribe();
     await ctx.cleanup();
   }, 30000);
 
@@ -38,6 +42,7 @@ describe("waitForFinish edge cases", () => {
     });
 
     // This was the original bug: waitForFinish returned old idle states
+    collector.clear();
     await ctx.client.sendMessage(agent.id, "Say 'hello'");
     const state = await ctx.client.waitForFinish(agent.id, 30000);
 
@@ -60,6 +65,7 @@ describe("waitForFinish edge cases", () => {
 
     // Send 3 messages without waiting - tests that waitForFinish
     // finds the idle AFTER the last running state
+    collector.clear();
     await ctx.client.sendMessage(agent.id, "Say 'one'");
     await ctx.client.sendMessage(agent.id, "Say 'two'");
     await ctx.client.sendMessage(agent.id, "Say 'three'");
@@ -68,8 +74,7 @@ describe("waitForFinish edge cases", () => {
     expect(state.status).toBe("idle");
 
     // Verify all 3 messages were recorded
-    const queue = ctx.client.getMessageQueue();
-    const userMessages = queue.filter(
+    const userMessages = collector.messages.filter(
       (m) =>
         m.type === "agent_stream" &&
         m.payload.agentId === agent.id &&
@@ -103,17 +108,18 @@ describe("waitForFinish edge cases", () => {
     });
 
     // Start both agents
+    collector.clear();
     await ctx.client.sendMessage(agent1.id, "Say 'agent one'");
     await ctx.client.sendMessage(agent2.id, "Say 'agent two'");
 
     // Wait for each - should not be confused by the other's state
     const state2 = await ctx.client.waitForFinish(agent2.id, 30000);
     expect(state2.status).toBe("idle");
-    expect(state2.id).toBe(agent2.id);
+    expect(state2.final?.id).toBe(agent2.id);
 
     const state1 = await ctx.client.waitForFinish(agent1.id, 30000);
     expect(state1.status).toBe("idle");
-    expect(state1.id).toBe(agent1.id);
+    expect(state1.final?.id).toBe(agent1.id);
 
     await ctx.client.deleteAgent(agent1.id);
     await ctx.client.deleteAgent(agent2.id);

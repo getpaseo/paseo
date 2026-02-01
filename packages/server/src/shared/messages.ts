@@ -317,6 +317,7 @@ export const SubscribeAgentUpdatesMessageSchema = z.object({
   subscriptionId: z.string(),
   filter: z.object({
     labels: z.record(z.string()).optional(),
+    agentId: z.string().optional(),
   }).optional(),
 });
 
@@ -369,6 +370,52 @@ export const SendAgentMessageSchema = z.object({
     data: z.string(), // base64 encoded image
     mimeType: z.string(), // e.g., "image/jpeg", "image/png"
   })).optional(),
+});
+
+// ============================================================================
+// Agent RPCs (requestId-correlated)
+// ============================================================================
+
+export const FetchAgentsRequestMessageSchema = z.object({
+  type: z.literal("fetch_agents_request"),
+  requestId: z.string(),
+  filter: z
+    .object({
+      labels: z.record(z.string()).optional(),
+    })
+    .optional(),
+});
+
+export const FetchAgentRequestMessageSchema = z.object({
+  type: z.literal("fetch_agent_request"),
+  requestId: z.string(),
+  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
+  agentId: z.string(),
+});
+
+export const SendAgentMessageRequestSchema = z.object({
+  type: z.literal("send_agent_message_request"),
+  requestId: z.string(),
+  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
+  agentId: z.string(),
+  text: z.string(),
+  messageId: z.string().optional(), // Client-provided ID for deduplication
+  images: z
+    .array(
+      z.object({
+        data: z.string(), // base64 encoded image
+        mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+      })
+    )
+    .optional(),
+});
+
+export const WaitForFinishRequestSchema = z.object({
+  type: z.literal("wait_for_finish_request"),
+  requestId: z.string(),
+  /** Accepts full ID, unique prefix, or exact full title (server resolves). */
+  agentId: z.string(),
+  timeoutMs: z.number().int().positive().optional(),
 });
 
 // ============================================================================
@@ -761,7 +808,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RealtimeAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
-  RequestAgentListMessageSchema,
+  FetchAgentsRequestMessageSchema,
+  FetchAgentRequestMessageSchema,
   SubscribeAgentUpdatesMessageSchema,
   UnsubscribeAgentUpdatesMessageSchema,
   LoadVoiceConversationRequestMessageSchema,
@@ -770,7 +818,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
   SetVoiceConversationMessageSchema,
-  SendAgentMessageSchema,
+  SendAgentMessageRequestSchema,
+  WaitForFinishRequestSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -1037,6 +1086,43 @@ export const AgentListMessageSchema = z.object({
   type: z.literal("agent_list"),
   payload: z.object({
     agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const FetchAgentsResponseMessageSchema = z.object({
+  type: z.literal("fetch_agents_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const FetchAgentResponseMessageSchema = z.object({
+  type: z.literal("fetch_agent_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const SendAgentMessageResponseMessageSchema = z.object({
+  type: z.literal("send_agent_message_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WaitForFinishResponseMessageSchema = z.object({
+  type: z.literal("wait_for_finish_response"),
+  payload: z.object({
+    requestId: z.string(),
+    status: z.enum(["idle", "error", "permission", "timeout"]),
+    final: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable(),
   }),
 });
 
@@ -1476,7 +1562,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStreamMessageSchema,
   AgentStreamSnapshotMessageSchema,
   AgentStatusMessageSchema,
-  AgentListMessageSchema,
+  FetchAgentsResponseMessageSchema,
+  FetchAgentResponseMessageSchema,
+  SendAgentMessageResponseMessageSchema,
+  WaitForFinishResponseMessageSchema,
   ListVoiceConversationsResponseMessageSchema,
   DeleteVoiceConversationResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
@@ -1529,7 +1618,18 @@ export type AgentStreamSnapshotMessage = z.infer<
   typeof AgentStreamSnapshotMessageSchema
 >;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
-export type AgentListMessage = z.infer<typeof AgentListMessageSchema>;
+export type FetchAgentsResponseMessage = z.infer<
+  typeof FetchAgentsResponseMessageSchema
+>;
+export type FetchAgentResponseMessage = z.infer<
+  typeof FetchAgentResponseMessageSchema
+>;
+export type SendAgentMessageResponseMessage = z.infer<
+  typeof SendAgentMessageResponseMessageSchema
+>;
+export type WaitForFinishResponseMessage = z.infer<
+  typeof WaitForFinishResponseMessageSchema
+>;
 export type ListVoiceConversationsResponseMessage = z.infer<
   typeof ListVoiceConversationsResponseMessageSchema
 >;
@@ -1550,7 +1650,10 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
 export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessageSchema>;
-export type SendAgentMessage = z.infer<typeof SendAgentMessageSchema>;
+export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
+export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
+export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
+export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
 export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;
 export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishMessageSchema>;

@@ -1,6 +1,6 @@
 import type { Command } from 'commander'
 import type { AgentSnapshotPayload } from '@paseo/server'
-import { connectToDaemon, getDaemonHost, resolveAgentId } from '../../utils/client.js'
+import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from '../../output/index.js'
 
 /** Agent inspect data for display (matches CLI spec format) */
@@ -217,27 +217,7 @@ export async function runInspectCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID (supports prefix matching)
-    const agentId = resolveAgentId(agentIdArg, agents)
-    if (!agentId) {
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
-      }
-      throw error
-    }
-
-    // Get the full agent snapshot
-    const snapshot = agents.find((a) => a.id === agentId)
+    const snapshot = await client.fetchAgent(agentIdArg)
     if (!snapshot) {
       const error: CommandError = {
         code: 'AGENT_NOT_FOUND',

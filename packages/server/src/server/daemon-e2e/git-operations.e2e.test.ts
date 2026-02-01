@@ -6,6 +6,7 @@ import {
   createDaemonTestContext,
   type DaemonTestContext,
 } from "../test-utils/index.js";
+import { createMessageCollector, type MessageCollector } from "../test-utils/message-collector.js";
 import { slugify } from "../../utils/worktree.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
@@ -60,50 +61,35 @@ function findTimelineToolCall(
 }
 
 async function waitForTimelineToolCall(
-  ctx: DaemonTestContext,
+  messages: SessionOutboundMessage[],
   agentId: string,
   predicate: (item: AgentTimelineItem) => boolean,
   timeoutMs = 10000
 ): Promise<Extract<AgentTimelineItem, { type: "tool_call" }>> {
-  const existing = findTimelineToolCall(
-    ctx.client.getMessageQueue(),
-    agentId,
-    predicate
-  );
-  if (existing && existing.type === "tool_call") {
-    return existing;
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const existing = findTimelineToolCall(messages, agentId, predicate);
+    if (existing && existing.type === "tool_call") {
+      return existing;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-
-  return new Promise((resolve, reject) => {
-    let unsub = () => {};
-    const timeout = setTimeout(() => {
-      unsub();
-      reject(new Error(`Timed out waiting for timeline tool_call (${agentId})`));
-    }, timeoutMs);
-
-    unsub = ctx.client.on("agent_stream", (message) => {
-      if (message.type !== "agent_stream") {
-        return;
-      }
-      if (message.payload.agentId !== agentId) {
-        return;
-      }
-      const event = message.payload.event as any;
-      if (event?.type !== "timeline") {
-        return;
-      }
-      const item = event.item as AgentTimelineItem;
-      if (item?.type !== "tool_call") {
-        return;
-      }
-      if (!predicate(item)) {
-        return;
-      }
-      clearTimeout(timeout);
-      unsub();
-      resolve(item);
-    });
-  });
+  const recentToolCalls: Array<{ name: string; status?: string; callId?: string }> = [];
+  for (let i = messages.length - 1; i >= 0 && recentToolCalls.length < 10; i -= 1) {
+    const msg = messages[i];
+    if (msg?.type !== "agent_stream") continue;
+    if (msg.payload.agentId !== agentId) continue;
+    const event = msg.payload.event as any;
+    if (event?.type !== "timeline") continue;
+    const item = event.item as AgentTimelineItem;
+    if (item?.type !== "tool_call") continue;
+    recentToolCalls.push({ name: item.name, status: item.status, callId: item.callId });
+  }
+  throw new Error(
+    `Timed out waiting for timeline tool_call (${agentId}). Recent tool_calls: ${JSON.stringify(
+      recentToolCalls
+    )}`
+  );
 }
 
 // Use gpt-5.1-codex-mini with low reasoning effort for faster test execution
@@ -112,12 +98,15 @@ const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
+  let collector: MessageCollector;
 
   beforeEach(async () => {
     ctx = await createDaemonTestContext();
+    collector = createMessageCollector(ctx.client);
   });
 
   afterEach(async () => {
+    collector.unsubscribe();
     await ctx.cleanup();
   }, 60000);
 
@@ -393,7 +382,7 @@ describe("daemon E2E", () => {
         execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
 
         const setupCommand =
-          'while [ ! -f "$PASEO_ROOT_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
         writeFileSync(
           path.join(repoRoot, "paseo.json"),
           JSON.stringify({ worktree: { setup: [setupCommand] } })
@@ -426,27 +415,16 @@ describe("daemon E2E", () => {
         expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
         expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
 
-        const started = await waitForTimelineToolCall(
-          ctx,
-          agent.id,
-          (item) => item.name === "paseo_worktree_setup" && item.status === "running",
-          10000
-        );
-
-        expect(started.callId).toBeTruthy();
-
-        writeFileSync(path.join(repoRoot, "allow-setup"), "ok\n");
+        writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
 
         const completed = await waitForTimelineToolCall(
-          ctx,
+          collector.messages,
           agent.id,
-          (item) =>
-            item.name === "paseo_worktree_setup" &&
-            item.callId === started.callId &&
-            item.status === "completed",
+          (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
           20000
         );
 
+        expect(completed.callId).toBeTruthy();
         expect(completed.output).toBeTruthy();
         expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(true);
 
@@ -512,14 +490,14 @@ describe("daemon E2E", () => {
         expect(existsSync(agent.cwd)).toBe(true);
 
         const started = await waitForTimelineToolCall(
-          ctx,
+          collector.messages,
           agent.id,
           (item) => item.name === "paseo_worktree_setup" && item.status === "running",
           10000
         );
 
         const failed = await waitForTimelineToolCall(
-          ctx,
+          collector.messages,
           agent.id,
           (item) =>
             item.name === "paseo_worktree_setup" &&

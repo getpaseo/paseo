@@ -1,5 +1,6 @@
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./paseo-daemon.js";
 import { DaemonClient } from "./daemon-client.js";
+import { createTestAgentClients } from "./fake-agent-client.js";
 
 export interface DaemonTestContext {
   daemon: TestPaseoDaemon;
@@ -34,7 +35,10 @@ export interface DaemonTestContext {
 export async function createDaemonTestContext(
   options?: Parameters<typeof createTestPaseoDaemon>[0]
 ): Promise<DaemonTestContext> {
-  const daemon = await createTestPaseoDaemon(options);
+  const daemon = await createTestPaseoDaemon({
+    agentClients: createTestAgentClients(),
+    ...options,
+  });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
   });

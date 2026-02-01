@@ -1,5 +1,4 @@
 import type { Command } from 'commander'
-import type { AgentSnapshotPayload } from '@paseo/server'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type { CommandOptions, SingleResult, OutputSchema, CommandError } from '../../output/index.js'
 import { readFile } from 'node:fs/promises'
@@ -8,7 +7,7 @@ import { extname } from 'node:path'
 /** Result type for agent send command */
 export interface AgentSendResult {
   agentId: string
-  status: 'sent' | 'completed'
+  status: 'sent' | 'completed' | 'timeout' | 'permission' | 'error'
   message: string
 }
 
@@ -25,27 +24,6 @@ export const agentSendSchema: OutputSchema<AgentSendResult> = {
 export interface AgentSendOptions extends CommandOptions {
   noWait?: boolean
   image?: string[]
-}
-
-/**
- * Resolve agent ID from prefix or full ID.
- * Supports exact match and prefix matching.
- */
-function resolveAgentId(agents: AgentSnapshotPayload[], idOrPrefix: string): string | null {
-  // Exact match first
-  const exact = agents.find((a) => a.id === idOrPrefix)
-  if (exact) return exact.id
-
-  // Prefix match
-  const matches = agents.filter((a) => a.id.startsWith(idOrPrefix))
-  if (matches.length === 1 && matches[0]) return matches[0].id
-  if (matches.length > 1) {
-    throw new Error(
-      `Ambiguous ID prefix '${idOrPrefix}': matches ${matches.length} agents (${matches.map((a) => a.id.slice(0, 7)).join(', ')})`
-    )
-  }
-
-  return null
 }
 
 /**
@@ -140,32 +118,13 @@ export async function runSendCommand(
   }
 
   try {
-    // Request agent list
-    client.requestAgentList()
-
-    // Wait a moment for the agent list to be populated
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    const agents = client.listAgents()
-
-    // Resolve agent ID (supports prefix matching)
-    const agentId = resolveAgentId(agents, agentIdArg)
-    if (!agentId) {
-      const error: CommandError = {
-        code: 'AGENT_NOT_FOUND',
-        message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
-      }
-      throw error
-    }
-
     // Read image files if provided
     const images = options.image && options.image.length > 0
       ? await readImageFiles(options.image)
       : undefined
 
     // Send the message
-    await client.sendAgentMessage(agentId, prompt, { images })
+    await client.sendAgentMessage(agentIdArg, prompt, { images })
 
     // If --no-wait, return immediately
     if (options.noWait) {
@@ -174,7 +133,7 @@ export async function runSendCommand(
       return {
         type: 'single',
         data: {
-          agentId,
+          agentId: agentIdArg,
           status: 'sent',
           message: 'Message sent, not waiting for completion',
         },
@@ -183,16 +142,52 @@ export async function runSendCommand(
     }
 
     // Wait for agent to finish
-    const state = await client.waitForFinish(agentId, 600000) // 10 minute timeout
+    const state = await client.waitForFinish(agentIdArg, 600000) // 10 minute timeout
 
     await client.close()
+
+    if (state.status === 'timeout') {
+      return {
+        type: 'single',
+        data: {
+          agentId: state.final?.id ?? agentIdArg,
+          status: 'timeout',
+          message: 'Timed out waiting for agent to finish',
+        },
+        schema: agentSendSchema,
+      }
+    }
+
+    if (state.status === 'permission') {
+      return {
+        type: 'single',
+        data: {
+          agentId: state.final?.id ?? agentIdArg,
+          status: 'permission',
+          message: 'Agent is waiting for permission',
+        },
+        schema: agentSendSchema,
+      }
+    }
+
+    if (state.status === 'error') {
+      return {
+        type: 'single',
+        data: {
+          agentId: state.final?.id ?? agentIdArg,
+          status: 'error',
+          message: state.error ?? 'Agent finished with error',
+        },
+        schema: agentSendSchema,
+      }
+    }
 
     return {
       type: 'single',
       data: {
-        agentId,
+        agentId: state.final?.id ?? agentIdArg,
         status: 'completed',
-        message: state.status === 'error' ? 'Agent finished with error' : 'Agent completed processing the message',
+        message: 'Agent completed processing the message',
       },
       schema: agentSendSchema,
     }

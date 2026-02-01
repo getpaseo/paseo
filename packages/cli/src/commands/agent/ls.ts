@@ -115,10 +115,7 @@ export async function runLsCommand(
   }
 
   try {
-    // Request and wait for agent list
-    await client.waitForAgentList()
-
-    let agents = client.listAgents()
+    let agents = await client.fetchAgents()
 
     // Status filtering:
     // By default, only show running/idle agents (not error, archived, etc.)
@@ -173,9 +170,9 @@ export async function runLsCommand(
     if (Object.keys(labelFilters).length > 0) {
       // Filter to agents that have ALL specified labels (AND semantics)
       agents = agents.filter((a) => {
-        const agentLabels = (a as any).labels as Record<string, string> | undefined
+        const agentLabels = a.labels
         for (const [key, value] of Object.entries(labelFilters)) {
-          if (!agentLabels || agentLabels[key] !== value) {
+          if (agentLabels[key] !== value) {
             return false
           }
         }
@@ -184,8 +181,7 @@ export async function runLsCommand(
     } else {
       // Default: show background agents only (those without ui=true)
       agents = agents.filter((a) => {
-        const agentLabels = (a as any).labels as Record<string, string> | undefined
-        return !agentLabels || agentLabels['ui'] !== 'true'
+        return a.labels['ui'] !== 'true'
       })
     }
 

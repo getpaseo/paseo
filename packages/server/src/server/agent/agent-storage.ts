@@ -241,6 +241,12 @@ export class AgentStorage {
     await this.upsert({ ...record, title });
   }
 
+  async flush(): Promise<void> {
+    await this.load().catch(() => undefined);
+    const writes = Array.from(this.pendingWrites.values());
+    await Promise.allSettled(writes);
+  }
+
   private async load(): Promise<StoredAgentRecord[]> {
     if (this.loaded) {
       return Array.from(this.cache.values());
