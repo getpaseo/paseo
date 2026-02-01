@@ -3,7 +3,7 @@
     "target": "ES2020",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2020"],
+    "lib": ["ES2020", "DOM"],
     "baseUrl": "./src",
     "paths": {
       "@server/*": ["./*"]

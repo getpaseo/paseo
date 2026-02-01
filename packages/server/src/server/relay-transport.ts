@@ -1,15 +1,31 @@
+/// <reference lib="dom" />
+import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import type pino from "pino";
+import {
+  createDaemonChannel,
+  type EncryptedChannel,
+  type Transport as RelayTransport,
+} from "@paseo/relay";
 
 type RelayTransportOptions = {
   logger: pino.Logger;
-  attachSocket: (ws: WebSocket) => Promise<void>;
+  attachSocket: (ws: RelaySocketLike) => Promise<void>;
   relayEndpoint: string; // "host:port"
   sessionId: string;
+  daemonKeyPair?: CryptoKeyPair;
 };
 
 export type RelayTransportController = {
   stop: () => Promise<void>;
+};
+
+type RelaySocketLike = {
+  readyState: number;
+  send: (data: string) => void;
+  close: (code?: number, reason?: string) => void;
+  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
 };
 
 export function startRelayTransport({
@@ -17,6 +33,7 @@ export function startRelayTransport({
   attachSocket,
   relayEndpoint,
   sessionId,
+  daemonKeyPair,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
 
@@ -56,7 +73,11 @@ export function startRelayTransport({
 
       if (attached) return;
       attached = true;
-      void attachSocket(socket);
+      if (daemonKeyPair) {
+        void attachEncryptedSocket(socket, daemonKeyPair, relayLogger, attachSocket);
+      } else {
+        void attachSocket(socket);
+      }
     });
 
     socket.on("close", (code, reason) => {
@@ -88,6 +109,113 @@ export function startRelayTransport({
   connect();
 
   return { stop };
+}
+
+async function attachEncryptedSocket(
+  socket: WebSocket,
+  daemonKeyPair: CryptoKeyPair,
+  logger: pino.Logger,
+  attachSocket: (ws: RelaySocketLike) => Promise<void>
+): Promise<void> {
+  try {
+    const relayTransport = createRelayTransportAdapter(socket);
+    const emitter = new EventEmitter();
+    const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
+      onmessage: (data) => emitter.emit("message", data),
+      onclose: (code, reason) => emitter.emit("close", code, reason),
+      onerror: (error) => {
+        logger.warn({ err: error }, "relay_e2ee_error");
+        emitter.emit("error", error);
+      },
+    });
+    const encryptedSocket = createEncryptedSocket(channel, emitter);
+    await attachSocket(encryptedSocket);
+  } catch (error) {
+    logger.warn({ err: error }, "relay_e2ee_handshake_failed");
+    try {
+      socket.close(1011, "E2EE handshake failed");
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function createRelayTransportAdapter(socket: WebSocket): RelayTransport {
+  const relayTransport: RelayTransport = {
+    send: (data) => socket.send(data),
+    close: (code?: number, reason?: string) => socket.close(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+
+  socket.on("message", (data) => {
+    relayTransport.onmessage?.(normalizeMessageData(data));
+  });
+  socket.on("close", (code, reason) => {
+    relayTransport.onclose?.(code, reason.toString());
+  });
+  socket.on("error", (err) => {
+    relayTransport.onerror?.(err instanceof Error ? err : new Error(String(err)));
+  });
+
+  return relayTransport;
+}
+
+function createEncryptedSocket(
+  channel: EncryptedChannel,
+  emitter: EventEmitter
+): RelaySocketLike {
+  let readyState = 1;
+
+  channel.setState("open");
+
+  const close = (code?: number, reason?: string) => {
+    if (readyState === 3) return;
+    readyState = 3;
+    channel.close(code, reason);
+  };
+
+  emitter.on("close", () => {
+    if (readyState === 3) return;
+    readyState = 3;
+  });
+
+  return {
+    get readyState() {
+      return readyState;
+    },
+    send: (data) => {
+      void channel.send(data).catch((error) => {
+        emitter.emit("error", error);
+      });
+    },
+    close,
+    on: (event, listener) => {
+      emitter.on(event, listener);
+    },
+    once: (event, listener) => {
+      emitter.once(event, listener);
+    },
+  };
+}
+
+function normalizeMessageData(data: unknown): string | ArrayBuffer {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return data;
+  if (ArrayBuffer.isView(data)) {
+    const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const out = new Uint8Array(view.byteLength);
+    out.set(view);
+    return out.buffer;
+  }
+  if (Buffer.isBuffer(data)) {
+    const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const out = new Uint8Array(view.byteLength);
+    out.set(view);
+    return out.buffer;
+  }
+  return String(data);
 }
 
 function buildRelayWebSocketUrl(
