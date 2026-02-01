@@ -22,18 +22,20 @@ This is an npm workspace monorepo:
 
 - **packages/server**: The Paseo daemon that runs on your machine. Manages agent processes, provides WebSocket API for real-time streaming, and exposes an MCP server for agent control.
 - **packages/app**: Cross-platform client (Expo). Connects to one or more servers, displays agent output, handles voice input, and sends push notifications.
+- **packages/cli**: The `paseo` CLI that is used to manage the deamon, and acts as a client to it with  Docker-style commands like `paseo run/ls/logs/wait`
 - **packages/website**: Marketing site at paseo.dev (TanStack Router + Cloudflare Workers).
 
-## Environment overrides
+## Development Server
 
-- `PASEO_HOME` – path for runtime state such as `agents.json`. Defaults to `~/.paseo`; set this to a unique directory (e.g., `~/.paseo-blue`) when running a secondary server instance.
-- `PASEO_PORT` – preferred voice server + MCP port. Overrides `PORT` and defaults to `6767`. Use distinct ports (e.g., `7777`) for blue/green testing.
+The `npm run dev` script automatically picks an available port for the development server.
 
-Example blue/green launch:
+When running in a worktree or alongside the main checkout, set `PASEO_HOME` to isolate state:
 
+```bash
+PASEO_HOME=~/.paseo-blue npm run dev
 ```
-PASEO_HOME=~/.paseo-blue PASEO_PORT=7777 npm run dev
-```
+
+- `PASEO_HOME` – path for runtime state (agent data, sockets, etc.). Defaults to `~/.paseo`; set this to a unique directory when running a secondary server instance.
 
 ## Running and checking logs
 
@@ -46,7 +48,7 @@ Both the server and Expo app are running in a Tmux session. See CLAUDE.local.md 
 The Paseo daemon communicates via WebSocket. In the main checkout:
 - Daemon runs at `localhost:6767`
 - Expo app at `localhost:8081`
-- State lives in `~/.paseo`
+- State lives in `$PASEO_HOME`
 
 In worktrees or when running `npm run dev`, ports and home directories may differ. Never assume the defaults.
 
@@ -68,18 +70,18 @@ npm run cli -- daemon status         # Check daemon status
 
 Agent data is stored at:
 ```
-~/.paseo/agents/{cwd-with-dashes}/{agent-id}.json
+$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
 To find an agent by ID:
 ```bash
-find ~/.paseo/agents -name "{agent-id}.json"
+find $PASEO_HOME/agents -name "{agent-id}.json"
 ```
 
 To find an agent by title or other content:
 ```bash
-rg -l "some title text" ~/.paseo/agents/
-rg -l "spiteful-toad" ~/.paseo/agents/
+rg -l "some title text" $PASEO_HOME/agents/
+rg -l "spiteful-toad" $PASEO_HOME/agents/
 ```
 
 ### Provider session files
@@ -130,7 +132,7 @@ All agent providers (Claude, Codex, OpenCode) handle their own authentication ou
 
 ## NEVER DO THESE THINGS
 
-- **NEVER restart the Paseo daemon/server** - The daemon is running in Tmux and managed by the user. Restarting it disrupts active sessions, loses state, and breaks workflows. If there's a connectivity issue, investigate the cause - do not restart.
+- **NEVER restart the main Paseo daemon on port 6767** - This is the production daemon that launches and manages agents. If you are reading this, you are probably running as an agent under it. Restarting it will kill your own process and all other running agents. The daemon is managed by the user in Tmux.
 - **NEVER kill or restart processes in Tmux** without explicit user permission
 - **NEVER assume a timeout means the service needs restarting** - Timeouts can be transient network issues, not service failures
 - **NEVER add authentication checks to tests** - Agent providers handle their own auth. If tests fail due to auth issues, report it rather than adding conditional skips or env var checks
