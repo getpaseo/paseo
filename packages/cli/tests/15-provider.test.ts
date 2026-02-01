@@ -9,13 +9,13 @@
  * Tests:
  * - provider --help shows subcommands
  * - provider ls lists all providers
- * - provider ls --format json outputs valid JSON
+ * - provider ls --json outputs valid JSON
  * - provider ls --quiet outputs provider names only
  * - provider models claude lists claude models
  * - provider models codex lists codex models
  * - provider models opencode lists opencode models
  * - provider models unknown fails with error
- * - provider models --format json outputs valid JSON
+ * - provider models --json outputs valid JSON
  */
 
 import assert from 'node:assert'
@@ -47,10 +47,10 @@ console.log('=== Provider Commands ===\n')
   console.log('✓ provider ls lists all providers\n')
 }
 
-// Test 3: provider ls --format json outputs valid JSON
+// Test 3: provider ls --json outputs valid JSON
 {
-  console.log('Test 3: provider ls --format json outputs valid JSON')
-  const result = await $`npx paseo provider ls --format json`.nothrow()
+  console.log('Test 3: provider ls --json outputs valid JSON')
+  const result = await $`npx paseo provider ls --json`.nothrow()
   assert.strictEqual(result.exitCode, 0, 'should exit 0')
   const data = JSON.parse(result.stdout.trim())
   assert(Array.isArray(data), 'output should be an array')
@@ -58,7 +58,7 @@ console.log('=== Provider Commands ===\n')
   assert(data.some((p: { provider: string }) => p.provider === 'claude'), 'should include claude')
   assert(data.some((p: { provider: string }) => p.provider === 'codex'), 'should include codex')
   assert(data.some((p: { provider: string }) => p.provider === 'opencode'), 'should include opencode')
-  console.log('✓ provider ls --format json outputs valid JSON\n')
+  console.log('✓ provider ls --json outputs valid JSON\n')
 }
 
 // Test 4: provider ls --quiet outputs provider names only
@@ -119,16 +119,16 @@ console.log('=== Provider Commands ===\n')
   console.log('✓ provider models unknown fails with error\n')
 }
 
-// Test 9: provider models --format json outputs valid JSON
+// Test 9: provider models --json outputs valid JSON
 {
-  console.log('Test 9: provider models --format json outputs valid JSON')
-  const result = await $`npx paseo provider models claude --format json`.nothrow()
+  console.log('Test 9: provider models --json outputs valid JSON')
+  const result = await $`npx paseo provider models claude --json`.nothrow()
   assert.strictEqual(result.exitCode, 0, 'should exit 0')
   const data = JSON.parse(result.stdout.trim())
   assert(Array.isArray(data), 'output should be an array')
   assert.strictEqual(data.length, 3, 'should have 3 models for claude')
   assert(data.every((m: { model: string; id: string }) => m.model && m.id), 'each model should have name and id')
-  console.log('✓ provider models --format json outputs valid JSON\n')
+  console.log('✓ provider models --json outputs valid JSON\n')
 }
 
 // Test 10: provider models --quiet outputs model IDs only

@@ -107,7 +107,7 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
   const startTime = Date.now()
 
   while (Date.now() - startTime < maxWait) {
-    const result = await ctx.paseo(['permit', 'ls', '--format', 'json'])
+    const result = await ctx.paseo(['permit', 'ls', '--json'])
 
     if (result.exitCode === 0) {
       try {
@@ -148,7 +148,7 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
 async function test_permit_ls(): Promise<{ agentShortId: string; requestId: string }> {
   console.log('\n--- Test: List pending permissions with permit ls ---')
 
-  const result = await ctx.paseo(['permit', 'ls', '--format', 'json'])
+  const result = await ctx.paseo(['permit', 'ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)

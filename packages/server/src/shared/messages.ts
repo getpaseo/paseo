@@ -46,6 +46,31 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
 });
 
+const McpStdioServerConfigSchema = z.object({
+  type: z.literal("stdio"),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+});
+
+const McpHttpServerConfigSchema = z.object({
+  type: z.literal("http"),
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+});
+
+const McpSseServerConfigSchema = z.object({
+  type: z.literal("sse"),
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+});
+
+const McpServerConfigSchema = z.discriminatedUnion("type", [
+  McpStdioServerConfigSchema,
+  McpHttpServerConfigSchema,
+  McpSseServerConfigSchema,
+]);
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -70,7 +95,7 @@ const AgentSessionConfigSchema = z.object({
     })
     .partial()
     .optional(),
-  mcpServers: z.record(z.unknown()).optional(),
+  mcpServers: z.record(McpServerConfigSchema).optional(),
 });
 
 const AgentPermissionUpdateSchema = z.record(z.unknown());

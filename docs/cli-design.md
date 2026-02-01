@@ -584,7 +584,7 @@ paseo daemon restart
 paseo --host localhost:7777 agent ps
 
 # Output format
-paseo agent ls --format json
+paseo agent ls --json
 paseo agent ls --format yaml
 paseo agent ls --format table  # default
 
@@ -1434,7 +1434,7 @@ assert(models.stdout.includes('haiku'))
 ---
 
 ### Phase 16: Output Formats
-- [ ] **16.1** `--format json` works on all list commands
+- [ ] **16.1** `--json` works on all list commands
 - [ ] **16.2** `--format yaml` works on all list commands
 - [ ] **16.3** `--format table` is default
 - [ ] **16.4** `-q` (quiet) returns minimal output
@@ -1445,7 +1445,7 @@ assert(models.stdout.includes('haiku'))
 // ... setup daemon on random port ...
 
 // JSON
-const json = await paseo(['agent', 'ps', '--format', 'json'])
+const json = await paseo(['agent', 'ps', '--json'])
 JSON.parse(json.stdout) // Should not throw
 
 // YAML

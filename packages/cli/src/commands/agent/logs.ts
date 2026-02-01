@@ -20,6 +20,15 @@ export interface AgentLogsOptions extends CommandOptions {
 export type AgentLogsResult = void
 
 
+function parseTailCount(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined
+  const parsed = Number.parseInt(raw, 10)
+  if (Number.isNaN(parsed) || parsed < 0) {
+    return undefined
+  }
+  return parsed
+}
+
 /**
  * Check if a timeline item matches the filter type
  */
@@ -110,6 +119,12 @@ export async function runLogsCommand(
 
     // For follow mode, we stream events continuously
     if (options.follow) {
+      if (options.tail !== undefined && parseTailCount(options.tail) === undefined) {
+        console.error(`Error: Invalid --tail value: ${options.tail}`)
+        console.error('Usage: --tail <n> (where n is >= 0)')
+        await client.close().catch(() => {})
+        process.exit(1)
+      }
       await runFollowMode(client, resolvedId, options)
       return
     }
@@ -159,18 +174,22 @@ export async function runLogsCommand(
       timelineItems = timelineItems.filter((item) => matchesFilter(item, options.filter))
     }
 
-    // Apply tail limit
-    if (options.tail) {
-      const tailCount = parseInt(options.tail, 10)
-      if (!isNaN(tailCount) && tailCount > 0) {
-        timelineItems = timelineItems.slice(-tailCount)
-      }
+    const tailCount = parseTailCount(options.tail)
+    if (options.tail !== undefined && tailCount === undefined) {
+      console.error(`Error: Invalid --tail value: ${options.tail}`)
+      console.error('Usage: --tail <n> (where n is >= 0)')
+      await client.close().catch(() => {})
+      process.exit(1)
     }
 
     await client.close()
 
     // Use curateAgentActivity to format the transcript
-    const transcript = curateAgentActivity(timelineItems)
+    if (tailCount === 0) {
+      return
+    }
+
+    const transcript = curateAgentActivity(timelineItems, tailCount !== undefined ? { maxItems: tailCount } : undefined)
     console.log(transcript)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -188,6 +207,9 @@ async function runFollowMode(
   agentId: string,
   options: AgentLogsOptions
 ): Promise<void> {
+  const DEFAULT_FOLLOW_TAIL = 10
+  const tailCount = parseTailCount(options.tail) ?? DEFAULT_FOLLOW_TAIL
+
   // First, get existing timeline
   const snapshotPromise = new Promise<AgentTimelineItem[]>((resolve) => {
     const timeout = setTimeout(() => resolve([]), 10000)
@@ -218,22 +240,17 @@ async function runFollowMode(
     existingItems = existingItems.filter((item) => matchesFilter(item, options.filter))
   }
 
-  // Apply tail to existing items
-  if (options.tail) {
-    const tailCount = parseInt(options.tail, 10)
-    if (!isNaN(tailCount) && tailCount > 0) {
-      existingItems = existingItems.slice(-tailCount)
+  // Print existing transcript (tail-like behavior)
+  if (tailCount > 0) {
+    const existingTranscript = curateAgentActivity(existingItems, { maxItems: tailCount })
+    if (existingTranscript !== 'No activity to display.') {
+      console.log(existingTranscript)
     }
   }
 
-  // Print existing transcript
-  const existingTranscript = curateAgentActivity(existingItems)
-  if (existingTranscript !== 'No activity to display.') {
-    console.log(existingTranscript)
-  }
-
   // Subscribe to new events
-  console.log('\n--- Following logs (Ctrl+C to stop) ---\n')
+  const tailLabel = tailCount === 0 ? 'no history' : `last ${tailCount} entr${tailCount === 1 ? 'y' : 'ies'}`
+  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`)
 
   const unsubscribe = client.on('agent_stream', (msg: unknown) => {
     const message = msg as AgentStreamMessage

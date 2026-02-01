@@ -112,15 +112,15 @@ try {
     console.log('-q (quiet) flag is accepted with wait\n')
   }
 
-  // Test 7: --format json flag is accepted with wait
+  // Test 7: --json flag is accepted with wait
   {
-    console.log('Test 7: --format json flag is accepted with wait')
+    console.log('Test 7: --json flag is accepted with wait')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo --format json wait abc123`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo wait abc123 --json`.nothrow()
     const output = result.stdout + result.stderr
-    assert(!output.includes('unknown option'), 'should accept --format json flag')
+    assert(!output.includes('unknown option'), 'should accept --json flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
-    console.log('--format json flag is accepted with wait\n')
+    console.log('--json flag is accepted with wait\n')
   }
 
   // Test 8: --format yaml flag is accepted with wait

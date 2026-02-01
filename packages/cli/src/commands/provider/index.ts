@@ -11,12 +11,7 @@ export function createProviderCommand(): Command {
     .description('List available providers and status')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runLsCommand)(options, command)
-    })
+    .action(withOutput(runLsCommand))
 
   provider
     .command('models')
@@ -24,12 +19,7 @@ export function createProviderCommand(): Command {
     .argument('<provider>', 'Provider name (claude, codex, opencode)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((provider, options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runModelsCommand)(provider, options, command)
-    })
+    .action(withOutput(runModelsCommand))
 
   return provider
 }

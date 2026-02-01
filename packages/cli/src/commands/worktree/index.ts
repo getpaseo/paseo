@@ -11,17 +11,13 @@ export function createWorktreeCommand(): Command {
     .description('List Paseo-managed git worktrees')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runLsCommand)(options, command)
-    })
+    .action(withOutput(runLsCommand))
 
   worktree
     .command('archive')
     .description('Archive a worktree (removes worktree and associated branch)')
     .argument('<name>', 'Worktree name or branch name')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runArchiveCommand))
 

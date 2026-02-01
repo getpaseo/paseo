@@ -13,7 +13,7 @@
  * - paseo --help shows ls command
  * - paseo ls --help shows options
  * - paseo ls returns empty list or error when no daemon
- * - paseo ls --format json returns valid JSON (or error)
+ * - paseo ls --json returns valid JSON (or error)
  * - paseo ls -a flag is accepted
  * - paseo ls -g flag is accepted
  */
@@ -71,11 +71,11 @@ try {
     console.log('✓ paseo ls handles daemon not running\n')
   }
 
-  // Test 4: paseo ls --format json returns valid JSON error
+  // Test 4: paseo ls --json returns valid JSON error
   {
-    console.log('Test 4: paseo ls --format json handles errors')
+    console.log('Test 4: paseo ls --json handles errors')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo ls --format json`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo ls --json`.nothrow()
     // Should still fail (daemon not running)
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     // But output should be valid JSON if present
@@ -83,13 +83,13 @@ try {
     if (output.length > 0) {
       try {
         JSON.parse(output)
-        console.log('✓ paseo ls --format json outputs valid JSON error\n')
+        console.log('✓ paseo ls --json outputs valid JSON error\n')
       } catch {
         // Empty or stderr-only output is acceptable
-        console.log('✓ paseo ls --format json handled error (output may be in stderr)\n')
+        console.log('✓ paseo ls --json handled error (output may be in stderr)\n')
       }
     } else {
-      console.log('✓ paseo ls --format json handled error gracefully\n')
+      console.log('✓ paseo ls --json handled error gracefully\n')
     }
   }
 

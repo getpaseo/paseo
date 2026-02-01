@@ -7,7 +7,7 @@ import {
   query,
   type AgentDefinition,
   type CanUseTool,
-  type McpServerConfig,
+  type McpServerConfig as ClaudeSdkMcpServerConfig,
   type ModelInfo,
   type Options,
   type PermissionMode,
@@ -45,6 +45,7 @@ import type {
   AgentRuntimeInfo,
   ListModelsOptions,
   ListPersistedAgentsOptions,
+  McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
@@ -102,7 +103,6 @@ type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export type ClaudeContentChunk = { type: string; [key: string]: any };
 
-type ClaudeMcpServerConfig = McpServerConfig;
 type ClaudeOptions = Options;
 
 type ClaudeAgentClientOptions = {
@@ -178,6 +178,32 @@ function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
 }
 
+function isMcpServerConfig(value: unknown): value is McpServerConfig {
+  if (!isMetadata(value)) {
+    return false;
+  }
+  const type = value.type;
+  if (type === "stdio") {
+    return typeof value.command === "string";
+  }
+  if (type === "http" || type === "sse") {
+    return typeof value.url === "string";
+  }
+  return false;
+}
+
+function isMcpServersRecord(value: unknown): value is Record<string, McpServerConfig> {
+  if (!isMetadata(value)) {
+    return false;
+  }
+  for (const config of Object.values(value)) {
+    if (!isMcpServerConfig(config)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isPermissionMode(value: string | undefined): value is PermissionMode {
   return typeof value === "string" && VALID_CLAUDE_MODES.has(value);
 }
@@ -230,18 +256,37 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
       result.extra = extra;
     }
   }
-  if (isMetadata(metadata.mcpServers)) {
+  if (isMcpServersRecord(metadata.mcpServers)) {
     result.mcpServers = metadata.mcpServers;
   }
 
   return result;
 }
 
-function isClaudeMcpServerConfig(value: unknown): value is ClaudeMcpServerConfig {
-  if (!isMetadata(value)) {
-    return false;
+function toClaudeSdkMcpConfig(
+  config: McpServerConfig
+): ClaudeSdkMcpServerConfig {
+  switch (config.type) {
+    case "stdio":
+      return {
+        type: "stdio",
+        command: config.command,
+        args: config.args,
+        env: config.env,
+      };
+    case "http":
+      return {
+        type: "http",
+        url: config.url,
+        headers: config.headers,
+      };
+    case "sse":
+      return {
+        type: "sse",
+        url: config.url,
+        headers: config.headers,
+      };
   }
-  return typeof value.type === "string" || typeof value.command === "string" || typeof value.url === "string";
 }
 
 function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
@@ -783,10 +828,7 @@ class ClaudeAgentSession implements AgentSession {
     };
 
     if (this.config.mcpServers) {
-      const normalizedUserServers = this.normalizeMcpServers(this.config.mcpServers);
-      if (normalizedUserServers) {
-        base.mcpServers = normalizedUserServers;
-      }
+      base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
     }
 
     if (this.config.model) {
@@ -800,18 +842,13 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private normalizeMcpServers(
-    servers: ClaudeAgentConfig["mcpServers"]
-  ): Record<string, ClaudeMcpServerConfig> | undefined {
-    if (!servers) {
-      return undefined;
-    }
-    const result: Record<string, ClaudeMcpServerConfig> = {};
+    servers: Record<string, McpServerConfig>
+  ): Record<string, ClaudeSdkMcpServerConfig> {
+    const result: Record<string, ClaudeSdkMcpServerConfig> = {};
     for (const [name, config] of Object.entries(servers)) {
-      if (isClaudeMcpServerConfig(config)) {
-        result[name] = config;
-      }
+      result[name] = toClaudeSdkMcpConfig(config);
     }
-    return Object.keys(result).length ? result : undefined;
+    return result;
   }
 
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {

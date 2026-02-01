@@ -15,22 +15,19 @@ export function createDaemonCommand(): Command {
     .description('Show daemon status')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runStatusCommand)(options, command)
-    })
+    .action(withOutput(runStatusCommand))
 
   daemon
     .command('stop')
     .description('Stop the daemon')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runStopCommand))
 
   daemon
     .command('restart')
     .description('Restart the daemon')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runRestartCommand))
 

@@ -5,7 +5,7 @@
  */
 
 import type { Command } from 'commander'
-import type { AnyCommandResult, OutputOptions } from './types.js'
+import type { AnyCommandResult, CommandError, OutputOptions } from './types.js'
 import { render, renderError, toCommandError, defaultOutputOptions } from './render.js'
 
 /** Options that include output settings from global options */
@@ -13,10 +13,26 @@ export interface CommandOptions extends Partial<OutputOptions> {
   [key: string]: unknown
 }
 
+function normalizeFormat(raw: unknown): OutputOptions['format'] {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+
+  // Common user expectation: "cli" means "table/human"
+  if (value === 'cli') return 'table'
+
+  if (value === 'table' || value === 'json' || value === 'yaml') return value
+
+  const error: CommandError = {
+    code: 'INVALID_FORMAT',
+    message: `Unsupported output format: ${String(raw)}`,
+    details: 'Supported formats: table, json, yaml',
+  }
+  throw error
+}
+
 /** Extract output options from command options */
 function extractOutputOptions(options: CommandOptions): OutputOptions {
   return {
-    format: (options.format as OutputOptions['format']) ?? defaultOutputOptions.format,
+    format: options.json ? 'json' : normalizeFormat(options.format ?? defaultOutputOptions.format),
     quiet: options.quiet ?? defaultOutputOptions.quiet,
     noHeaders: options.headers === false, // Commander uses --no-headers -> headers: false
     noColor: options.color === false, // Commander uses --no-color -> color: false

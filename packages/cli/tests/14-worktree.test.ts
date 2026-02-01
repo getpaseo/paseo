@@ -142,15 +142,15 @@ try {
     console.log('✓ -q (quiet) flag is accepted with worktree ls\n')
   }
 
-  // Test 10: -f json flag is accepted with worktree ls
+  // Test 10: --json flag is accepted with worktree ls
   {
-    console.log('Test 10: -f json flag is accepted with worktree ls')
+    console.log('Test 10: --json flag is accepted with worktree ls')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -f json worktree ls`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree ls --json`.nothrow()
     const output = result.stdout + result.stderr
-    assert(!output.includes('unknown option'), 'should accept -f json flag')
+    assert(!output.includes('unknown option'), 'should accept --json flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
-    console.log('✓ -f json flag is accepted with worktree ls\n')
+    console.log('✓ --json flag is accepted with worktree ls\n')
   }
 
   // Test 11: paseo --help shows worktree subcommand

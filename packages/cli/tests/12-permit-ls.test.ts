@@ -13,7 +13,7 @@
  * - permit --help shows subcommands
  * - permit ls --help shows options
  * - permit ls returns error when no daemon
- * - permit ls --format json handles errors
+ * - permit ls --json handles errors
  */
 
 import assert from 'node:assert'
@@ -67,11 +67,11 @@ try {
     console.log('✓ permit ls handles daemon not running\n')
   }
 
-  // Test 4: permit ls --format json handles errors
+  // Test 4: permit ls --json handles errors
   {
-    console.log('Test 4: permit ls --format json handles errors')
+    console.log('Test 4: permit ls --json handles errors')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit ls --format json`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo permit ls --json`.nothrow()
     // Should still fail (daemon not running)
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     // But output should be valid JSON if present
@@ -79,13 +79,13 @@ try {
     if (output.length > 0) {
       try {
         JSON.parse(output)
-        console.log('✓ permit ls --format json outputs valid JSON error\n')
+        console.log('✓ permit ls --json outputs valid JSON error\n')
       } catch {
         // Empty or stderr-only output is acceptable
-        console.log('✓ permit ls --format json handled error (output may be in stderr)\n')
+        console.log('✓ permit ls --json handled error (output may be in stderr)\n')
       }
     } else {
-      console.log('✓ permit ls --format json handled error gracefully\n')
+      console.log('✓ permit ls --json handled error gracefully\n')
     }
   }
 

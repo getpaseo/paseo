@@ -12,12 +12,7 @@ export function createPermitCommand(): Command {
     .description('List all pending permissions')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runLsCommand)(options, command)
-    })
+    .action(withOutput(runLsCommand))
 
   permit
     .command('allow')
@@ -26,6 +21,7 @@ export function createPermitCommand(): Command {
     .argument('[req_id]', 'Permission request ID (optional if --all)')
     .option('--all', 'Allow all pending permissions for this agent')
     .option('--input <json>', 'Modified input parameters (JSON)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runAllowCommand))
 
@@ -37,6 +33,7 @@ export function createPermitCommand(): Command {
     .option('--all', 'Deny all pending permissions for this agent')
     .option('--message <msg>', 'Denial reason message')
     .option('--interrupt', 'Stop agent after denial')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runDenyCommand))
 

@@ -32,7 +32,8 @@ export function createCli(): Command {
     .description('Paseo CLI - control your AI coding agents from the command line')
     .version(VERSION, '-v, --version', 'output the version number')
     // Global output options
-    .option('-f, --format <format>', 'output format: table, json, yaml', 'table')
+    .option('-o, --format <format>', 'output format: table, json, yaml', 'table')
+    .option('--json', 'output in JSON format (alias for --format json)')
     .option('-q, --quiet', 'minimal output (IDs only)')
     .option('--no-headers', 'omit table headers')
     .option('--no-color', 'disable colored output')
@@ -47,12 +48,7 @@ export function createCli(): Command {
     .option('--ui', 'Show only UI agents (equivalent to --label ui=true)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.opts().format = 'json'
-      }
-      return withOutput(runLsCommand)(options, command)
-    })
+    .action(withOutput(runLsCommand))
 
   program
     .command('run')
@@ -69,6 +65,7 @@ export function createCli(): Command {
     .option('--cwd <path>', 'Working directory (default: current)')
     .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
     .option('--ui', 'Mark as UI agent (equivalent to --label ui=true)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runRunCommand))
 
@@ -96,6 +93,7 @@ export function createCli(): Command {
     .argument('[id]', 'Agent ID (or prefix) - optional if --all or --cwd specified')
     .option('--all', 'Stop all agents')
     .option('--cwd <path>', 'Stop all agents in directory')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runStopCommand))
 
@@ -106,6 +104,7 @@ export function createCli(): Command {
     .argument('<prompt>', 'The message to send')
     .option('--no-wait', 'Return immediately without waiting for completion')
     .option('--image <path>', 'Attach image(s) to the message', collectMultiple, [])
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runSendCommand))
 
@@ -115,18 +114,14 @@ export function createCli(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((id, options, command) => {
-      if (options.json) {
-        command.parent.opts().format = 'json'
-      }
-      return withOutput(runInspectCommand)(id, options, command)
-    })
+    .action(withOutput(runInspectCommand))
 
   program
     .command('wait')
     .description('Wait for an agent to become idle')
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--timeout <seconds>', 'Maximum wait time (default: 600)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runWaitCommand))
 

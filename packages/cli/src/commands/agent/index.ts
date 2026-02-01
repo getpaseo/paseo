@@ -29,12 +29,7 @@ export function createAgentCommand(): Command {
     .option('--ui', 'Show only UI agents (equivalent to --label ui=true)')
     .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
-    .action((options, command) => {
-      if (options.json) {
-        command.parent.parent.opts().format = 'json'
-      }
-      return withOutput(runLsCommand)(options, command)
-    })
+    .action(withOutput(runLsCommand))
 
   agent
     .command('run')
@@ -48,6 +43,7 @@ export function createAgentCommand(): Command {
     .option('--cwd <path>', 'Working directory (default: current)')
     .option('--label <key=value>', 'Add label(s) to the agent (can be used multiple times)', collectMultiple, [])
     .option('--ui', 'Mark as UI agent (equivalent to --label ui=true)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runRunCommand))
 
@@ -74,6 +70,7 @@ export function createAgentCommand(): Command {
     .argument('[id]', 'Agent ID (or prefix) - optional if --all or --cwd specified')
     .option('--all', 'Stop all agents')
     .option('--cwd <path>', 'Stop all agents in directory')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runStopCommand))
 
@@ -83,6 +80,7 @@ export function createAgentCommand(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .argument('<prompt>', 'The message to send')
     .option('--no-wait', 'Return immediately without waiting for completion')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runSendCommand))
 
@@ -90,6 +88,7 @@ export function createAgentCommand(): Command {
     .command('inspect')
     .description('Show detailed information about an agent')
     .argument('<id>', 'Agent ID (or prefix)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runInspectCommand))
 
@@ -98,6 +97,7 @@ export function createAgentCommand(): Command {
     .description('Wait for an agent to become idle')
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--timeout <seconds>', 'Maximum wait time (default: 600)')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runWaitCommand))
 
@@ -108,6 +108,7 @@ export function createAgentCommand(): Command {
     .argument('<id>', 'Agent ID (or prefix)')
     .argument('[mode]', 'Mode to set (required unless --list)')
     .option('--list', 'List available modes for this agent')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runModeCommand))
 
@@ -116,6 +117,7 @@ export function createAgentCommand(): Command {
     .description('Archive an agent (soft-delete)')
     .argument('<id>', 'Agent ID (or prefix)')
     .option('--force', 'Force archive running agent')
+    .option('--json', 'Output in JSON format')
     .option('--host <host>', 'Daemon host:port (default: localhost:6767)')
     .action(withOutput(runArchiveCommand))
 

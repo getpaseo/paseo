@@ -98,15 +98,15 @@ try {
     console.log('-q (quiet) flag is accepted with inspect\n')
   }
 
-  // Test 6: --format json flag is accepted with inspect
+  // Test 6: --json flag is accepted with inspect
   {
-    console.log('Test 6: --format json flag is accepted with inspect')
+    console.log('Test 6: --json flag is accepted with inspect')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo --format json inspect abc123`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo inspect abc123 --json`.nothrow()
     const output = result.stdout + result.stderr
-    assert(!output.includes('unknown option'), 'should accept --format json flag')
+    assert(!output.includes('unknown option'), 'should accept --json flag')
     assert(!output.includes('error: option'), 'should not have option parsing error')
-    console.log('--format json flag is accepted with inspect\n')
+    console.log('--json flag is accepted with inspect\n')
   }
 
   // Test 7: --format yaml flag is accepted with inspect

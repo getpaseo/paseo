@@ -4,6 +4,44 @@ export type AgentProvider = string;
 
 export type AgentMetadata = { [key: string]: unknown };
 
+/**
+ * Stdio-based MCP server (spawns a subprocess).
+ */
+export interface McpStdioServerConfig {
+  type: "stdio";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/**
+ * HTTP-based MCP server.
+ */
+export interface McpHttpServerConfig {
+  type: "http";
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * SSE-based MCP server (Server-Sent Events over HTTP).
+ */
+export interface McpSseServerConfig {
+  type: "sse";
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Canonical MCP server configuration.
+ * Discriminated union by `type` field.
+ * Each provider normalizes this to their expected format.
+ */
+export type McpServerConfig =
+  | McpStdioServerConfig
+  | McpHttpServerConfig
+  | McpSseServerConfig;
+
 export type AgentMode = {
   id: string;
   label: string;
@@ -208,7 +246,7 @@ export type AgentSessionConfig = {
     codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
   };
-  mcpServers?: AgentMetadata;
+  mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.

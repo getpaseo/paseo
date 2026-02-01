@@ -60,7 +60,7 @@ async function cleanup(): Promise<void> {
 async function test_agent_ls_empty(): Promise<void> {
   console.log('\n--- Test: agent ls with empty list ---')
 
-  const result = await ctx.paseo(['ls', '--format', 'json'])
+  const result = await ctx.paseo(['ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -116,7 +116,7 @@ async function test_agent_run_detached(): Promise<string> {
 async function test_agent_ls_shows_agent(agentId: string): Promise<void> {
   console.log('\n--- Test: agent ls shows created agent ---')
 
-  const result = await ctx.paseo(['ls', '--format', 'json'])
+  const result = await ctx.paseo(['ls', '--json'])
 
   console.log('Exit code:', result.exitCode)
   console.log('Stdout:', result.stdout)
@@ -198,7 +198,7 @@ async function test_agent_stop(agentId: string): Promise<void> {
   assert.strictEqual(result.exitCode, 0, 'agent stop should succeed')
 
   // Verify agent is no longer in running list
-  const psResult = await ctx.paseo(['ls', '--format', 'json'])
+  const psResult = await ctx.paseo(['ls', '--json'])
   const agents = JSON.parse(psResult.stdout.trim()) as Array<{ id: string; status?: string }>
 
   // Agent might still be in list but should not be running

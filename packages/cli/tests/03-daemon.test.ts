@@ -9,7 +9,7 @@
  * Tests:
  * - daemon --help shows subcommands
  * - daemon status fails gracefully when daemon not running
- * - daemon status --format json outputs valid JSON (even for errors)
+ * - daemon status --json outputs valid JSON (even for errors)
  * - daemon stop handles daemon not running gracefully
  */
 
@@ -56,11 +56,11 @@ try {
     console.log('✓ daemon status fails gracefully when not running\n')
   }
 
-  // Test 3: daemon status --format json outputs valid JSON (even for errors)
+  // Test 3: daemon status --json outputs valid JSON (even for errors)
   {
-    console.log('Test 3: daemon status --format json outputs JSON')
+    console.log('Test 3: daemon status --json outputs JSON')
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo daemon status --format json`.nothrow()
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo daemon status --json`.nothrow()
     // Should still fail (daemon not running)
     assert.notStrictEqual(result.exitCode, 0, 'should fail when daemon not running')
     // But output should be valid JSON
@@ -68,14 +68,14 @@ try {
     if (output.length > 0) {
       try {
         JSON.parse(output)
-        console.log('✓ daemon status --format json outputs valid JSON\n')
+        console.log('✓ daemon status --json outputs valid JSON\n')
       } catch {
         // If stdout is empty, check if stderr has the error (acceptable for now)
-        console.log('✓ daemon status --format json handled error (output may be in stderr)\n')
+        console.log('✓ daemon status --json handled error (output may be in stderr)\n')
       }
     } else {
       // Empty stdout is acceptable if error is in stderr
-      console.log('✓ daemon status --format json handled error gracefully\n')
+      console.log('✓ daemon status --json handled error gracefully\n')
     }
   }
 

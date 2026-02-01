@@ -37,6 +37,7 @@ import type {
   AgentRuntimeInfo,
   ListModelsOptions,
   ListPersistedAgentsOptions,
+  McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { curateAgentActivity } from "../activity-curator.js";
@@ -1866,6 +1867,31 @@ const AgentSessionExtraSchema = z.object({
   claude: z.custom<AgentSessionExtra["claude"]>().optional(),
 });
 
+const McpStdioServerConfigSchema = z.object({
+  type: z.literal("stdio"),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+});
+
+const McpHttpServerConfigSchema = z.object({
+  type: z.literal("http"),
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+});
+
+const McpSseServerConfigSchema = z.object({
+  type: z.literal("sse"),
+  url: z.string(),
+  headers: z.record(z.string()).optional(),
+});
+
+const McpServerConfigSchema = z.discriminatedUnion("type", [
+  McpStdioServerConfigSchema,
+  McpHttpServerConfigSchema,
+  McpSseServerConfigSchema,
+]);
+
 const AgentSessionConfigSchema = z
   .object({
     provider: z.string(),
@@ -1879,7 +1905,7 @@ const AgentSessionConfigSchema = z
     webSearch: z.boolean().optional(),
     reasoningEffort: z.string().optional(),
     extra: AgentSessionExtraSchema.optional(),
-    mcpServers: z.record(z.unknown()).optional(),
+    mcpServers: z.record(McpServerConfigSchema).optional(),
   })
   .passthrough();
 
@@ -2693,14 +2719,35 @@ function getCodexMcpCommand(): string {
   }
 }
 
-type CodexMcpServerConfig = {
+interface CodexMcpServerConfig {
   url?: string;
-  http_headers?: Record<string, string>;  // Static HTTP headers for HTTP servers
+  http_headers?: Record<string, string>;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  tool_timeout_sec?: number;  // Override the default 60s per-tool timeout
-};
+  tool_timeout_sec?: number;
+}
+
+function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
+  switch (config.type) {
+    case "stdio":
+      return {
+        command: config.command,
+        args: config.args,
+        env: config.env,
+      };
+    case "http":
+      return {
+        url: config.url,
+        http_headers: config.headers,
+      };
+    case "sse":
+      return {
+        url: config.url,
+        http_headers: config.headers,
+      };
+  }
+}
 
 type CodexConfigPayload = {
   mcp_servers?: Record<string, CodexMcpServerConfig>;
@@ -2754,22 +2801,10 @@ function buildCodexMcpConfig(
   // Build MCP servers configuration
   const mcpServers: Record<string, CodexMcpServerConfig> = {};
 
-  // Merge MCP servers from extra.codex.mcp_servers (legacy location)
-  const extraCodex = config.extra?.codex as Record<string, unknown> | undefined;
-  if (extraCodex?.mcp_servers && typeof extraCodex.mcp_servers === "object") {
-    for (const [name, serverConfig] of Object.entries(extraCodex.mcp_servers as Record<string, unknown>)) {
-      if (typeof serverConfig === "object" && serverConfig !== null) {
-        mcpServers[name] = serverConfig as CodexMcpServerConfig;
-      }
-    }
-  }
-
-  // Merge user-provided MCP servers (they take highest precedence)
+  // Merge user-provided MCP servers
   if (config.mcpServers) {
     for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
-      if (typeof serverConfig === "object" && serverConfig !== null) {
-        mcpServers[name] = serverConfig as CodexMcpServerConfig;
-      }
+      mcpServers[name] = toCodexMcpConfig(serverConfig);
     }
   }
 

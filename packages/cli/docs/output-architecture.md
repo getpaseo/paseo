@@ -380,7 +380,7 @@ async function renderStream<T>(
 
 ### NDJSON for Streaming
 
-When `--format json` is used with streaming commands, output is newline-delimited JSON (NDJSON) for easy parsing:
+When `--json` (or `--format json`) is used with streaming commands, output is newline-delimited JSON (NDJSON) for easy parsing:
 
 ```
 {"timestamp":"2024-01-15T10:30:00Z","type":"stdout","content":"Hello"}
@@ -451,8 +451,8 @@ E2E tests can verify both structured data (for correctness) and formatted output
 
 ```typescript
 // Verify JSON output is valid and contains expected data
-test('agent list --format json', async () => {
-  const output = await ctx.paseo('agent list --format json')
+test('agent list --json', async () => {
+  const output = await ctx.paseo('agent list --json')
   const data = JSON.parse(output.stdout)
 
   expect(data).toBeInstanceOf(Array)
@@ -475,7 +475,8 @@ Add output options to the root command:
 
 ```typescript
 program
-  .option('-f, --format <format>', 'Output format: table, json, yaml', 'table')
+  .option('-o, --format <format>', 'Output format: table, json, yaml', 'table')
+  .option('--json', 'Output in JSON format (alias for --format json)')
   .option('-q, --quiet', 'Minimal output (IDs only)')
   .option('--no-headers', 'Omit table headers')
   .option('--no-color', 'Disable colored output')
