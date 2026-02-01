@@ -1,5 +1,4 @@
 import os from "node:os";
-import { webcrypto } from "node:crypto";
 import { z } from "zod";
 
 export const ConnectionOfferV1Schema = z.object({
@@ -52,14 +51,13 @@ export function buildOfferEndpoints({
 export async function createConnectionOfferV1(args: {
   sessionId: string;
   endpoints: string[];
+  daemonPublicKeyB64: string;
 }): Promise<ConnectionOfferV1> {
-  const daemonPublicKeyB64 = await generateDaemonPublicKeyB64();
-
   return ConnectionOfferV1Schema.parse({
     v: 1,
     sessionId: args.sessionId,
     endpoints: args.endpoints,
-    daemonPublicKeyB64,
+    daemonPublicKeyB64: args.daemonPublicKeyB64,
   });
 }
 
@@ -88,17 +86,6 @@ function getPrimaryLanIp(): string | null {
     }
   }
   return null;
-}
-
-async function generateDaemonPublicKeyB64(): Promise<string> {
-  const keyPair = await webcrypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-
-  const raw = await webcrypto.subtle.exportKey("raw", keyPair.publicKey);
-  return Buffer.from(new Uint8Array(raw)).toString("base64");
 }
 
 function dedupePreserveOrder(values: string[]): string[] {

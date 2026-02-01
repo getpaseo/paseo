@@ -9,19 +9,44 @@ function runDaemonRequest(label: string, promise: Promise<unknown>): void {
   });
 }
 
-export function useDaemonClient(url: string): DaemonClientV2 {
+type DaemonClientOptions = {
+  daemonPublicKeyB64?: string;
+};
+
+function isRelayWebSocketUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get("role") === "client" && parsed.searchParams.has("session");
+  } catch {
+    return false;
+  }
+}
+
+export function useDaemonClient(
+  url: string,
+  options: DaemonClientOptions = {}
+): DaemonClientV2 {
   const client = useMemo(
     () => {
       const tauriTransportFactory = createTauriWebSocketTransportFactory();
+      const relayConnection = isRelayWebSocketUrl(url);
       return new DaemonClientV2({
         url,
         suppressSendErrors: true,
         ...(tauriTransportFactory
           ? { transportFactory: tauriTransportFactory }
           : {}),
+        ...(relayConnection
+          ? {
+              e2ee: {
+                enabled: true,
+                daemonPublicKeyB64: options.daemonPublicKeyB64,
+              },
+            }
+          : {}),
       });
     },
-    [url]
+    [options.daemonPublicKeyB64, url]
   );
 
   useEffect(() => {

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 function buildCandidateUrls(daemon: HostProfile): string[] {
   const endpoints = daemon.endpoints ?? [];
   const sessionId = daemon.relay?.sessionId ?? null;
+  const relayEndpoint = daemon.relay?.endpoint ?? null;
   const lastKnownGood =
     typeof daemon.metadata?.lastKnownGoodEndpoint === "string"
       ? (daemon.metadata.lastKnownGoodEndpoint as string)
@@ -20,21 +21,24 @@ function buildCandidateUrls(daemon: HostProfile): string[] {
     if (!out.includes(url)) out.push(url);
   };
 
-  if (lastKnownGood) {
+  const isLastKnownRelay = !!relayEndpoint && lastKnownGood === relayEndpoint;
+  const directEndpoints = relayEndpoint
+    ? endpoints.filter((endpoint) => endpoint !== relayEndpoint)
+    : endpoints;
+
+  if (lastKnownGood && !isLastKnownRelay) {
     push(buildDaemonWebSocketUrl(lastKnownGood));
   }
 
-  for (const endpoint of endpoints) {
+  for (const endpoint of directEndpoints) {
     push(buildDaemonWebSocketUrl(endpoint));
   }
 
-  if (sessionId) {
-    if (lastKnownGood) {
-      push(buildRelayWebSocketUrl({ endpoint: lastKnownGood, sessionId }));
+  if (sessionId && relayEndpoint) {
+    if (isLastKnownRelay) {
+      push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
     }
-    for (const endpoint of endpoints) {
-      push(buildRelayWebSocketUrl({ endpoint, sessionId }));
-    }
+    push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
   }
 
   return out;
@@ -123,7 +127,12 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   ]);
 
   return (
-    <SessionProvider key={`${daemon.id}:${activeUrl}`} serverUrl={activeUrl} serverId={daemon.id}>
+    <SessionProvider
+      key={`${daemon.id}:${activeUrl}`}
+      serverUrl={activeUrl}
+      serverId={daemon.id}
+      daemonPublicKeyB64={daemon.daemonPublicKeyB64}
+    >
       {null}
     </SessionProvider>
   );
