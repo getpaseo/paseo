@@ -19,17 +19,17 @@ import type {
   FileExplorerResponse,
   GitDiffResponse,
   GitSetupOptions,
-  GitRepoInfoResponse,
   HighlightedDiffResponse,
   CheckoutStatusResponse,
-	  CheckoutDiffResponse,
-	  CheckoutCommitResponse,
-	  CheckoutMergeResponse,
-	  CheckoutMergeFromBaseResponse,
-	  CheckoutPushResponse,
-	  CheckoutPrCreateResponse,
-	  CheckoutPrStatusResponse,
-	  PaseoWorktreeListResponse,
+  CheckoutDiffResponse,
+  CheckoutCommitResponse,
+  CheckoutMergeResponse,
+  CheckoutMergeFromBaseResponse,
+  CheckoutPushResponse,
+  CheckoutPrCreateResponse,
+  CheckoutPrStatusResponse,
+  ValidateBranchResponse,
+  PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
   ListCommandsResponse,
@@ -177,7 +177,6 @@ type ListVoiceConversationsPayload = ListVoiceConversationsResponseMessage["payl
 type DeleteVoiceConversationPayload = DeleteVoiceConversationResponseMessage["payload"];
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
-type GitRepoInfoPayload = GitRepoInfoResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
@@ -186,6 +185,7 @@ type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
+type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
@@ -1596,37 +1596,20 @@ export class DaemonClientV2 {
     return response;
   }
 
-  async getGitRepoInfo(
-    input: string | { cwd: string } | { agentId: string },
+  async validateBranch(
+    options: { cwd: string; branchName: string },
     requestId?: string
-  ): Promise<GitRepoInfoPayload> {
-    const normalizedInput =
-      typeof input === "string" ? { agentId: input } : input;
+  ): Promise<ValidateBranchPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
-    const cwd =
-      "cwd" in normalizedInput
-        ? normalizedInput.cwd
-        : (await this.fetchAgent(normalizedInput.agentId).catch(() => null))?.cwd;
-
-    if (!cwd) {
-      return {
-        cwd: "cwd" in normalizedInput ? normalizedInput.cwd : "",
-        repoRoot: "",
-        requestId: resolvedRequestId,
-        error: `Agent not found: ${
-          "agentId" in normalizedInput ? normalizedInput.agentId : ""
-        }`,
-      };
-    }
-
     const message = SessionInboundMessageSchema.parse({
-      type: "git_repo_info_request",
-      cwd,
+      type: "validate_branch_request",
+      cwd: options.cwd,
+      branchName: options.branchName,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
       (msg) => {
-        if (msg.type !== "git_repo_info_response") {
+        if (msg.type !== "validate_branch_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

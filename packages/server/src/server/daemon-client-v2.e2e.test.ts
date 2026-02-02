@@ -784,36 +784,11 @@ describe("daemon client v2 E2E", () => {
         title: "Git/File Test",
       });
 
-      const repoInfoRequestId = `repo-info-${Date.now()}`;
-      const repoInfoMessagePromise = waitForSignal(15000, (resolve) => {
-        const unsubscribeRepo = ctx.client.on(
-          "git_repo_info_response",
-          (message) => {
-            if (message.type !== "git_repo_info_response") {
-              return;
-            }
-            if (message.payload.cwd !== cwd) {
-              return;
-            }
-            if (message.payload.requestId !== repoInfoRequestId) {
-              return;
-            }
-            resolve(message);
-          }
-        );
-        return unsubscribeRepo;
-      });
-
-      const repoInfo = await ctx.client.getGitRepoInfo(
-        { cwd },
-        repoInfoRequestId
-      );
-      const repoInfoMessage = await repoInfoMessagePromise;
-      expect(repoInfo.error ?? null).toBeNull();
-      expect(repoInfo.repoRoot).toContain(cwd);
-      expect(repoInfo.requestId).toBe(repoInfoRequestId);
-      expect(repoInfoMessage.payload.cwd).toBe(cwd);
-      expect(repoInfoMessage.payload.requestId).toBe(repoInfoRequestId);
+      // Test checkout status RPC
+      const checkoutStatus = await ctx.client.getCheckoutStatus(cwd);
+      expect(checkoutStatus.error).toBeNull();
+      expect(checkoutStatus.isGit).toBe(true);
+      expect(checkoutStatus.repoRoot).toContain(cwd);
 
       const diffRequestId = `diff-${Date.now()}`;
       const diffMessagePromise = waitForSignal(15000, (resolve) => {
