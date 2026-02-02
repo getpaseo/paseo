@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
-import { createAgentSelfIdMcpServer } from "./agent-self-id-mcp.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 
@@ -104,24 +103,27 @@ describe("create_agent MCP tool", () => {
     );
   });
 
-  it("set_title trims and persists titles for caller agent", async () => {
-    const { agentManager, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({
-      id: "agent-1",
+  it("trims caller-provided titles before createAgent", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "agent-456",
+      cwd: "/tmp/repo",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
     } as ManagedAgent);
 
-    const server = await createAgentSelfIdMcpServer({
-      agentManager,
-      logger,
-      callerAgentId: "agent-1",
+    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const tool = (server as any)._registeredTools["create_agent"];
+    await tool.callback({
+      cwd: "/tmp/repo",
+      title: "  Fix auth  ",
     });
-    const tool = (server as any)._registeredTools["set_title"];
 
-    await tool.callback({ title: "  Fix auth  " });
-
-    expect(spies.agentManager.setTitle).toHaveBeenCalledWith(
-      "agent-1",
-      "Fix auth"
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Fix auth",
+      })
     );
   });
 });

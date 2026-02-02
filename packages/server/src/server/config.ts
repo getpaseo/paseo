@@ -15,9 +15,6 @@ function getDefaultListen(): string {
   return `127.0.0.1:${DEFAULT_PORT}`;
 }
 
-function getSelfIdMcpSocketPath(paseoHome: string): string {
-  return path.join(paseoHome, "self-id-mcp.sock");
-}
 
 function parseOpenAIConfig(env: NodeJS.ProcessEnv) {
   const apiKey = env.OPENAI_API_KEY;
@@ -82,7 +79,6 @@ export function loadConfig(
   // Default is TCP at 127.0.0.1:6767
   const listen = env.PASEO_LISTEN ?? persisted.listen ?? getDefaultListen();
   const mcpListen = getListenForMcp(listen);
-  const selfIdMcpSocketPath = getSelfIdMcpSocketPath(paseoHome);
 
   const envCorsOrigins = env.PASEO_CORS_ORIGINS
     ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
@@ -91,7 +87,6 @@ export function loadConfig(
   return {
     listen,
     paseoHome,
-    selfIdMcpSocketPath,
     corsAllowedOrigins: [...persisted.cors.allowedOrigins, ...envCorsOrigins],
     agentMcpRoute: DEFAULT_AGENT_MCP_ROUTE,
     agentMcpAllowedHosts: [mcpListen, `localhost:${mcpListen.split(":")[1]}`],

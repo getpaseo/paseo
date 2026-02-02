@@ -53,7 +53,7 @@ export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
-import { injectLeadingPaseoInstructionTag } from "./agent/paseo-instructions-tag.js";
+import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
 import { toAgentPayload } from "./agent/agent-projections.js";
 import {
   StructuredAgentResponseError,
@@ -578,7 +578,7 @@ export class Session {
           });
         }
 
-        // Title updates are now handled by set_title MCP tool calls.
+        // Title updates may be applied asynchronously after agent creation.
       },
       { replayState: false }
     );
@@ -1402,14 +1402,20 @@ export class Session {
 
       const trimmedPrompt = initialPrompt?.trim();
       if (trimmedPrompt) {
+        scheduleAgentMetadataGeneration({
+          agentManager: this.agentManager,
+          agentId: snapshot.id,
+          cwd: snapshot.cwd,
+          initialPrompt: trimmedPrompt,
+          explicitTitle: snapshot.config.title,
+          paseoHome: this.paseoHome,
+          logger: this.sessionLogger,
+        });
+
         try {
-          const initialPromptWithInstructions = injectLeadingPaseoInstructionTag(
-            trimmedPrompt,
-            snapshot.config.paseoPromptInstructions
-          );
           await this.handleSendAgentMessage(
             snapshot.id,
-            initialPromptWithInstructions,
+            trimmedPrompt,
             uuidv4(),
             images
           );

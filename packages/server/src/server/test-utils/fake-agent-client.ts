@@ -3,7 +3,6 @@ import { readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import http from "node:http";
 import type {
   AgentCapabilityFlags,
   AgentClient,
@@ -32,141 +31,6 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: true,
 };
 
-type UnixHttpResponse = {
-  status: number;
-  headers: http.IncomingHttpHeaders;
-  body: string;
-};
-
-function parseSseDataFrames(body: string): string[] {
-  const frames: string[] = [];
-  const parts = body.split(/\n\n+/g);
-  for (const part of parts) {
-    const lines = part.split("\n");
-    const dataLines: string[] = [];
-    for (const line of lines) {
-      if (line.startsWith("data:")) {
-        dataLines.push(line.slice("data:".length).trimStart());
-      }
-    }
-    if (dataLines.length > 0) {
-      frames.push(dataLines.join("\n"));
-    }
-  }
-  return frames;
-}
-
-function extractJsonRpcBody(res: UnixHttpResponse): unknown {
-  const contentType = String(res.headers["content-type"] ?? "");
-  if (contentType.includes("text/event-stream")) {
-    const frames = parseSseDataFrames(res.body);
-    if (frames.length === 0) {
-      throw new Error("Empty SSE response from Self-ID MCP server");
-    }
-    return JSON.parse(frames[frames.length - 1]!);
-  }
-  return JSON.parse(res.body);
-}
-
-async function unixSocketJsonRpcRequest(params: {
-  socketPath: string;
-  path: string;
-  headers?: Record<string, string>;
-  body: unknown;
-}): Promise<UnixHttpResponse> {
-  const bodyText = JSON.stringify(params.body);
-  return await new Promise<UnixHttpResponse>((resolve, reject) => {
-    const req = http.request(
-      {
-        socketPath: params.socketPath,
-        path: params.path,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(bodyText),
-          Accept: "application/json, text/event-stream",
-          ...(params.headers ?? {}),
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          resolve({
-            status: res.statusCode ?? 500,
-            headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf-8"),
-          });
-        });
-        res.on("error", reject);
-      }
-    );
-    req.on("error", reject);
-    req.write(bodyText);
-    req.end();
-  });
-}
-
-async function callSelfIdMcpTool(params: {
-  socketPath: string;
-  callerAgentId: string;
-  toolName: "set_title";
-  args: { title: string };
-}): Promise<void> {
-  // Minimal MCP-over-HTTP (Unix socket) client, modeled after packages/server/src/self-id-bridge.
-  const urlPath = `/?callerAgentId=${encodeURIComponent(params.callerAgentId)}`;
-
-  const initReq = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "fake-agent", version: "0.0.0" },
-    },
-  };
-
-  const initRes = await unixSocketJsonRpcRequest({
-    socketPath: params.socketPath,
-    path: urlPath,
-    body: initReq,
-  });
-  const mcpSessionId = typeof initRes.headers["mcp-session-id"] === "string" ? initRes.headers["mcp-session-id"] : null;
-
-  let protocolVersion: string | null = null;
-  const initParsed = extractJsonRpcBody(initRes) as { result?: { protocolVersion?: string }; error?: { message?: string } };
-  if (initParsed.error) {
-    throw new Error(initParsed.error.message ?? "Self-ID MCP initialize failed");
-  }
-  protocolVersion = initParsed.result?.protocolVersion ?? null;
-
-  const toolReq = {
-    jsonrpc: "2.0",
-    id: 2,
-    method: "tools/call",
-    params: {
-      name: params.toolName,
-      arguments: params.args,
-    },
-  };
-
-  const headers: Record<string, string> = {};
-  if (mcpSessionId) headers["mcp-session-id"] = mcpSessionId;
-  if (protocolVersion) headers["mcp-protocol-version"] = protocolVersion;
-
-  const toolRes = await unixSocketJsonRpcRequest({
-    socketPath: params.socketPath,
-    path: urlPath,
-    headers,
-    body: toolReq,
-  });
-
-  const parsed = extractJsonRpcBody(toolRes) as { error?: { message?: string } };
-  if (parsed.error) {
-    throw new Error(parsed.error.message ?? "Self-ID MCP tool call failed");
-  }
-}
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -228,7 +92,7 @@ function buildToolCallForPrompt(provider: string, prompt: string) {
   const text = prompt.toLowerCase();
   if (provider === "claude") {
     if (text.includes("read") && text.includes("/etc/hosts")) {
-      return { name: "Read", input: { path: "/etc/hosts" }, output: { lines: 7 } };
+      return { name: "Read", input: { path: "/etc/hosts" }, output: undefined };
     }
     if (text.includes("rm -f permission.txt")) {
       return { name: "Bash", input: { command: "rm -f permission.txt" }, output: { ok: true } };
@@ -242,9 +106,6 @@ function buildToolCallForPrompt(provider: string, prompt: string) {
     if (text.includes("edit") && text.includes(".txt")) {
       return { name: "Edit", input: { file: "test.txt" }, output: { applied: true } };
     }
-    if (text.includes("set_title") && text.includes("mcp")) {
-      return { name: "mcp__paseo-self-id__set_title", input: { title: "Updated via MCP" }, output: { ok: true } };
-    }
     return null;
   }
 
@@ -253,10 +114,16 @@ function buildToolCallForPrompt(provider: string, prompt: string) {
       return { name: "shell", input: { command: "echo hello" }, output: { stdout: "hello\n" } };
     }
     if (text.includes("read") && text.includes("/etc/hosts")) {
-      return { name: "read_file", input: { path: "/etc/hosts" }, output: { lines: 7 } };
+      return { name: "read_file", input: { path: "/etc/hosts" }, output: undefined };
+    }
+    if (text.includes("read") && text.includes("tool-create.txt")) {
+      return { name: "read_file", input: { path: "tool-create.txt" }, output: undefined };
     }
     if (text.includes("edit") && text.includes(".txt")) {
-      return { name: "apply_patch", input: { patch: "*** Begin Patch\n*** End Patch\n" }, output: { applied: true } };
+      const output = text.includes("tool-create.txt")
+        ? { applied: true, file: "tool-create.txt" }
+        : { applied: true };
+      return { name: "apply_patch", input: { patch: "*** Begin Patch\n*** End Patch\n" }, output };
     }
     const printfMatch =
       /printf\s+\"ok\"\s*>\s*([^\s`]+)/i.exec(text) ??
@@ -415,6 +282,21 @@ class FakeAgentSession implements AgentSession {
 
       await this.applyToolSideEffects(tool.name, tool.input ?? {}, textPrompt);
 
+      let toolOutput: unknown = tool.output;
+      if (!toolOutput && (tool.name === "Read" || tool.name === "read_file")) {
+        const pathInput =
+          typeof tool.input?.path === "string" ? tool.input.path : "/etc/hosts";
+        const resolvedPath = path.isAbsolute(pathInput)
+          ? pathInput
+          : path.join(this.config.cwd ?? process.cwd(), pathInput);
+        try {
+          const content = readFileSync(resolvedPath, "utf8");
+          toolOutput = { path: pathInput, content };
+        } catch {
+          toolOutput = { path: pathInput, content: "" };
+        }
+      }
+
       const toolCompleted: AgentStreamEvent = {
         type: "timeline",
         provider: this.providerName,
@@ -424,7 +306,7 @@ class FakeAgentSession implements AgentSession {
           callId,
           status: "completed",
           input: tool.input ?? undefined,
-          output: tool.output ?? { ok: true },
+          output: toolOutput ?? { ok: true },
         },
       };
       await this.appendHistoryEvent(toolCompleted);
@@ -695,36 +577,21 @@ class FakeAgentSession implements AgentSession {
       return;
     }
 
-    if (toolName === "mcp__paseo-self-id__set_title") {
-      const title = typeof toolInput.title === "string" ? toolInput.title : null;
-      const server = (this.config.mcpServers as Record<string, any> | undefined)?.["paseo-self-id"];
-      const args = Array.isArray(server?.args) ? (server.args as string[]) : [];
-      const socketIndex = args.indexOf("--socket");
-      const agentIndex = args.indexOf("--agent-id");
-      const socketPath = socketIndex >= 0 ? args[socketIndex + 1] : null;
-      const callerAgentId = agentIndex >= 0 ? args[agentIndex + 1] : null;
-
-      if (!title || !socketPath || !callerAgentId) {
-        throw new Error("FakeAgentSession missing paseo-self-id MCP config");
-      }
-
-      await callSelfIdMcpTool({
-        socketPath,
-        callerAgentId,
-        toolName: "set_title",
-        args: { title },
-      });
-      return;
-    }
-
     if (toolName === "Edit" || toolName === "apply_patch") {
+      const lowerPrompt = prompt.toLowerCase();
       const match = /edit the file\s+([^\s]+)\s+and change/i.exec(prompt);
-      const filePath = match?.[1];
+      const filePath = match?.[1] ?? (lowerPrompt.includes("tool-create.txt") ? "tool-create.txt" : null);
       if (filePath) {
         try {
-          const before = readFileSync(filePath, "utf8");
-          const after = before.replace(/hello/g, "goodbye");
-          writeFileSync(filePath, after);
+          const resolved = path.isAbsolute(filePath)
+            ? filePath
+            : path.join(this.config.cwd ?? process.cwd(), filePath);
+          const before = readFileSync(resolved, "utf8");
+          let after = before.replace(/hello/g, "goodbye");
+          if (lowerPrompt.includes("alpha") && lowerPrompt.includes("beta")) {
+            after = after.replace(/alpha/g, "beta");
+          }
+          writeFileSync(resolved, after);
         } catch {
           // ignore
         }

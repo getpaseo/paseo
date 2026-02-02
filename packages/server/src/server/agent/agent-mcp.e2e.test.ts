@@ -83,7 +83,6 @@ describe("agent MCP end-to-end (offline)", () => {
       const daemonConfig: PaseoDaemonConfig = {
         listen: `127.0.0.1:${port}`,
         paseoHome,
-        selfIdMcpSocketPath: path.join(paseoHome, "self-id-mcp.sock"),
         corsAllowedOrigins: [],
         agentMcpRoute: "/mcp/agents",
         agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
@@ -150,4 +149,3 @@ describe("agent MCP end-to-end (offline)", () => {
     30_000
   );
 });
-

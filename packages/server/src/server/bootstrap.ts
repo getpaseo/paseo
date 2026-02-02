@@ -46,7 +46,6 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
-import { createAgentSelfIdMcpServer } from "./agent/agent-self-id-mcp.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import {
@@ -73,7 +72,6 @@ export type PaseoOpenAIConfig = {
 export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
-  selfIdMcpSocketPath: string;
   corsAllowedOrigins: string[];
   agentMcpRoute: string;
   agentMcpAllowedHosts: string[];
@@ -214,7 +212,6 @@ export async function createPaseoDaemon(
       ...config.agentClients,
     },
     registry: agentStorage,
-    selfIdMcpSocketPath: config.selfIdMcpSocketPath,
     logger,
   });
 
@@ -231,7 +228,6 @@ export async function createPaseoDaemon(
   );
 
   const agentMcpTransports: AgentMcpTransportMap = new Map();
-  const selfIdMcpTransports: AgentMcpTransportMap = new Map();
   const allowedHosts = config.agentMcpAllowedHosts;
 
   const createAgentMcpTransport = async (callerAgentId?: string) => {
@@ -357,116 +353,6 @@ export async function createPaseoDaemon(
   app.delete(agentMcpRoute, handleAgentMcpRequest);
   logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
 
-  // Create dedicated Self-ID MCP server on Unix socket for agent self-identification
-  // This only provides set_title and set_branch tools for coding agents
-  // Host validation is disabled since Unix sockets don't have HTTP hosts
-  const selfIdMcpSocketPath = config.selfIdMcpSocketPath;
-
-  const createSelfIdMcpTransport = async (callerAgentId: string) => {
-    const selfIdMcpServer = await createAgentSelfIdMcpServer({
-      agentManager,
-      paseoHome: config.paseoHome,
-      callerAgentId,
-      logger,
-    });
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sessionId) => {
-        selfIdMcpTransports.set(sessionId, transport);
-        logger.debug({ sessionId, callerAgentId }, "Self-ID MCP session initialized");
-      },
-      onsessionclosed: (sessionId) => {
-        selfIdMcpTransports.delete(sessionId);
-        logger.debug({ sessionId }, "Self-ID MCP session closed");
-      },
-      // Disable host validation for Unix socket
-      enableDnsRebindingProtection: false,
-    });
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        selfIdMcpTransports.delete(transport.sessionId);
-      }
-    };
-    transport.onerror = (err) => {
-      logger.error({ err }, "Self-ID MCP transport error");
-    };
-
-    await selfIdMcpServer.connect(transport);
-
-    return transport;
-  };
-
-  const handleSelfIdMcpRequest: express.RequestHandler = async (req, res) => {
-    if (config.mcpDebug) {
-      logger.debug(
-        {
-          method: req.method,
-          url: req.originalUrl,
-          sessionId: req.header("mcp-session-id"),
-          body: req.body,
-        },
-        "Self-ID MCP request"
-      );
-    }
-    try {
-      const sessionId = req.header("mcp-session-id");
-      let transport = sessionId ? selfIdMcpTransports.get(sessionId) : undefined;
-
-      if (!transport) {
-        if (req.method !== "POST") {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Missing or invalid MCP session" },
-            id: null,
-          });
-          return;
-        }
-        if (!isInitializeRequest(req.body)) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Initialization request expected" },
-            id: null,
-          });
-          return;
-        }
-        const callerAgentIdRaw = req.query.callerAgentId;
-        const callerAgentId =
-          typeof callerAgentIdRaw === "string"
-            ? callerAgentIdRaw
-            : Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string"
-              ? callerAgentIdRaw[0]
-              : undefined;
-        if (!callerAgentId) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "callerAgentId query parameter is required for Self-ID MCP" },
-            id: null,
-          });
-          return;
-        }
-        transport = await createSelfIdMcpTransport(callerAgentId);
-      }
-
-      await transport.handleRequest(req as any, res as any, req.body);
-    } catch (err) {
-      logger.error({ err }, "Failed to handle Self-ID MCP request");
-      if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: "2.0",
-          error: { code: -32603, message: "Internal MCP server error" },
-          id: null,
-        });
-      }
-    }
-  };
-
-  const selfIdMcpApp = express();
-  selfIdMcpApp.use(express.json());
-  selfIdMcpApp.post("/", handleSelfIdMcpRequest);
-  selfIdMcpApp.get("/", handleSelfIdMcpRequest);
-  selfIdMcpApp.delete("/", handleSelfIdMcpRequest);
-  const selfIdMcpSocketServer = createHTTPServer(selfIdMcpApp);
 
   let sttService: OpenAISTT | null = null;
   let ttsService: OpenAITTS | null = null;
@@ -525,28 +411,7 @@ export async function createPaseoDaemon(
 
   const start = async () => {
     // Acquire PID lock
-    await acquirePidLock(config.paseoHome, selfIdMcpSocketPath);
-
-    // Start Self-ID MCP socket server first
-    await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error) => {
-        selfIdMcpSocketServer.off("listening", onListening);
-        reject(err);
-      };
-      const onListening = () => {
-        selfIdMcpSocketServer.off("error", onError);
-        logger.info({ path: selfIdMcpSocketPath }, `Self-ID MCP server listening on ${selfIdMcpSocketPath}`);
-        resolve();
-      };
-      selfIdMcpSocketServer.once("error", onError);
-      selfIdMcpSocketServer.once("listening", onListening);
-
-      // Remove stale socket file if it exists
-      if (existsSync(selfIdMcpSocketPath)) {
-        unlinkSync(selfIdMcpSocketPath);
-      }
-      selfIdMcpSocketServer.listen(selfIdMcpSocketPath);
-    });
+    await acquirePidLock(config.paseoHome, config.listen);
 
     // Start main HTTP server
     await new Promise<void>((resolve, reject) => {
@@ -626,15 +491,9 @@ export async function createPaseoDaemon(
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });
-    await new Promise<void>((resolve) => {
-      selfIdMcpSocketServer.close(() => resolve());
-    });
     // Clean up socket files
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
-    }
-    if (existsSync(selfIdMcpSocketPath)) {
-      unlinkSync(selfIdMcpSocketPath);
     }
     // Release PID lock
     await releasePidLock(config.paseoHome);

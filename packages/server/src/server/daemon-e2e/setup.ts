@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";

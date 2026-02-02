@@ -5,7 +5,6 @@ import {
   type AgentLifecycleStatus,
 } from "../../shared/agent-lifecycle.js";
 import type { Logger } from "pino";
-import { getSelfIdentificationInstructions } from "./self-identification-instructions.js";
 
 import type {
   AgentCapabilityFlags,
@@ -59,8 +58,6 @@ export type AgentManagerOptions = {
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
   logger: Logger;
-  /** Path to the Self-ID MCP Unix socket for UI agent injection */
-  selfIdMcpSocketPath?: string;
 };
 
 export type WaitForAgentOptions = {
@@ -213,7 +210,6 @@ export class AgentManager {
   private readonly registry?: AgentStorage;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
-  private readonly selfIdMcpSocketPath?: string;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
 
@@ -222,7 +218,6 @@ export class AgentManager {
       options?.maxTimelineItems ?? DEFAULT_MAX_TIMELINE_ITEMS;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
-    this.selfIdMcpSocketPath = options?.selfIdMcpSocketPath;
     this.onAgentAttention = options?.onAgentAttention;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     if (options?.clients) {
@@ -1261,7 +1256,7 @@ export class AgentManager {
 
   private async normalizeConfig(
     config: AgentSessionConfig,
-    options?: { labels?: Record<string, string>; agentId?: string }
+    _options?: { labels?: Record<string, string>; agentId?: string }
   ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
@@ -1273,31 +1268,6 @@ export class AgentManager {
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
       normalized.model = trimmed.length > 0 ? trimmed : undefined;
-    }
-
-    // Inject paseoPromptInstructions and MCP config for UI agents (with ui=true label)
-    const isUiAgent = options?.labels?.ui === "true";
-    if (isUiAgent) {
-      normalized.paseoPromptInstructions = getSelfIdentificationInstructions({
-        cwd: normalized.cwd,
-      });
-
-      // Inject Self-ID MCP server config (stdio bridge to self-id-mcp.sock)
-      if (this.selfIdMcpSocketPath && options?.agentId) {
-        const existingMcpServers = normalized.mcpServers ?? {};
-        normalized.mcpServers = {
-          ...existingMcpServers,
-          "paseo-self-id": {
-            type: "stdio",
-            command: "paseo",
-            args: [
-              "self-id-bridge",
-              "--socket", this.selfIdMcpSocketPath,
-              "--agent-id", options.agentId,
-            ],
-          },
-        };
-      }
     }
 
     return normalized;

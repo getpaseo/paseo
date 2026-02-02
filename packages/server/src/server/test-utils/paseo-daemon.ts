@@ -65,7 +65,6 @@ export async function createTestPaseoDaemon(
     const config: PaseoDaemonConfig = {
       listen: `${listenHost}:${port}`,
       paseoHome,
-      selfIdMcpSocketPath: path.join(paseoHome, "self-id-mcp.sock"),
       corsAllowedOrigins: options.corsAllowedOrigins ?? [],
       agentMcpRoute: "/mcp/agents",
       agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `${listenHost}:${port}`],
