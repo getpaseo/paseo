@@ -7,7 +7,7 @@ import type {
 import type { Logger } from "pino";
 
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
-import { CodexMcpAgentClient } from "./providers/codex-mcp-agent.js";
+import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 
 import {
@@ -32,7 +32,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 
 export function buildProviderRegistry(logger: Logger): Record<AgentProvider, ProviderDefinition> {
   const claudeClient = new ClaudeAgentClient({ logger });
-  const codexClient = new CodexMcpAgentClient(logger);
+  const codexClient = new CodexAppServerAgentClient(logger);
   const opencodeClient = new OpenCodeAgentClient(logger);
 
   return {
@@ -43,7 +43,7 @@ export function buildProviderRegistry(logger: Logger): Record<AgentProvider, Pro
     },
     codex: {
       ...AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === "codex")!,
-      createClient: (logger: Logger) => new CodexMcpAgentClient(logger),
+      createClient: (logger: Logger) => new CodexAppServerAgentClient(logger),
       fetchModels: (options) => codexClient.listModels(options),
     },
     opencode: {
