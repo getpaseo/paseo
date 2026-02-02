@@ -870,6 +870,10 @@ export class Session {
           await this.handleCheckoutStatusRequest(msg);
           break;
 
+        case "validate_branch_request":
+          await this.handleValidateBranchRequest(msg);
+          break;
+
         case "checkout_diff_request":
           await this.handleCheckoutDiffRequest(msg);
           break;
@@ -2509,6 +2513,81 @@ export class Session {
           remoteUrl: null,
           isPaseoOwnedWorktree: false,
           error: this.toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleValidateBranchRequest(
+    msg: Extract<SessionInboundMessage, { type: "validate_branch_request" }>
+  ): Promise<void> {
+    const { cwd, branchName, requestId } = msg;
+
+    try {
+      const resolvedCwd = expandTilde(cwd);
+
+      // Try local branch first
+      try {
+        await execAsync(`git rev-parse --verify ${branchName}`, {
+          cwd: resolvedCwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        this.emit({
+          type: "validate_branch_response",
+          payload: {
+            exists: true,
+            resolvedRef: branchName,
+            isRemote: false,
+            error: null,
+            requestId,
+          },
+        });
+        return;
+      } catch {
+        // Local branch doesn't exist, try remote
+      }
+
+      // Try remote branch (origin/{branchName})
+      try {
+        await execAsync(`git rev-parse --verify origin/${branchName}`, {
+          cwd: resolvedCwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        this.emit({
+          type: "validate_branch_response",
+          payload: {
+            exists: true,
+            resolvedRef: `origin/${branchName}`,
+            isRemote: true,
+            error: null,
+            requestId,
+          },
+        });
+        return;
+      } catch {
+        // Remote branch doesn't exist either
+      }
+
+      // Branch not found anywhere
+      this.emit({
+        type: "validate_branch_response",
+        payload: {
+          exists: false,
+          resolvedRef: null,
+          isRemote: false,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "validate_branch_response",
+        payload: {
+          exists: false,
+          resolvedRef: null,
+          isRemote: false,
+          error: error instanceof Error ? error.message : String(error),
           requestId,
         },
       });
