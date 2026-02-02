@@ -1729,4 +1729,13 @@ export class CodexAppServerAgentClient implements AgentClient {
       await client.dispose();
     }
   }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      const codexPath = execSync("which codex", { encoding: "utf8" }).trim();
+      return Boolean(codexPath);
+    } catch {
+      return false;
+    }
+  }
 }

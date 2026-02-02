@@ -340,6 +340,10 @@ export class AgentManager {
       agentId: resolvedAgentId,
     });
     const client = this.requireClient(normalizedConfig.provider);
+    const available = await client.isAvailable();
+    if (!available) {
+      throw new Error(`Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`);
+    }
     const session = await client.createSession(normalizedConfig);
     return this.registerSession(
       session,
