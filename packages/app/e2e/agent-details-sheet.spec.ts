@@ -12,6 +12,9 @@ test("agent details sheet shows IDs and copy toast", async ({ page }) => {
     await ensureHostSelected(page);
     await createAgent(page, prompt);
 
+    // Wait for the agent to finish responding
+    await page.waitForTimeout(2000);
+
     await page.getByTestId("agent-overflow-menu").click();
     await page.getByTestId("agent-menu-details").click();
 

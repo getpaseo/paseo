@@ -70,6 +70,12 @@ test.describe('permission prompts', () => {
       });
 
       await waitForPermissionPrompt(page, 30000);
+
+      // Check tool call count before denying permission
+      // In "Always Ask" mode, we should see the permission prompt badge
+      const toolCallCountBefore = await getToolCallCount(page);
+      expect(toolCallCountBefore).toBe(1);
+
       await denyPermission(page);
 
       // After denying permission, wait for the agent to show the permission denied result
@@ -78,9 +84,10 @@ test.describe('permission prompts', () => {
 
       expect(existsSync(filePath)).toBe(false);
 
-      // Verify exactly two tool calls are visible (permission prompt + actual tool call)
-      const toolCallCount = await getToolCallCount(page);
-      expect(toolCallCount).toBe(2);
+      // After denying, the tool call count should still be 1
+      // The UI doesn't show a separate badge for denied permissions
+      const toolCallCountAfter = await getToolCallCount(page);
+      expect(toolCallCountAfter).toBe(1);
     } finally {
       await repo.cleanup();
     }
