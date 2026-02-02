@@ -48,17 +48,26 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
 
   // Connect with timeout
   const connectPromise = client.connect()
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
+    timeoutHandle = setTimeout(() => {
       reject(new Error(`Connection timeout after ${timeout}ms`))
     }, timeout)
   })
 
   try {
     await Promise.race([connectPromise, timeoutPromise])
+    // Clear the timeout so it doesn't keep the event loop alive
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
     client.subscribeAgentUpdates({ subscriptionId: `cli:${process.pid}` })
     return client
   } catch (err) {
+    // Clear the timeout on error too
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
     await client.close().catch(() => {})
     throw err
   }
