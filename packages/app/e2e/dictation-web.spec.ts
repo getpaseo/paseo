@@ -190,7 +190,7 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
     await ensureHostSelected(page);
     await createAgent(page, 'Respond with exactly: Hello');
 
-    await expect(page).toHaveURL(/\/agent\//);
+    await expect(page).toHaveURL(/\/agent($|\/)/);
     await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeEditable();
 
     await page.keyboard.press('Control+d');
@@ -200,7 +200,7 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
 
     await page.keyboard.press('Control+d');
 
-    const newAgentButton = page.getByText('New Agent', { exact: true }).first();
+    const newAgentButton = page.getByTestId('sidebar-new-agent');
     await expect(newAgentButton).toBeVisible();
     await newAgentButton.click();
     await expect(page).toHaveURL(/\/agent\/?$/);
@@ -210,7 +210,7 @@ test('dictation confirm+send does not dispatch after navigating away', async ({ 
     const agentEntry = page.getByText(repo.path).first();
     await expect(agentEntry).toBeVisible();
     await agentEntry.click();
-    await expect(page).toHaveURL(/\/agent\//);
+    await expect(page).toHaveURL(/\/agent($|\/)/);
 
     await expect(page.getByText(/voice note/i)).not.toBeVisible();
   } finally {

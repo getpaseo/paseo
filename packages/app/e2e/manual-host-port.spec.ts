@@ -13,7 +13,7 @@ test('manual host add accepts host:port only and persists endpoints', async ({ p
   });
   await page.goto('/settings');
 
-  await page.getByText('+ Add Host', { exact: true }).click();
+  await page.getByText('+ Add host', { exact: true }).click();
   await page.getByText('Direct connection', { exact: true }).click();
 
   const input = page.getByPlaceholder('host:6767');
