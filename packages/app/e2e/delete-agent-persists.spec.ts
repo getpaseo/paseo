@@ -49,9 +49,9 @@ test('deleting an agent via long-press persists after reload', async ({ page }) 
 
     await longPress(page, agentRow, 1200);
 
-    const deleteButton = page.getByTestId('agent-action-delete').first();
-    await expect(deleteButton).toBeVisible({ timeout: 10000 });
-    await deleteButton.click({ force: true });
+    const archiveButton = page.getByTestId('agent-action-archive').first();
+    await expect(archiveButton).toBeVisible({ timeout: 10000 });
+    await archiveButton.click({ force: true });
     await expect(page.getByTestId('agent-action-cancel')).toHaveCount(0, { timeout: 10000 });
 
     // Ensure deletion finished before reload (avoids races).

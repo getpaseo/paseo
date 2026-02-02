@@ -66,7 +66,7 @@ test('new agent respects serverId in the URL', async ({ page }) => {
   }
 
   await page.goto(`/?serverId=${encodeURIComponent(seededDaemonId)}`);
-  await expect(page.getByText('New Agent', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
 
   const input = page.getByRole('textbox', { name: 'Message agent...' });
   await expect(input).toBeEditable({ timeout: 30000 });
