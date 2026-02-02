@@ -312,29 +312,29 @@ export function DraftAgentScreen({
   type RepoInfoState = {
     cwd: string;
     repoRoot: string;
-    branches: Array<{ name: string; isCurrent: boolean }>;
     currentBranch: string | null;
     isDirty: boolean;
   };
   const repoInfoQuery = useQuery({
-    queryKey: ["gitRepoInfo", selectedServerId, trimmedWorkingDir],
+    queryKey: ["checkoutStatus", selectedServerId, trimmedWorkingDir],
     queryFn: async () => {
       const client = sessionClient;
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.getGitRepoInfo({
-        cwd: trimmedWorkingDir || ".",
-      });
+      const payload = await client.getCheckoutStatus(trimmedWorkingDir || ".");
       if (payload.error) {
-        throw new Error(payload.error);
+        throw new Error(payload.error.message);
       }
+      if (!payload.isGit) {
+        throw new Error("Not a git repository");
+      }
+      // After the isGit check, TypeScript knows we have a git repo
       return {
         cwd: payload.cwd,
         repoRoot: payload.repoRoot,
-        branches: payload.branches ?? [],
-        currentBranch: payload.currentBranch ?? null,
-        isDirty: Boolean(payload.isDirty),
+        currentBranch: payload.currentBranch,
+        isDirty: payload.isDirty,
       };
     },
     enabled:
@@ -501,6 +501,30 @@ export function DraftAgentScreen({
     validateWorktreeName,
   ]);
 
+  // Validate branch exists (checks local first, then remote)
+  const branchValidationQuery = useQuery({
+    queryKey: ["validateBranch", selectedServerId, trimmedWorkingDir, baseBranch],
+    queryFn: async () => {
+      const client = sessionClient;
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      return client.validateBranch({
+        cwd: trimmedWorkingDir || ".",
+        branchName: baseBranch,
+      });
+    },
+    enabled:
+      isCreateWorktree &&
+      !isNonGitDirectory &&
+      Boolean(baseBranch) &&
+      Boolean(trimmedWorkingDir) &&
+      Boolean(sessionClient) &&
+      isConnected,
+    retry: false,
+    staleTime: 30_000,
+  });
+
   const baseBranchError = useMemo(() => {
     if (!isCreateWorktree || isNonGitDirectory) {
       return null;
@@ -508,16 +532,21 @@ export function DraftAgentScreen({
     if (!baseBranch) {
       return "Base branch is required";
     }
-    const branches = repoInfo?.branches ?? [];
-    if (branches.length === 0) {
+    // While validating, don't show error
+    if (branchValidationQuery.isPending || branchValidationQuery.isFetching) {
       return null;
     }
-    const branchExists = branches.some((b) => b.name === baseBranch);
-    if (!branchExists) {
+    // If validation query errored, show generic error
+    if (branchValidationQuery.isError) {
+      return "Failed to validate branch";
+    }
+    // If validation completed and branch doesn't exist
+    const validationResult = branchValidationQuery.data;
+    if (validationResult && !validationResult.exists) {
       return `Branch "${baseBranch}" not found in repository`;
     }
     return null;
-  }, [isCreateWorktree, isNonGitDirectory, baseBranch, repoInfo?.branches]);
+  }, [isCreateWorktree, isNonGitDirectory, baseBranch, branchValidationQuery]);
 
   const handleBaseBranchChange = useCallback((value: string) => {
     setBaseBranch(value);
@@ -865,7 +894,6 @@ export function DraftAgentScreen({
                 currentBranch={repoInfo?.currentBranch ?? null}
                 baseBranch={baseBranch}
                 onBaseBranchChange={handleBaseBranchChange}
-                branches={repoInfo?.branches ?? []}
                 status={repoInfoStatus}
                 repoError={repoInfoError}
                 gitValidationError={gitBlockingError}
