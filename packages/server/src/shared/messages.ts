@@ -979,6 +979,7 @@ const AgentStatusWithTimelineSchema = AgentStatusWithRequestSchema.extend({
 export const AgentCreatedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_created"),
+    agent: AgentSnapshotPayloadSchema,
   })
   .extend(AgentStatusWithRequestSchema.shape);
 
@@ -991,6 +992,7 @@ export const AgentCreateFailedStatusPayloadSchema = z.object({
 export const AgentResumedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_resumed"),
+    agent: AgentSnapshotPayloadSchema,
   })
   .extend(AgentStatusWithTimelineSchema.shape);
 

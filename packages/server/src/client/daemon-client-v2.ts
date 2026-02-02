@@ -200,9 +200,6 @@ type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type TerminalOutputPayload = TerminalOutput["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 
-type AgentCreateFailedStatusPayload = z.infer<
-  typeof AgentCreateFailedStatusPayloadSchema
->;
 type AgentRefreshedStatusPayload = z.infer<
   typeof AgentRefreshedStatusPayloadSchema
 >;
@@ -889,43 +886,7 @@ export class DaemonClientV2 {
       throw new Error(status.error);
     }
 
-    return this.waitForAgentUpsert(
-      status.agentId,
-      (snapshot) => snapshot.status === "idle",
-      60000
-    );
-  }
-
-  async createAgentExpectFail(
-    options: CreateAgentRequestOptions
-  ): Promise<AgentCreateFailedStatusPayload> {
-    const requestId = this.createRequestId(options.requestId);
-    const config = resolveAgentConfig(options);
-
-    const message = SessionInboundMessageSchema.parse({
-      type: "create_agent_request",
-      requestId,
-      config,
-      ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
-    });
-
-    const response = this.waitFor(
-      (msg) => {
-        if (msg.type !== "status") {
-          return null;
-        }
-        const failed = AgentCreateFailedStatusPayloadSchema.safeParse(msg.payload);
-        if (failed.success && failed.data.requestId === requestId) {
-          return failed.data;
-        }
-        return null;
-      },
-      10000,
-      { skipQueue: true }
-    );
-
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    return status.agent;
   }
 
   async deleteAgent(agentId: string): Promise<void> {
@@ -1007,11 +968,7 @@ export class DaemonClientV2 {
     await this.sendSessionMessageOrThrow(message);
     const status = await statusPromise;
 
-    return this.waitForAgentUpsert(
-      status.agentId,
-      (snapshot) => snapshot.status === "idle",
-      60000
-    );
+    return status.agent;
   }
 
   async refreshAgent(

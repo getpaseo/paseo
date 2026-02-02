@@ -185,13 +185,14 @@ describe("daemon client v2 E2E", () => {
         return unsubscribe;
       });
 
-      const failResult = await ctx.client.createAgentExpectFail({
-        ...getFullAccessConfig("codex"),
-        cwd: "/this/path/does/not/exist/12345",
-        title: "Should Fail",
-        requestId: failRequestId,
-      });
-      expect(failResult.error).toContain("Working directory does not exist");
+      await expect(
+        ctx.client.createAgent({
+          ...getFullAccessConfig("codex"),
+          cwd: "/this/path/does/not/exist/12345",
+          title: "Should Fail",
+          requestId: failRequestId,
+        })
+      ).rejects.toThrow("Working directory does not exist");
       await failedStatusPromise;
 
       let sawRefresh = false;
