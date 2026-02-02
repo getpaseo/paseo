@@ -454,6 +454,25 @@ type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
 
 type NotificationHandler = (method: string, params: unknown) => void;
 
+// Codex app-server API response types
+interface CodexModel {
+  id: string;
+  displayName?: string;
+  description?: string;
+  isDefault?: boolean;
+  model?: string;
+  defaultReasoningEffort?: string;
+  supportedReasoningEfforts?: string[];
+}
+
+interface CodexModelListResponse {
+  data?: CodexModel[];
+}
+
+interface CodexThreadStartResponse {
+  thread?: { id?: string };
+}
+
 class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -1304,6 +1323,19 @@ class CodexAppServerAgentSession implements AgentSession {
   private async ensureThread(): Promise<void> {
     if (!this.client) return;
     if (this.currentThreadId) return;
+
+    // Resolve model - if not specified, query available models and pick default
+    let model = this.config.model;
+    if (!model) {
+      const modelResponse = (await this.client.request("model/list", {})) as CodexModelListResponse;
+      const models = modelResponse?.data ?? [];
+      const defaultModel = models.find((m) => m.isDefault) ?? models[0];
+      if (!defaultModel) {
+        throw new Error("No models available from Codex app-server");
+      }
+      model = defaultModel.id;
+    }
+
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.config.approvalPolicy ?? preset.approvalPolicy;
     const sandbox = this.config.sandboxMode ?? preset.sandbox;
@@ -1319,12 +1351,12 @@ class CodexAppServerAgentSession implements AgentSession {
       Object.assign(innerConfig, this.config.extra.codex);
     }
     const response = (await this.client.request("thread/start", {
-      model: this.config.model ?? null,
+      model,
       cwd: this.config.cwd ?? null,
       approvalPolicy,
       sandbox,
       ...(Object.keys(innerConfig).length > 0 ? { config: innerConfig } : {}),
-    })) as { thread?: { id?: string } };
+    })) as CodexThreadStartResponse;
     const threadId = response?.thread?.id;
     if (!threadId) {
       throw new Error("Codex app-server did not return thread id");
