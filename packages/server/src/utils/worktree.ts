@@ -542,10 +542,19 @@ export async function createWorktree({
   if (normalizedBaseBranch === "HEAD") {
     throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
   }
+
+  // Resolve the base branch - try local first, then remote
+  let resolvedBaseBranch = normalizedBaseBranch;
   try {
     await execAsync(`git rev-parse --verify ${normalizedBaseBranch}`, { cwd });
   } catch {
-    throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+    // Local branch doesn't exist, try remote (origin/{branch})
+    try {
+      await execAsync(`git rev-parse --verify origin/${normalizedBaseBranch}`, { cwd });
+      resolvedBaseBranch = `origin/${normalizedBaseBranch}`;
+    } catch {
+      throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+    }
   }
 
   let worktreePath: string;
@@ -568,8 +577,8 @@ export async function createWorktree({
 
   // Always create a new branch for the worktree
   // If branchName already exists, use it as base and create worktree-slug as branch name
-  // If branchName doesn't exist, create it from baseBranch
-  const base = branchExists ? branchName : normalizedBaseBranch;
+  // If branchName doesn't exist, create it from baseBranch (resolved to remote if needed)
+  const base = branchExists ? branchName : resolvedBaseBranch;
   const candidateBranch = branchExists ? desiredSlug : branchName;
 
   // Find unique branch name if collision

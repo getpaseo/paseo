@@ -623,6 +623,13 @@ export const CheckoutPrStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ValidateBranchRequestSchema = z.object({
+  type: z.literal("validate_branch_request"),
+  cwd: z.string(),
+  branchName: z.string(),
+  requestId: z.string(),
+});
+
 export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
   cwd: z.string().optional(),
@@ -842,13 +849,13 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrStatusRequestSchema,
+  ValidateBranchRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   HighlightedDiffRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
-  GitRepoInfoRequestMessageSchema,
   ClearAgentAttentionMessageSchema,
   ClientHeartbeatMessageSchema,
   ListCommandsRequestSchema,
@@ -979,6 +986,7 @@ const AgentStatusWithTimelineSchema = AgentStatusWithRequestSchema.extend({
 export const AgentCreatedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_created"),
+    agent: AgentSnapshotPayloadSchema,
   })
   .extend(AgentStatusWithRequestSchema.shape);
 
@@ -991,6 +999,7 @@ export const AgentCreateFailedStatusPayloadSchema = z.object({
 export const AgentResumedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_resumed"),
+    agent: AgentSnapshotPayloadSchema,
   })
   .extend(AgentStatusWithTimelineSchema.shape);
 
@@ -1333,6 +1342,17 @@ export const CheckoutPrStatusResponseSchema = z.object({
   }),
 });
 
+export const ValidateBranchResponseSchema = z.object({
+  type: z.literal("validate_branch_response"),
+  payload: z.object({
+    exists: z.boolean(),
+    resolvedRef: z.string().nullable(),
+    isRemote: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 const PaseoWorktreeSchema = z.object({
   worktreePath: z.string(),
   branchName: z.string().nullable().optional(),
@@ -1407,24 +1427,6 @@ export const FileDownloadTokenResponseSchema = z.object({
     size: z.number().nullable(),
     error: z.string().nullable(),
     requestId: z.string(),
-  }),
-});
-
-const GitBranchInfoSchema = z.object({
-  name: z.string(),
-  isCurrent: z.boolean(),
-});
-
-export const GitRepoInfoResponseSchema = z.object({
-  type: z.literal("git_repo_info_response"),
-  payload: z.object({
-    cwd: z.string(),
-    repoRoot: z.string(),
-    requestId: z.string(),
-    branches: z.array(GitBranchInfoSchema).optional(),
-    currentBranch: z.string().nullable().optional(),
-    isDirty: z.boolean().optional(),
-    error: z.string().nullable().optional(),
   }),
 });
 
@@ -1581,13 +1583,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPushResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrStatusResponseSchema,
+  ValidateBranchResponseSchema,
   PaseoWorktreeListResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
   HighlightedDiffResponseSchema,
   FileExplorerResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
-  GitRepoInfoResponseSchema,
   ListProviderModelsResponseMessageSchema,
   ListCommandsResponseSchema,
   ExecuteCommandResponseSchema,
@@ -1685,6 +1687,8 @@ export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSche
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;
 export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSchema>;
+export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
+export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
 export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSchema>;
 export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>;
 export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>;
@@ -1698,7 +1702,6 @@ export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
-export type GitRepoInfoResponse = z.infer<typeof GitRepoInfoResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;
 export type ClientHeartbeatMessage = z.infer<typeof ClientHeartbeatMessageSchema>;

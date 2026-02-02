@@ -234,7 +234,7 @@ describe("daemon E2E", () => {
   });
 
 
-  describe("getGitRepoInfo", () => {
+  describe("getCheckoutStatus", () => {
     test(
       "returns repo info for git repo with branch and dirty state",
       async () => {
@@ -268,16 +268,15 @@ describe("daemon E2E", () => {
         expect(agent.id).toBeTruthy();
         expect(agent.status).toBe("idle");
 
-        // Get git repo info
-        const result = await ctx.client.getGitRepoInfo(agent.id);
+        // Get checkout status
+        const result = await ctx.client.getCheckoutStatus(cwd);
 
         // Verify repo info returned without error
         expect(result.error).toBeNull();
+        expect(result.isGit).toBe(true);
         // macOS symlinks /var to /private/var, so we check containment
         expect(result.repoRoot).toContain("daemon-e2e-");
         expect(result.currentBranch).toBeTruthy();
-        expect(result.branches.length).toBeGreaterThan(0);
-        expect(result.branches.some((b) => b.isCurrent)).toBe(true);
         expect(result.isDirty).toBe(true);
 
         // Cleanup
@@ -316,10 +315,11 @@ describe("daemon E2E", () => {
 
         expect(agent.id).toBeTruthy();
 
-        // Get git repo info
-        const result = await ctx.client.getGitRepoInfo(agent.id);
+        // Get checkout status
+        const result = await ctx.client.getCheckoutStatus(cwd);
 
         expect(result.error).toBeNull();
+        expect(result.isGit).toBe(true);
         expect(result.isDirty).toBe(false);
         expect(result.currentBranch).toBeTruthy();
 
@@ -331,7 +331,7 @@ describe("daemon E2E", () => {
     );
 
     test(
-      "returns error for non-git directory",
+      "returns isGit false for non-git directory",
       async () => {
         const cwd = tmpCwd();
         // Don't initialize git - just a regular directory
@@ -345,11 +345,10 @@ describe("daemon E2E", () => {
 
         expect(agent.id).toBeTruthy();
 
-        // Get git repo info - should return error
-        const result = await ctx.client.getGitRepoInfo(agent.id);
+        // Get checkout status - should return isGit: false
+        const result = await ctx.client.getCheckoutStatus(cwd);
 
-        // Server returns cwd as repoRoot even on error, so we just check for error
-        expect(result.error).toBeTruthy();
+        expect(result.isGit).toBe(false);
 
         // Cleanup
         await ctx.client.deleteAgent(agent.id);
