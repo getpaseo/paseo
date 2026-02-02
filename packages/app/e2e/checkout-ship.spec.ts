@@ -95,34 +95,6 @@ async function waitForAssistantText(page: Page, text: string) {
   return assistantMessage;
 }
 
-async function waitForAssistantTextWithPermissions(
-  page: Page,
-  text: string,
-  timeoutMs = 60000
-) {
-  const start = Date.now();
-  const assistantMessage = page
-    .getByTestId('assistant-message')
-    .filter({ hasText: text })
-    .last();
-  while (Date.now() - start < timeoutMs) {
-    if (await assistantMessage.isVisible()) {
-      return assistantMessage;
-    }
-    const allowButton = page.getByText('Allow', { exact: true }).first();
-    if (await allowButton.isVisible()) {
-      try {
-        await allowButton.click({ force: true, timeout: 1000 });
-      } catch {
-        // Button can detach during animation; retry on next loop.
-      }
-      continue;
-    }
-    await page.waitForTimeout(500);
-  }
-  throw new Error(`Timed out waiting for assistant text: ${text}`);
-}
-
 async function createAgentAndWait(page: Page, message: string) {
   const input = page.getByRole('textbox', { name: 'Message agent...' });
   await expect(input).toBeEditable();
@@ -251,18 +223,8 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     const secondCwd = await requestCwd(page);
     expect(secondCwd).toBe(firstCwd);
 
-    await sendPrompt(
-      page,
-      'Only call MCP tools set_title("E2E Ship Loop") and set_branch("feat/e2e-ship-loop"). Do not run bash or other tools. Then respond with exactly: OK'
-    );
-    await waitForAssistantTextWithPermissions(page, 'OK', 60000);
-    await expect(page.getByText('E2E Ship Loop', { exact: true }).first()).toBeVisible();
-
-    await openChangesPanel(page);
-    await expect.poll(
-      async () => (await getChangesScope(page).getByTestId('changes-branch').innerText()).trim(),
-      { timeout: 60000 }
-    ).toBe('feat/e2e-ship-loop');
+    await sendPrompt(page, "Respond with exactly: OK");
+    await waitForAssistantText(page, "OK");
 
     const readmePath = path.join(firstCwd, 'README.md');
     await appendFile(readmePath, '\nFirst change\n');

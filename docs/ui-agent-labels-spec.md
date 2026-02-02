@@ -1,12 +1,11 @@
-# UI vs Background Agents — Labels + UI MCP Spec
+# UI vs Background Agents — Labels Spec
 
 ## Goal
-Introduce a simple labels system to distinguish UI agents (visible in the mobile app) from background/CLI agents, while keeping the implementation minimal and extensible.
+Distinguish UI agents (visible in the mobile app) from background/CLI agents with a minimal labels system.
 
 ## Non-Goals
-- No complex label semantics (no namespaces, inheritance, or validation rules beyond `key=value`).
-- No migration or auto-tagging beyond explicit flags.
-- No new MCP tools beyond `set_title` and `set_branch`.
+- Complex label semantics (namespaces, inheritance, or validation beyond `key=value`).
+- Additional MCP tools or prompt injection.
 
 ---
 
@@ -14,9 +13,8 @@ Introduce a simple labels system to distinguish UI agents (visible in the mobile
 - **Labels are the single source of truth** for UI vs background.
 - `--ui` is **syntactic sugar** for `--label ui=true`.
 - **Default `paseo run` is background** (no `ui=true`).
-- **Only agents with `ui=true`** get the UI MCP injection and show in the mobile app.
-- **Remove the current `agent-control` MCP injection** from all agents.
-- **Branch name is simple and consistent**; avoid extra indirection or derived naming.
+- **Only agents with `ui=true`** show in the mobile app.
+- **No special MCP injection** for UI agents.
 
 ---
 
@@ -66,66 +64,19 @@ Add label filtering.
 - If multiple `--label` flags are provided, require **all** to match (AND semantics).
 
 ### UI Agent Behavior (`ui=true`)
-When an agent has label `ui=true`:
-1. **Inject** the new `Paseo` MCP server with **only** `set_title` and `set_branch`.
-2. **Inject** UI-specific prompt instructions (see below).
-3. **Expose** agent in mobile app UI (mobile filters to `ui=true` on the server side or via API).
-
-Agents without `ui=true`:
-- **No Paseo MCP injection.**
-- **No UI prompt instructions.**
-- **Not shown** in the mobile app UI.
-
-### Remove Agent-Control MCP Injection
-- Remove the current agent-control MCP injection for **all** agents.
-- This logic should be deleted (not conditionally disabled).
+- UI agents are visible in the mobile app UI.
+- No special MCP server injection or prompt injection for UI agents.
 
 ---
 
-## MCP: `Paseo` Server Definition
-
-### Name
-`Paseo` (exact capitalization)
-
-### Tools (ONLY)
-- `set_title(title: string)`
-- `set_branch(name: string)`
-
-### Availability
-- **Injected only** when `labels.ui === "true"`.
-
----
-
-## Prompt Instructions (Injected Only for UI Agents)
-Keep the instructions short and direct. Inject them at the start of the prompt for UI agents.
-
-**Text to inject (verbatim):**
-```
-You are running under Paseo. You MUST call set_title immediately after understanding the task. Call it exactly once per task—do not repeat.
-You are running inside a Paseo-owned worktree. Call set_branch once (alongside set_title) to name your branch.
-```
-
----
-
-## Mobile App Behavior
-- The app shows **only agents with `ui=true`**.
-- No change to app UI beyond filtering logic.
-
----
-
-## Migration / Removal Checklist
-- [ ] Remove agent-control MCP injection from the daemon for all agents.
-- [ ] Add new `Paseo` MCP injection gated on `labels.ui === "true"`.
-- [ ] Ensure `paseo run` supports `--label` and `--ui`.
-- [ ] Ensure `paseo ls` supports `--label` and `--ui` filtering.
-- [ ] Persist labels with agent metadata.
+## Metadata Generation (Title + Branch)
+- The daemon may generate agent metadata **asynchronously** on creation using the initial user prompt.
+- Title generation is skipped when a title is explicitly provided.
+- Branch generation is only attempted when running inside a Paseo-owned worktree and the branch is still the worktree directory name.
 
 ---
 
 ## Acceptance Criteria
 - `paseo run --ui "Task"` creates an agent with `labels.ui === "true"`.
-- UI agents have access to only `set_title` and `set_branch` MCP tools.
-- Background agents have **no** `Paseo` MCP tools.
-- `paseo ls --ui` returns only UI agents.
-- Mobile app displays only UI agents.
-- No remaining references to the old agent-control MCP injection.
+- UI agents show up in the mobile app; background agents do not.
+- No MCP-based self-identification remains in the system.

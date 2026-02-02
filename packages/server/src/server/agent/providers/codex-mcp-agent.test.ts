@@ -1343,7 +1343,8 @@ describe("CodexMcpAgentClient (MCP integration)", () => {
         session = await client.createSession(config);
 
       const prompt = [
-        "Request approval to run the command `printf \"ok\" > permission.txt`.",
+        "You must use the shell tool to run the exact command `printf \"ok\" > permission.txt`.",
+        "Request approval before running it.",
         "If approval is denied, stop immediately.",
       ].join(" ");
 
