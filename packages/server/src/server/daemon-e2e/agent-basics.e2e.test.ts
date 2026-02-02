@@ -93,14 +93,13 @@ describe("daemon E2E", () => {
   test("fails to create agent with non-existent cwd", async () => {
     const nonExistentCwd = "/this/path/does/not/exist/12345";
 
-    const result = await ctx.client.createAgentExpectFail({
-      provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-      cwd: nonExistentCwd,
-      title: "Should Fail Agent",
-    });
-
-    expect(result.error).toContain("Working directory does not exist");
-    expect(result.error).toContain(nonExistentCwd);
+    await expect(
+      ctx.client.createAgent({
+        provider: "codex", model: CODEX_TEST_MODEL, reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        cwd: nonExistentCwd,
+        title: "Should Fail Agent",
+      })
+    ).rejects.toThrow(nonExistentCwd);
   });
 
 

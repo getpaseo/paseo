@@ -1435,12 +1435,17 @@ export class Session {
       }
 
       if (requestId) {
+        const agentPayload = await this.getAgentPayloadById(snapshot.id);
+        if (!agentPayload) {
+          throw new Error(`Agent ${snapshot.id} not found after creation`);
+        }
         this.emit({
           type: "status",
           payload: {
             status: "agent_created",
             agentId: snapshot.id,
             requestId,
+            agent: agentPayload,
           },
         });
       }
@@ -1510,6 +1515,10 @@ export class Session {
       await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
+        const agentPayload = await this.getAgentPayloadById(snapshot.id);
+        if (!agentPayload) {
+          throw new Error(`Agent ${snapshot.id} not found after resume`);
+        }
         this.emit({
           type: "status",
           payload: {
@@ -1517,6 +1526,7 @@ export class Session {
             agentId: snapshot.id,
             requestId,
             timelineSize,
+            agent: agentPayload,
           },
         });
       }
