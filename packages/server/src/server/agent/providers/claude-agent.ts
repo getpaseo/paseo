@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -401,6 +402,15 @@ export class ClaudeAgentClient implements AgentClient {
     }
 
     return descriptors;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      const claudePath = execSync("which claude", { encoding: "utf8" }).trim();
+      return Boolean(claudePath);
+    } catch {
+      return false;
+    }
   }
 
   private assertConfig(config: AgentSessionConfig): ClaudeAgentConfig {

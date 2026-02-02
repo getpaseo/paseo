@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
 import type { Logger } from "pino";
@@ -316,6 +316,15 @@ export class OpenCodeAgentClient implements AgentClient {
   async listPersistedAgents(_options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> {
     // TODO: Implement by listing sessions from OpenCode
     return [];
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      const opencodePath = execSync("which opencode", { encoding: "utf8" }).trim();
+      return Boolean(opencodePath);
+    } catch {
+      return false;
+    }
   }
 
   private assertConfig(config: AgentSessionConfig): OpenCodeAgentConfig {

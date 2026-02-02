@@ -664,6 +664,10 @@ class FakeAgentClient implements AgentClient {
       { provider: this.provider, id: "test-model", label: "Test Model", isDefault: true },
     ];
   }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
 }
 
 export function createTestAgentClients(): Record<string, AgentClient> {

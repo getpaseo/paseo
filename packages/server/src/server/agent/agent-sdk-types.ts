@@ -287,4 +287,9 @@ export interface AgentClient {
   resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>): Promise<AgentSession>;
   listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
+  /**
+   * Check if this provider is available (CLI binary is installed).
+   * Returns true if available, false otherwise.
+   */
+  isAvailable(): Promise<boolean>;
 }
