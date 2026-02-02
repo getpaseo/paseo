@@ -14,7 +14,9 @@ import {
   type CheckoutStatusResult,
 } from "../../utils/checkout-git.js";
 
-const AUTO_GEN_MODEL = "haiku";
+const AUTO_GEN_PROVIDER = "codex" as const;
+const AUTO_GEN_MODEL = "gpt-5.1-codex-mini";
+const AUTO_GEN_REASONING_EFFORT = "low";
 
 export type AgentMetadataGeneratorDeps = {
   generateStructuredAgentResponse?: typeof generateStructuredAgentResponse;
@@ -156,8 +158,9 @@ export async function generateAndApplyAgentMetadata(
     result = await generator({
       manager: options.agentManager,
       agentConfig: {
-        provider: "claude",
+        provider: AUTO_GEN_PROVIDER,
         model: AUTO_GEN_MODEL,
+        reasoningEffort: AUTO_GEN_REASONING_EFFORT,
         cwd: options.cwd,
         title: "Agent metadata generator",
         internal: true,

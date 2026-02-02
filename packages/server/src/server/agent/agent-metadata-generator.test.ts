@@ -1,321 +1,148 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { execSync } from "child_process";
+import { mkdtempSync, rmSync, writeFileSync, realpathSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+import pino from "pino";
 
-import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentManager } from "./agent-manager.js";
-import {
-  determineAgentMetadataNeeds,
-  generateAndApplyAgentMetadata,
-  scheduleAgentMetadataGeneration,
-} from "./agent-metadata-generator.js";
+import { AgentManager } from "./agent-manager.js";
+import { AgentStorage } from "./agent-storage.js";
+import { createAllClients, shutdownProviders } from "./provider-registry.js";
+import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
+import { createWorktree, validateBranchSlug } from "../../utils/worktree.js";
 
-const logger = createTestLogger();
+const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
+const CODEX_TEST_REASONING_EFFORT = "low";
 
-function createAgentManagerStub() {
-  return {
-    setTitle: vi.fn().mockResolvedValue(undefined),
-  } as unknown as AgentManager;
+function tmpCwd(prefix: string): string {
+  return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
 }
 
-function delayImmediate(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+function initGitRepo(repoDir: string): void {
+  execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
+  execSync("git config user.email 'paseo-test@example.com'", {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execSync("git config user.name 'Paseo Test'", {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  writeFileSync(path.join(repoDir, "README.md"), "init\n");
+  execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
 }
 
-function getSchemaKeys(schema: unknown): string[] {
-  const shape =
-    (schema as { shape?: Record<string, unknown> }).shape ??
-    (schema as { _def?: { shape?: () => Record<string, unknown> } })._def?.shape?.();
-  return shape ? Object.keys(shape).sort() : [];
-}
+describe("agent metadata generation (real agents)", () => {
+  const logger = pino({ level: "silent" });
+  let repoDir: string;
+  let paseoHome: string;
+  let storagePath: string;
+  let manager: AgentManager;
+  let storage: AgentStorage;
+  let codexSessionDir: string;
+  let previousCodexSessionDir: string | undefined;
 
-describe("agent metadata generation", () => {
-  it("skips generation when there is no initial prompt", async () => {
-    const agentManager = createAgentManagerStub();
-    const generator = vi.fn();
-
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-1",
-      cwd: "/tmp",
-      initialPrompt: "   ",
+  beforeEach(() => {
+    repoDir = tmpCwd("metadata-repo-");
+    initGitRepo(repoDir);
+    paseoHome = tmpCwd("metadata-paseo-home-");
+    storagePath = path.join(paseoHome, "agents");
+    storage = new AgentStorage(storagePath, logger);
+    manager = new AgentManager({
+      clients: createAllClients(logger),
+      registry: storage,
       logger,
-      deps: { generateStructuredAgentResponse: generator },
     });
-
-    expect(generator).not.toHaveBeenCalled();
+    codexSessionDir = tmpCwd("codex-sessions-");
+    previousCodexSessionDir = process.env.CODEX_SESSION_DIR;
+    process.env.CODEX_SESSION_DIR = codexSessionDir;
   });
 
-  it("determines title needs when explicit title is missing", async () => {
-    const needs = await determineAgentMetadataNeeds({
-      cwd: "/tmp",
-      initialPrompt: "Do the thing",
-      explicitTitle: null,
-      deps: {
-        getCheckoutStatus: async () => ({
-          isGit: false,
-        }),
-      },
-    });
+  afterEach(async () => {
+    process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
+    await shutdownProviders(logger);
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(paseoHome, { recursive: true, force: true });
+    rmSync(codexSessionDir, { recursive: true, force: true });
+  }, 60000);
 
-    expect(needs.needsTitle).toBe(true);
-    expect(needs.needsBranch).toBe(false);
-  });
+  test(
+    "generates a title using a real Codex agent",
+    async () => {
+      const agent = await manager.createAgent({
+        provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        modeId: "auto",
+        cwd: repoDir,
+        title: "Main Agent",
+      }, "metadata-title-agent");
 
-  it("schedules async title generation", async () => {
-    const agentManager = createAgentManagerStub();
-    const generator = vi.fn(async () => ({ title: "Generated Title" }));
+      await generateAndApplyAgentMetadata({
+        agentManager: manager,
+        agentId: agent.id,
+        cwd: repoDir,
+        initialPrompt: "Use the exact title 'Metadata Title E2E'.",
+        explicitTitle: null,
+        paseoHome,
+        logger,
+      });
 
-    scheduleAgentMetadataGeneration({
-      agentManager,
-      agentId: "agent-2",
-      cwd: "/tmp",
-      initialPrompt: "Create a report",
-      explicitTitle: null,
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: false,
-        }),
-      },
-    });
+      await storage.flush();
+      const record = await storage.get(agent.id);
+      expect(record?.title).toBe("Metadata Title E2E");
 
-    expect(generator).not.toHaveBeenCalled();
+      await manager.closeAgent(agent.id);
+    },
+    180000
+  );
 
-    await delayImmediate();
+  test(
+    "renames the worktree branch using a real Codex agent",
+    async () => {
+      const worktreeSlug = "metadata-worktree";
+      const worktree = await createWorktree({
+        branchName: worktreeSlug,
+        cwd: repoDir,
+        baseBranch: "main",
+        worktreeSlug,
+        paseoHome,
+      });
 
-    expect(generator).toHaveBeenCalledTimes(1);
-    expect(agentManager.setTitle).toHaveBeenCalledWith(
-      "agent-2",
-      "Generated Title"
-    );
-  });
+      const agent = await manager.createAgent({
+        provider: "codex",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        modeId: "auto",
+        cwd: worktree.worktreePath,
+        title: "Worktree Agent",
+      }, "metadata-branch-agent");
 
-  it("selects title-only schema when branch is not eligible", async () => {
-    const agentManager = createAgentManagerStub();
-    let capturedSchema: unknown;
-    const generator = vi.fn(async (options: any) => {
-      capturedSchema = options.schema;
-      return { title: "Only Title" };
-    });
+      await generateAndApplyAgentMetadata({
+        agentManager: manager,
+        agentId: agent.id,
+        cwd: worktree.worktreePath,
+        initialPrompt: "Use the exact branch 'feat/metadata-worktree'.",
+        explicitTitle: "Explicit Title",
+        paseoHome,
+        logger,
+      });
 
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-title-only",
-      cwd: "/tmp",
-      initialPrompt: "Do the thing",
-      explicitTitle: null,
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: false,
-        }),
-      },
-    });
+      const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: worktree.worktreePath,
+        stdio: "pipe",
+      }).toString().trim();
 
-    expect(getSchemaKeys(capturedSchema)).toEqual(["title"]);
-  });
+      const validation = validateBranchSlug(currentBranch);
+      expect(validation.valid).toBe(true);
+      expect(currentBranch).toBe("feat/metadata-worktree");
 
-  it("selects branch-only schema when explicit title exists and branch is eligible", async () => {
-    const agentManager = createAgentManagerStub();
-    let capturedSchema: unknown;
-    const generator = vi.fn(async (options: any) => {
-      capturedSchema = options.schema;
-      return { branch: "feat/branch-only" };
-    });
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "worktree-name",
-      currentBranch: "feat/branch-only",
-    });
-
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-branch-only",
-      cwd: "/tmp/worktree",
-      initialPrompt: "Add feature",
-      explicitTitle: "Explicit Title",
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: true,
-          isPaseoOwnedWorktree: true,
-          repoRoot: "/tmp/worktree-name",
-          mainRepoRoot: "/tmp/main",
-          currentBranch: "worktree-name",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-        }),
-        renameCurrentBranch,
-      },
-    });
-
-    expect(getSchemaKeys(capturedSchema)).toEqual(["branch"]);
-    expect(agentManager.setTitle).not.toHaveBeenCalled();
-  });
-
-  it("selects title+branch schema when both are needed", async () => {
-    const agentManager = createAgentManagerStub();
-    let capturedSchema: unknown;
-    const generator = vi.fn(async (options: any) => {
-      capturedSchema = options.schema;
-      return { title: "Both", branch: "feat/both" };
-    });
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "worktree-name",
-      currentBranch: "feat/both",
-    });
-
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-both",
-      cwd: "/tmp/worktree",
-      initialPrompt: "Add payment support",
-      explicitTitle: null,
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: true,
-          isPaseoOwnedWorktree: true,
-          repoRoot: "/tmp/worktree-name",
-          mainRepoRoot: "/tmp/main",
-          currentBranch: "worktree-name",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-        }),
-        renameCurrentBranch,
-      },
-    });
-
-    expect(getSchemaKeys(capturedSchema)).toEqual(["branch", "title"]);
-  });
-
-  it("renames branch when eligible, even with explicit title", async () => {
-    const agentManager = createAgentManagerStub();
-    const generator = vi.fn(async () => ({ branch: "feat/auto-branch" }));
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "worktree-name",
-      currentBranch: "feat/auto-branch",
-    });
-
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-3",
-      cwd: "/tmp/worktree",
-      initialPrompt: "Add payment support",
-      explicitTitle: "Payments",
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: true,
-          isPaseoOwnedWorktree: true,
-          repoRoot: "/tmp/worktree-name",
-          mainRepoRoot: "/tmp/main",
-          currentBranch: "worktree-name",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-        }),
-        renameCurrentBranch,
-      },
-    });
-
-    expect(generator).toHaveBeenCalledTimes(1);
-    expect(renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/worktree",
-      "feat/auto-branch"
-    );
-  });
-
-  it("skips rename when generated branch is invalid", async () => {
-    const agentManager = createAgentManagerStub();
-    const generator = vi.fn(async () => ({ branch: "Invalid Branch" }));
-    const renameCurrentBranch = vi.fn();
-
-    await generateAndApplyAgentMetadata({
-      agentManager,
-      agentId: "agent-invalid-branch",
-      cwd: "/tmp/worktree",
-      initialPrompt: "Ship it",
-      explicitTitle: "Explicit",
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: true,
-          isPaseoOwnedWorktree: true,
-          repoRoot: "/tmp/worktree-name",
-          mainRepoRoot: "/tmp/main",
-          currentBranch: "worktree-name",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-        }),
-        renameCurrentBranch,
-      },
-    });
-
-    expect(renameCurrentBranch).not.toHaveBeenCalled();
-  });
-
-  it("schedules async branch generation for worktree agents", async () => {
-    const agentManager = createAgentManagerStub();
-    const generator = vi.fn(async () => ({ branch: "feat/async-branch" }));
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "worktree-name",
-      currentBranch: "feat/async-branch",
-    });
-
-    scheduleAgentMetadataGeneration({
-      agentManager,
-      agentId: "agent-4",
-      cwd: "/tmp/worktree",
-      initialPrompt: "Ship the feature",
-      explicitTitle: "Explicit Title",
-      logger,
-      deps: {
-        generateStructuredAgentResponse: generator,
-        getCheckoutStatus: async () => ({
-          isGit: true,
-          isPaseoOwnedWorktree: true,
-          repoRoot: "/tmp/worktree-name",
-          mainRepoRoot: "/tmp/main",
-          currentBranch: "worktree-name",
-          isDirty: false,
-          baseRef: "main",
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-        }),
-        renameCurrentBranch,
-      },
-    });
-
-    expect(generator).not.toHaveBeenCalled();
-
-    await delayImmediate();
-
-    expect(generator).toHaveBeenCalledTimes(1);
-    expect(renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/worktree",
-      "feat/async-branch"
-    );
-  });
+      await manager.closeAgent(agent.id);
+    },
+    180000
+  );
 });
