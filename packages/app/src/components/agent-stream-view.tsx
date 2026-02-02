@@ -54,7 +54,7 @@ import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
-  item?.kind === "tool_call" || item?.kind === "thought";
+  item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
 const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
 const STREAM_ITEM_LOG_MIN_COUNT = 200;
 const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
@@ -232,6 +232,16 @@ export function AgentStreamView({
         return tightGap;
       }
 
+      // Keep tool sequences visually connected to the preceding user message / tasks.
+      if (
+        isToolSequenceItem(item) &&
+        (aboveItem.kind === "user_message" ||
+          aboveItem.kind === "assistant_message" ||
+          aboveItem.kind === "todo_list")
+      ) {
+        return tightGap;
+      }
+
       // Different types get loose gap (16px)
       return looseGap;
     },
@@ -328,8 +338,6 @@ export function AgentStreamView({
         case "todo_list":
           return (
             <TodoListCard
-              provider={item.provider}
-              timestamp={item.timestamp.getTime()}
               items={item.items}
             />
           );
@@ -368,6 +376,8 @@ export function AgentStreamView({
         return null;
       }
 
+      const gapAbove = getGapAbove(item, index);
+
       // Check if this is the end of a turn (before a user message or end of stream when not running)
       // In inverted list: index-1 is the next item (newer in time)
       const nextItem = flatListData[index - 1];
@@ -379,7 +389,7 @@ export function AgentStreamView({
       const getContent = () => collectTurnContent(index);
 
       return (
-        <View style={[stylesheet.streamItemWrapper]}>
+        <View style={[stylesheet.streamItemWrapper, { marginBottom: gapAbove }]}>
           {content}
           {isEndOfTurn ? <TurnCopyButton getContent={getContent} /> : null}
         </View>

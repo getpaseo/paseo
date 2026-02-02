@@ -17,8 +17,6 @@ import {
   useContext,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import { getAgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import * as Linking from "expo-linking";
 import {
@@ -31,6 +29,7 @@ import {
   ChevronDown,
   Loader2,
   Check,
+  CheckSquare,
   X,
   Wrench,
   Pencil,
@@ -871,101 +870,38 @@ export const ActivityLog = memo(function ActivityLog({
 });
 
 interface TodoListCardProps {
-  provider: AgentProvider;
-  timestamp: number;
   items: TodoEntry[];
   disableOuterSpacing?: boolean;
 }
 
-function formatTasksTimestamp(timestamp: number): string {
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(new Date(timestamp));
-  } catch {
-    return new Date(timestamp).toLocaleTimeString();
-  }
-}
-
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
-  container: {
-    marginHorizontal: theme.spacing[2],
-  },
-  containerSpacing: {
-    marginBottom: theme.spacing[2],
-  },
-  card: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    padding: theme.spacing[3],
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing[2],
-  },
-  headerMeta: {
-    flexDirection: "column",
-    gap: theme.spacing[0],
-  },
-  title: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  timestamp: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  providerBadge: {
-    backgroundColor: "rgba(59, 130, 246, 0.15)",
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-  },
-  providerText: {
-    color: "#93c5fd",
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  progressText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    marginBottom: theme.spacing[2],
-  },
   list: {
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
   },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: theme.borderRadius.base,
+  radioOuter: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.foregroundMuted,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "transparent",
   },
-  checkboxCompleted: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
+  radioInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.foregroundMuted,
   },
   itemText: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   itemTextCompleted: {
     color: theme.colors.foregroundMuted,
@@ -973,95 +909,56 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontStyle: "italic",
+    fontSize: theme.fontSize.base,
   },
 }));
 
 export const TodoListCard = memo(function TodoListCard({
-  provider,
-  timestamp,
   items,
   disableOuterSpacing,
 }: TodoListCardProps) {
-  const resolvedDisableOuterSpacing =
-    useDisableOuterSpacing(disableOuterSpacing);
-  const providerLabel = useMemo(() => {
-    const definition = getAgentProviderDefinition(provider);
-    return definition?.label ?? provider;
-  }, [provider]);
+  const { theme: unistylesTheme } = useUnistyles();
+  const [isExpanded, setIsExpanded] = useState(true);
 
-  const completedCount = useMemo(
-    () => items.filter((item) => item.completed).length,
-    [items]
-  );
+  const handleToggle = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
 
-  const timestampLabel = useMemo(
-    () => formatTasksTimestamp(timestamp),
-    [timestamp]
-  );
-
-  const iconColor = theme.colors.surface0;
+  const renderDetails = useCallback(() => {
+    return (
+      <View style={todoListCardStylesheet.list}>
+        {items.length === 0 ? (
+          <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
+        ) : (
+          items.map((item, idx) => (
+            <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
+              <View style={todoListCardStylesheet.radioOuter}>
+                {item.completed ? <View style={todoListCardStylesheet.radioInner} /> : null}
+              </View>
+              <Text
+                style={[
+                  todoListCardStylesheet.itemText,
+                  item.completed && todoListCardStylesheet.itemTextCompleted,
+                ]}
+              >
+                {item.text}
+              </Text>
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }, [items]);
 
   return (
-    <View
-      style={[
-        todoListCardStylesheet.container,
-        !resolvedDisableOuterSpacing && todoListCardStylesheet.containerSpacing,
-      ]}
-    >
-      <View style={todoListCardStylesheet.card}>
-        <View style={todoListCardStylesheet.header}>
-          <View style={todoListCardStylesheet.headerMeta}>
-            <Text style={todoListCardStylesheet.title}>Tasks</Text>
-            <Text style={todoListCardStylesheet.timestamp}>
-              {timestampLabel}
-            </Text>
-          </View>
-          <View style={todoListCardStylesheet.providerBadge}>
-            <Text style={todoListCardStylesheet.providerText}>
-              {providerLabel}
-            </Text>
-          </View>
-        </View>
-        <Text style={todoListCardStylesheet.progressText}>
-          {items.length > 0
-            ? `${completedCount}/${items.length} completed`
-            : "Waiting for tasks..."}
-        </Text>
-        <View style={todoListCardStylesheet.list}>
-          {items.length === 0 ? (
-            <Text style={todoListCardStylesheet.emptyText}>
-              No tasks shared yet.
-            </Text>
-          ) : (
-            items.map((item, idx) => (
-              <View
-                key={`${item.text}-${idx}`}
-                style={todoListCardStylesheet.itemRow}
-              >
-                <View
-                  style={[
-                    todoListCardStylesheet.checkbox,
-                    item.completed && todoListCardStylesheet.checkboxCompleted,
-                  ]}
-                >
-                  {item.completed && <Check size={14} color={iconColor} />}
-                </View>
-                <Text
-                  style={[
-                    todoListCardStylesheet.itemText,
-                    item.completed && todoListCardStylesheet.itemTextCompleted,
-                  ]}
-                >
-                  {item.text}
-                </Text>
-              </View>
-            ))
-          )}
-        </View>
-      </View>
-    </View>
+    <ExpandableBadge
+      label="Tasks"
+      icon={CheckSquare}
+      isExpanded={isExpanded}
+      onToggle={handleToggle}
+      renderDetails={renderDetails}
+      disableOuterSpacing={disableOuterSpacing}
+    />
   );
 });
 
@@ -1152,7 +1049,17 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }
 
   return (
-    <View style={[expandableBadgeStylesheet.container, style]} testID={testID}>
+    <View
+      style={[
+        expandableBadgeStylesheet.container,
+        !resolvedDisableOuterSpacing &&
+          (isLastInSequence
+            ? expandableBadgeStylesheet.containerLastInSequence
+            : expandableBadgeStylesheet.containerSpacing),
+        style,
+      ]}
+      testID={testID}
+    >
       <Pressable
         onPress={hasDetails ? onToggle : undefined}
         disabled={!hasDetails}
@@ -1352,7 +1259,6 @@ export const ToolCall = memo(function ToolCall({
       isLoading={status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
-      style={isLastInSequence ? undefined : { marginBottom: theme.spacing[1] }}
       disableOuterSpacing={disableOuterSpacing}
     />
   );

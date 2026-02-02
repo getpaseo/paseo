@@ -797,6 +797,11 @@ export function reduceStreamUpdate(
           break;
         }
         case "todo": {
+          if (event.provider === "claude") {
+            // Claude plan mode is rendered via permission prompts + TodoWrite tool calls.
+            // Avoid rendering legacy plan-mode todo timeline items as Tasks.
+            break;
+          }
           const items = (item.items ?? []) as TodoEntry[];
           nextState = appendTodoList(state, event.provider, items, timestamp);
           break;
