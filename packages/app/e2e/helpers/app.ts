@@ -137,7 +137,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
 export const gotoHome = async (page: Page) => {
   await page.goto('/');
   await ensureE2EStorageSeeded(page);
-  await expect(page.getByText('New Agent', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('New agent', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message agent...' })).toBeVisible();
 };
 

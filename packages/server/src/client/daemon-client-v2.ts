@@ -19,17 +19,17 @@ import type {
   FileExplorerResponse,
   GitDiffResponse,
   GitSetupOptions,
-  GitRepoInfoResponse,
   HighlightedDiffResponse,
   CheckoutStatusResponse,
-	  CheckoutDiffResponse,
-	  CheckoutCommitResponse,
-	  CheckoutMergeResponse,
-	  CheckoutMergeFromBaseResponse,
-	  CheckoutPushResponse,
-	  CheckoutPrCreateResponse,
-	  CheckoutPrStatusResponse,
-	  PaseoWorktreeListResponse,
+  CheckoutDiffResponse,
+  CheckoutCommitResponse,
+  CheckoutMergeResponse,
+  CheckoutMergeFromBaseResponse,
+  CheckoutPushResponse,
+  CheckoutPrCreateResponse,
+  CheckoutPrStatusResponse,
+  ValidateBranchResponse,
+  PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
   ListCommandsResponse,
@@ -177,7 +177,6 @@ type ListVoiceConversationsPayload = ListVoiceConversationsResponseMessage["payl
 type DeleteVoiceConversationPayload = DeleteVoiceConversationResponseMessage["payload"];
 type GitDiffPayload = GitDiffResponse["payload"];
 type HighlightedDiffPayload = HighlightedDiffResponse["payload"];
-type GitRepoInfoPayload = GitRepoInfoResponse["payload"];
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type CheckoutDiffPayload = CheckoutDiffResponse["payload"];
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
@@ -186,6 +185,7 @@ type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
+type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
@@ -200,9 +200,6 @@ type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type TerminalOutputPayload = TerminalOutput["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 
-type AgentCreateFailedStatusPayload = z.infer<
-  typeof AgentCreateFailedStatusPayloadSchema
->;
 type AgentRefreshedStatusPayload = z.infer<
   typeof AgentRefreshedStatusPayloadSchema
 >;
@@ -889,43 +886,7 @@ export class DaemonClientV2 {
       throw new Error(status.error);
     }
 
-    return this.waitForAgentUpsert(
-      status.agentId,
-      (snapshot) => snapshot.status === "idle",
-      60000
-    );
-  }
-
-  async createAgentExpectFail(
-    options: CreateAgentRequestOptions
-  ): Promise<AgentCreateFailedStatusPayload> {
-    const requestId = this.createRequestId(options.requestId);
-    const config = resolveAgentConfig(options);
-
-    const message = SessionInboundMessageSchema.parse({
-      type: "create_agent_request",
-      requestId,
-      config,
-      ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
-    });
-
-    const response = this.waitFor(
-      (msg) => {
-        if (msg.type !== "status") {
-          return null;
-        }
-        const failed = AgentCreateFailedStatusPayloadSchema.safeParse(msg.payload);
-        if (failed.success && failed.data.requestId === requestId) {
-          return failed.data;
-        }
-        return null;
-      },
-      10000,
-      { skipQueue: true }
-    );
-
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    return status.agent;
   }
 
   async deleteAgent(agentId: string): Promise<void> {
@@ -1007,11 +968,7 @@ export class DaemonClientV2 {
     await this.sendSessionMessageOrThrow(message);
     const status = await statusPromise;
 
-    return this.waitForAgentUpsert(
-      status.agentId,
-      (snapshot) => snapshot.status === "idle",
-      60000
-    );
+    return status.agent;
   }
 
   async refreshAgent(
@@ -1639,37 +1596,20 @@ export class DaemonClientV2 {
     return response;
   }
 
-  async getGitRepoInfo(
-    input: string | { cwd: string } | { agentId: string },
+  async validateBranch(
+    options: { cwd: string; branchName: string },
     requestId?: string
-  ): Promise<GitRepoInfoPayload> {
-    const normalizedInput =
-      typeof input === "string" ? { agentId: input } : input;
+  ): Promise<ValidateBranchPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
-    const cwd =
-      "cwd" in normalizedInput
-        ? normalizedInput.cwd
-        : (await this.fetchAgent(normalizedInput.agentId).catch(() => null))?.cwd;
-
-    if (!cwd) {
-      return {
-        cwd: "cwd" in normalizedInput ? normalizedInput.cwd : "",
-        repoRoot: "",
-        requestId: resolvedRequestId,
-        error: `Agent not found: ${
-          "agentId" in normalizedInput ? normalizedInput.agentId : ""
-        }`,
-      };
-    }
-
     const message = SessionInboundMessageSchema.parse({
-      type: "git_repo_info_request",
-      cwd,
+      type: "validate_branch_request",
+      cwd: options.cwd,
+      branchName: options.branchName,
       requestId: resolvedRequestId,
     });
     const response = this.waitFor(
       (msg) => {
-        if (msg.type !== "git_repo_info_response") {
+        if (msg.type !== "validate_branch_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

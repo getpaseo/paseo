@@ -373,16 +373,14 @@ function AgentScreenContent({
   const modelDisplayValue = agentModel ?? "Unknown";
 
   const repoInfoQuery = useQuery({
-    queryKey: ["gitRepoInfo", serverId, agent?.cwd ?? ""],
+    queryKey: ["checkoutStatus", serverId, agent?.cwd ?? ""],
     queryFn: async () => {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.getGitRepoInfo({
-        cwd: agent?.cwd ?? ".",
-      });
+      const payload = await client.getCheckoutStatus(agent?.cwd ?? ".");
       if (payload.error) {
-        throw new Error(payload.error);
+        throw new Error(payload.error.message);
       }
       return {
         cwd: payload.cwd,

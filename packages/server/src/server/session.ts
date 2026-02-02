@@ -922,10 +922,6 @@ export class Session {
           await this.handleFileDownloadTokenRequest(msg);
           break;
 
-        case "git_repo_info_request":
-          await this.handleGitRepoInfoRequest(msg);
-          break;
-
         case "list_provider_models_request":
           await this.handleListProviderModelsRequest(msg);
           break;
@@ -1441,12 +1437,17 @@ export class Session {
       }
 
       if (requestId) {
+        const agentPayload = await this.getAgentPayloadById(snapshot.id);
+        if (!agentPayload) {
+          throw new Error(`Agent ${snapshot.id} not found after creation`);
+        }
         this.emit({
           type: "status",
           payload: {
             status: "agent_created",
             agentId: snapshot.id,
             requestId,
+            agent: agentPayload,
           },
         });
       }
@@ -1516,6 +1517,10 @@ export class Session {
       await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.emitAgentTimelineSnapshot(snapshot);
       if (requestId) {
+        const agentPayload = await this.getAgentPayloadById(snapshot.id);
+        if (!agentPayload) {
+          throw new Error(`Agent ${snapshot.id} not found after resume`);
+        }
         this.emit({
           type: "status",
           payload: {
@@ -1523,6 +1528,7 @@ export class Session {
             agentId: snapshot.id,
             requestId,
             timelineSize,
+            agent: agentPayload,
           },
         });
       }
@@ -1784,59 +1790,6 @@ export class Session {
         return false;
       }
       throw error;
-    }
-  }
-
-  private async handleGitRepoInfoRequest(
-    msg: Extract<SessionInboundMessage, { type: "git_repo_info_request" }>
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-    const resolvedCwd = expandTilde(cwd);
-
-    try {
-      const status = await getCheckoutStatus(resolvedCwd, { paseoHome: this.paseoHome });
-      if (!status.isGit) {
-        throw new NotGitRepoError(resolvedCwd);
-      }
-      const repoRoot = status.repoRoot ?? resolvedCwd;
-      const { stdout: branchesRaw } = await execAsync(
-        "git branch --format='%(refname:short)'",
-        { cwd: repoRoot, env: READ_ONLY_GIT_ENV }
-      );
-      const currentBranch = status.currentBranch ?? "";
-      const branches = branchesRaw
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .map((name) => ({
-          name,
-          isCurrent: name === currentBranch,
-        }));
-
-      const isDirty = status.isDirty ?? false;
-
-      this.emit({
-        type: "git_repo_info_response",
-        payload: {
-          cwd: resolvedCwd,
-          repoRoot,
-          requestId,
-          branches,
-          currentBranch: currentBranch || null,
-          isDirty,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "git_repo_info_response",
-        payload: {
-          cwd,
-          repoRoot: cwd,
-          requestId,
-          error: (error as Error)?.message ?? String(error),
-        },
-      });
     }
   }
 

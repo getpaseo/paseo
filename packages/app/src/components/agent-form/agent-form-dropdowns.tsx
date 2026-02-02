@@ -851,7 +851,6 @@ export interface GitOptionsSectionProps {
   currentBranch: string | null;
   baseBranch: string;
   onBaseBranchChange: (value: string) => void;
-  branches: Array<{ name: string; isCurrent: boolean }>;
   status: "idle" | "loading" | "ready" | "error";
   repoError: string | null;
   gitValidationError: string | null;
@@ -871,7 +870,6 @@ export function GitOptionsSection({
   currentBranch,
   baseBranch,
   onBaseBranchChange,
-  branches,
   status,
   repoError,
   gitValidationError,
