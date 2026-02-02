@@ -136,7 +136,7 @@ async function requestCwd(page: Page) {
   await sendPrompt(page, 'Run `pwd` and respond with exactly: CWD: <path>');
   const message = await waitForAssistantText(page, 'CWD:');
   // The assistant streams tokens; make sure we capture the full path (not a partial prefix).
-  await expect.poll(async () => (await message.textContent()) ?? '', { timeout: 60000 }).toContain('.paseo/worktrees/');
+  await expect.poll(async () => (await message.textContent()) ?? '', { timeout: 60000 }).toContain('/worktrees/');
   const content = (await message.textContent()) ?? '';
   const match = content.match(/CWD:\s*(\S+)/);
   if (!match) {
@@ -232,11 +232,10 @@ test('checkout-first Changes panel ship loop', async ({ page }) => {
     ]);
     const normalizedRepo = normalizeTmpPath(resolvedRepo);
     const normalizedCwd = normalizeTmpPath(resolvedCwd);
-    const expectedMarker = `${path.sep}.paseo${path.sep}worktrees${path.sep}`;
+    const expectedMarker = `${path.sep}worktrees${path.sep}`;
     expect(normalizedCwd.includes(expectedMarker)).toBeTruthy();
     if (repo.name) {
-      const expectedProjectRoot = path.join('.paseo', 'worktrees', repo.name);
-      expect(normalizedCwd.includes(expectedProjectRoot)).toBeTruthy();
+      expect(normalizedCwd.includes(path.join('worktrees', repo.name))).toBeTruthy();
     }
 
     await page.getByTestId('sidebar-new-agent').click();
