@@ -33,7 +33,6 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-import { injectLeadingPaseoInstructionTag } from "../paseo-instructions-tag.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const CODEX_PROVIDER = "codex" as const;
@@ -1335,37 +1334,15 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private buildUserInput(prompt: AgentPromptInput): unknown[] {
     if (typeof prompt === "string") {
-      const text = this.paseoInstructionsInjected
-        ? prompt
-        : injectLeadingPaseoInstructionTag(prompt, this.config.paseoPromptInstructions);
       this.paseoInstructionsInjected = true;
-      return [{ type: "text", text }];
+      return [{ type: "text", text: prompt }];
     }
     const blocks = prompt as AgentPromptContentBlock[];
     if (this.paseoInstructionsInjected) {
       return blocks;
     }
     this.paseoInstructionsInjected = true;
-    if (blocks.length === 0) {
-      return blocks;
-    }
-    const first = blocks[0];
-    if (first && typeof first === "object" && (first as { type?: string }).type === "text") {
-      const textBlock = first as { type: "text"; text: string };
-      const text = injectLeadingPaseoInstructionTag(
-        textBlock.text ?? "",
-        this.config.paseoPromptInstructions
-      );
-      return [{ ...textBlock, text }, ...blocks.slice(1)];
-    }
-    const injected = injectLeadingPaseoInstructionTag(
-      "",
-      this.config.paseoPromptInstructions
-    );
-    if (injected.trim().length === 0) {
-      return blocks;
-    }
-    return [{ type: "text", text: injected }, ...blocks];
+    return blocks;
   }
 
   private emitEvent(event: AgentStreamEvent): void {

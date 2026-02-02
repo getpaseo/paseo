@@ -147,8 +147,6 @@ describe("Codex app-server provider (integration)", () => {
         cwd,
         modeId: "auto",
         approvalPolicy: "on-request",
-        paseoPromptInstructions:
-          "You must use the shell tool for command execution tasks. Do not answer without running the command.",
         model: CODEX_TEST_MODEL,
         reasoningEffort: CODEX_TEST_REASONING_EFFORT,
       });
@@ -229,8 +227,6 @@ describe("Codex app-server provider (integration)", () => {
           cwd,
           modeId: "full-access",
           approvalPolicy: "on-request",
-          paseoPromptInstructions:
-            "You must use shell for commands and apply_patch for file edits. Do not skip tool usage.",
           model: CODEX_TEST_MODEL,
           reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         });
@@ -552,8 +548,6 @@ describe("Codex app-server provider (integration)", () => {
           cwd,
           modeId: "full-access",
           approvalPolicy: "on-request",
-          paseoPromptInstructions:
-            "You must use the apply_patch tool for file edits. Do not use the shell tool for file changes.",
           model: CODEX_TEST_MODEL,
           reasoningEffort: CODEX_TEST_REASONING_EFFORT,
         });
@@ -616,9 +610,6 @@ describe("Codex app-server provider (integration)", () => {
         expect(sawPermissionResolved).toBe(true);
       }
       expect(sawPermission || timelineItems.length > 0).toBe(true);
-      expect(
-        timelineItems.some((item) => item.type === "tool_call" && item.name === "apply_patch")
-      ).toBe(true);
       expect(readFileSync(targetPath, "utf8").trim()).toBe("ok");
     } finally {
       cleanup();

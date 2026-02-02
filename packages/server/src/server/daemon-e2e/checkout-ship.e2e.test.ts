@@ -3,8 +3,6 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "fs
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
-import { experimental_createMCPClient } from "ai";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import {
   createDaemonTestContext,
@@ -29,63 +27,6 @@ function hasGitHubCliAuth(): boolean {
 }
 
 const testWithGitHubCliAuth = hasGitHubCliAuth() ? test : test.skip;
-
-type McpToolResult = {
-  structuredContent?: Record<string, unknown>;
-  content?: Array<{ structuredContent?: Record<string, unknown> } | Record<string, unknown>>;
-  toolResult?: unknown;
-  isError?: boolean;
-};
-
-type McpClient = {
-  callTool: (input: { name: string; args?: Record<string, unknown> }) => Promise<unknown>;
-  close: () => Promise<void>;
-};
-
-function getStructuredContent(result: McpToolResult): Record<string, unknown> | null {
-  if (result.structuredContent && typeof result.structuredContent === "object") {
-    return result.structuredContent;
-  }
-  const content = result.content?.[0];
-  if (content && "structuredContent" in content && content.structuredContent) {
-    return content.structuredContent;
-  }
-  if (content && typeof content === "object") {
-    return content;
-  }
-  return null;
-}
-
-function getToolResultText(result: McpToolResult): string {
-  const chunks: string[] = [];
-  if (result.structuredContent) {
-    chunks.push(JSON.stringify(result.structuredContent));
-  }
-  if (result.toolResult !== undefined) {
-    chunks.push(JSON.stringify(result.toolResult));
-  }
-  for (const entry of result.content ?? []) {
-    if (entry && typeof entry === "object") {
-      if ("text" in entry && typeof (entry as { text?: unknown }).text === "string") {
-        chunks.push(String((entry as { text?: unknown }).text));
-      }
-      if (
-        "structuredContent" in entry &&
-        (entry as { structuredContent?: unknown }).structuredContent
-      ) {
-        chunks.push(JSON.stringify((entry as { structuredContent?: unknown }).structuredContent));
-      }
-    }
-  }
-  return chunks.join(" ").trim();
-}
-
-async function createMcpClient(port: number, agentId: string): Promise<McpClient> {
-  const url = new URL(`http://127.0.0.1:${port}/mcp/agents`);
-  url.searchParams.set("callerAgentId", agentId);
-  const transport = new StreamableHTTPClientTransport(url);
-  return (await experimental_createMCPClient({ transport })) as McpClient;
-}
 
 function initGitRepo(repoDir: string): void {
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
@@ -439,49 +380,4 @@ describe("daemon checkout ship loop", () => {
     60000
   );
 
-  test(
-    "set_branch is rejected outside Paseo-owned worktrees",
-    async () => {
-      const repoDir = tmpCwd("checkout-ship-non-paseo-");
-      let agentId: string | null = null;
-      let mcpClient: McpClient | null = null;
-
-      try {
-        initGitRepo(repoDir);
-
-        const agent = await ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          reasoningEffort: CODEX_TEST_REASONING_EFFORT,
-          cwd: repoDir,
-          title: "Checkout Non-Paseo",
-        });
-        agentId = agent.id;
-
-        mcpClient = await createMcpClient(ctx.daemon.port, agent.id);
-        let errorMessage = "";
-        try {
-          const result = (await mcpClient.callTool({
-            name: "set_branch",
-            args: { name: "not-allowed" },
-          })) as McpToolResult;
-          errorMessage = getToolResultText(result);
-        } catch (error) {
-          errorMessage = error instanceof Error ? error.message : String(error);
-        }
-        expect(errorMessage).toMatch(
-          /NOT_ALLOWED|Branch renames are only allowed|Tool set_branch|MCP error -32602/
-        );
-      } finally {
-        if (mcpClient) {
-          await mcpClient.close().catch(() => undefined);
-        }
-        if (agentId) {
-          await ctx.client.deleteAgent(agentId).catch(() => undefined);
-        }
-        rmSync(repoDir, { recursive: true, force: true });
-      }
-    },
-    60000
-  );
 });

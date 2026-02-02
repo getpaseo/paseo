@@ -27,7 +27,7 @@ import { AGENT_PROVIDER_DEFINITIONS } from "./provider-registry.js";
 import { AgentStorage } from "./agent-storage.js";
 import { createWorktree } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
-import { injectLeadingPaseoInstructionTag } from "./paseo-instructions-tag.js";
+import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -440,13 +440,20 @@ export async function createAgentMcpServer(
         title: normalizedTitle ?? undefined,
       });
 
-      if (initialPrompt) {
-        const initialPromptWithInstructions = injectLeadingPaseoInstructionTag(
-          initialPrompt,
-          snapshot.config.paseoPromptInstructions
-        );
+      const trimmedPrompt = initialPrompt?.trim();
+      if (trimmedPrompt) {
+        scheduleAgentMetadataGeneration({
+          agentManager,
+          agentId: snapshot.id,
+          cwd: snapshot.cwd,
+          initialPrompt: trimmedPrompt,
+          explicitTitle: snapshot.config.title,
+          paseoHome: options.paseoHome,
+          logger: childLogger,
+        });
+
         try {
-          agentManager.recordUserMessage(snapshot.id, initialPromptWithInstructions);
+          agentManager.recordUserMessage(snapshot.id, trimmedPrompt);
         } catch (error) {
           childLogger.error(
             { err: error, agentId: snapshot.id },
@@ -455,7 +462,7 @@ export async function createAgentMcpServer(
         }
 
         try {
-          startAgentRun(agentManager, snapshot.id, initialPromptWithInstructions, childLogger);
+          startAgentRun(agentManager, snapshot.id, trimmedPrompt, childLogger);
 
           // If not running in background, wait for completion
           if (!background) {

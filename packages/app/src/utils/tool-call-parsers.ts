@@ -1163,8 +1163,6 @@ const TOOL_NAME_MAP: Record<string, string> = {
   read_file: "Read",
   apply_patch: "Edit",
   paseo_worktree_setup: "Setup",
-  set_title: "Set title",
-  set_branch: "Set branch",
   thinking: "Thinking",
 };
 
