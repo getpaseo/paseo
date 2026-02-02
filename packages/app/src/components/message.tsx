@@ -877,7 +877,7 @@ interface TodoListCardProps {
   disableOuterSpacing?: boolean;
 }
 
-function formatPlanTimestamp(timestamp: number): string {
+function formatTasksTimestamp(timestamp: number): string {
   try {
     return new Intl.DateTimeFormat("en-US", {
       hour: "numeric",
@@ -997,7 +997,7 @@ export const TodoListCard = memo(function TodoListCard({
   );
 
   const timestampLabel = useMemo(
-    () => formatPlanTimestamp(timestamp),
+    () => formatTasksTimestamp(timestamp),
     [timestamp]
   );
 
@@ -1013,7 +1013,7 @@ export const TodoListCard = memo(function TodoListCard({
       <View style={todoListCardStylesheet.card}>
         <View style={todoListCardStylesheet.header}>
           <View style={todoListCardStylesheet.headerMeta}>
-            <Text style={todoListCardStylesheet.title}>Plan</Text>
+            <Text style={todoListCardStylesheet.title}>Tasks</Text>
             <Text style={todoListCardStylesheet.timestamp}>
               {timestampLabel}
             </Text>
@@ -1032,7 +1032,7 @@ export const TodoListCard = memo(function TodoListCard({
         <View style={todoListCardStylesheet.list}>
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>
-              No todo items shared yet.
+              No tasks shared yet.
             </Text>
           ) : (
             items.map((item, idx) => (

@@ -65,6 +65,26 @@ function toolTimeline(
   };
 }
 
+function toolTimelineWithInput(options: {
+  provider: TestAgentProvider;
+  name: string;
+  status: string;
+  callId?: string;
+  input: unknown;
+}): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: options.provider,
+    item: {
+      type: "tool_call",
+      name: options.name,
+      status: options.status,
+      callId: options.callId ?? options.name,
+      input: options.input,
+    },
+  };
+}
+
 function todoTimeline(items: { text: string; completed: boolean }[]): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -664,6 +684,44 @@ function testTodoListConsolidation() {
   );
 }
 
+function testTodoWriteToolCallCreatesTodoList() {
+  const timestamp = new Date("2025-01-01T12:32:00Z");
+  const event = toolTimelineWithInput({
+    provider: "claude",
+    name: "TodoWrite",
+    status: "completed",
+    input: {
+      todos: [
+        { content: "First task", status: "pending" },
+        { content: "Second task", status: "completed" },
+      ],
+    },
+  });
+
+  const state = reduceStreamUpdate([], event, timestamp);
+  const todoEntries = state.filter(
+    (item): item is TodoListItem => item.kind === "todo_list"
+  );
+  const toolCalls = state.filter((item) => item.kind === "tool_call");
+
+  assert.strictEqual(todoEntries.length, 1);
+  assert.strictEqual(
+    toolCalls.length,
+    0,
+    "TodoWrite should render as a task list, not a tool call"
+  );
+  assert.ok(
+    todoEntries[0].items.some(
+      (entry) => entry.text === "First task" && !entry.completed
+    )
+  );
+  assert.ok(
+    todoEntries[0].items.some(
+      (entry) => entry.text === "Second task" && entry.completed
+    )
+  );
+}
+
 function testTimelineIdStabilityAfterRemovals() {
   const timestamp = new Date('2025-01-01T12:35:00Z');
 
@@ -1038,6 +1096,7 @@ describe('stream timeline reducers', () => {
   it('hydrates user messages and deduplicates optimistic/live entries', testUserMessageHydration);
   it('retains hydrated user messages across providers', testHydratedUserMessagesPersist);
   it('consolidates todo list updates', testTodoListConsolidation);
+  it('renders TodoWrite as a task list', testTodoWriteToolCallCreatesTodoList);
   it('keeps timeline ids stable after list shrinkage', testTimelineIdStabilityAfterRemovals);
   it('deduplicates live tool call entries', testToolCallDeduplicationLive);
   it('deduplicates hydrated tool call entries', testToolCallDeduplicationHydrated);

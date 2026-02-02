@@ -4,6 +4,7 @@ import {
   extractCommandDetails,
   extractEditEntries,
   extractReadEntries,
+  extractTaskEntriesFromToolCall,
   type CommandDetails,
   type EditEntry,
   type ReadEntry,
@@ -754,6 +755,32 @@ export function reduceStreamUpdate(
         case "reasoning":
           return appendThought(state, item.text, timestamp);
         case "tool_call": {
+          const normalizedToolName = item.name
+            .trim()
+            .replace(/[.\s-]+/g, "_")
+            .toLowerCase();
+          if (event.provider === "claude" && normalizedToolName === "exitplanmode") {
+            // ExitPlanMode is rendered via the plan permission prompt; avoid duplicating it in the timeline.
+            break;
+          }
+
+          const tasks = extractTaskEntriesFromToolCall(
+            item.name,
+            item.input
+          );
+          if (tasks) {
+            nextState = appendTodoList(
+              state,
+              event.provider,
+              tasks.map((entry) => ({
+                text: entry.text,
+                completed: entry.completed,
+              })),
+              timestamp
+            );
+            break;
+          }
+
           nextState = appendAgentToolCall(
             state,
             {

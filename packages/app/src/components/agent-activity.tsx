@@ -149,7 +149,7 @@ function PlanItem({ update, timestamp }: { update: SessionUpdate; timestamp: Dat
         <View style={stylesheet.planHeaderLeft}>
           <Text style={stylesheet.timestamp}>{formatTimestamp(timestamp)}</Text>
           <Text style={stylesheet.planTitle}>
-            📋 Plan ({update.entries.length} tasks)
+            📋 Tasks ({update.entries.length})
           </Text>
         </View>
         <Text style={stylesheet.expandIcon}>{isExpanded ? '▼' : '▶'}</Text>
@@ -217,7 +217,7 @@ export function AgentActivityItem({ item }: AgentActivityItemProps) {
   const activity = item as AgentActivity;
   const update = activity.update;
 
-  // Plan
+  // Tasks
   if (update.kind === 'plan') {
     return <PlanItem update={update} timestamp={activity.timestamp} />;
   }

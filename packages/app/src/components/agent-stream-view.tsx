@@ -757,7 +757,10 @@ function PermissionRequestCard({
   const { theme } = useUnistyles();
 
   const { request } = permission;
-  const title = request.title ?? request.name ?? "Permission Required";
+  const isPlanRequest = request.kind === "plan";
+  const title = isPlanRequest
+    ? "Plan"
+    : request.title ?? request.name ?? "Permission Required";
   const description = request.description ?? "";
 
   const planMarkdown = useMemo(() => {
@@ -778,10 +781,12 @@ function PermissionRequestCard({
     return undefined;
   }, [request]);
 
-  const toolCallDisplay = useMemo(
-    () => parseToolCallDisplay(request.name ?? "unknown", request.input, null),
-    [request.name, request.input]
-  );
+  const toolCallDisplay = useMemo(() => {
+    if (isPlanRequest) {
+      return null;
+    }
+    return parseToolCallDisplay(request.name ?? "unknown", request.input, null);
+  }, [isPlanRequest, request.name, request.input]);
 
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
@@ -978,7 +983,7 @@ function PermissionRequestCard({
               { color: theme.colors.foregroundMuted },
             ]}
           >
-            Proposed Plan
+            {isPlanRequest ? "Plan" : "Proposed Plan"}
           </Text>
           <View
             style={[
@@ -996,7 +1001,9 @@ function PermissionRequestCard({
         </View>
       ) : null}
 
-      <ToolCallDetailsContent display={toolCallDisplay} maxHeight={200} />
+      {!isPlanRequest && toolCallDisplay ? (
+        <ToolCallDetailsContent display={toolCallDisplay} maxHeight={200} />
+      ) : null}
 
       <Text
         style={[

@@ -865,15 +865,19 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         "Devise a plan to create a file named dummy.txt containing the word plan-test. After planning, proceed to execute your plan."
       );
 
-      let sawPlan = false;
+      let capturedPlan: string | null = null;
       for await (const event of events) {
         await autoApprove(session, event);
-        if (
-          event.type === "timeline" &&
-          event.item.type === "todo" &&
-          event.item.items.some((entry) => entry.text.includes("dummy.txt"))
-        ) {
-          sawPlan = true;
+        if (event.type === "permission_requested" && event.request.kind === "plan") {
+          const planFromMetadata =
+            typeof event.request.metadata?.planText === "string"
+              ? event.request.metadata.planText
+              : null;
+          const planFromInput =
+            typeof (event.request.input as any)?.plan === "string"
+              ? ((event.request.input as any)?.plan as string)
+              : null;
+          capturedPlan = planFromMetadata ?? planFromInput ?? capturedPlan;
         }
 
         if (event.type === "turn_completed" || event.type === "turn_failed") {
@@ -881,7 +885,8 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
         }
       }
 
-      expect(sawPlan).toBe(true);
+      expect(capturedPlan).not.toBeNull();
+      expect(capturedPlan?.includes("dummy.txt")).toBe(true);
       expect(await session.getCurrentMode()).toBe("acceptEdits");
 
       const filePath = path.join(cwd, "dummy.txt");

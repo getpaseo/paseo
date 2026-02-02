@@ -1159,10 +1159,6 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options
   ): Promise<PermissionResult> => {
-    if (toolName === "ExitPlanMode") {
-      this.emitPlanTodoItems(input);
-    }
-
     const requestId = `permission-${randomUUID()}`;
     const metadata: AgentMetadata = {};
     if (options.toolUseID) {
@@ -1233,19 +1229,6 @@ class ClaudeAgentSession implements AgentSession {
       });
     });
   };
-
-  private emitPlanTodoItems(input: AgentMetadata) {
-    const planText = typeof input.plan === "string" ? input.plan : JSON.stringify(input);
-    const todoItems = planText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((text) => ({ text, completed: false }));
-    this.enqueueTimeline({
-      type: "todo",
-      items: todoItems.length > 0 ? todoItems : [{ text: planText, completed: false }],
-    });
-  }
 
   private enqueueTimeline(item: AgentTimelineItem) {
     this.pushEvent({ type: "timeline", item, provider: "claude" });

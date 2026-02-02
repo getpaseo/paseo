@@ -137,7 +137,7 @@ export function curateAgentActivity(
       }
       case "todo":
         flushBuffers(lines, buffers);
-        lines.push("[Plan]");
+        lines.push("[Tasks]");
         for (const entry of item.items) {
           const checkbox = entry.completed ? "[x]" : "[ ]";
           lines.push(`- ${checkbox} ${entry.text}`);

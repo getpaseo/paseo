@@ -66,7 +66,7 @@ describe("curateAgentActivity", () => {
       expect(result).toBe("[ListFiles]");
     });
 
-    test("serializes todo items as [Plan]", () => {
+    test("serializes todo items as [Tasks]", () => {
       const timeline: AgentTimelineItem[] = [
         {
           type: "todo",
@@ -80,7 +80,7 @@ describe("curateAgentActivity", () => {
 
       const result = curateAgentActivity(timeline);
 
-      expect(result).toContain("[Plan]");
+      expect(result).toContain("[Tasks]");
       expect(result).toContain("- [x] Read the file");
       expect(result).toContain("- [ ] Fix the bug");
       expect(result).toContain("- [ ] Run tests");

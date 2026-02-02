@@ -1224,6 +1224,85 @@ export function parseToolCallDisplay(toolName: string, input: unknown, result: u
   return ToolCallDisplaySchema.parse({ toolName, input, result });
 }
 
+// ---- Task Extraction (cross-provider) ----
+
+export type TaskStatus = "pending" | "in_progress" | "completed";
+
+export type TaskEntry = {
+  text: string;
+  status: TaskStatus;
+  completed: boolean;
+};
+
+const TaskStatusSchema = z.enum(["pending", "in_progress", "completed"]);
+
+const ClaudeTodoWriteSchema = z.object({
+  todos: z.array(
+    z.object({
+      content: z.string(),
+      status: TaskStatusSchema,
+      activeForm: z.string().optional(),
+    })
+  ),
+});
+
+const UpdatePlanSchema = z.object({
+  plan: z.array(
+    z.object({
+      step: z.string(),
+      status: TaskStatusSchema.catch("pending"),
+    })
+  ),
+});
+
+function normalizeToolName(toolName: string): string {
+  return toolName.trim().replace(/[.\s-]+/g, "_").toLowerCase();
+}
+
+export function extractTaskEntriesFromToolCall(
+  toolName: string,
+  input: unknown
+): TaskEntry[] | null {
+  const normalized = normalizeToolName(toolName);
+
+  // Claude's plan mode uses ExitPlanMode for the approval prompt; it is not a task list.
+  if (normalized === "exitplanmode") {
+    return null;
+  }
+
+  if (normalized === "todowrite" || normalized === "todo_write") {
+    const parsed = ClaudeTodoWriteSchema.safeParse(input);
+    if (!parsed.success) {
+      return null;
+    }
+    return parsed.data.todos.map((todo) => {
+      const status = todo.status;
+      const text = todo.activeForm?.trim() || todo.content.trim();
+      return {
+        text: text.length ? text : todo.content,
+        status,
+        completed: status === "completed",
+      };
+    });
+  }
+
+  if (normalized === "update_plan") {
+    const parsed = UpdatePlanSchema.safeParse(input);
+    if (!parsed.success) {
+      return null;
+    }
+    return parsed.data.plan
+      .map((entry) => ({
+        text: entry.step.trim(),
+        status: entry.status,
+        completed: entry.status === "completed",
+      }))
+      .filter((entry) => entry.text.length > 0);
+  }
+
+  return null;
+}
+
 // ---- Principal Parameter Extraction ----
 // Re-export from server to avoid drift
 export {
