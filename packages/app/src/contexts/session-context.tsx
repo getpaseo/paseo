@@ -245,7 +245,6 @@ function normalizeAgentSnapshot(
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
-    variantId: snapshot.variantId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
@@ -316,7 +315,6 @@ export interface SessionContextValue {
   setAgentMode: (agentId: string, modeId: string) => void;
   setAgentModel: (agentId: string, modelId: string | null) => void;
   setAgentThinkingOption: (agentId: string, thinkingOptionId: string | null) => void;
-  setAgentVariant: (agentId: string, variantId: string | null) => void;
   respondToPermission: (
     agentId: string,
     requestId: string,
@@ -2012,19 +2010,6 @@ export function SessionProvider({
     [client]
   );
 
-  const setAgentVariant = useCallback(
-    (agentId: string, variantId: string | null) => {
-      if (!client) {
-        console.warn("[Session] setAgentVariant skipped: daemon unavailable");
-        return;
-      }
-      void client.setAgentVariant(agentId, variantId).catch((error) => {
-        console.error("[Session] Failed to set agent variant:", error);
-      });
-    },
-    [client]
-  );
-
   const respondToPermission = useCallback(
     (agentId: string, requestId: string, response: any) => {
       if (!client) {
@@ -2306,7 +2291,6 @@ export function SessionProvider({
       setAgentMode,
       setAgentModel,
       setAgentThinkingOption,
-      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     }),
@@ -2333,7 +2317,6 @@ export function SessionProvider({
       setAgentMode,
       setAgentModel,
       setAgentThinkingOption,
-      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     ]
@@ -2363,7 +2346,6 @@ export function SessionProvider({
       setAgentMode,
       setAgentModel,
       setAgentThinkingOption,
-      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     }),
@@ -2387,7 +2369,6 @@ export function SessionProvider({
       setAgentMode,
       setAgentModel,
       setAgentThinkingOption,
-      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     ]

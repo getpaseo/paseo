@@ -57,8 +57,6 @@ export type AgentModelDefinition = {
   metadata?: AgentMetadata;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
-  variantOptions?: AgentSelectOption[];
-  defaultVariantOptionId?: string;
 };
 
 export type AgentSelectOption = {
@@ -241,16 +239,11 @@ export type AgentSessionConfig = {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  variantId?: string;
   title?: string | null;
   approvalPolicy?: string;
   sandboxMode?: string;
   networkAccess?: boolean;
   webSearch?: boolean;
-  /**
-   * Deprecated alias for `thinkingOptionId` (kept for backward compatibility with persisted agents).
-   */
-  reasoningEffort?: string;
   extra?: {
     codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
@@ -300,10 +293,6 @@ export interface AgentSession {
    * Normalized to a string option id (provider-specific interpretation).
    */
   setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
-  /**
-   * Update the provider-defined variant used for subsequent turns (if supported).
-   */
-  setVariant?(variantId: string | null): Promise<void>;
 }
 
 export interface ListModelsOptions {

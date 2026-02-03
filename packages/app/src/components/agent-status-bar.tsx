@@ -41,9 +41,6 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const setAgentThinkingOption = useSessionStore(
     (state) => state.sessions[serverId]?.methods?.setAgentThinkingOption
   );
-  const setAgentVariant = useSessionStore(
-    (state) => state.sessions[serverId]?.methods?.setAgentVariant
-  );
   const requestProviderModels = useSessionStore(
     (state) => state.sessions[serverId]?.methods?.requestProviderModels
   );
@@ -70,30 +67,22 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const selectedThinkingId =
     agent.thinkingOptionId ??
     selectedModel?.defaultThinkingOptionId ??
-    (agent.provider === "claude" ? "off" : "default");
+    "default";
   const selectedThinking = thinkingOptions?.find((o) => o.id === selectedThinkingId) ?? null;
   const displayThinking = selectedThinking?.label ?? selectedThinkingId ?? "default";
 
-  const variantOptions = selectedModel?.variantOptions ?? null;
-  const selectedVariantId =
-    agent.variantId ?? selectedModel?.defaultVariantOptionId ?? "default";
-  const selectedVariant = variantOptions?.find((o) => o.id === selectedVariantId) ?? null;
-  const displayVariant = selectedVariant?.label ?? selectedVariantId ?? "default";
-
-  const isVariantOverriddenByThinking =
-    agent.provider === "opencode" &&
-    agent.thinkingOptionId !== null &&
-    agent.thinkingOptionId !== undefined &&
-    agent.thinkingOptionId !== "default";
-
   useEffect(() => {
     if (!requestProviderModels) return;
-    const shouldFetch =
-      agent.provider &&
-      (!providerModelState || (!providerModelState.models && !providerModelState.isLoading));
+    const provider = agent.provider;
+    if (!provider) return;
+
+    const hasState = Boolean(providerModelState);
+    const isLoading = providerModelState?.isLoading ?? false;
+    const hasModels = Boolean(providerModelState?.models);
+    const shouldFetch = !hasState || (!hasModels && !isLoading);
     if (!shouldFetch) return;
     if (IS_WEB || prefsOpen) {
-      requestProviderModels(agent.provider, { cwd: agent.cwd });
+      requestProviderModels(provider, { cwd: agent.cwd });
     }
   }, [IS_WEB, prefsOpen, agent.provider, agent.cwd, providerModelState, requestProviderModels]);
 
@@ -217,46 +206,6 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
             </DropdownMenu>
           )}
 
-          {variantOptions && variantOptions.length > 1 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                style={({ pressed }) => [
-                  styles.modeBadge,
-                  pressed && styles.modeBadgePressed,
-                  isVariantOverriddenByThinking && styles.disabledBadge,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Select variant"
-                disabled={isVariantOverriddenByThinking}
-                testID="agent-variant-selector"
-              >
-                <Text style={styles.modeBadgeText}>{displayVariant}</Text>
-                <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" testID="agent-variant-menu">
-                <DropdownMenuLabel>Variant</DropdownMenuLabel>
-                {variantOptions.map((opt) => {
-                  const isActive = opt.id === selectedVariantId;
-                  return (
-                    <DropdownMenuItem
-                      key={opt.id}
-                      selected={isActive}
-                      selectedVariant="accent"
-                      description={opt.description}
-                      onSelect={() =>
-                        setAgentVariant?.(
-                          agentId,
-                          opt.id === "default" ? null : opt.id
-                        )
-                      }
-                    >
-                      {opt.label}
-                    </DropdownMenuItem>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
         </>
       )}
 
@@ -359,54 +308,6 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
               </View>
             )}
 
-            {variantOptions && variantOptions.length > 1 && (
-              <View style={styles.sheetSection}>
-                <Text style={styles.sheetLabel}>Variant</Text>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    style={({ pressed }) => [
-                      styles.sheetSelect,
-                      pressed && styles.sheetSelectPressed,
-                      isVariantOverriddenByThinking && styles.disabledBadge,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select variant"
-                    disabled={isVariantOverriddenByThinking}
-                    testID="agent-preferences-variant"
-                  >
-                    <Text style={styles.sheetSelectText}>{displayVariant}</Text>
-                    <ChevronDown size={16} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start">
-                    <DropdownMenuLabel>Variant</DropdownMenuLabel>
-                    {variantOptions.map((opt) => {
-                      const isActive = opt.id === selectedVariantId;
-                      return (
-                        <DropdownMenuItem
-                          key={opt.id}
-                          selected={isActive}
-                          selectedVariant="accent"
-                          description={opt.description}
-                          onSelect={() =>
-                            setAgentVariant?.(
-                              agentId,
-                              opt.id === "default" ? null : opt.id
-                            )
-                          }
-                        >
-                          {opt.label}
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                {isVariantOverriddenByThinking && (
-                  <Text style={styles.sheetHint}>
-                    Variant is controlled by the selected thinking option.
-                  </Text>
-                )}
-              </View>
-            )}
           </AdaptiveModalSheet>
         </>
       )}
@@ -437,9 +338,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.semibold,
     textTransform: "capitalize",
-  },
-  disabledBadge: {
-    opacity: 0.55,
   },
   prefsButton: {
     width: 32,
@@ -480,9 +378,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-  },
-  sheetHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
 }));

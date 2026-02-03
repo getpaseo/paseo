@@ -131,7 +131,82 @@ function extractJsonFromMarkdown(text: string): string {
   if (fencedMatch) {
     return fencedMatch[1].trim();
   }
+
+  const extracted = extractFirstJsonSnippet(text);
+  if (extracted) {
+    return extracted;
+  }
+
   return text.trim();
+}
+
+function extractFirstJsonSnippet(text: string): string | null {
+  const source = text.trim();
+  if (!source) {
+    return null;
+  }
+
+  // Try to find the first valid JSON object/array within a larger response.
+  // This is intentionally provider-agnostic and improves resilience when models
+  // add extra prose before/after the JSON.
+  const startIndexes: number[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "{" || ch === "[") {
+      startIndexes.push(i);
+    }
+  }
+
+  for (const start of startIndexes) {
+    const open = source[start]!;
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < source.length; i += 1) {
+      const ch = source[i]!;
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === "\"") {
+        inString = true;
+        continue;
+      }
+
+      if (ch === open) {
+        depth += 1;
+        continue;
+      }
+      if (ch === close) {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = source.slice(start, i + 1).trim();
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            // keep scanning; the snippet might not be JSON (e.g. braces in prose)
+          }
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function getStructuredAgentResponse<T>(

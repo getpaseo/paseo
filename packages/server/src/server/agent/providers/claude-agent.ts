@@ -242,9 +242,6 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   if (typeof metadata.webSearch === "boolean") {
     result.webSearch = metadata.webSearch;
   }
-  if (typeof metadata.reasoningEffort === "string") {
-    result.reasoningEffort = metadata.reasoningEffort;
-  }
   if (isMetadata(metadata.extra)) {
     const extra: AgentSessionConfig["extra"] = {};
     if (isMetadata(metadata.extra.codex)) {
@@ -369,7 +366,6 @@ export class ClaudeAgentClient implements AgentClient {
         thinkingOptions: [
           { id: "off", label: "Thinking Off", isDefault: true },
           { id: "on", label: "Thinking On" },
-          { id: "max", label: "Thinking Max" },
         ],
         defaultThinkingOptionId: "off",
         metadata: {
@@ -702,16 +698,19 @@ class ClaudeAgentSession implements AgentSession {
     const query = await this.ensureQuery();
 
     if (!normalizedThinkingOptionId || normalizedThinkingOptionId === "default") {
-      await query.setMaxThinkingTokens(null);
+      // Claude Code TUI exposes only ON/OFF. Default to OFF.
+      try {
+        await query.setMaxThinkingTokens(0);
+      } catch {
+        await query.setMaxThinkingTokens(1);
+      }
       this.config.thinkingOptionId = undefined;
-      this.config.reasoningEffort = undefined;
       return;
     }
 
-    if (normalizedThinkingOptionId === "on" || normalizedThinkingOptionId === "max") {
+    if (normalizedThinkingOptionId === "on") {
       await query.setMaxThinkingTokens(null);
       this.config.thinkingOptionId = normalizedThinkingOptionId;
-      this.config.reasoningEffort = undefined;
       return;
     }
 
@@ -723,27 +722,10 @@ class ClaudeAgentSession implements AgentSession {
         await query.setMaxThinkingTokens(1);
       }
       this.config.thinkingOptionId = "off";
-      this.config.reasoningEffort = undefined;
-      return;
-    }
-
-    const asNumber = Number(normalizedThinkingOptionId);
-    if (Number.isFinite(asNumber) && asNumber >= 0) {
-      await query.setMaxThinkingTokens(asNumber);
-      this.config.thinkingOptionId = normalizedThinkingOptionId;
-      this.config.reasoningEffort = undefined;
       return;
     }
 
     throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
-  }
-
-  async setVariant(variantId: string | null): Promise<void> {
-    // Claude Code does not support variants today; keep for interface parity.
-    const normalizedVariantId =
-      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
-    this.config.variantId = normalizedVariantId ?? undefined;
-    this.persistence = null;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -879,18 +861,17 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildOptions(): ClaudeOptions {
-    const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort;
+    const configuredThinkingOptionId = this.config.thinkingOptionId;
+    const thinkingOptionId =
+      configuredThinkingOptionId && configuredThinkingOptionId !== "default"
+        ? configuredThinkingOptionId
+        : "off";
     let maxThinkingTokens: number | undefined;
     if (typeof thinkingOptionId === "string" && thinkingOptionId.length > 0) {
       if (thinkingOptionId === "off") {
         maxThinkingTokens = 0;
-      } else {
-        const numeric = Number(thinkingOptionId);
-        if (Number.isFinite(numeric) && numeric >= 0) {
-          maxThinkingTokens = numeric;
-        }
       }
-      // For "on"/"max"/"default" we omit maxThinkingTokens (SDK default max).
+      // For "on" we omit maxThinkingTokens (SDK default max).
     }
 
     const base: ClaudeOptions = {

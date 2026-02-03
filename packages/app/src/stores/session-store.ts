@@ -96,7 +96,6 @@ export interface Agent {
   cwd: string;
   model: string | null;
   thinkingOptionId?: string | null;
-  variantId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
@@ -198,7 +197,6 @@ export interface SessionState {
     setAgentMode: (agentId: string, modeId: string) => void;
     setAgentModel: (agentId: string, modelId: string | null) => void;
     setAgentThinkingOption: (agentId: string, thinkingOptionId: string | null) => void;
-    setAgentVariant: (agentId: string, variantId: string | null) => void;
     respondToPermission: (agentId: string, requestId: string, response: any) => void;
     ensureAgentIsInitialized: (agentId: string) => Promise<void>;
   } | null;

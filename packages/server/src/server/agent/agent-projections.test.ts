@@ -235,7 +235,6 @@ describe("toAgentPayload", () => {
     expect(payload.title).toBe("UI Payload");
     expect(payload.model).toBe(agent.config.model);
     expect(payload.thinkingOptionId).toBeNull();
-    expect(payload.variantId).toBeNull();
     expect(payload.pendingPermissions.map((item) => item.id)).toEqual([
       "perm-a",
       "perm-b",

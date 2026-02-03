@@ -475,21 +475,6 @@ export class AgentManager {
     }
 
     agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
-    // Clear deprecated alias so persistence converges to the new field.
-    agent.config.reasoningEffort = undefined;
-    this.emitState(agent);
-  }
-
-  async setAgentVariant(agentId: string, variantId: string | null): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    const normalizedVariantId =
-      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
-
-    if (agent.session.setVariant) {
-      await agent.session.setVariant(normalizedVariantId);
-    }
-
-    agent.config.variantId = normalizedVariantId ?? undefined;
     this.emitState(agent);
   }
 

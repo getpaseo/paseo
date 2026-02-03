@@ -1100,10 +1100,6 @@ export class DaemonClientV2 {
     this.sendSessionMessage({ type: "set_agent_thinking", agentId, thinkingOptionId });
   }
 
-  async setAgentVariant(agentId: string, variantId: string | null): Promise<void> {
-    this.sendSessionMessage({ type: "set_agent_variant", agentId, variantId });
-  }
-
   async restartServer(
     reason?: string,
     requestId?: string

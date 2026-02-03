@@ -1955,13 +1955,11 @@ const AgentSessionConfigSchema = z
     modeId: z.string().optional(),
     model: z.string().optional(),
     thinkingOptionId: z.string().optional(),
-    variantId: z.string().optional(),
     title: z.string().nullable().optional(),
     approvalPolicy: z.string().optional(),
     sandboxMode: z.string().optional(),
     networkAccess: z.boolean().optional(),
     webSearch: z.boolean().optional(),
-    reasoningEffort: z.string().optional(),
     extra: AgentSessionExtraSchema.optional(),
     mcpServers: z.record(McpServerConfigSchema).optional(),
   })
@@ -2874,8 +2872,8 @@ function buildCodexMcpConfig(
     innerConfig.mcp_servers = mcpServers;
   }
 
-  // Add reasoning effort to config if provided
-  const thinkingOptionId = config.thinkingOptionId ?? config.reasoningEffort;
+  // Add thinking option to config if provided
+  const thinkingOptionId = config.thinkingOptionId;
   if (
     typeof thinkingOptionId === "string" &&
     thinkingOptionId.length > 0 &&
@@ -3520,15 +3518,6 @@ class CodexMcpAgentSession implements AgentSession {
         ? thinkingOptionId
         : null;
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
-    this.config.reasoningEffort = undefined;
-    this.cachedRuntimeInfo = null;
-  }
-
-  async setVariant(variantId: string | null): Promise<void> {
-    // Codex MCP does not support variants today; keep for interface parity.
-    const normalizedVariantId =
-      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
-    this.config.variantId = normalizedVariantId ?? undefined;
     this.cachedRuntimeInfo = null;
   }
 

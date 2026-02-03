@@ -282,18 +282,6 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).");
     }
 
-    const thinkingVariantIds = new Set([
-      // OpenAI-style reasoning effort variants
-      "none",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      // Anthropic-style thinking budget variants
-      "max",
-    ]);
-
     const models: AgentModelDefinition[] = [];
     for (const provider of providers.all) {
       // Skip providers that aren't connected/configured
@@ -303,15 +291,9 @@ export class OpenCodeAgentClient implements AgentClient {
 
       for (const [modelId, model] of Object.entries(provider.models)) {
         const rawVariants = model.variants ? Object.keys(model.variants) : [];
-        const variantOptions = [
-          { id: "default", label: "Default", isDefault: true },
-          ...rawVariants.map((id) => ({ id, label: id })),
-        ];
         const thinkingOptions = [
           { id: "default", label: "Default", isDefault: true },
-          ...rawVariants
-            .filter((id) => thinkingVariantIds.has(id))
-            .map((id) => ({ id, label: id })),
+          ...rawVariants.map((id) => ({ id, label: id })),
         ];
 
         models.push({
@@ -321,8 +303,6 @@ export class OpenCodeAgentClient implements AgentClient {
           description: `${provider.name} - ${model.family ?? ""}`.trim(),
           thinkingOptions: thinkingOptions.length > 1 ? thinkingOptions : undefined,
           defaultThinkingOptionId: "default",
-          variantOptions: variantOptions.length > 1 ? variantOptions : undefined,
-          defaultVariantOptionId: "default",
           metadata: {
             providerId: provider.id,
             providerName: provider.name,
@@ -414,13 +394,6 @@ class OpenCodeAgentSession implements AgentSession {
         ? thinkingOptionId
         : null;
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
-    this.config.reasoningEffort = undefined;
-  }
-
-  async setVariant(variantId: string | null): Promise<void> {
-    const normalizedVariantId =
-      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
-    this.config.variantId = normalizedVariantId ?? undefined;
   }
 
   async run(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -458,13 +431,9 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = this.buildPromptParts(prompt);
     const model = this.parseModel(this.config.model);
-    const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort;
+    const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant =
-      thinkingOptionId && thinkingOptionId !== "default"
-        ? thinkingOptionId
-        : this.config.variantId && this.config.variantId !== "default"
-          ? this.config.variantId
-          : undefined;
+      thinkingOptionId && thinkingOptionId !== "default" ? thinkingOptionId : undefined;
 
     // Send prompt asynchronously
     const promptResponse = await this.client.session.promptAsync({

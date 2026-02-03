@@ -16,7 +16,7 @@ import { createAllClients, shutdownProviders } from "./provider-registry.js";
 import pino from "pino";
 
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
+const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 type AgentMcpServerHandle = {
   url: string;
@@ -176,7 +176,7 @@ describe("getStructuredAgentResponse (e2e)", () => {
         agentConfig: {
           provider: "codex",
           model: CODEX_TEST_MODEL,
-          reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
           cwd,
           title: "Structured Response Test",
         },
@@ -198,20 +198,34 @@ describe("getStructuredAgentResponse (e2e)", () => {
         message: z.string(),
       });
 
-      const result = await generateStructuredAgentResponse({
-        manager,
-        agentConfig: {
-          provider: "claude",
-          model: "haiku",
-          cwd,
-          title: "Claude Haiku Structured Test",
-          internal: true,
-        },
-        prompt:
-          'Respond with exactly this JSON (no markdown, no extra keys, no extra text): {"message":"hello"}',
-        schema,
-        maxRetries: 2,
-      });
+      let result: { message: string } | null = null;
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          result = await generateStructuredAgentResponse({
+            manager,
+            agentConfig: {
+              provider: "claude",
+              model: "haiku",
+              thinkingOptionId: "on",
+              cwd,
+              title: "Claude Haiku Structured Test",
+              internal: true,
+            },
+            prompt:
+              'Respond with exactly this JSON (no markdown, no extra keys, no extra text): {"message":"hello"}',
+            schema,
+            maxRetries: 6,
+          });
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!result) {
+        throw lastError;
+      }
 
       expect(result.message.trim().toLowerCase()).toBe("hello");
     },

@@ -21,7 +21,7 @@ type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
 function isKnownProvider(provider: string): provider is AgentProvider {
-  return provider === "claude" || provider === "codex";
+  return provider === "claude" || provider === "codex" || provider === "opencode";
 }
 
 /**
@@ -49,14 +49,11 @@ export function attachAgentStoragePersistence(
 export function buildConfigOverrides(
   record: StoredAgentRecord
 ): Partial<AgentSessionConfig> {
-  const thinkingOptionId =
-    record.config?.thinkingOptionId ?? record.config?.reasoningEffort ?? undefined;
   return {
     cwd: record.cwd,
     modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
     model: record.config?.model ?? undefined,
-    thinkingOptionId,
-    variantId: record.config?.variantId ?? undefined,
+    thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
     title: record.title ?? undefined,
     extra: record.config?.extra ?? undefined,
   };
@@ -75,7 +72,6 @@ export function buildSessionConfig(
     modeId: overrides.modeId,
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
-    variantId: overrides.variantId,
     title: overrides.title,
     extra: overrides.extra,
   };

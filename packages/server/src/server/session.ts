@@ -616,9 +616,7 @@ export class Session {
       provider,
       cwd: record.cwd,
       model: record.config?.model ?? null,
-      thinkingOptionId:
-        record.config?.thinkingOptionId ?? record.config?.reasoningEffort ?? null,
-      variantId: record.config?.variantId ?? null,
+      thinkingOptionId: record.config?.thinkingOptionId ?? null,
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -863,10 +861,6 @@ export class Session {
 
         case "set_agent_thinking":
           await this.handleSetAgentThinking(msg.agentId, msg.thinkingOptionId);
-          break;
-
-        case "set_agent_variant":
-          await this.handleSetAgentVariant(msg.agentId, msg.variantId);
           break;
 
         case "agent_permission_response":
@@ -2209,39 +2203,6 @@ export class Session {
           timestamp: new Date(),
           type: "error",
           content: `Failed to set agent thinking option: ${error.message}`,
-        },
-      });
-      throw error;
-    }
-  }
-
-  private async handleSetAgentVariant(
-    agentId: string,
-    variantId: string | null
-  ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId, variantId },
-      `Setting agent ${agentId} variant`
-    );
-
-    try {
-      await this.agentManager.setAgentVariant(agentId, variantId);
-      this.sessionLogger.info(
-        { agentId, variantId },
-        `Agent ${agentId} variant updated`
-      );
-    } catch (error: any) {
-      this.sessionLogger.error(
-        { err: error, agentId, variantId },
-        "Failed to set agent variant"
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent variant: ${error.message}`,
         },
       });
       throw error;

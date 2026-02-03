@@ -1032,7 +1032,7 @@ class CodexAppServerAgentSession implements AgentSession {
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
     if (match.developer_instructions) settings.developer_instructions = match.developer_instructions;
     if (this.config.model) settings.model = this.config.model;
-    const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort;
+    const thinkingOptionId = this.config.thinkingOptionId;
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
     return { mode: match.mode ?? "code", settings, name: match.name };
   }
@@ -1159,7 +1159,7 @@ class CodexAppServerAgentSession implements AgentSession {
       if (this.config.model) {
         params.model = this.config.model;
       }
-      const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort;
+      const thinkingOptionId = this.config.thinkingOptionId;
       if (thinkingOptionId) {
         params.effort = thinkingOptionId;
       }
@@ -1245,14 +1245,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
     this.config.thinkingOptionId = thinkingOptionId ?? undefined;
-    this.config.reasoningEffort = undefined;
     this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
-    this.cachedRuntimeInfo = null;
-  }
-
-  async setVariant(variantId: string | null): Promise<void> {
-    // Codex app-server does not support variants today; keep for interface parity.
-    this.config.variantId = variantId ?? undefined;
     this.cachedRuntimeInfo = null;
   }
 
@@ -1322,7 +1315,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   describePersistence(): { provider: typeof CODEX_PROVIDER; sessionId: string; nativeHandle: string; metadata: Record<string, unknown> } | null {
     if (!this.currentThreadId) return null;
-    const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort ?? null;
+    const thinkingOptionId = this.config.thinkingOptionId ?? null;
     return {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,
@@ -1335,8 +1328,6 @@ class CodexAppServerAgentSession implements AgentSession {
         modeId: this.currentMode,
         model: this.config.model ?? null,
         thinkingOptionId,
-        reasoningEffort: thinkingOptionId,
-        variantId: this.config.variantId ?? null,
       },
     };
   }

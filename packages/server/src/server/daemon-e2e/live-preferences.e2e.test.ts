@@ -115,7 +115,7 @@ describe("daemon E2E", () => {
   );
 
   test(
-    "live thinking switching works for Claude (off -> max)",
+    "live thinking switching works for Claude (off -> on)",
     async () => {
       const cwd = tmpCwd();
       try {
@@ -133,16 +133,16 @@ describe("daemon E2E", () => {
         });
 
         const startIndex = messages.length;
-        await ctx.client.setAgentThinkingOption(agent.id, "max");
+        await ctx.client.setAgentThinkingOption(agent.id, "on");
 
         const updated = await waitForAgentUpdate(
           messages,
           startIndex,
-          (a) => a.id === agent.id && a.thinkingOptionId === "max",
+          (a) => a.id === agent.id && a.thinkingOptionId === "on",
           { timeoutMs: 20000 }
         );
 
-        expect(updated.thinkingOptionId).toBe("max");
+        expect(updated.thinkingOptionId).toBe("on");
       } finally {
         rmSync(cwd, { recursive: true, force: true });
       }
@@ -199,7 +199,7 @@ describe("daemon E2E", () => {
   );
 
   test(
-    "live thinking + variant switching works for OpenCode",
+    "live thinking switching works for OpenCode",
     async () => {
       const cwd = tmpCwd();
       try {
@@ -208,56 +208,35 @@ describe("daemon E2E", () => {
           throw new Error("No OpenCode models returned");
         }
 
-        const modelWithVariants = modelList.models.find(
-          (m) => (m.variantOptions?.length ?? 0) > 1
+        const modelWithThinkingOptions = modelList.models.find(
+          (m) => (m.thinkingOptions?.length ?? 0) > 1
         );
-        if (!modelWithVariants) {
-          throw new Error("No OpenCode model with variantOptions returned");
+        if (!modelWithThinkingOptions) {
+          throw new Error("No OpenCode model with thinkingOptions returned");
         }
 
         const agent = await ctx.client.createAgent({
           provider: "opencode",
           cwd,
           title: "OpenCode Preferences Switch",
-          model: modelWithVariants.id,
+          model: modelWithThinkingOptions.id,
         });
 
-        // 1) Thinking: pick a non-default thinking option if available.
         const thinkingId =
-          modelWithVariants.thinkingOptions?.find((o) => o.id !== "default")?.id ??
+          modelWithThinkingOptions.thinkingOptions?.find((o) => o.id !== "default")?.id ??
           null;
-        if (thinkingId) {
-          const startIndex = messages.length;
-          await ctx.client.setAgentThinkingOption(agent.id, thinkingId);
-          const updatedThinking = await waitForAgentUpdate(
-            messages,
-            startIndex,
-            (a) => a.id === agent.id && a.thinkingOptionId === thinkingId,
-            { timeoutMs: 20000 }
-          );
-          expect(updatedThinking.thinkingOptionId).toBe(thinkingId);
+        if (!thinkingId) {
+          throw new Error("No non-default OpenCode thinking option found");
         }
-
-        // 2) Variant: clear thinking override (so variant takes effect), then set variant.
-        await ctx.client.setAgentThinkingOption(agent.id, null);
-        const variantId =
-          modelWithVariants.variantOptions?.find((o) => o.id !== "default")?.id ??
-          null;
-        if (!variantId) {
-          throw new Error("No non-default OpenCode variant found");
-        }
-
-        const startIndex2 = messages.length;
-        await ctx.client.setAgentVariant(agent.id, variantId);
-
-        const updatedVariant = await waitForAgentUpdate(
+        const startIndex = messages.length;
+        await ctx.client.setAgentThinkingOption(agent.id, thinkingId);
+        const updatedThinking = await waitForAgentUpdate(
           messages,
-          startIndex2,
-          (a) => a.id === agent.id && a.variantId === variantId,
+          startIndex,
+          (a) => a.id === agent.id && a.thinkingOptionId === thinkingId,
           { timeoutMs: 20000 }
         );
-
-        expect(updatedVariant.variantId).toBe(variantId);
+        expect(updatedThinking.thinkingOptionId).toBe(thinkingId);
       } finally {
         rmSync(cwd, { recursive: true, force: true });
       }

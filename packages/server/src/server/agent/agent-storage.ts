@@ -14,9 +14,6 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
-    variantId: z.string().nullable().optional(),
-    // Deprecated alias for thinkingOptionId (accept for backward compatibility)
-    reasoningEffort: z.string().nullable().optional(),
     extra: z.record(z.any()).nullable().optional(),
   })
   .nullable()
@@ -64,7 +61,7 @@ const STORED_AGENT_SCHEMA = z.object({
 
 export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
-  "modeId" | "model" | "thinkingOptionId" | "variantId" | "reasoningEffort" | "extra"
+  "modeId" | "model" | "thinkingOptionId" | "extra"
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
