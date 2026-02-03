@@ -16,7 +16,7 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
-import { ChevronDown, ChevronRight, GitBranch, MoreVertical } from "lucide-react-native";
+import { ChevronDown, ChevronRight, GitBranch, MoreVertical, ArrowLeftRight } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -1107,28 +1107,19 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                 <MoreVertical size={16} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
-                <DropdownMenuItem
-                  testID="changes-menu-toggle-view"
-                  onSelect={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
-                >
-                  {diffMode === "uncommitted" ? `Show changes vs ${baseRefLabel}` : "Show uncommitted changes"}
-                </DropdownMenuItem>
                 {gitStatus?.isPaseoOwnedWorktree ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      testID="changes-menu-archive"
-                      destructive
-                      disabled={archiveDisabled}
-                      status={archiveAction.status}
-                      pendingLabel="Archiving..."
-                      successLabel="Archived"
-                      closeOnSelect={false}
-                      onSelect={archiveAction.trigger}
-                    >
-                      Archive worktree
-                    </DropdownMenuItem>
-                  </>
+                  <DropdownMenuItem
+                    testID="changes-menu-archive"
+                    destructive
+                    disabled={archiveDisabled}
+                    status={archiveAction.status}
+                    pendingLabel="Archiving..."
+                    successLabel="Archived"
+                    closeOnSelect={false}
+                    onSelect={archiveAction.trigger}
+                  >
+                    Archive worktree
+                  </DropdownMenuItem>
                 ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1137,10 +1128,26 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       </View>
 
       {isGit && hasChanges ? (
-        <View style={styles.diffStatusRow} testID="changes-diff-status">
-          <Text style={styles.diffStatusText}>
-            {diffMode === "uncommitted" ? "Uncommitted changes" : `Changes vs ${baseRefLabel}`}
-          </Text>
+        <View style={styles.diffStatusContainer}>
+          <Pressable
+            style={({ hovered }) => [
+              styles.diffStatusRow,
+              hovered && styles.diffStatusRowHovered,
+            ]}
+            testID="changes-diff-status"
+            onPress={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
+          >
+            {({ hovered }) => (
+              <>
+                <Text style={styles.diffStatusText}>
+                  {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
+                </Text>
+                {hovered ? (
+                  <ArrowLeftRight size={12} color={theme.colors.foregroundMuted} />
+                ) : null}
+              </>
+            )}
+          </Pressable>
         </View>
       ) : null}
 
@@ -1188,11 +1195,23 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
-  diffStatusRow: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+  diffStatusContainer: {
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  diffStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: theme.spacing[1],
+    marginHorizontal: theme.spacing[3],
+    marginVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+  },
+  diffStatusRowHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   diffStatusText: {
     fontSize: theme.fontSize.xs,
@@ -1387,7 +1406,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   fileName: {
-    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
   },
   fileDir: {
     color: theme.colors.foregroundMuted,
