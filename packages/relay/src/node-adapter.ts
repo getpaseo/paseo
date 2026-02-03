@@ -76,32 +76,7 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
     relay.addConnection(sessionId, role, connection);
 
     ws.on("message", (data, isBinary) => {
-      if (isBinary) {
-        const message =
-          data instanceof ArrayBuffer
-            ? data
-            : bufferToArrayBuffer(
-                data instanceof Buffer
-                  ? data
-                  : ArrayBuffer.isView(data)
-                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-                    : Buffer.from(String(data), "utf8")
-              );
-        relay.forward(sessionId, role, message);
-        return;
-      }
-
-      const text =
-        typeof data === "string"
-          ? data
-          : data instanceof Buffer
-            ? data.toString("utf8")
-            : data instanceof ArrayBuffer
-              ? Buffer.from(data).toString("utf8")
-              : ArrayBuffer.isView(data)
-                ? Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8")
-                : String(data);
-      relay.forward(sessionId, role, text);
+      relay.forward(sessionId, role, normalizeWsMessageForRelay(data, isBinary));
     });
 
     ws.on("close", () => {
@@ -159,4 +134,47 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
   const out = new Uint8Array(buffer.byteLength);
   out.set(buffer);
   return out.buffer;
+}
+
+function normalizeWsMessageForRelay(data: unknown, isBinary: boolean): string | ArrayBuffer {
+  if (isBinary) {
+    return normalizeWsBinaryMessage(data);
+  }
+  return normalizeWsTextMessage(data);
+}
+
+function normalizeWsBinaryMessage(data: unknown): ArrayBuffer {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  return bufferToArrayBuffer(bufferFromWsData(data));
+}
+
+function normalizeWsTextMessage(data: unknown): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  return bufferFromWsData(data).toString("utf8");
+}
+
+function bufferFromWsData(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data.map(bufferFromWsData));
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data);
+  }
+
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+
+  if (typeof data === "string") {
+    return Buffer.from(data, "utf8");
+  }
+
+  return Buffer.from(String(data), "utf8");
 }
