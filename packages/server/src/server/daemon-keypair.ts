@@ -66,7 +66,7 @@ export async function loadOrCreateDaemonKeyPair(
     privateKeyJwk: privateKeyJwk as Record<string, unknown>,
   };
 
-  writeFileSync(filePath, JSON.stringify(payload, null, 2) + "\n");
+  writeFileSync(filePath, JSON.stringify(payload, null, 2) + "\n", { mode: 0o600 });
   log?.info({ filePath }, "Saved daemon keypair");
 
   return { keyPair, publicKeyB64 };

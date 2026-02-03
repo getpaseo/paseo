@@ -72,15 +72,36 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
     const sessionId = url.searchParams.get("session")!;
     const role = url.searchParams.get("role") as ConnectionRole;
 
-    const connection = wrapWebSocket(ws);
+    const connection = wrapWebSocket(ws, role);
     relay.addConnection(sessionId, role, connection);
 
-    ws.on("message", (data) => {
-      const message =
-        data instanceof Buffer
-          ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-          : String(data);
-      relay.forward(sessionId, role, message as string | ArrayBuffer);
+    ws.on("message", (data, isBinary) => {
+      if (isBinary) {
+        const message =
+          data instanceof ArrayBuffer
+            ? data
+            : bufferToArrayBuffer(
+                data instanceof Buffer
+                  ? data
+                  : ArrayBuffer.isView(data)
+                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+                    : Buffer.from(String(data), "utf8")
+              );
+        relay.forward(sessionId, role, message);
+        return;
+      }
+
+      const text =
+        typeof data === "string"
+          ? data
+          : data instanceof Buffer
+            ? data.toString("utf8")
+            : data instanceof ArrayBuffer
+              ? Buffer.from(data).toString("utf8")
+              : ArrayBuffer.isView(data)
+                ? Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8")
+                : String(data);
+      relay.forward(sessionId, role, text);
     });
 
     ws.on("close", () => {
@@ -120,9 +141,9 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
   };
 }
 
-function wrapWebSocket(ws: NodeWebSocket): RelayConnection {
+function wrapWebSocket(ws: NodeWebSocket, role: ConnectionRole): RelayConnection {
   return {
-    role: "server",
+    role,
     send: (data) => {
       if (ws.readyState === NodeWebSocket.OPEN) {
         ws.send(data);
@@ -132,4 +153,10 @@ function wrapWebSocket(ws: NodeWebSocket): RelayConnection {
       ws.close(code, reason);
     },
   };
+}
+
+function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const out = new Uint8Array(buffer.byteLength);
+  out.set(buffer);
+  return out.buffer;
 }

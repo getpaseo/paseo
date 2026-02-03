@@ -102,6 +102,14 @@ Get the session ID from the agent JSON file (`persistence.sessionId`), then:
 
 Take screenshots like this: `adb exec-out screencap -p > screenshot.png`
 
+## Testing with Playwright MCP
+
+**CRITICAL:** When asked to test the app, you MUST use the Playwright MCP connecting to Metro at `http://localhost:8081`.
+
+Use the Playwright MCP to test the app in Metro web. Navigate to `http://localhost:8081` to interact with the app UI.
+
+**Important:** Do NOT use browser history (back/forward). Always navigate by clicking UI elements or using `browser_navigate` with the full URL. The app uses client-side routing and browser history navigation breaks the state.
+
 ## Expo troubleshooting
 
 Run `npx expo-doctor` to diagnose version mismatches and native module issues.
