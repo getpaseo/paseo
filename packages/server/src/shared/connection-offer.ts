@@ -14,4 +14,3 @@ export const ConnectionOfferV1Schema = z.object({
 });
 
 export type ConnectionOfferV1 = z.infer<typeof ConnectionOfferV1Schema>;
-

@@ -7,6 +7,7 @@ import {
   type EncryptedChannel,
   type Transport as RelayTransport,
 } from "@paseo/relay/e2ee";
+import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 type RelayTransportOptions = {
   logger: pino.Logger;
@@ -61,7 +62,11 @@ export function startRelayTransport({
   const connect = (): void => {
     if (stopped) return;
 
-    const url = buildRelayWebSocketUrl(relayEndpoint, sessionId, "server");
+    const url = buildRelayWebSocketUrl({
+      endpoint: relayEndpoint,
+      sessionId,
+      role: "server",
+    });
     const socket = new WebSocket(url);
     ws = socket;
 
@@ -247,46 +252,4 @@ function bufferFromWsData(data: unknown): Buffer | null {
   return null;
 }
 
-function buildRelayWebSocketUrl(
-  relayEndpoint: string,
-  sessionId: string,
-  role: "server" | "client"
-): string {
-  const { host, port } = parseHostPort(relayEndpoint);
-  const protocol = port === 443 ? "wss" : "ws";
-  return `${protocol}://${host}:${port}/ws?session=${encodeURIComponent(
-    sessionId
-  )}&role=${role}`;
-}
-
-function parseHostPort(input: string): { host: string; port: number } {
-  const trimmed = input.trim();
-
-  if (trimmed.startsWith("[")) {
-    const endIdx = trimmed.indexOf("]");
-    if (endIdx === -1) {
-      throw new Error(`Invalid relay endpoint: ${input}`);
-    }
-    const host = trimmed.slice(1, endIdx);
-    const rest = trimmed.slice(endIdx + 1);
-    if (!rest.startsWith(":")) {
-      throw new Error(`Invalid relay endpoint: ${input}`);
-    }
-    const port = Number.parseInt(rest.slice(1), 10);
-    if (!Number.isFinite(port)) {
-      throw new Error(`Invalid relay port: ${input}`);
-    }
-    return { host: `[${host}]`, port };
-  }
-
-  const idx = trimmed.lastIndexOf(":");
-  if (idx === -1) {
-    throw new Error(`Invalid relay endpoint (expected host:port): ${input}`);
-  }
-  const host = trimmed.slice(0, idx);
-  const port = Number.parseInt(trimmed.slice(idx + 1), 10);
-  if (!host || !Number.isFinite(port)) {
-    throw new Error(`Invalid relay endpoint: ${input}`);
-  }
-  return { host, port };
-}
+// buildRelayWebSocketUrl + parseHostPort live in ../shared/daemon-endpoints.ts

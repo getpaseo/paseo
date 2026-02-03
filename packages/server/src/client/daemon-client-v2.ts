@@ -58,6 +58,7 @@ import {
   type EncryptedChannel,
   type Transport as RelayTransport,
 } from "@paseo/relay/e2ee";
+import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -2357,18 +2358,6 @@ function createRelayE2eeTransportFactory(
     const base = baseFactory({ url, headers });
     return createEncryptedTransport(base, daemonPublicKeyB64, logger);
   };
-}
-
-function isRelayClientWebSocketUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return (
-      parsed.searchParams.get("role") === "client" &&
-      parsed.searchParams.has("session")
-    );
-  } catch {
-    return false;
-  }
 }
 
 function createEncryptedTransport(

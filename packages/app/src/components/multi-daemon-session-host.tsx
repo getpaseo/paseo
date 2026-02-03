@@ -4,7 +4,7 @@ import {
   type HostProfile,
 } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
+import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl, extractHostPortFromWebSocketUrl } from "@/utils/daemon-endpoints";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 function buildCandidateUrls(daemon: HostProfile): string[] {
@@ -41,18 +41,6 @@ function buildCandidateUrls(daemon: HostProfile): string[] {
   return out;
 }
 
-function extractEndpointFromUrl(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname;
-    const port = parsed.port ? Number(parsed.port) : parsed.protocol === "wss:" ? 443 : 80;
-    const isIpv6 = host.includes(":") && !host.startsWith("[") && !host.endsWith("]");
-    return isIpv6 ? `[${host}]:${port}` : `${host}:${port}`;
-  } catch {
-    return null;
-  }
-}
-
 function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   const { connectionStates } = useDaemonConnections();
   const { updateDaemon } = useDaemonRegistry();
@@ -87,9 +75,15 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   useEffect(() => {
     if (!connection) return;
 
-    if (status === "online") {
-      if (pendingMetadataWriteRef.current) return;
-      const endpoint = extractEndpointFromUrl(activeUrl);
+      if (status === "online") {
+        if (pendingMetadataWriteRef.current) return;
+      const endpoint = (() => {
+        try {
+          return extractHostPortFromWebSocketUrl(activeUrl);
+        } catch {
+          return null;
+        }
+      })();
       if (!endpoint) return;
       if (daemon.metadata?.lastKnownGoodEndpoint === endpoint) return;
 
