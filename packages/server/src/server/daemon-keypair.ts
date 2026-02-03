@@ -3,6 +3,7 @@ import { webcrypto } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import type pino from "pino";
 
 const KeyPairSchema = z.object({
   v: z.literal(1),
@@ -11,12 +12,6 @@ const KeyPairSchema = z.object({
 });
 
 type StoredKeyPair = z.infer<typeof KeyPairSchema>;
-
-type LoggerLike = {
-  child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: any[]): void;
-  warn(...args: any[]): void;
-};
 
 const KEYPAIR_FILENAME = "daemon-keypair.json";
 const ECDH_ALGORITHM = { name: "ECDH", namedCurve: "P-256" };
@@ -28,7 +23,7 @@ export type DaemonKeyPairBundle = {
 
 export async function loadOrCreateDaemonKeyPair(
   paseoHome: string,
-  logger?: LoggerLike
+  logger?: pino.Logger
 ): Promise<DaemonKeyPairBundle> {
   const log = logger?.child({ module: "daemon-keypair" });
   const filePath = path.join(paseoHome, KEYPAIR_FILENAME);
