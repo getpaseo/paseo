@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
-import { View, Pressable, Text, Platform } from "react-native";
+import { View, Pressable, Text, Platform, Modal, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -9,13 +9,16 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { Plus, Settings, Users } from "lucide-react-native";
+import { Plus, Settings, Users, AudioLines } from "lucide-react-native";
 import { router } from "expo-router";
 import { usePanelStore } from "@/stores/panel-store";
 import { GroupedAgentList } from "./grouped-agent-list";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
+import { useVoice } from "@/contexts/voice-context";
+import { useDaemonConnections } from "@/contexts/daemon-connections-context";
+import { VoicePanel } from "./voice-panel";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 const SIDEBAR_AGENT_LIMIT = 15;
@@ -48,6 +51,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   } = useSidebarAnimation();
   const trafficLightPadding = useTrafficLightPadding();
   const dragHandlers = useTauriDragHandlers();
+  const { connectionStates } = useDaemonConnections();
+  const { isVoiceMode, startVoice, stopVoice } = useVoice();
+  const [showVoiceHostPicker, setShowVoiceHostPicker] = useState(false);
 
   // Track user-initiated refresh to avoid showing spinner on background revalidation
   const [isManualRefresh, setIsManualRefresh] = useState(false);
@@ -123,6 +129,62 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     closeToAgent();
     router.push("/agents");
   }, [backdropOpacity, closeToAgent, isMobile, translateX, windowWidth]);
+
+  const voiceEligibleHosts = useMemo(() => {
+    return Array.from(connectionStates.values()).filter((entry) => entry.status === "online");
+  }, [connectionStates]);
+  const hasAnyConfiguredHosts = connectionStates.size > 0;
+
+  const handleToggleVoice = useCallback(() => {
+    if (isVoiceMode) {
+      void stopVoice().catch((error) => {
+        console.error("[SlidingSidebar] Failed to stop voice", error);
+        Alert.alert("Voice failed", "Unable to stop voice mode.");
+      });
+      return;
+    }
+
+    if (voiceEligibleHosts.length === 0) {
+      if (!hasAnyConfiguredHosts) {
+        Alert.alert(
+          "No hosts available",
+          "Add a host in Settings before starting Voice mode.",
+          [{ text: "Open Settings", onPress: () => router.push("/settings") }, { text: "OK" }]
+        );
+        return;
+      }
+      Alert.alert(
+        "Hosts reconnecting",
+        "Every host is offline right now. Paseo reconnects automatically—try Voice mode again once one comes online."
+      );
+      return;
+    }
+
+    if (voiceEligibleHosts.length === 1) {
+      void startVoice(voiceEligibleHosts[0].daemon.id).catch((error) => {
+        console.error("[SlidingSidebar] Failed to start voice", error);
+        Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
+      });
+      return;
+    }
+
+    setShowVoiceHostPicker(true);
+  }, [hasAnyConfiguredHosts, isVoiceMode, startVoice, stopVoice, voiceEligibleHosts]);
+
+  const handleSelectVoiceHost = useCallback(
+    (daemonId: string) => {
+      setShowVoiceHostPicker(false);
+      void startVoice(daemonId).catch((error) => {
+        console.error("[SlidingSidebar] Failed to start voice", error);
+        Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
+      });
+    },
+    [startVoice]
+  );
+
+  const handleDismissVoiceHostPicker = useCallback(() => {
+    setShowVoiceHostPicker(false);
+  }, []);
 
   // Close gesture (swipe left to close when sidebar is open)
   // Only activates on leftward swipe, fails on rightward or vertical movement
@@ -224,6 +286,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                 parentGestureRef={closeGestureRef}
               />
 
+              {isVoiceMode ? <VoicePanel /> : null}
+
               {/* Footer */}
               <View style={styles.sidebarFooter}>
                 <Pressable
@@ -239,6 +303,25 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                     </>
                   )}
                 </Pressable>
+                <View style={styles.footerIconRow}>
+                  <Pressable
+                    style={styles.footerIconButton}
+                    testID="sidebar-voice"
+                    onPress={handleToggleVoice}
+                  >
+                    {({ hovered }) => (
+                      <AudioLines
+                        size={20}
+                        color={
+                          isVoiceMode
+                            ? theme.colors.foreground
+                            : hovered
+                              ? theme.colors.foreground
+                              : theme.colors.foregroundMuted
+                        }
+                      />
+                    )}
+                  </Pressable>
                 <Pressable
                   style={styles.footerIconButton}
                   onPress={handleSettingsMobile}
@@ -247,10 +330,37 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                     <Settings size={20} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
                   )}
                 </Pressable>
+                </View>
               </View>
             </View>
           </Animated.View>
         </GestureDetector>
+
+        <Modal
+          visible={showVoiceHostPicker}
+          transparent
+          animationType="fade"
+          onRequestClose={handleDismissVoiceHostPicker}
+        >
+          <View style={styles.hostPickerOverlay}>
+            <Pressable style={styles.hostPickerBackdrop} onPress={handleDismissVoiceHostPicker} />
+            <View style={styles.hostPickerContainer}>
+              <Text style={styles.hostPickerTitle}>Choose a host</Text>
+              {voiceEligibleHosts.map((entry) => (
+                <Pressable
+                  key={entry.daemon.id}
+                  style={styles.hostPickerButton}
+                  onPress={() => handleSelectVoiceHost(entry.daemon.id)}
+                >
+                  <Text style={styles.hostPickerButtonText}>{entry.daemon.label}</Text>
+                </Pressable>
+              ))}
+              <Pressable style={styles.hostPickerCancel} onPress={handleDismissVoiceHostPicker}>
+                <Text style={styles.hostPickerCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -289,6 +399,8 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         selectedAgentId={selectedAgentId}
       />
 
+      {isVoiceMode ? <VoicePanel /> : null}
+
       {/* Footer */}
       <View style={styles.sidebarFooter}>
         <Pressable
@@ -304,14 +416,34 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
             </>
           )}
         </Pressable>
-        <Pressable
-          style={styles.footerIconButton}
-          onPress={handleSettingsDesktop}
-        >
-          {({ hovered }) => (
-            <Settings size={20} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
-          )}
-        </Pressable>
+        <View style={styles.footerIconRow}>
+          <Pressable
+            style={styles.footerIconButton}
+            testID="sidebar-voice"
+            onPress={handleToggleVoice}
+          >
+            {({ hovered }) => (
+              <AudioLines
+                size={20}
+                color={
+                  isVoiceMode
+                    ? theme.colors.foreground
+                    : hovered
+                      ? theme.colors.foreground
+                      : theme.colors.foregroundMuted
+                }
+              />
+            )}
+          </Pressable>
+          <Pressable
+            style={styles.footerIconButton}
+            onPress={handleSettingsDesktop}
+          >
+            {({ hovered }) => (
+              <Settings size={20} color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted} />
+            )}
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -376,6 +508,11 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
+  footerIconRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
   footerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -394,5 +531,57 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerButtonTextHovered: {
     color: theme.colors.foreground,
+  },
+  hostPickerOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    padding: theme.spacing[4],
+  },
+  hostPickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  hostPickerContainer: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: theme.colors.surface0,
+    borderRadius: theme.borderRadius["2xl"],
+    padding: theme.spacing[4],
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    gap: theme.spacing[2],
+  },
+  hostPickerTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing[2],
+  },
+  hostPickerButton: {
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  hostPickerButtonText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  hostPickerCancel: {
+    marginTop: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface0,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    alignItems: "center",
+  },
+  hostPickerCancelText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
 }));

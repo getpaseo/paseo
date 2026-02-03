@@ -5,7 +5,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
-import { RealtimeProvider } from "@/contexts/realtime-context";
+import { VoiceProvider } from "@/contexts/voice-context";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { View, ActivityIndicator, Text } from "react-native";
@@ -226,10 +226,10 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   }
 
   return (
-    <RealtimeProvider>
+    <VoiceProvider>
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertDaemonFromOfferUrl} />
       {children}
-    </RealtimeProvider>
+    </VoiceProvider>
   );
 }
 
