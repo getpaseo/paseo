@@ -5,7 +5,7 @@ import { Writable } from "node:stream";
 import net from "node:net";
 
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { createClientChannel, type Transport } from "@paseo/relay";
+import { createClientChannel, type Transport } from "@paseo/relay/e2ee";
 import { createRelayServer } from "@paseo/relay/node";
 
 function createCapturingLogger() {

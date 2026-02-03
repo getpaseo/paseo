@@ -6,7 +6,7 @@ import {
   createDaemonChannel,
   type EncryptedChannel,
   type Transport as RelayTransport,
-} from "@paseo/relay";
+} from "@paseo/relay/e2ee";
 
 type RelayTransportOptions = {
   logger: pino.Logger;

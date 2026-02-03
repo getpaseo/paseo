@@ -13,15 +13,6 @@ type DaemonClientOptions = {
   daemonPublicKeyB64?: string;
 };
 
-function isRelayWebSocketUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.searchParams.get("role") === "client" && parsed.searchParams.has("session");
-  } catch {
-    return false;
-  }
-}
-
 export function useDaemonClient(
   url: string,
   options: DaemonClientOptions = {}
@@ -29,21 +20,18 @@ export function useDaemonClient(
   const client = useMemo(
     () => {
       const tauriTransportFactory = createTauriWebSocketTransportFactory();
-      const relayConnection = isRelayWebSocketUrl(url);
       return new DaemonClientV2({
         url,
         suppressSendErrors: true,
         ...(tauriTransportFactory
           ? { transportFactory: tauriTransportFactory }
           : {}),
-        ...(relayConnection
+        e2ee: options.daemonPublicKeyB64
           ? {
-              e2ee: {
-                enabled: true,
-                daemonPublicKeyB64: options.daemonPublicKeyB64,
-              },
+              enabled: true,
+              daemonPublicKeyB64: options.daemonPublicKeyB64,
             }
-          : {}),
+          : undefined,
       });
     },
     [options.daemonPublicKeyB64, url]

@@ -57,7 +57,7 @@ import {
   createClientChannel,
   type EncryptedChannel,
   type Transport as RelayTransport,
-} from "@paseo/relay";
+} from "@paseo/relay/e2ee";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -319,14 +319,16 @@ export class DaemonClientV2 {
         createWebSocketTransportFactory(
           this.config.webSocketFactory ?? defaultWebSocketFactory
         );
-      const transportFactory =
-        this.config.e2ee?.enabled === true
-          ? createEncryptedTransportFactory(
-              baseTransportFactory,
-              this.config.e2ee?.daemonPublicKeyB64,
-              this.logger
-            )
-          : baseTransportFactory;
+      const shouldUseRelayE2ee =
+        this.config.e2ee?.enabled === true &&
+        isRelayClientWebSocketUrl(this.config.url);
+      const transportFactory = shouldUseRelayE2ee
+        ? createRelayE2eeTransportFactory(
+            baseTransportFactory,
+            this.config.e2ee?.daemonPublicKeyB64,
+            this.logger
+          )
+        : baseTransportFactory;
       const transport = transportFactory({ url: this.config.url, headers });
       this.transport = transport;
 
@@ -2342,7 +2344,7 @@ function createWebSocketTransportFactory(
   };
 }
 
-function createEncryptedTransportFactory(
+function createRelayE2eeTransportFactory(
   baseFactory: DaemonTransportFactory,
   daemonPublicKeyB64: string | undefined,
   logger: Logger
@@ -2355,6 +2357,18 @@ function createEncryptedTransportFactory(
     const base = baseFactory({ url, headers });
     return createEncryptedTransport(base, daemonPublicKeyB64, logger);
   };
+}
+
+function isRelayClientWebSocketUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.searchParams.get("role") === "client" &&
+      parsed.searchParams.has("session")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function createEncryptedTransport(

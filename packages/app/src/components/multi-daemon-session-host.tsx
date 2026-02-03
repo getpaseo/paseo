@@ -22,11 +22,11 @@ function buildCandidateUrls(daemon: HostProfile): string[] {
   };
 
   const isLastKnownRelay = !!relayEndpoint && lastKnownGood === relayEndpoint;
-  const directEndpoints = relayEndpoint
-    ? endpoints.filter((endpoint) => endpoint !== relayEndpoint)
-    : endpoints;
+  const directEndpoints = endpoints;
 
-  if (lastKnownGood && !isLastKnownRelay) {
+  if (sessionId && relayEndpoint && isLastKnownRelay) {
+    push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
+  } else if (lastKnownGood) {
     push(buildDaemonWebSocketUrl(lastKnownGood));
   }
 
@@ -35,9 +35,6 @@ function buildCandidateUrls(daemon: HostProfile): string[] {
   }
 
   if (sessionId && relayEndpoint) {
-    if (isLastKnownRelay) {
-      push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
-    }
     push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
   }
 

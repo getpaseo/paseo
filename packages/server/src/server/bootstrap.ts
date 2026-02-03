@@ -437,14 +437,13 @@ export async function createPaseoDaemon(
             const endpoints = buildOfferEndpoints({
               listenHost: listenTarget.host,
               port: listenTarget.port,
-              relayEnabled,
-              relayEndpoint,
             });
 
             const offer = await createConnectionOfferV1({
               sessionId: connectionSessionId,
               endpoints,
               daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
+              relay: relayEnabled ? { endpoint: relayEndpoint } : null,
             });
 
             const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
