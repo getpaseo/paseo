@@ -11,11 +11,12 @@ import {
   NativeSyntheticEvent,
   Modal,
   Pressable,
-  ScrollView,
+  ScrollView as RNScrollView,
   Text,
   View,
   useWindowDimensions,
 } from "react-native";
+import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -737,16 +738,16 @@ export function FileExplorerPane({
                   <Text style={styles.emptyText}>No preview available yet</Text>
                 </View>
               ) : preview.kind === "text" ? (
-                <ScrollView
+                <RNScrollView
                   style={styles.sheetContent}
                   contentContainerStyle={styles.sheetScrollContent}
                 >
-                  <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+                  <RNScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
                     <Text style={styles.codeText}>{preview.content}</Text>
-                  </ScrollView>
-                </ScrollView>
+                  </RNScrollView>
+                </RNScrollView>
               ) : preview.kind === "image" && preview.content ? (
-                <ScrollView contentContainerStyle={styles.sheetImageScrollContent}>
+                <RNScrollView contentContainerStyle={styles.sheetImageScrollContent}>
                   <RNImage
                     source={{
                       uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
@@ -754,7 +755,7 @@ export function FileExplorerPane({
                     style={styles.sheetImage}
                     resizeMode="contain"
                   />
-                </ScrollView>
+                </RNScrollView>
               ) : (
                 <View style={styles.sheetCenterState}>
                   <Text style={styles.emptyText}>Binary preview unavailable</Text>

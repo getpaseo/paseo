@@ -3,6 +3,7 @@ import { AppState, Platform } from "react-native";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
 
 interface ClientActivityOptions {
   client: DaemonClientV2;
@@ -12,14 +13,15 @@ interface ClientActivityOptions {
 /**
  * Handles client activity reporting:
  * - Heartbeat sending every 15 seconds
- * - App visibility tracking (updates lastActivityAt on foreground)
- * - Sends heartbeat immediately when focused agent changes
+ * - App visibility tracking
+ * - Records lastActivityAt only on real user activity (not on heartbeat)
  */
 export function useClientActivity({ client, focusedAgentId }: ClientActivityOptions): void {
   const lastActivityAtRef = useRef<Date>(new Date());
   const appVisibleRef = useRef(AppState.currentState === "active");
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
+  const lastImmediateHeartbeatAtRef = useRef<number>(0);
 
   const deviceType = Platform.OS === "web" ? "web" : "mobile";
 
@@ -28,17 +30,7 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
   }, []);
 
   const sendHeartbeat = useCallback(() => {
-    if (!client.isConnected) {
-      console.log("[ClientActivity] sendHeartbeat skipped - not connected");
-      return;
-    }
-    lastActivityAtRef.current = new Date();
-    console.log("[ClientActivity] sendHeartbeat", {
-      deviceType,
-      focusedAgentId,
-      lastActivityAt: lastActivityAtRef.current.toISOString(),
-      appVisible: appVisibleRef.current,
-    });
+    if (!client.isConnected) return;
     client.sendHeartbeat({
       deviceType,
       focusedAgentId,
@@ -47,35 +39,77 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
     });
   }, [client, deviceType, focusedAgentId]);
 
+  const maybeSendImmediateHeartbeat = useCallback(() => {
+    if (!client.isConnected) return;
+    const now = Date.now();
+    if (now - lastImmediateHeartbeatAtRef.current < ACTIVITY_HEARTBEAT_THROTTLE_MS) {
+      return;
+    }
+    lastImmediateHeartbeatAtRef.current = now;
+    sendHeartbeat();
+  }, [client, sendHeartbeat]);
+
   // Track app visibility
   useEffect(() => {
-    console.log("[ClientActivity] AppState effect mounted, current:", AppState.currentState);
     const subscription = AppState.addEventListener("change", (nextState) => {
-      console.log("[ClientActivity] AppState changed:", nextState);
       appVisibleRef.current = nextState === "active";
       if (nextState === "active") {
         recordUserActivity();
+        maybeSendImmediateHeartbeat();
       }
     });
 
     return () => subscription.remove();
-  }, [recordUserActivity]);
+  }, [maybeSendImmediateHeartbeat, recordUserActivity]);
+
+  // Track user activity on web for accurate staleness.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (typeof document === "undefined") return;
+
+    const handleUserActivity = () => {
+      recordUserActivity();
+      maybeSendImmediateHeartbeat();
+    };
+
+    const handleVisibilityChange = () => {
+      const visible = document.visibilityState === "visible";
+      appVisibleRef.current = visible;
+      if (visible) {
+        recordUserActivity();
+        maybeSendImmediateHeartbeat();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleUserActivity);
+    window.addEventListener("pointerdown", handleUserActivity, { passive: true });
+    window.addEventListener("keydown", handleUserActivity);
+    window.addEventListener("wheel", handleUserActivity, { passive: true });
+    window.addEventListener("touchstart", handleUserActivity, { passive: true });
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleUserActivity);
+      window.removeEventListener("pointerdown", handleUserActivity);
+      window.removeEventListener("keydown", handleUserActivity);
+      window.removeEventListener("wheel", handleUserActivity);
+      window.removeEventListener("touchstart", handleUserActivity);
+    };
+  }, [maybeSendImmediateHeartbeat, recordUserActivity]);
 
   // Send heartbeat on focused agent change
   useEffect(() => {
     if (prevFocusedAgentIdRef.current !== focusedAgentId) {
-      console.log("[ClientActivity] focusedAgentId changed:", prevFocusedAgentIdRef.current, "->", focusedAgentId);
       prevFocusedAgentIdRef.current = focusedAgentId;
+      recordUserActivity();
       sendHeartbeat();
     }
-  }, [focusedAgentId, sendHeartbeat]);
+  }, [focusedAgentId, recordUserActivity, sendHeartbeat]);
 
   // Periodic heartbeat
   useEffect(() => {
-    console.log("[ClientActivity] Heartbeat effect mounted, isConnected:", client.isConnected);
-
     const startHeartbeat = () => {
-      console.log("[ClientActivity] startHeartbeat called");
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
       }
@@ -84,7 +118,6 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
     };
 
     const stopHeartbeat = () => {
-      console.log("[ClientActivity] stopHeartbeat called");
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
@@ -92,7 +125,6 @@ export function useClientActivity({ client, focusedAgentId }: ClientActivityOpti
     };
 
     const unsubscribe = client.subscribeConnectionStatus((state) => {
-      console.log("[ClientActivity] Connection status changed:", state.status);
       if (state.status === "connected") {
         startHeartbeat();
       } else {

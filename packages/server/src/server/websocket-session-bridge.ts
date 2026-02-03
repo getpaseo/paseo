@@ -71,7 +71,10 @@ export class WebSocketSessionBridge {
     this.dictation = dictation ?? null;
 
     const pushLogger = this.logger.child({ module: "push" });
-    this.pushTokenStore = new PushTokenStore(pushLogger);
+    this.pushTokenStore = new PushTokenStore(
+      pushLogger,
+      join(paseoHome, "push-tokens.json")
+    );
     this.pushService = new PushService(pushLogger, this.pushTokenStore);
 
     this.agentManager.setAgentAttentionCallback((params) => {
@@ -391,16 +394,42 @@ export class WebSocketSessionBridge {
       "broadcastAgentAttention"
     );
 
-    const allClientsStale = allStates.every((state) => state.isStale);
-    this.logger.debug({ allClientsStale }, "Client staleness check");
-    if (allClientsStale) {
+    const hasActiveWebClient = allStates.some(
+      (state) => state.deviceType === "web" && !state.isStale
+    );
+    const hasActiveMobileForegroundClient = allStates.some(
+      (state) => state.deviceType === "mobile" && state.appVisible && !state.isStale
+    );
+
+    // Push is only a fallback when the user is away from their desktop/web.
+    // Also suppress push if they're actively using the mobile app.
+    const shouldSendPush =
+      params.reason !== "error" &&
+      !hasActiveWebClient &&
+      !hasActiveMobileForegroundClient;
+
+    this.logger.debug(
+      { hasActiveWebClient, hasActiveMobileForegroundClient, shouldSendPush },
+      "Push gating check"
+    );
+
+    if (shouldSendPush) {
       const tokens = this.pushTokenStore.getAllTokens();
       this.logger.info({ tokenCount: tokens.length }, "Sending push notification");
       if (tokens.length > 0) {
+        const agent = this.agentManager.getAgent(params.agentId);
+        const agentTitle = agent?.config?.title ?? agent?.cwd ?? params.agentId;
+        const title =
+          params.reason === "permission" ? "Agent needs permission" : "Agent finished";
+        const body =
+          params.reason === "permission"
+            ? `Permission requested: ${agentTitle}`
+            : `Finished: ${agentTitle}`;
+
         void this.pushService.sendPush(tokens, {
-          title: "Agent needs attention",
-          body: `Reason: ${params.reason}`,
-          data: { agentId: params.agentId },
+          title,
+          body,
+          data: { agentId: params.agentId, reason: params.reason },
         });
       }
     }
