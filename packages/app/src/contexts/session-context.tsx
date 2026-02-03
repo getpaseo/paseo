@@ -13,6 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useClientActivity } from "@/hooks/use-client-activity";
+import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import {
   applyStreamEvent,
   generateMessageId,
@@ -388,6 +389,7 @@ export function SessionProvider({
 
   // Client activity tracking (heartbeat, push token registration)
   useClientActivity({ client, focusedAgentId });
+  usePushTokenRegistration({ client, serverId });
 
   // State for voice detection flags (will be set by RealtimeContext)
   const isDetectingRef = useRef(false);
