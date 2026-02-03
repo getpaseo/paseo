@@ -54,6 +54,37 @@ type ActionState = {
   trigger: () => void;
 };
 
+// =============================================================================
+// Git Actions Data Structure
+// =============================================================================
+
+type GitActionId =
+  | "commit"
+  | "push"
+  | "view-pr"
+  | "create-pr"
+  | "merge-branch"
+  | "merge-from-base"
+  | "archive-worktree";
+
+interface GitAction {
+  id: GitActionId;
+  label: string;
+  pendingLabel: string;
+  successLabel: string;
+  disabled: boolean;
+  status: ActionStatus;
+  description?: string;
+  destructive?: boolean;
+  handler: () => void;
+}
+
+interface GitActions {
+  primary: GitAction | null;
+  secondary: GitAction[];
+  menu: GitAction[];
+}
+
 function useActionStatus<TData, TError, TVariables, TContext>(
   mutation: UseMutationResult<TData, TError, TVariables, TContext>,
   onTrigger?: () => void
@@ -843,151 +874,177 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   }
 
   const hasPullRequest = Boolean(prStatus?.url);
+  const hasRemote = gitStatus?.hasRemote ?? false;
+  const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
 
   // ==========================================================================
-  // Primary CTA Logic
+  // Git Actions (Data-Oriented)
   // ==========================================================================
-  // Rules (in priority order):
-  // 1. Uncommitted changes → "Commit" is primary
-  // 2. Ahead of origin (unpushed commits) → "Push" is primary
-  // 3. Has PR → "View PR" is primary
-  // 4. Ahead of base → "Merge branch" or "Create PR" based on shipDefault preference
-  // 5. Nothing to do → no primary CTA
+  // All possible actions are computed as data, then partitioned into:
+  // - primary: The main CTA button
+  // - secondary: Dropdown next to primary button
+  // - menu: Kebab overflow menu
   // ==========================================================================
 
-  type PrimaryCTA =
-    | { type: "commit" }
-    | { type: "push" }
-    | { type: "view-pr"; url: string }
-    | { type: "ship"; action: "merge" | "create-pr" }
-    | null;
+  const gitActions: GitActions = useMemo(() => {
+    if (!isGit) {
+      return { primary: null, secondary: [], menu: [] };
+    }
 
-  const primaryCTA: PrimaryCTA = useMemo(() => {
-    if (!isGit) return null;
+    // Build all possible actions
+    const allActions = new Map<GitActionId, GitAction>();
+
+    // Commit - always available
+    allActions.set("commit", {
+      id: "commit",
+      label: "Commit",
+      pendingLabel: "Committing...",
+      successLabel: "Committed",
+      disabled: commitDisabled,
+      status: commitAction.status,
+      handler: commitAction.trigger,
+    });
+
+    // Push - when has remote
+    if (hasRemote) {
+      allActions.set("push", {
+        id: "push",
+        label: "Push",
+        pendingLabel: "Pushing...",
+        successLabel: "Pushed",
+        disabled: pushDisabled,
+        status: pushAction.status,
+        description: !hasRemote ? "No remote configured" : undefined,
+        handler: pushAction.trigger,
+      });
+    }
+
+    // View PR - when PR exists
+    if (hasPullRequest && prStatus?.url) {
+      const prUrl = prStatus.url;
+      allActions.set("view-pr", {
+        id: "view-pr",
+        label: "View PR",
+        pendingLabel: "View PR",
+        successLabel: "View PR",
+        disabled: false,
+        status: "idle",
+        handler: () => openURLInNewTab(prUrl),
+      });
+    }
+
+    // Create PR - when ahead of base and no PR
+    if (aheadCount > 0 && !hasPullRequest) {
+      allActions.set("create-pr", {
+        id: "create-pr",
+        label: "Create PR",
+        pendingLabel: "Creating PR...",
+        successLabel: "PR Created",
+        disabled: prDisabled,
+        status: prCreateAction.status,
+        handler: prCreateAction.trigger,
+      });
+    }
+
+    // Merge branch - when ahead of base
+    if (aheadCount > 0) {
+      allActions.set("merge-branch", {
+        id: "merge-branch",
+        label: "Merge branch",
+        pendingLabel: "Merging...",
+        successLabel: "Merged",
+        disabled: mergeDisabled,
+        status: mergeAction.status,
+        description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+        handler: mergeAction.trigger,
+      });
+    }
+
+    // Merge from base - always available
+    allActions.set("merge-from-base", {
+      id: "merge-from-base",
+      label: `Merge from ${baseRefLabel}`,
+      pendingLabel: "Merging...",
+      successLabel: "Merged",
+      disabled: mergeFromBaseDisabled,
+      status: mergeFromBaseAction.status,
+      description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+      handler: mergeFromBaseAction.trigger,
+    });
+
+    // Archive worktree - only for Paseo worktrees
+    if (isPaseoOwnedWorktree) {
+      allActions.set("archive-worktree", {
+        id: "archive-worktree",
+        label: "Archive worktree",
+        pendingLabel: "Archiving...",
+        successLabel: "Archived",
+        disabled: archiveDisabled,
+        status: archiveAction.status,
+        destructive: true,
+        handler: archiveAction.trigger,
+      });
+    }
+
+    // Select primary action (priority rules)
+    let primaryActionId: GitActionId | null = null;
 
     // Rule 1: Uncommitted changes → Commit
     if (hasUncommittedChanges) {
-      return { type: "commit" };
+      primaryActionId = "commit";
     }
-
     // Rule 2: Ahead of origin → Push
-    if (aheadOfOrigin > 0 && !pushDisabled) {
-      return { type: "push" };
+    else if (aheadOfOrigin > 0 && allActions.has("push") && !pushDisabled) {
+      primaryActionId = "push";
     }
-
     // Rule 3: Has PR → View PR
-    if (hasPullRequest && prStatus?.url) {
-      return { type: "view-pr", url: prStatus.url };
+    else if (hasPullRequest) {
+      primaryActionId = "view-pr";
     }
+    // Rule 4: Ahead of base → Ship action based on preference
+    else if (aheadCount > 0) {
+      const preferred: GitActionId = shipDefault === "merge" ? "merge-branch" : "create-pr";
+      const fallback: GitActionId = shipDefault === "merge" ? "create-pr" : "merge-branch";
 
-    // Rule 4: Ahead of base → Ship (merge or create PR based on preference)
-    if (aheadCount > 0) {
-      const preferredAction = shipDefault === "merge" ? "merge" : "create-pr";
-      // If preferred action is disabled, fall back to the other
-      if (preferredAction === "merge" && mergeDisabled && !prDisabled) {
-        return { type: "ship", action: "create-pr" };
+      const preferredAction = allActions.get(preferred);
+      const fallbackAction = allActions.get(fallback);
+
+      if (preferredAction && !preferredAction.disabled) {
+        primaryActionId = preferred;
+      } else if (fallbackAction && !fallbackAction.disabled) {
+        primaryActionId = fallback;
+      } else if (preferredAction) {
+        primaryActionId = preferred;
       }
-      if (preferredAction === "create-pr" && prDisabled && !mergeDisabled) {
-        return { type: "ship", action: "merge" };
-      }
-      return { type: "ship", action: preferredAction };
     }
 
-    // Rule 5: Nothing to do
-    return null;
-  }, [isGit, hasUncommittedChanges, aheadOfOrigin, pushDisabled, hasPullRequest, prStatus?.url, aheadCount, shipDefault, mergeDisabled, prDisabled]);
+    const primary = primaryActionId ? allActions.get(primaryActionId) ?? null : null;
 
-  const primaryCTALabel = useMemo(() => {
-    if (!primaryCTA) return "";
-    switch (primaryCTA.type) {
-      case "commit":
-        return "Commit";
-      case "push":
-        return "Push";
-      case "view-pr":
-        return "View PR";
-      case "ship":
-        return primaryCTA.action === "merge" ? "Merge branch" : "Create PR";
-    }
-  }, [primaryCTA]);
+    // Secondary actions: ship-related + merge from base + push (excluding primary)
+    const secondaryIds: GitActionId[] = ["merge-branch", "create-pr", "view-pr", "merge-from-base", "push"];
+    const secondary = secondaryIds
+      .filter(id => id !== primaryActionId && allActions.has(id))
+      .map(id => allActions.get(id)!);
 
-  const primaryCTADisabled = useMemo(() => {
-    if (!primaryCTA || actionsDisabled) return true;
-    switch (primaryCTA.type) {
-      case "commit":
-        return commitDisabled;
-      case "push":
-        return pushDisabled;
-      case "view-pr":
-        return false; // View PR is never disabled
-      case "ship":
-        return primaryCTA.action === "merge" ? mergeDisabled : prDisabled;
-    }
-  }, [primaryCTA, actionsDisabled, commitDisabled, pushDisabled, mergeDisabled, prDisabled]);
+    // Menu actions: archive worktree only
+    const menu = allActions.has("archive-worktree")
+      ? [allActions.get("archive-worktree")!]
+      : [];
 
-  const primaryCTAStatus: ActionStatus = useMemo(() => {
-    if (!primaryCTA) return "idle";
-    switch (primaryCTA.type) {
-      case "commit":
-        return commitAction.status;
-      case "push":
-        return pushAction.status;
-      case "view-pr":
-        return "idle"; // View PR is instant, no status
-      case "ship":
-        return primaryCTA.action === "merge" ? mergeAction.status : prCreateAction.status;
-    }
-  }, [primaryCTA, commitAction.status, pushAction.status, mergeAction.status, prCreateAction.status]);
+    return { primary, secondary, menu };
+  }, [
+    isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree,
+    hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel,
+    commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
+    commitAction, pushAction, prCreateAction, mergeAction, mergeFromBaseAction, archiveAction,
+  ]);
 
-  const primaryCTADisplayLabel = useMemo(() => {
-    if (!primaryCTA) return "";
-    const status = primaryCTAStatus;
-
-    switch (primaryCTA.type) {
-      case "commit":
-        if (status === "pending") return "Committing...";
-        if (status === "success") return "Committed";
-        return "Commit";
-      case "push":
-        if (status === "pending") return "Pushing...";
-        if (status === "success") return "Pushed";
-        return "Push";
-      case "view-pr":
-        return "View PR";
-      case "ship":
-        if (primaryCTA.action === "merge") {
-          if (status === "pending") return "Merging...";
-          if (status === "success") return "Merged";
-          return "Merge branch";
-        } else {
-          if (status === "pending") return "Creating PR...";
-          if (status === "success") return "PR Created";
-          return "Create PR";
-        }
-    }
-  }, [primaryCTA, primaryCTAStatus]);
-
-  const handlePrimaryCTAPress = useCallback(() => {
-    if (!primaryCTA || primaryCTADisabled || primaryCTAStatus !== "idle") return;
-    switch (primaryCTA.type) {
-      case "commit":
-        commitAction.trigger();
-        break;
-      case "push":
-        pushAction.trigger();
-        break;
-      case "view-pr":
-        openURLInNewTab(primaryCTA.url);
-        break;
-      case "ship":
-        if (primaryCTA.action === "merge") {
-          mergeAction.trigger();
-        } else {
-          prCreateAction.trigger();
-        }
-        break;
-    }
-  }, [primaryCTA, primaryCTADisabled, primaryCTAStatus, commitAction, pushAction, mergeAction, prCreateAction]);
+  // Helper to get display label based on status
+  const getActionDisplayLabel = useCallback((action: GitAction): string => {
+    if (action.status === "pending") return action.pendingLabel;
+    if (action.status === "success") return action.successLabel;
+    return action.label;
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -1003,126 +1060,91 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         </View>
         {isGit ? (
           <View style={styles.headerRight}>
-            {primaryCTA ? (
+            {gitActions.primary ? (
               <View style={styles.splitButton}>
                 <Pressable
                   testID="changes-primary-cta"
                   style={[
                     styles.splitButtonPrimary,
-                    primaryCTADisabled && styles.splitButtonPrimaryDisabled,
+                    gitActions.primary.disabled && styles.splitButtonPrimaryDisabled,
                   ]}
-                  onPress={handlePrimaryCTAPress}
-                  disabled={primaryCTADisabled}
+                  onPress={gitActions.primary.handler}
+                  disabled={gitActions.primary.disabled}
                   accessibilityRole="button"
-                  accessibilityLabel={primaryCTALabel}
+                  accessibilityLabel={gitActions.primary.label}
                 >
-                  {primaryCTAStatus === "pending" ? (
+                  {gitActions.primary.status === "pending" ? (
                     <ActivityIndicator size="small" color={theme.colors.foreground} style={styles.splitButtonSpinner} />
                   ) : (
-                    <Text style={styles.splitButtonText}>{primaryCTADisplayLabel}</Text>
+                    <Text style={styles.splitButtonText}>{getActionDisplayLabel(gitActions.primary)}</Text>
                   )}
                 </Pressable>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    testID="changes-primary-cta-caret"
-                    style={styles.splitButtonCaret}
-                    accessibilityRole="button"
-                    accessibilityLabel="More options"
-                  >
-                    <ChevronDown size={16} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" width={260} testID="changes-primary-cta-menu">
-                    {/* Ship actions - only show if ahead of base */}
-                    {aheadCount > 0 ? (
-                      <>
-                        <DropdownMenuItem
-                          testID="changes-menu-merge"
-                          disabled={mergeDisabled}
-                          status={mergeAction.status}
-                          pendingLabel="Merging..."
-                          successLabel="Merged"
-                          closeOnSelect={false}
-                          description={hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                          onSelect={mergeAction.trigger}
-                        >
-                          Merge branch
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          testID={hasPullRequest ? "changes-menu-view-pr" : "changes-menu-create-pr"}
-                          disabled={!hasPullRequest && prDisabled}
-                          status={!hasPullRequest ? prCreateAction.status : undefined}
-                          pendingLabel="Creating PR..."
-                          successLabel="PR Created"
-                          closeOnSelect={!hasPullRequest ? false : true}
-                          onSelect={() => {
-                            if (hasPullRequest && prStatus?.url) {
-                              openURLInNewTab(prStatus.url);
-                              return;
-                            }
-                            prCreateAction.trigger();
-                          }}
-                        >
-                          {hasPullRequest ? "View PR" : "Create PR"}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                      </>
-                    ) : null}
-                    <DropdownMenuItem
-                      testID="changes-menu-merge-from-base"
-                      disabled={mergeFromBaseDisabled}
-                      status={mergeFromBaseAction.status}
-                      pendingLabel="Merging..."
-                      successLabel="Merged"
-                      closeOnSelect={false}
-                      description={hasUncommittedChanges ? "Requires clean working tree" : undefined}
-                      onSelect={mergeFromBaseAction.trigger}
+                {gitActions.secondary.length > 0 ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      testID="changes-primary-cta-caret"
+                      style={styles.splitButtonCaret}
+                      accessibilityRole="button"
+                      accessibilityLabel="More options"
                     >
-                      Merge from {baseRefLabel}
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      testID="changes-menu-push"
-                      disabled={pushDisabled}
-                      status={pushAction.status}
-                      pendingLabel="Pushing..."
-                      successLabel="Pushed"
-                      closeOnSelect={false}
-                      description={!(gitStatus?.hasRemote ?? false) ? "No remote configured" : undefined}
-                      onSelect={pushAction.trigger}
-                    >
-                      Push to remote
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" width={260} testID="changes-primary-cta-menu">
+                      {gitActions.secondary.map((action, index) => {
+                        const needsSeparator = action.id === "merge-from-base" || action.id === "push";
+                        return (
+                          <View key={action.id}>
+                            {needsSeparator && index > 0 ? <DropdownMenuSeparator /> : null}
+                            <DropdownMenuItem
+                              testID={`changes-menu-${action.id}`}
+                              disabled={action.disabled}
+                              status={action.status}
+                              pendingLabel={action.pendingLabel}
+                              successLabel={action.successLabel}
+                              closeOnSelect={action.status === "idle" && action.id === "view-pr"}
+                              description={action.description}
+                              onSelect={action.handler}
+                            >
+                              {action.label}
+                            </DropdownMenuItem>
+                          </View>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
               </View>
             ) : null}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                testID="changes-overflow-menu"
-                hitSlop={8}
-                style={styles.iconButton}
-                accessibilityRole="button"
-                accessibilityLabel="More actions"
-              >
-                <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
-                {gitStatus?.isPaseoOwnedWorktree ? (
-                  <DropdownMenuItem
-                    testID="changes-menu-archive"
-                    destructive
-                    disabled={archiveDisabled}
-                    status={archiveAction.status}
-                    pendingLabel="Archiving..."
-                    successLabel="Archived"
-                    closeOnSelect={false}
-                    onSelect={archiveAction.trigger}
-                  >
-                    Archive worktree
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {gitActions.menu.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  testID="changes-overflow-menu"
+                  hitSlop={8}
+                  style={styles.iconButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="More actions"
+                >
+                  <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
+                  {gitActions.menu.map((action) => (
+                    <DropdownMenuItem
+                      key={action.id}
+                      testID={`changes-menu-${action.id}`}
+                      destructive={action.destructive}
+                      disabled={action.disabled}
+                      status={action.status}
+                      pendingLabel={action.pendingLabel}
+                      successLabel={action.successLabel}
+                      closeOnSelect={false}
+                      onSelect={action.handler}
+                    >
+                      {action.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </View>
         ) : null}
       </View>
