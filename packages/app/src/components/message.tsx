@@ -180,11 +180,13 @@ export const UserMessage = memo(function UserMessage({
     <View
       style={[
         userMessageStylesheet.container,
-        isFirstInGroup && { marginTop: theme.spacing[4] },
-        isLastInGroup && { marginBottom: theme.spacing[4] },
-        !isFirstInGroup || !isLastInGroup
-          ? { marginBottom: theme.spacing[1] }
-          : undefined,
+        !resolvedDisableOuterSpacing && [
+          isFirstInGroup && { marginTop: theme.spacing[4] },
+          isLastInGroup && { marginBottom: theme.spacing[4] },
+          !isFirstInGroup || !isLastInGroup
+            ? { marginBottom: theme.spacing[1] }
+            : undefined,
+        ],
       ]}
     >
       <Pressable

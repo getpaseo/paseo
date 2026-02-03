@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
 import Animated, {
   FadeIn,
@@ -27,7 +27,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { ChevronDown } from "lucide-react-native";
+import { Check, ChevronDown, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
@@ -239,6 +239,11 @@ export function AgentStreamView({
           aboveItem.kind === "assistant_message" ||
           aboveItem.kind === "todo_list")
       ) {
+        return tightGap;
+      }
+
+      // And keep assistant messages visually connected to tool sequences (symmetry).
+      if (item.kind === "assistant_message" && isToolSequenceItem(aboveItem)) {
         return tightGap;
       }
 
@@ -765,6 +770,8 @@ function PermissionRequestCard({
   client: DaemonClientV2 | null;
 }) {
   const { theme } = useUnistyles();
+  const isMobile =
+    UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
@@ -987,14 +994,16 @@ function PermissionRequestCard({
 
       {planMarkdown ? (
         <View style={permissionStyles.section}>
-          <Text
-            style={[
-              permissionStyles.sectionTitle,
-              { color: theme.colors.foregroundMuted },
-            ]}
-          >
-            {isPlanRequest ? "Plan" : "Proposed Plan"}
-          </Text>
+          {!isPlanRequest ? (
+            <Text
+              style={[
+                permissionStyles.sectionTitle,
+                { color: theme.colors.foregroundMuted },
+              ]}
+            >
+              Proposed plan
+            </Text>
+          ) : null}
           <View
             style={[
               permissionStyles.contentCard,
@@ -1024,36 +1033,27 @@ function PermissionRequestCard({
         How would you like to proceed?
       </Text>
 
-      <View style={permissionStyles.optionsContainer}>
+      <View
+        style={[
+          permissionStyles.optionsContainer,
+          !isMobile && permissionStyles.optionsContainerDesktop,
+        ]}
+      >
         <Pressable
-          style={[
-            permissionStyles.optionButton,
-            { backgroundColor: theme.colors.primary },
-          ]}
-          onPress={() => handleResponse({ behavior: "allow" })}
-          disabled={isResponding}
-        >
-          {isResponding ? (
-            <ActivityIndicator
-              size="small"
-              color={theme.colors.primaryForeground}
-            />
-          ) : (
-            <Text
-              style={[
-                permissionStyles.optionText,
-                { color: theme.colors.primaryForeground },
-              ]}
-            >
-              Allow
-            </Text>
-          )}
-        </Pressable>
-        <Pressable
-          style={[
-            permissionStyles.optionButton,
-            { backgroundColor: theme.colors.destructive },
-          ]}
+          style={(state) => {
+            const hovered = Boolean((state as any).hovered);
+            const pressed = Boolean(state.pressed);
+            return [
+              permissionStyles.optionButton,
+              {
+                backgroundColor: hovered
+                  ? theme.colors.surface1
+                  : theme.colors.surface2,
+                borderColor: theme.colors.borderAccent,
+              },
+              pressed ? permissionStyles.optionButtonPressed : null,
+            ];
+          }}
           onPress={() =>
             handleResponse({
               behavior: "deny",
@@ -1063,19 +1063,54 @@ function PermissionRequestCard({
           disabled={isResponding}
         >
           {isResponding ? (
-            <ActivityIndicator
-              size="small"
-              color={theme.colors.primaryForeground}
-            />
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           ) : (
-            <Text
-              style={[
-                permissionStyles.optionText,
-                { color: theme.colors.primaryForeground },
-              ]}
-            >
-              Deny
-            </Text>
+            <View style={permissionStyles.optionContent}>
+              <X size={14} color={theme.colors.foregroundMuted} />
+              <Text
+                style={[
+                  permissionStyles.optionText,
+                  { color: theme.colors.foregroundMuted },
+                ]}
+              >
+                Deny
+              </Text>
+            </View>
+          )}
+        </Pressable>
+
+        <Pressable
+          style={(state) => {
+            const hovered = Boolean((state as any).hovered);
+            const pressed = Boolean(state.pressed);
+            return [
+              permissionStyles.optionButton,
+              {
+                backgroundColor: hovered
+                  ? theme.colors.surface1
+                  : theme.colors.surface2,
+                borderColor: theme.colors.primary,
+              },
+              pressed ? permissionStyles.optionButtonPressed : null,
+            ];
+          }}
+          onPress={() => handleResponse({ behavior: "allow" })}
+          disabled={isResponding}
+        >
+          {isResponding ? (
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+          ) : (
+            <View style={permissionStyles.optionContent}>
+              <Check size={14} color={theme.colors.primary} />
+              <Text
+                style={[
+                  permissionStyles.optionText,
+                  { color: theme.colors.primary },
+                ]}
+              >
+                Accept
+              </Text>
+            </View>
           )}
         </Pressable>
       </View>
@@ -1190,7 +1225,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 const permissionStyles = StyleSheet.create((theme) => ({
   container: {
     marginVertical: theme.spacing[3],
-    padding: theme.spacing[4],
+    padding: theme.spacing[3],
     borderRadius: theme.spacing[2],
     borderWidth: 1,
     gap: theme.spacing[2],
@@ -1208,8 +1243,6 @@ const permissionStyles = StyleSheet.create((theme) => ({
   },
   sectionTitle: {
     fontSize: theme.fontSize.xs,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
   },
   contentCard: {
     padding: theme.spacing[3],
@@ -1220,19 +1253,35 @@ const permissionStyles = StyleSheet.create((theme) => ({
   },
   question: {
     fontSize: theme.fontSize.sm,
-    marginTop: theme.spacing[2],
-    marginBottom: theme.spacing[2],
+    marginTop: theme.spacing[1],
+    marginBottom: theme.spacing[1],
   },
   optionsContainer: {
     gap: theme.spacing[2],
   },
+  optionsContainerDesktop: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    width: "100%",
+  },
   optionButton: {
-    padding: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
+    borderWidth: theme.borderWidth[1],
+  },
+  optionButtonPressed: {
+    opacity: 0.9,
+  },
+  optionContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   optionText: {
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
 }));
