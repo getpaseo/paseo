@@ -1,5 +1,5 @@
 import "@/styles/unistyles";
-import { Stack, usePathname } from "expo-router";
+import { Stack, usePathname, useRouter } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -15,9 +15,10 @@ import { DaemonRegistryProvider, useDaemonRegistry } from "@/contexts/daemon-reg
 import { DaemonConnectionsProvider } from "@/contexts/daemon-connections-context";
 import { MultiDaemonSessionHost } from "@/components/multi-daemon-session-host";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, useEffect, type ReactNode, useMemo } from "react";
+import { useState, useEffect, type ReactNode, useMemo, useRef } from "react";
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
+import * as Notifications from "expo-notifications";
 import { SlidingSidebar } from "@/components/sliding-sidebar";
 import { DownloadToast } from "@/components/download-toast";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -33,6 +34,63 @@ import {
 } from "@/contexts/horizontal-scroll-context";
 import { getIsTauriMac } from "@/constants/layout";
 import { useTrafficLightPadding } from "@/utils/tauri-window";
+
+function PushNotificationRouter() {
+  const router = useRouter();
+  const lastHandledIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      return;
+    }
+
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        // When the app is open, don't show OS banners.
+        shouldShowAlert: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+    });
+
+    const openFromResponse = (response: Notifications.NotificationResponse) => {
+      const identifier = response.notification.request.identifier;
+      if (lastHandledIdRef.current === identifier) {
+        return;
+      }
+      lastHandledIdRef.current = identifier;
+
+      const data = response.notification.request.content.data as
+        | Record<string, unknown>
+        | undefined;
+      const agentId = typeof data?.agentId === "string" ? data.agentId : null;
+
+      if (agentId) {
+        // Legacy route resolves agent -> host once sessions reconnect.
+        router.push(`/agent/${agentId}` as any);
+      } else {
+        router.push("/agents" as any);
+      }
+    };
+
+    const subscription =
+      Notifications.addNotificationResponseReceivedListener(openFromResponse);
+
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) {
+        openFromResponse(response);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [router]);
+
+  return null;
+}
 
 function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -335,6 +393,7 @@ export default function RootLayout() {
               <QueryProvider>
                 <DaemonRegistryProvider>
                   <DaemonConnectionsProvider>
+                    <PushNotificationRouter />
                     <MultiDaemonSessionHost />
                     <ProvidersWrapper>
                       <SidebarAnimationProvider>

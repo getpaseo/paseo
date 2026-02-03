@@ -1,5 +1,4 @@
 import { Platform } from "react-native";
-import * as Notifications from "expo-notifications";
 
 type OsNotificationPayload = {
   title: string;
@@ -7,8 +6,6 @@ type OsNotificationPayload = {
   data?: Record<string, unknown>;
 };
 
-let isNativeConfigured = false;
-let permissionState: "unknown" | "granted" | "denied" = "unknown";
 let permissionRequest: Promise<boolean> | null = null;
 
 function getWebNotificationConstructor(): {
@@ -20,73 +17,25 @@ function getWebNotificationConstructor(): {
   return NotificationConstructor ?? null;
 }
 
-async function configureNativeNotifications(): Promise<void> {
-  if (isNativeConfigured || Platform.OS === "web") {
-    return;
-  }
-  isNativeConfigured = true;
-
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
-  });
-}
-
 async function ensureNotificationPermission(): Promise<boolean> {
-  if (Platform.OS === "web") {
-    const NotificationConstructor = getWebNotificationConstructor();
-    if (!NotificationConstructor) {
-      return false;
-    }
-    if (NotificationConstructor.permission === "granted") {
-      return true;
-    }
-    if (NotificationConstructor.permission === "denied") {
-      return false;
-    }
-    if (permissionRequest) {
-      return permissionRequest;
-    }
-    permissionRequest = Promise.resolve(
-      NotificationConstructor.requestPermission
-        ? NotificationConstructor.requestPermission()
-        : "denied"
-    ).then((permission) => permission === "granted");
-    const result = await permissionRequest;
-    permissionRequest = null;
-    return result;
+  const NotificationConstructor = getWebNotificationConstructor();
+  if (!NotificationConstructor) {
+    return false;
   }
-
-  if (permissionState === "granted") {
+  if (NotificationConstructor.permission === "granted") {
     return true;
   }
-  if (permissionState === "denied") {
+  if (NotificationConstructor.permission === "denied") {
     return false;
   }
   if (permissionRequest) {
     return permissionRequest;
   }
-
-  permissionRequest = (async () => {
-    const existing = await Notifications.getPermissionsAsync();
-    if (existing.status === "granted") {
-      permissionState = "granted";
-      return true;
-    }
-    if (!existing.canAskAgain) {
-      permissionState = "denied";
-      return false;
-    }
-    const requested = await Notifications.requestPermissionsAsync();
-    permissionState = requested.status === "granted" ? "granted" : "denied";
-    return permissionState === "granted";
-  })();
-
+  permissionRequest = Promise.resolve(
+    NotificationConstructor.requestPermission
+      ? NotificationConstructor.requestPermission()
+      : "denied"
+  ).then((permission) => permission === "granted");
   const result = await permissionRequest;
   permissionRequest = null;
   return result;
@@ -95,36 +44,22 @@ async function ensureNotificationPermission(): Promise<boolean> {
 export async function sendOsNotification(
   payload: OsNotificationPayload
 ): Promise<boolean> {
-  if (Platform.OS === "web") {
-    const NotificationConstructor = getWebNotificationConstructor();
-    if (!NotificationConstructor) {
-      return false;
-    }
-    const granted = await ensureNotificationPermission();
-    if (!granted) {
-      return false;
-    }
-    new NotificationConstructor(payload.title, {
-      body: payload.body,
-      data: payload.data,
-    });
-    return true;
+  // Mobile/native notifications should be remote push only.
+  if (Platform.OS !== "web") {
+    return false;
   }
 
-  await configureNativeNotifications();
+  const NotificationConstructor = getWebNotificationConstructor();
+  if (!NotificationConstructor) {
+    return false;
+  }
   const granted = await ensureNotificationPermission();
   if (!granted) {
     return false;
   }
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: payload.title,
-      body: payload.body,
-      data: payload.data,
-    },
-    trigger: null,
+  new NotificationConstructor(payload.title, {
+    body: payload.body,
+    data: payload.data,
   });
-
   return true;
 }
