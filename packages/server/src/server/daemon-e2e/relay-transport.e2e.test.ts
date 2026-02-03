@@ -152,6 +152,12 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
         });
 
         expect(received).toEqual({ type: "pong" });
+      } catch (err) {
+        const tail = lines.slice(-50).join("");
+        // Only prints on failure to help diagnose relay handshake issues.
+        // eslint-disable-next-line no-console
+        console.error("daemon logs (tail):\n", tail);
+        throw err;
       } finally {
         await daemon.close();
         await relay.stop();

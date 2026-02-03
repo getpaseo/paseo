@@ -21,6 +21,19 @@ import type pino from "pino";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 
+function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffer {
+  if (typeof data === "string") return Buffer.from(data, "utf8");
+  if (Array.isArray(data)) {
+    return Buffer.concat(
+      data.map((item) =>
+        Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer)
+      )
+    );
+  }
+  if (Buffer.isBuffer(data)) return data;
+  return Buffer.from(data as ArrayBuffer);
+}
+
 type WebSocketLike = {
   readyState: number;
   send: (data: string) => void;
@@ -156,7 +169,8 @@ export class WebSocketSessionBridge {
     data: Buffer | ArrayBuffer | Buffer[] | string
   ): Promise<void> {
     try {
-      const parsed = JSON.parse(data.toString());
+      const buffer = bufferFromWsData(data);
+      const parsed = JSON.parse(buffer.toString());
       const message = WSInboundMessageSchema.parse(parsed);
 
       const messageSummary = {
@@ -203,13 +217,7 @@ export class WebSocketSessionBridge {
       let parsedPayload: unknown = null;
 
       try {
-        const buffer = Array.isArray(data)
-          ? Buffer.concat(
-              data.map((item) => (Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer)))
-            )
-          : Buffer.isBuffer(data)
-            ? data
-            : Buffer.from(data as ArrayBuffer);
+        const buffer = bufferFromWsData(data);
         rawPayload = buffer.toString();
         parsedPayload = JSON.parse(rawPayload);
       } catch (payloadError) {

@@ -149,8 +149,8 @@ function createRelayTransportAdapter(socket: WebSocket): RelayTransport {
     onerror: null,
   };
 
-  socket.on("message", (data) => {
-    relayTransport.onmessage?.(normalizeMessageData(data));
+  socket.on("message", (data, isBinary) => {
+    relayTransport.onmessage?.(normalizeMessageData(data, isBinary));
   });
   socket.on("close", (code, reason) => {
     relayTransport.onclose?.(code, reason.toString());
@@ -200,22 +200,51 @@ function createEncryptedSocket(
   };
 }
 
-function normalizeMessageData(data: unknown): string | ArrayBuffer {
-  if (typeof data === "string") return data;
+function normalizeMessageData(data: unknown, isBinary: boolean): string | ArrayBuffer {
+  if (!isBinary) {
+    if (typeof data === "string") return data;
+    const buffer = bufferFromWsData(data);
+    if (buffer) return buffer.toString("utf8");
+    return String(data);
+  }
+
   if (data instanceof ArrayBuffer) return data;
-  if (ArrayBuffer.isView(data)) {
-    const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+
+  const buffer = bufferFromWsData(data);
+  if (buffer) {
+    const view = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     const out = new Uint8Array(view.byteLength);
     out.set(view);
     return out.buffer;
   }
-  if (Buffer.isBuffer(data)) {
-    const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    const out = new Uint8Array(view.byteLength);
-    out.set(view);
-    return out.buffer;
-  }
+
   return String(data);
+}
+
+function bufferFromWsData(data: unknown): Buffer | null {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) {
+    const buffers: Buffer[] = [];
+    for (const part of data) {
+      if (Buffer.isBuffer(part)) {
+        buffers.push(part);
+      } else if (part instanceof ArrayBuffer) {
+        buffers.push(Buffer.from(part));
+      } else if (ArrayBuffer.isView(part)) {
+        buffers.push(Buffer.from(part.buffer, part.byteOffset, part.byteLength));
+      } else if (typeof part === "string") {
+        buffers.push(Buffer.from(part, "utf8"));
+      } else {
+        return null;
+      }
+    }
+    return Buffer.concat(buffers);
+  }
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return null;
 }
 
 function buildRelayWebSocketUrl(

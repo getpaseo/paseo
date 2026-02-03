@@ -87,18 +87,27 @@ export async function createDaemonChannel(
       reject(new Error("Handshake timeout"));
     }, 10000);
 
+    const bufferedMessages: Array<string | ArrayBuffer> = [];
+
     transport.onmessage = async (data) => {
       try {
-        if (typeof data !== "string") {
-          throw new Error("Expected string hello message");
-        }
+        const helloText =
+          typeof data === "string" ? data : new TextDecoder().decode(data);
 
-        const msg = JSON.parse(data) as HelloMessage;
+        const msg = JSON.parse(helloText) as HelloMessage;
         if (msg.type !== "hello" || !msg.key) {
           throw new Error("Invalid hello message");
         }
 
         clearTimeout(timeout);
+
+        // Buffer any subsequent messages that arrive while we're doing async
+        // WebCrypto work to derive the shared key. Without this, it's possible
+        // for the next message (already encrypted) to be misinterpreted as a
+        // second hello, causing the handshake to fail.
+        transport.onmessage = (next) => {
+          bufferedMessages.push(next);
+        };
 
         const clientPublicKey = await importPublicKey(msg.key);
         const sharedKey = await deriveSharedKey(
@@ -109,6 +118,10 @@ export async function createDaemonChannel(
         const channel = new EncryptedChannel(transport, sharedKey, events);
         channel.setState("open");
         events.onopen?.();
+
+        for (const buffered of bufferedMessages) {
+          transport.onmessage?.(buffered);
+        }
 
         resolve(channel);
       } catch (error) {
