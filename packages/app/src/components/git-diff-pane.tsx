@@ -390,13 +390,11 @@ const DiffFileSection = memo(function DiffFileSection({
               color={theme.colors.foregroundMuted}
             />
           </View>
-          <Text style={styles.filePath} numberOfLines={1} ellipsizeMode="head">
-            <Text style={styles.fileName}>{file.path.split("/").pop()}</Text>
-            <Text style={styles.fileDir}>
-              {file.path.includes("/")
-                ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}`
-                : ""}
-            </Text>
+          <Text style={styles.fileName}>{file.path.split("/").pop()}</Text>
+          <Text style={styles.fileDir} numberOfLines={1}>
+            {file.path.includes("/")
+              ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}`
+              : ""}
           </Text>
           {file.isNew && (
             <View style={styles.newBadge}>
@@ -1160,21 +1158,23 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       {isGit && (hasUncommittedChanges || aheadCount > 0) ? (
         <View style={styles.diffStatusContainer}>
           <Pressable
-            style={({ hovered }) => [
+            style={({ hovered, pressed }) => [
               styles.diffStatusRow,
-              hovered && styles.diffStatusRowHovered,
+              (hovered || pressed) && styles.diffStatusRowHovered,
             ]}
             testID="changes-diff-status"
             onPress={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
           >
-            {({ hovered }) => (
+            {({ hovered, pressed }) => (
               <>
                 <Text style={styles.diffStatusText}>
                   {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
                 </Text>
-                {hovered ? (
-                  <ArrowLeftRight size={12} color={theme.colors.foregroundMuted} />
-                ) : null}
+                <ArrowLeftRight
+                  size={12}
+                  color={theme.colors.foregroundMuted}
+                  style={hovered || pressed ? undefined : styles.diffStatusIconHidden}
+                />
               </>
             )}
           </Pressable>
@@ -1234,9 +1234,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     alignSelf: "flex-start",
     gap: theme.spacing[1],
-    marginHorizontal: theme.spacing[3],
+    // Align text with chevron/branch icons (at spacing[2] from edge)
     marginVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
   },
@@ -1246,6 +1247,9 @@ const styles = StyleSheet.create((theme) => ({
   diffStatusText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+  },
+  diffStatusIconHidden: {
+    opacity: 0,
   },
   splitButton: {
     flexDirection: "row",
@@ -1429,18 +1433,17 @@ const styles = StyleSheet.create((theme) => ({
   chevronExpanded: {
     transform: [{ rotate: "90deg" }],
   },
-  filePath: {
+  fileName: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
-    flex: 1,
-  },
-  fileName: {
-    color: theme.colors.foreground,
+    flexShrink: 0,
   },
   fileDir: {
-    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+    flex: 1,
   },
   newBadge: {
     backgroundColor: "rgba(46, 160, 67, 0.2)",
