@@ -4,7 +4,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync
 import os from "node:os";
 import path from "node:path";
 
-import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import {
+  CodexAppServerAgentClient,
+  codexAppServerTurnInputFromPrompt,
+} from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type {
   AgentPermissionRequest,
@@ -14,6 +17,8 @@ import type {
 
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_REASONING_EFFORT = "low";
+const ONE_BY_ONE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 
 function isCodexInstalled(): boolean {
   try {
@@ -64,11 +69,56 @@ function hasApplyPatchFile(item: AgentTimelineItem, fileName: string): boolean {
 describe("Codex app-server provider (integration)", () => {
   const logger = createTestLogger();
 
+  test("maps image prompt blocks to Codex localImage input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        { type: "text", text: "hello" },
+        { type: "image", mimeType: "image/png", data: ONE_BY_ONE_PNG_BASE64 },
+      ],
+      logger
+    );
+    const localImage = input.find((item) => (item as any)?.type === "localImage") as
+      | { type: "localImage"; path?: string }
+      | undefined;
+    expect(localImage?.path).toBeTypeOf("string");
+    if (localImage?.path) {
+      expect(existsSync(localImage.path)).toBe(true);
+      rmSync(localImage.path, { force: true });
+    }
+  });
+
   test.runIf(isCodexInstalled())("listModels returns live Codex models", async () => {
     const client = new CodexAppServerAgentClient(logger);
     const models = await client.listModels();
     expect(models.some((model) => model.id.includes("gpt-5.1-codex"))).toBe(true);
   }, 30000);
+
+  test.runIf(isCodexInstalled())("accepts image prompt blocks without request validation errors", async () => {
+    const cleanup = useTempCodexSessionDir();
+    const cwd = tmpCwd("codex-image-prompt-");
+
+    try {
+      const client = new CodexAppServerAgentClient(logger);
+      const session = await client.createSession({
+        provider: "codex",
+        cwd,
+        modeId: "auto",
+        model: CODEX_TEST_MODEL,
+        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+      });
+
+      const result = await session.run([
+        { type: "text", text: "Reply with exactly: OK." },
+        { type: "image", mimeType: "image/png", data: ONE_BY_ONE_PNG_BASE64 },
+      ] satisfies AgentPromptContentBlock[]);
+      await session.close();
+
+      expect(result.finalText).toContain("OK");
+    } finally {
+      cleanup();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60000);
 
   test.runIf(isCodexInstalled())("getRuntimeInfo reflects model + mode", async () => {
     const cleanup = useTempCodexSessionDir();

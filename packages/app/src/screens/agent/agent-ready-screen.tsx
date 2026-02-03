@@ -12,7 +12,6 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import { useQuery } from "@tanstack/react-query";
 import ReanimatedAnimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -71,9 +70,6 @@ import {
 
 const DROPDOWN_WIDTH = 220;
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
-
-
-type BranchStatus = "idle" | "loading" | "ready" | "error";
 
 export function AgentReadyScreen({
   serverId,
@@ -372,43 +368,6 @@ function AgentScreenContent({
   const agentModel = extractAgentModel(agent);
   const modelDisplayValue = agentModel ?? "Unknown";
 
-  const repoInfoQuery = useQuery({
-    queryKey: ["checkoutStatus", serverId, agent?.cwd ?? ""],
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client unavailable");
-      }
-      const payload = await client.getCheckoutStatus(agent?.cwd ?? ".");
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      return {
-        cwd: payload.cwd,
-        currentBranch: payload.currentBranch ?? null,
-      };
-    },
-    enabled: Boolean(client && isConnected && agent?.cwd),
-    retry: false,
-  });
-  const { refetch: refetchRepoInfo } = repoInfoQuery;
-  const branchStatus: BranchStatus = !agent?.cwd
-    ? "idle"
-    : repoInfoQuery.isPending || repoInfoQuery.isFetching
-    ? "loading"
-    : repoInfoQuery.isError
-    ? "error"
-    : repoInfoQuery.isSuccess
-    ? "ready"
-    : "idle";
-  const branchLabel = repoInfoQuery.data?.currentBranch ?? null;
-  const branchError = repoInfoQuery.error instanceof Error
-    ? repoInfoQuery.error.message
-    : null;
-  const branchDisplayValue =
-    branchStatus === "error"
-      ? branchError ?? "Unavailable"
-      : branchLabel ?? "Unknown";
-
   // Checkout status for header subtitle
   const checkoutStatusQuery = useCheckoutStatusQuery({
     serverId,
@@ -648,7 +607,7 @@ function AgentScreenContent({
               <DropdownMenu
                 onOpenChange={(open) => {
                   if (open && agent?.cwd) {
-                    refetchRepoInfo().catch(() => {});
+                    checkoutStatusQuery.refresh().catch(() => {});
                   }
                 }}
               >
@@ -679,31 +638,30 @@ function AgentScreenContent({
                       </Text>
                     </View>
 
-                    <View style={styles.menuMetaRow}>
-                      <Text style={styles.menuMetaLabel}>Branch</Text>
-                      <View style={styles.menuMetaValueRow}>
-                        {branchStatus === "loading" ? (
-                          <>
-                            <ActivityIndicator
-                              size="small"
-                              color={theme.colors.foregroundMuted}
-                            />
-                            <Text style={styles.menuMetaPendingText}>Fetching…</Text>
-                          </>
-                        ) : (
-                          <Text
-                            style={[
-                              styles.menuMetaValue,
-                              branchStatus === "error" ? styles.menuMetaValueError : null,
-                            ]}
-                            numberOfLines={1}
-                            ellipsizeMode="middle"
-                          >
-                            {branchDisplayValue}
-                          </Text>
-                        )}
+                    {checkout?.isGit && checkout.currentBranch && checkout.currentBranch !== "HEAD" ? (
+                      <View style={styles.menuMetaRow}>
+                        <Text style={styles.menuMetaLabel}>Branch</Text>
+                        <View style={styles.menuMetaValueRow}>
+                          {checkoutStatusQuery.isFetching ? (
+                            <>
+                              <ActivityIndicator
+                                size="small"
+                                color={theme.colors.foregroundMuted}
+                              />
+                              <Text style={styles.menuMetaPendingText}>Fetching…</Text>
+                            </>
+                          ) : (
+                            <Text
+                              style={styles.menuMetaValue}
+                              numberOfLines={1}
+                              ellipsizeMode="middle"
+                            >
+                              {checkout.currentBranch}
+                            </Text>
+                          )}
+                        </View>
                       </View>
-                    </View>
+                    ) : null}
                   </View>
 
                   <DropdownMenuSeparator />

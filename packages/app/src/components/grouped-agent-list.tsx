@@ -440,7 +440,11 @@ export function GroupedAgentList({
       });
       const checkout = checkoutQuery.data ?? null;
       const activeBranchLabel = checkout?.isGit
-        ? (checkout.currentBranch ?? checkout.baseRef ?? "git")
+        ? ((checkout.currentBranch && checkout.currentBranch !== "HEAD"
+            ? checkout.currentBranch
+            : null) ??
+          checkout.baseRef ??
+          "git")
         : null;
 
       const canArchive = !isRunning && !agent.requiresAttention;

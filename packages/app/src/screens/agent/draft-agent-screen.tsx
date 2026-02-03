@@ -27,6 +27,10 @@ import {
 import { FileDropZone } from "@/components/file-drop-zone";
 import { useQuery } from "@tanstack/react-query";
 import { useAgentFormState, type CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
+import {
+  CHECKOUT_STATUS_STALE_TIME,
+  checkoutStatusQueryKey,
+} from "@/hooks/use-checkout-status-query";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
@@ -309,82 +313,62 @@ export function DraftAgentScreen({
         "Repository details will load automatically once the selected host is back online."
       : null;
 
-  type RepoInfoState = {
-    cwd: string;
-    repoRoot: string;
-    currentBranch: string | null;
-    isDirty: boolean;
-  };
-  const repoInfoQuery = useQuery({
-    queryKey: ["checkoutStatus", selectedServerId, trimmedWorkingDir],
+  const checkoutStatusQuery = useQuery({
+    queryKey: checkoutStatusQueryKey(selectedServerId ?? "", trimmedWorkingDir),
     queryFn: async () => {
       const client = sessionClient;
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
-      const payload = await client.getCheckoutStatus(trimmedWorkingDir || ".");
-      if (payload.error) {
-        throw new Error(payload.error.message);
-      }
-      if (!payload.isGit) {
-        throw new Error("Not a git repository");
-      }
-      // After the isGit check, TypeScript knows we have a git repo
-      return {
-        cwd: payload.cwd,
-        repoRoot: payload.repoRoot,
-        currentBranch: payload.currentBranch,
-        isDirty: payload.isDirty,
-      };
+      return await client.getCheckoutStatus(trimmedWorkingDir);
     },
     enabled:
+      Boolean(selectedServerId) &&
       Boolean(trimmedWorkingDir) &&
       !repoAvailabilityError &&
       Boolean(sessionClient) &&
       isConnected,
     retry: false,
+    staleTime: CHECKOUT_STATUS_STALE_TIME,
+    refetchOnMount: "always",
   });
-  const repoInfo = repoInfoQuery.data ?? null;
-  const refetchRepoInfo = repoInfoQuery.refetch;
-  const repoRequestError = repoInfoQuery.error as Error | null;
-  const repoRequestStatus: "idle" | "loading" | "success" | "error" =
-    !shouldInspectRepo || repoAvailabilityError
-      ? "idle"
-      : repoInfoQuery.isPending || repoInfoQuery.isFetching
-      ? "loading"
-      : repoInfoQuery.isError
-      ? "error"
-      : repoInfoQuery.isSuccess
-      ? "success"
-      : "idle";
+
+  const checkout = checkoutStatusQuery.data ?? null;
+  const refetchCheckoutStatus = checkoutStatusQuery.refetch;
+  const checkoutQueryError =
+    checkoutStatusQuery.error instanceof Error ? checkoutStatusQuery.error.message : null;
+  const checkoutPayloadError = checkout?.error ? checkout.error.message : null;
+
   const isNonGitDirectory =
-    repoRequestStatus === "error" &&
-    /not in a git repository|not a git repository/i.test(repoRequestError?.message ?? "");
+    Boolean(trimmedWorkingDir) &&
+    checkoutStatusQuery.isSuccess &&
+    checkout?.isGit === false &&
+    checkout?.error == null;
+
   const isDirectoryNotExists =
-    repoRequestStatus === "error" &&
-    /does not exist|no such file or directory|ENOENT/i.test(repoRequestError?.message ?? "");
+    checkoutStatusQuery.isError &&
+    /does not exist|no such file or directory|ENOENT/i.test(checkoutQueryError ?? "");
+
   const repoInfoStatus: "idle" | "loading" | "ready" | "error" = !shouldInspectRepo
     ? "idle"
     : repoAvailabilityError
       ? "error"
-      : repoRequestStatus === "loading"
+      : checkoutStatusQuery.isPending || checkoutStatusQuery.isFetching
         ? "loading"
-        : repoRequestStatus === "error"
-          ? isNonGitDirectory
-            ? "idle"
-            : "error"
-          : repoRequestStatus === "success"
+        : checkoutStatusQuery.isError || Boolean(checkoutPayloadError)
+          ? "error"
+          : checkout?.isGit
             ? "ready"
             : "idle";
+
   const repoInfoError =
-    repoAvailabilityError ?? (isNonGitDirectory ? null : repoRequestError?.message ?? null);
-  const gitHelperText = isNonGitDirectory
-    ? "No git repository detected. Git options are disabled for this directory."
-    : null;
+    repoAvailabilityError ??
+    (checkoutStatusQuery.isError ? checkoutQueryError : null) ??
+    checkoutPayloadError;
   const isCreateWorktree = worktreeMode === "create";
   const isAttachWorktree = worktreeMode === "attach";
 
-  const worktreeListRoot = repoInfo?.repoRoot ?? trimmedWorkingDir;
+  const worktreeListRoot = checkout?.repoRoot ?? trimmedWorkingDir;
   const worktreeListQuery = useQuery({
     queryKey: ["paseoWorktreeList", selectedServerId, worktreeListRoot],
     queryFn: async () => {
@@ -446,10 +430,10 @@ export function DraftAgentScreen({
         setSelectedWorktreePath("");
       }
       if (mode !== "none") {
-        refetchRepoInfo();
+        refetchCheckoutStatus();
       }
     },
-    [worktreeSlug, refetchRepoInfo]
+    [worktreeSlug, refetchCheckoutStatus]
   );
 
   const validateWorktreeName = useCallback(
@@ -567,11 +551,14 @@ export function DraftAgentScreen({
     if (baseBranch) {
       return;
     }
-    const current = repoInfo?.currentBranch?.trim();
+    const current = checkout?.isGit ? checkout.currentBranch?.trim() : null;
+    if (!current || current === "HEAD") {
+      return;
+    }
     if (current) {
       setBaseBranch(current);
     }
-  }, [isCreateWorktree, isNonGitDirectory, baseBranch, repoInfo?.currentBranch]);
+  }, [isCreateWorktree, isNonGitDirectory, baseBranch, checkout]);
 
   useEffect(() => {
     if (isNonGitDirectory && worktreeMode !== "none") {
@@ -787,7 +774,6 @@ export function DraftAgentScreen({
       baseBranch,
       worktreeSlug,
       selectedWorktreePath,
-      repoInfo?.currentBranch,
       gitBlockingError,
       baseBranchError,
       isDirectoryNotExists,
@@ -891,7 +877,7 @@ export function DraftAgentScreen({
                 worktreeMode={worktreeMode}
                 onWorktreeModeChange={handleWorktreeModeChange}
                 worktreeSlug={worktreeSlug}
-                currentBranch={repoInfo?.currentBranch ?? null}
+                currentBranch={checkout?.isGit ? checkout.currentBranch ?? null : null}
                 baseBranch={baseBranch}
                 onBaseBranchChange={handleBaseBranchChange}
                 status={repoInfoStatus}

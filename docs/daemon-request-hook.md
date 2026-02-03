@@ -14,21 +14,21 @@ Daemon-facing UI frequently sends request/response pairs through the session web
 ```ts
 const result = useDaemonRequest<Params, Data, ResponseMessage>({
   ws: session.ws,
-  responseType: "git_repo_info_response",
+  responseType: "checkout_status_response",
   buildRequest: ({ params, requestId }) => ({
     type: "session",
     message: {
-      type: "git_repo_info_request",
+      type: "checkout_status_request",
       cwd: params.cwd,
       requestId,
     },
   }),
   selectData: (message) => ({
     cwd: message.payload.cwd,
-    currentBranch: message.payload.currentBranch,
+    currentBranch: message.payload.isGit ? message.payload.currentBranch : null,
   }),
   extractError: (message) =>
-    message.payload.error ? new Error(message.payload.error) : null,
+    message.payload.error ? new Error(message.payload.error.message) : null,
   getRequestKey: (params) => params?.cwd ?? "default",
   timeoutMs: 10_000,
   retryCount: 1,
@@ -56,23 +56,23 @@ The hook returns:
 const gitRepoInfo = useDaemonRequest<
   { cwd: string },
   { branch: string | null },
-  GitRepoInfoResponseMessage
+  CheckoutStatusResponseMessage
 >({
   ws,
-  responseType: "git_repo_info_response",
+  responseType: "checkout_status_response",
   buildRequest: ({ params, requestId }) => ({
     type: "session",
     message: {
-      type: "git_repo_info_request",
+      type: "checkout_status_request",
       cwd: params?.cwd ?? ".",
       requestId,
     },
   }),
   getRequestKey: (params) => params?.cwd ?? "default",
   selectData: (message) => ({
-    branch: message.payload.currentBranch ?? null,
+    branch: message.payload.isGit ? message.payload.currentBranch ?? null : null,
   }),
-  extractError: ({ payload }) => (payload.error ? new Error(payload.error) : null),
+  extractError: ({ payload }) => (payload.error ? new Error(payload.error.message) : null),
   retryCount: 1,
   timeoutMs: 8000,
 });

@@ -39,7 +39,7 @@ describe("useCheckoutStatusQuery", () => {
 
   describe("nextCheckoutStatusRefetchDecision", () => {
     it("refetches only once per key until reset", () => {
-      const key = "daemon-1:agent-1";
+      const key = "daemon-1:/path/to/project";
 
       expect(nextCheckoutStatusRefetchDecision(null, key)).toEqual({
         nextSeenKey: key,
@@ -62,11 +62,11 @@ describe("useCheckoutStatusQuery", () => {
       });
     });
 
-    it("refetches again when agent changes while active", () => {
+    it("refetches again when cwd changes while active", () => {
       expect(
-        nextCheckoutStatusRefetchDecision("daemon-1:agent-1", "daemon-1:agent-2")
+        nextCheckoutStatusRefetchDecision("daemon-1:/path/a", "daemon-1:/path/b")
       ).toEqual({
-        nextSeenKey: "daemon-1:agent-2",
+        nextSeenKey: "daemon-1:/path/b",
         shouldRefetch: true,
       });
     });

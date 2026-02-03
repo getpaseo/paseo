@@ -15,6 +15,9 @@ export function deriveBranchLabel(
   if (!currentBranch) {
     return null;
   }
+  if (currentBranch === "HEAD") {
+    return null;
+  }
   if (baseRef && currentBranch === baseRef) {
     return null;
   }

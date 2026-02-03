@@ -1041,20 +1041,42 @@ const EditToolCallSchema = z
     };
   });
 
-// Codex apply_patch input: { files: [{ path: string, kind: string }] }
+const ApplyPatchFileKindSchema = z
+  .union([
+    z.string(),
+    z
+      .object({
+        type: z.string().optional(),
+        move_path: z.string().nullable().optional(),
+        movePath: z.string().nullable().optional(),
+      })
+      .passthrough(),
+  ])
+  .optional();
+
+function getApplyPatchMovePath(kind: unknown): string | undefined {
+  if (!kind || typeof kind !== "object") return undefined;
+  const record = kind as Record<string, unknown>;
+  const movePath = typeof record.movePath === "string" ? record.movePath : undefined;
+  const movePathSnake =
+    typeof record.move_path === "string" ? record.move_path : undefined;
+  return movePath ?? movePathSnake ?? undefined;
+}
+
+// Codex apply_patch input: { files: [{ path: string, kind: string | object }] }
 const ApplyPatchInputSchema = z.object({
   files: z.array(z.object({
     path: z.string(),
-    kind: z.string().optional(),
+    kind: ApplyPatchFileKindSchema,
   })).min(1),
 }).passthrough();
 
-// Codex apply_patch result: { files: [{ path: string, patch: string, kind: string }], message: string, success: boolean }
+// Codex apply_patch result: { files: [{ path: string, patch: string, kind: string | object }], message: string, success: boolean }
 const ApplyPatchResultSchema = z.object({
   files: z.array(z.object({
     path: z.string(),
     patch: z.string().optional(),
-    kind: z.string().optional(),
+    kind: ApplyPatchFileKindSchema,
   })).optional(),
   message: z.string().optional(),
   success: z.boolean().optional(),
@@ -1068,13 +1090,19 @@ const ApplyPatchToolCallSchema = z
   })
   .transform((data): { type: "edit"; filePath: string; oldString: string; newString: string; unifiedDiff?: string } => {
     const firstFile = data.input.files[0];
-    const filePath = firstFile.path;
+    const movePath = getApplyPatchMovePath(firstFile.kind);
+    const filePath = movePath ?? firstFile.path;
 
     // Try to get the patch from the result
     const resultParsed = ApplyPatchResultSchema.safeParse(data.result);
     let unifiedDiff: string | undefined;
     if (resultParsed.success && resultParsed.data.files) {
-      const resultFile = resultParsed.data.files.find(f => f.path === filePath) ?? resultParsed.data.files[0];
+      const matchPaths = new Set<string>([firstFile.path]);
+      if (movePath) matchPaths.add(movePath);
+
+      const resultFile =
+        resultParsed.data.files.find((f) => matchPaths.has(f.path)) ??
+        resultParsed.data.files[0];
       unifiedDiff = resultFile?.patch;
     }
 

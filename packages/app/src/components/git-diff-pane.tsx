@@ -791,7 +791,11 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     (isDiffError && diffError instanceof Error ? diffError.message : null);
   const prErrorMessage = prPayloadError?.message ?? null;
   const branchLabel =
-    gitStatus?.currentBranch ?? (notGit ? "Not a git repository" : "Unknown");
+    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
+      ? gitStatus.currentBranch
+      : notGit
+        ? "Not a git repository"
+        : "Unknown";
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
   const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;

@@ -219,6 +219,65 @@ describe("parseToolCallDisplay - apply_patch (Codex)", () => {
     }
   });
 
+  test("parses apply_patch with kind object (type/move_path) into edit type", () => {
+    const input = {
+      files: [
+        {
+          path: "/Users/moboudra/-paseo/worktrees/paseo/naive-zebra/packages/server/src/server/daemon-keypair.ts",
+          kind: { type: "update", move_path: null },
+        },
+      ],
+    };
+    const result = {
+      files: [
+        {
+          path: "/Users/moboudra/-paseo/worktrees/paseo/naive-zebra/packages/server/src/server/daemon-keypair.ts",
+          patch: "@@ -1,1 +1,1 @@\n-foo\n+bar",
+          kind: { type: "update", move_path: null },
+        },
+      ],
+      success: true,
+    };
+
+    const display = parseToolCallDisplay("apply_patch", input, result);
+    expect(display.type).toBe("edit");
+    expect(display.toolName).toBe("Edit");
+    if (display.type === "edit") {
+      expect(display.filePath).toBe(
+        "/Users/moboudra/-paseo/worktrees/paseo/naive-zebra/packages/server/src/server/daemon-keypair.ts"
+      );
+      expect(display.unifiedDiff).toBe("@@ -1,1 +1,1 @@\n-foo\n+bar");
+    }
+  });
+
+  test("prefers move_path for display but still finds patch by original path", () => {
+    const input = {
+      files: [
+        {
+          path: "/some/old-path.txt",
+          kind: { type: "update", move_path: "/some/new-path.txt" },
+        },
+      ],
+    };
+    const result = {
+      files: [
+        {
+          path: "/some/old-path.txt",
+          patch: "@@ -1,1 +1,1 @@\n-old\n+new",
+          kind: { type: "update", move_path: "/some/new-path.txt" },
+        },
+      ],
+      success: true,
+    };
+
+    const display = parseToolCallDisplay("apply_patch", input, result);
+    expect(display.type).toBe("edit");
+    if (display.type === "edit") {
+      expect(display.filePath).toBe("/some/new-path.txt");
+      expect(display.unifiedDiff).toBe("@@ -1,1 +1,1 @@\n-old\n+new");
+    }
+  });
+
   test("parses pending apply_patch (no result yet)", () => {
     const input = {
       files: [
