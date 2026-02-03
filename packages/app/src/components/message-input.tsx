@@ -28,6 +28,7 @@ import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import { usePanelStore } from "@/stores/panel-store";
+import { useVoiceOptional } from "@/contexts/voice-context";
 
 export interface ImageAttachment {
   uri: string;
@@ -118,6 +119,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ref
   ) {
     const { theme } = useUnistyles();
+    const voice = useVoiceOptional();
     const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
   const textInputRef = useRef<
@@ -294,9 +296,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     if (isDictating) {
       await cancelDictation();
     } else {
+      if (voice?.isVoiceMode) {
+        await voice.stopVoice();
+      }
       await startDictation();
     }
-  }, [isDictating, cancelDictation, startDictation]);
+  }, [isDictating, cancelDictation, startDictation, voice]);
 
   const handleCancelRecording = useCallback(async () => {
     await cancelDictation();

@@ -1,26 +1,20 @@
 import {
   View,
   Pressable,
-  Platform,
   Text,
   ActivityIndicator,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ArrowUp, AudioLines, Square, Pencil } from "lucide-react-native";
-import Animated, {
-  useAnimatedStyle,
-  FadeIn,
-  FadeOut,
-} from "react-native-reanimated";
+import { ArrowUp, AudioLines, MicOff, Square, Pencil } from "lucide-react-native";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRealtime } from "@/contexts/realtime-context";
+import { useVoice } from "@/contexts/voice-context";
 import { useIsFocused } from "@react-navigation/native";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { generateMessageId } from "@/types/stream";
 import { AgentStatusBar } from "./agent-status-bar";
-import { RealtimeControls } from "./realtime-controls";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
@@ -57,15 +51,6 @@ interface AgentInputAreaProps {
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
-// Android currently crashes inside ViewGroup.dispatchDraw when running Reanimated
-// entering/exiting animations (see react-native-reanimated#8422), so guard them.
-const SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS = Platform.OS === "android";
-const REALTIME_FADE_IN = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS
-  ? undefined
-  : FadeIn.duration(250);
-const REALTIME_FADE_OUT = SHOULD_DISABLE_ENTRY_EXIT_ANIMATIONS
-  ? undefined
-  : FadeOut.duration(250);
 
 export function AgentInputArea({
   agentId,
@@ -106,7 +91,7 @@ export function AgentInputArea({
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
-  const { startRealtime, stopRealtime, isRealtimeMode } = useRealtime();
+  const { isVoiceMode, isMuted: isVoiceMuted, toggleMute: toggleVoiceMute } = useVoice();
 
   const [internalInput, setInternalInput] = useState("");
   const userInput = value ?? internalInput;
@@ -345,21 +330,6 @@ export function AgentInputArea({
     };
   });
 
-  async function handleRealtimePress() {
-    try {
-      if (isRealtimeMode) {
-        await stopRealtime();
-      } else {
-        if (!isConnected || !serverId) {
-          return;
-        }
-        await startRealtime(serverId);
-      }
-    } catch (error) {
-      console.error("[AgentInput] Failed to toggle realtime mode:", error);
-    }
-  }
-
   function handleCancelAgent() {
     if (!agent || agent.status !== "running" || isCancellingAgent) {
       return;
@@ -474,29 +444,7 @@ export function AgentInputArea({
         <Square size={18} color="white" fill="white" />
       )}
     </Pressable>
-  ) : (
-    <Pressable
-      onPress={handleRealtimePress}
-      disabled={!isConnected && !isRealtimeMode}
-      style={[
-        styles.realtimeButton as any,
-        (isRealtimeMode ? styles.realtimeButtonActive : undefined) as any,
-        (!isConnected && !isRealtimeMode
-          ? styles.buttonDisabled
-          : undefined) as any,
-      ]}
-    >
-      {isRealtimeMode ? (
-        <Square
-          size={18}
-          color={theme.colors.background}
-          fill={theme.colors.background}
-        />
-      ) : (
-        <AudioLines size={20} color={theme.colors.background} />
-      )}
-    </Pressable>
-  );
+  ) : null;
 
   const leftContent = <AgentStatusBar agentId={agentId} serverId={serverId} />;
 
@@ -508,17 +456,6 @@ export function AgentInputArea({
         keyboardAnimatedStyle,
       ]}
     >
-      {/* Realtime controls - only when active */}
-      {isRealtimeMode && (
-        <Animated.View
-          style={styles.realtimeControlsContainer}
-          entering={REALTIME_FADE_IN}
-          exiting={REALTIME_FADE_OUT}
-        >
-          <RealtimeControls />
-        </Animated.View>
-      )}
-
       {/* Input area */}
       <View style={styles.inputAreaContainer}>
         <View style={styles.inputAreaContent}>
@@ -564,6 +501,35 @@ export function AgentInputArea({
             />
           )}
 
+          {/* Voice quick mute indicator */}
+          {isVoiceMode && (
+            <View style={styles.voiceIndicatorRow}>
+              <Pressable
+                onPress={toggleVoiceMute}
+                accessibilityRole="button"
+                accessibilityLabel={isVoiceMuted ? "Unmute voice" : "Mute voice"}
+                style={[
+                  styles.voiceIndicatorPill,
+                  isVoiceMuted && styles.voiceIndicatorPillMuted,
+                ]}
+              >
+                {isVoiceMuted ? (
+                  <MicOff size={14} color={theme.colors.surface0} />
+                ) : (
+                  <AudioLines size={14} color={theme.colors.foreground} />
+                )}
+                <Text
+                  style={[
+                    styles.voiceIndicatorText,
+                    isVoiceMuted && styles.voiceIndicatorTextMuted,
+                  ]}
+                >
+                  {isVoiceMuted ? "Voice muted" : "Voice on"}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
           {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
           <MessageInput
             ref={messageInputRef}
@@ -578,7 +544,7 @@ export function AgentInputArea({
             client={client}
             placeholder="Message agent..."
             autoFocus={autoFocus}
-            disabled={isRealtimeMode || isSubmitLoading}
+            disabled={isSubmitLoading}
             isScreenFocused={isScreenFocused}
             leftContent={leftContent}
             rightContent={rightContent}
@@ -603,9 +569,6 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     height: theme.borderWidth[1],
     backgroundColor: theme.colors.border,
   },
-  realtimeControlsContainer: {
-    height: FOOTER_HEIGHT,
-  },
   inputAreaContainer: {
     position: "relative",
     minHeight: FOOTER_HEIGHT,
@@ -620,17 +583,6 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     maxWidth: MAX_CONTENT_WIDTH,
     gap: theme.spacing[3],
   },
-  realtimeButton: {
-    width: 34,
-    height: 34,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.accentForeground,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  realtimeButtonActive: {
-    backgroundColor: theme.colors.palette.blue[600],
-  },
   cancelButton: {
     width: 34,
     height: 34,
@@ -641,6 +593,33 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  voiceIndicatorRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  voiceIndicatorPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    height: 32,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  voiceIndicatorPillMuted: {
+    backgroundColor: theme.colors.palette.red[600],
+    borderColor: theme.colors.palette.red[800],
+  },
+  voiceIndicatorText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
+  voiceIndicatorTextMuted: {
+    color: theme.colors.surface0,
   },
   queueContainer: {
     flexDirection: "column",

@@ -7,7 +7,7 @@ export interface AudioPlayerOptions {
 
 /**
  * Web shim for the native two-way audio player.
- * We currently don't support realtime voice playback on web.
+ * We currently don't support Voice mode playback on web.
  */
 export function useAudioPlayer(_options?: AudioPlayerOptions) {
   return useMemo(

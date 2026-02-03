@@ -260,8 +260,8 @@ export class Session {
   private processingPhase: ProcessingPhase = "idle";
   private currentStreamPromise: Promise<void> | null = null;
 
-  // Realtime mode state
-  private isRealtimeMode = false;
+  // Voice mode state
+  private isVoiceMode = false;
   private speechInProgress = false;
   private voiceConversationId: string | null = null;
 
@@ -367,6 +367,28 @@ export class Session {
     this.subscribeToAgentEvents();
 
     this.sessionLogger.info("Session created");
+  }
+
+  private escapeXmlText(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  private escapeXmlAttribute(value: string): string {
+    return this.escapeXmlText(value)
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  private formatVoiceTranscriptionForLLM(text: string): string {
+    const trimmed = text.trim();
+    const focusedAgentId = this.clientActivity?.focusedAgentId ?? null;
+    const focusedAttr = focusedAgentId
+      ? ` focused-agent-id="${this.escapeXmlAttribute(focusedAgentId)}"`
+      : "";
+    return `<voice-transcription${focusedAttr}>${this.escapeXmlText(trimmed)}</voice-transcription>`;
   }
 
   /**
@@ -735,7 +757,7 @@ export class Session {
           await this.handleUserText(msg.text);
           break;
 
-        case "realtime_audio_chunk":
+        case "voice_audio_chunk":
           await this.handleAudioChunk(msg);
           break;
 
@@ -1214,7 +1236,7 @@ export class Session {
   }
 
   /**
-   * Handle realtime mode toggle
+   * Handle voice mode toggle
    */
   private async handleSetVoiceConversation(
     enabled: boolean,
@@ -1226,7 +1248,7 @@ export class Session {
         return;
       }
 
-      this.isRealtimeMode = true;
+      this.isVoiceMode = true;
       this.voiceConversationId = voiceConversationId;
 
       const loaded = await this.voiceConversationStore.load(
@@ -1242,7 +1264,7 @@ export class Session {
       return;
     }
 
-    this.isRealtimeMode = false;
+    this.isVoiceMode = false;
     const idToPersist = this.voiceConversationId;
     if (idToPersist) {
       try {
@@ -3875,8 +3897,8 @@ export class Session {
     // Add to conversation
     this.messages.push({ role: "user", content: text });
 
-    // Process through LLM (TTS enabled in realtime mode for voice conversations)
-    this.currentStreamPromise = this.processWithLLM(this.isRealtimeMode);
+    // Process through LLM (TTS enabled in voice mode for voice conversations)
+    this.currentStreamPromise = this.processWithLLM(this.isVoiceMode);
     await this.currentStreamPromise;
   }
 
@@ -3884,9 +3906,9 @@ export class Session {
    * Handle audio chunk for buffering and transcription
    */
   private async handleAudioChunk(
-    msg: Extract<SessionInboundMessage, { type: "realtime_audio_chunk" }>
+    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>
   ): Promise<void> {
-    await this.handleRealtimeSpeechStart();
+    await this.handleVoiceSpeechStart();
 
     const chunkBuffer = Buffer.from(msg.audio, "base64");
     const chunkFormat = msg.format || "audio/wav";
@@ -3932,19 +3954,19 @@ export class Session {
       `Buffered audio chunk (${chunkBuffer.length} bytes, chunks: ${this.audioBuffer.chunks.length}${this.audioBuffer.isPCM ? `, PCM bytes: ${this.audioBuffer.totalPCMBytes}` : ""})`
     );
 
-    // In realtime mode, only process audio when the user has finished speaking (isLast = true)
+    // In voice mode, only process audio when the user has finished speaking (isLast = true)
     // This prevents partial transcriptions from being sent to the LLM
-    if (this.isRealtimeMode) {
+    if (this.isVoiceMode) {
       if (!msg.isLast) {
-        this.sessionLogger.debug("Realtime mode: buffering audio, waiting for speech end");
+        this.sessionLogger.debug("Voice mode: buffering audio, waiting for speech end");
         return;
       }
-      this.sessionLogger.debug("Realtime mode: speech ended, processing complete audio");
+      this.sessionLogger.debug("Voice mode: speech ended, processing complete audio");
     }
 
-    // In non-realtime mode, use streaming threshold to process chunks
+    // In non-voice mode, use streaming threshold to process chunks
     const reachedStreamingThreshold =
-      !this.isRealtimeMode &&
+      !this.isVoiceMode &&
       this.audioBuffer.isPCM &&
       this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
 
@@ -4073,7 +4095,7 @@ export class Session {
       const requestId = uuidv4();
       const result = await this.sttManager.transcribe(audio, format, {
         requestId,
-        label: this.isRealtimeMode ? "realtime" : "buffered",
+        label: this.isVoiceMode ? "voice" : "buffered",
       });
 
       const transcriptText = result.text.trim();
@@ -4143,12 +4165,17 @@ export class Session {
       });
 
       // Add to conversation
-      this.messages.push({ role: "user", content: result.text });
+      this.messages.push({
+        role: "user",
+        content: this.isVoiceMode
+          ? this.formatVoiceTranscriptionForLLM(result.text)
+          : result.text,
+      });
 
-      // Set phase to LLM and process (TTS enabled in realtime mode for voice conversations)
+      // Set phase to LLM and process (TTS enabled in voice mode for voice conversations)
       this.clearSpeechInProgress("transcription complete");
       this.setPhase("llm");
-      this.currentStreamPromise = this.processWithLLM(this.isRealtimeMode);
+      this.currentStreamPromise = this.processWithLLM(this.isVoiceMode);
       await this.currentStreamPromise;
       this.setPhase("idle");
     } catch (error: any) {
@@ -4180,7 +4207,7 @@ export class Session {
       if (textBuffer.length > 0) {
         // TTS handling (capture mode at generation time for drift protection)
         if (enableTTS && !this.speechInProgress) {
-          const modeAtGeneration = this.isRealtimeMode;
+          const modeAtGeneration = this.isVoiceMode;
           pendingTTS = this.ttsManager.generateAndWaitForPlayback(
             textBuffer,
             (msg) => this.emit(msg),
@@ -4572,7 +4599,7 @@ export class Session {
   /**
    * Mark speech detection start and abort any active playback/LLM
    */
-  private async handleRealtimeSpeechStart(): Promise<void> {
+  private async handleVoiceSpeechStart(): Promise<void> {
     if (this.speechInProgress) {
       return;
     }
@@ -4582,13 +4609,13 @@ export class Session {
     const hadActiveStream = Boolean(this.currentStreamPromise);
 
     this.speechInProgress = true;
-    this.sessionLogger.debug("Realtime speech chunk detected – aborting playback and LLM");
-    this.ttsManager.cancelPendingPlaybacks("realtime speech detected");
+    this.sessionLogger.debug("Voice speech detected – aborting playback and LLM");
+    this.ttsManager.cancelPendingPlaybacks("voice speech detected");
 
     if (this.pendingAudioSegments.length > 0) {
       this.sessionLogger.debug(
         { segmentCount: this.pendingAudioSegments.length },
-        `Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to realtime speech`
+        `Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to voice speech`
       );
       this.pendingAudioSegments = [];
     }
