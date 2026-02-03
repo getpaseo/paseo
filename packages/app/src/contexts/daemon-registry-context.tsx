@@ -128,12 +128,16 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
       const existing = readDaemons();
       const now = new Date().toISOString();
       const normalizedEndpoints = offer.endpoints.map((endpoint) => normalizeHostPort(endpoint));
-      const relayEndpoint =
-        offer.relay?.endpoint
-          ? normalizeHostPort(offer.relay.endpoint)
-          : offer.relay === undefined && normalizedEndpoints.length > 0
-            ? normalizedEndpoints[normalizedEndpoints.length - 1]
-            : null;
+      let relayEndpoint: string | null = null;
+      if (offer.relay?.endpoint) {
+        relayEndpoint = normalizeHostPort(offer.relay.endpoint);
+      } else if (offer.relay === undefined && normalizedEndpoints.length > 0) {
+        // Back-compat: older offers encoded relay endpoint as the last entry.
+        relayEndpoint = normalizedEndpoints[normalizedEndpoints.length - 1];
+      }
+      const relay = relayEndpoint
+        ? { endpoint: relayEndpoint, sessionId: offer.sessionId }
+        : null;
 
       const matchIndex = existing.findIndex((daemon) => daemon.daemonPublicKeyB64 === offer.daemonPublicKeyB64);
       if (matchIndex !== -1) {
@@ -141,7 +145,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
           ...existing[matchIndex],
           daemonPublicKeyB64: offer.daemonPublicKeyB64,
           endpoints: normalizedEndpoints,
-          relay: relayEndpoint ? { endpoint: relayEndpoint, sessionId: offer.sessionId } : null,
+          relay,
           updatedAt: now,
         };
         const next = [...existing];
@@ -155,7 +159,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
         label: deriveLabelFromEndpoint(normalizedEndpoints[0] ?? "Unnamed Host"),
         endpoints: normalizedEndpoints,
         daemonPublicKeyB64: offer.daemonPublicKeyB64,
-        relay: relayEndpoint ? { endpoint: relayEndpoint, sessionId: offer.sessionId } : null,
+        relay,
         createdAt: now,
         updatedAt: now,
         metadata: null,
