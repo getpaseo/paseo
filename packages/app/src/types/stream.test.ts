@@ -722,6 +722,31 @@ function testTodoWriteToolCallCreatesTodoList() {
   );
 }
 
+function testTodoWriteToolCallExecutingDoesNotRenderToolCall() {
+  const timestamp = new Date("2025-01-01T12:32:00Z");
+  const event = toolTimelineWithInput({
+    provider: "claude",
+    name: "TodoWrite",
+    status: "executing",
+    input: {
+      todos: [{ content: "Task", status: "pending" }],
+    },
+  });
+
+  const state = reduceStreamUpdate([], event, timestamp);
+  const todoEntries = state.filter(
+    (item): item is TodoListItem => item.kind === "todo_list"
+  );
+  const toolCalls = state.filter((item) => item.kind === "tool_call");
+
+  assert.strictEqual(todoEntries.length, 1);
+  assert.strictEqual(
+    toolCalls.length,
+    0,
+    "TodoWrite (executing) should not render as a tool call"
+  );
+}
+
 function testTimelineIdStabilityAfterRemovals() {
   const timestamp = new Date('2025-01-01T12:35:00Z');
 
@@ -1097,6 +1122,10 @@ describe('stream timeline reducers', () => {
   it('retains hydrated user messages across providers', testHydratedUserMessagesPersist);
   it('consolidates todo list updates', testTodoListConsolidation);
   it('renders TodoWrite as a task list', testTodoWriteToolCallCreatesTodoList);
+  it(
+    "does not render TodoWrite (executing) as a tool call",
+    testTodoWriteToolCallExecutingDoesNotRenderToolCall
+  );
   it('keeps timeline ids stable after list shrinkage', testTimelineIdStabilityAfterRemovals);
   it('deduplicates live tool call entries', testToolCallDeduplicationLive);
   it('deduplicates hydrated tool call entries', testToolCallDeduplicationHydrated);

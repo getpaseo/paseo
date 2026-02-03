@@ -359,8 +359,13 @@ const DiffFileSection = memo(function DiffFileSection({
               color={theme.colors.foregroundMuted}
             />
           </View>
-          <Text style={styles.filePath} numberOfLines={1} ellipsizeMode="middle">
-            {file.path}
+          <Text style={styles.filePath} numberOfLines={1} ellipsizeMode="head">
+            <Text style={styles.fileName}>{file.path.split("/").pop()}</Text>
+            <Text style={styles.fileDir}>
+              {file.path.includes("/")
+                ? ` ${file.path.slice(0, file.path.lastIndexOf("/"))}`
+                : ""}
+            </Text>
           </Text>
           {file.isNew && (
             <View style={styles.newBadge}>
@@ -1380,6 +1385,13 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
     flex: 1,
+  },
+  fileName: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  fileDir: {
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.normal,
   },
   newBadge: {
     backgroundColor: "rgba(46, 160, 67, 0.2)",

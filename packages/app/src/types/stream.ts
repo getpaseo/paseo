@@ -764,6 +764,28 @@ export function reduceStreamUpdate(
             break;
           }
 
+          if (
+            event.provider === "claude" &&
+            (normalizedToolName === "todowrite" ||
+              normalizedToolName === "todo_write")
+          ) {
+            // For Claude: TodoWrite often appears as a tool call that never resolves. Always render it
+            // as Tasks when possible and otherwise hide it to avoid a stuck loading tool call.
+            const tasks = extractTaskEntriesFromToolCall(item.name, item.input);
+            if (tasks) {
+              nextState = appendTodoList(
+                state,
+                event.provider,
+                tasks.map((entry) => ({
+                  text: entry.text,
+                  completed: entry.completed,
+                })),
+                timestamp
+              );
+            }
+            break;
+          }
+
           const tasks = extractTaskEntriesFromToolCall(
             item.name,
             item.input
