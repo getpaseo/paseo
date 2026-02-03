@@ -21,6 +21,14 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   description: z.string().optional(),
 });
 
+const AgentSelectOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   provider: AgentProviderSchema,
   id: z.string(),
@@ -28,6 +36,10 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
+  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
+  defaultThinkingOptionId: z.string().optional(),
+  variantOptions: z.array(AgentSelectOptionSchema).optional(),
+  defaultVariantOptionId: z.string().optional(),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -76,6 +88,8 @@ const AgentSessionConfigSchema = z.object({
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
+  variantId: z.string().optional(),
   title: z
     .string()
     .trim()
@@ -87,6 +101,7 @@ const AgentSessionConfigSchema = z.object({
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),
   webSearch: z.boolean().optional(),
+  // Deprecated alias for thinkingOptionId (kept for backward compatibility)
   reasoningEffort: z.string().optional(),
   extra: z
     .object({
@@ -253,6 +268,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
   model: z.string().nullable(),
+  thinkingOptionId: z.string().nullable().optional(),
+  variantId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
@@ -524,6 +541,24 @@ export const SetAgentModeMessageSchema = z.object({
   type: z.literal("set_agent_mode"),
   agentId: z.string(),
   modeId: z.string(),
+});
+
+export const SetAgentModelMessageSchema = z.object({
+  type: z.literal("set_agent_model"),
+  agentId: z.string(),
+  modelId: z.string().nullable(),
+});
+
+export const SetAgentThinkingMessageSchema = z.object({
+  type: z.literal("set_agent_thinking"),
+  agentId: z.string(),
+  thinkingOptionId: z.string().nullable(),
+});
+
+export const SetAgentVariantMessageSchema = z.object({
+  type: z.literal("set_agent_variant"),
+  agentId: z.string(),
+  variantId: z.string().nullable(),
 });
 
 export const AgentPermissionResponseMessageSchema = z.object({
@@ -831,6 +866,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RestartServerRequestMessageSchema,
   InitializeAgentRequestMessageSchema,
   SetAgentModeMessageSchema,
+  SetAgentModelMessageSchema,
+  SetAgentThinkingMessageSchema,
+  SetAgentVariantMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   CheckoutStatusRequestSchema,

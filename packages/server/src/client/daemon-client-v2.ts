@@ -1089,6 +1089,21 @@ export class DaemonClientV2 {
     this.sendSessionMessage({ type: "set_agent_mode", agentId, modeId });
   }
 
+  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+    this.sendSessionMessage({ type: "set_agent_model", agentId, modelId });
+  }
+
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null
+  ): Promise<void> {
+    this.sendSessionMessage({ type: "set_agent_thinking", agentId, thinkingOptionId });
+  }
+
+  async setAgentVariant(agentId: string, variantId: string | null): Promise<void> {
+    this.sendSessionMessage({ type: "set_agent_variant", agentId, variantId });
+  }
+
   async restartServer(
     reason?: string,
     requestId?: string

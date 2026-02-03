@@ -194,12 +194,14 @@ export async function generateStructuredAgentResponse<T>(
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);
-      // Accumulate all assistant_message items since Claude streams text as deltas
-      const fullText = result.timeline
+      if (typeof result.finalText === "string" && result.finalText.length > 0) {
+        return result.finalText;
+      }
+      // Fallback for providers that may not populate finalText consistently.
+      const lastAssistant = result.timeline
         .filter((item) => item.type === "assistant_message")
-        .map((item) => item.text)
-        .join("");
-      return fullText || result.finalText;
+        .at(-1);
+      return lastAssistant?.text ?? "";
     };
     return await getStructuredAgentResponse({
       caller,

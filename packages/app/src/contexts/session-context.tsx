@@ -243,6 +243,8 @@ function normalizeAgentSnapshot(
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
+    thinkingOptionId: snapshot.thinkingOptionId ?? null,
+    variantId: snapshot.variantId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
@@ -311,6 +313,9 @@ export interface SessionContextValue {
     requestId?: string;
   }) => Promise<unknown>;
   setAgentMode: (agentId: string, modeId: string) => void;
+  setAgentModel: (agentId: string, modelId: string | null) => void;
+  setAgentThinkingOption: (agentId: string, thinkingOptionId: string | null) => void;
+  setAgentVariant: (agentId: string, variantId: string | null) => void;
   respondToPermission: (
     agentId: string,
     requestId: string,
@@ -1977,6 +1982,47 @@ export function SessionProvider({
     [client]
   );
 
+  const setAgentModel = useCallback(
+    (agentId: string, modelId: string | null) => {
+      if (!client) {
+        console.warn("[Session] setAgentModel skipped: daemon unavailable");
+        return;
+      }
+      void client.setAgentModel(agentId, modelId).catch((error) => {
+        console.error("[Session] Failed to set agent model:", error);
+      });
+    },
+    [client]
+  );
+
+  const setAgentThinkingOption = useCallback(
+    (agentId: string, thinkingOptionId: string | null) => {
+      if (!client) {
+        console.warn("[Session] setAgentThinkingOption skipped: daemon unavailable");
+        return;
+      }
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .catch((error) => {
+          console.error("[Session] Failed to set agent thinking option:", error);
+        });
+    },
+    [client]
+  );
+
+  const setAgentVariant = useCallback(
+    (agentId: string, variantId: string | null) => {
+      if (!client) {
+        console.warn("[Session] setAgentVariant skipped: daemon unavailable");
+        return;
+      }
+      void client.setAgentVariant(agentId, variantId).catch((error) => {
+        console.error("[Session] Failed to set agent variant:", error);
+      });
+    },
+    [client]
+  );
+
   const respondToPermission = useCallback(
     (agentId: string, requestId: string, response: any) => {
       if (!client) {
@@ -2256,6 +2302,9 @@ export function SessionProvider({
       sendAgentMessage,
       createAgent,
       setAgentMode,
+      setAgentModel,
+      setAgentThinkingOption,
+      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     }),
@@ -2280,6 +2329,9 @@ export function SessionProvider({
       sendAgentMessage,
       createAgent,
       setAgentMode,
+      setAgentModel,
+      setAgentThinkingOption,
+      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     ]
@@ -2307,6 +2359,9 @@ export function SessionProvider({
       archiveAgent,
       createAgent,
       setAgentMode,
+      setAgentModel,
+      setAgentThinkingOption,
+      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     }),
@@ -2328,6 +2383,9 @@ export function SessionProvider({
       archiveAgent,
       createAgent,
       setAgentMode,
+      setAgentModel,
+      setAgentThinkingOption,
+      setAgentVariant,
       respondToPermission,
       ensureAgentIsInitialized,
     ]

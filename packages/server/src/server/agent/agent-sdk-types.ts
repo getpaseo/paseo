@@ -55,6 +55,18 @@ export type AgentModelDefinition = {
   description?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
+  thinkingOptions?: AgentSelectOption[];
+  defaultThinkingOptionId?: string;
+  variantOptions?: AgentSelectOption[];
+  defaultVariantOptionId?: string;
+};
+
+export type AgentSelectOption = {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+  metadata?: AgentMetadata;
 };
 
 export type AgentCapabilityFlags = {
@@ -228,11 +240,16 @@ export type AgentSessionConfig = {
   cwd: string;
   modeId?: string;
   model?: string;
+  thinkingOptionId?: string;
+  variantId?: string;
   title?: string | null;
   approvalPolicy?: string;
   sandboxMode?: string;
   networkAccess?: boolean;
   webSearch?: boolean;
+  /**
+   * Deprecated alias for `thinkingOptionId` (kept for backward compatibility with persisted agents).
+   */
   reasoningEffort?: string;
   extra?: {
     codex?: AgentMetadata;
@@ -274,6 +291,19 @@ export interface AgentSession {
    * @param args Optional arguments to pass to the command
    */
   executeCommand?(commandName: string, args?: string): Promise<AgentCommandResult>;
+  /**
+   * Update the model used for subsequent turns (if supported by provider).
+   */
+  setModel?(modelId: string | null): Promise<void>;
+  /**
+   * Update the thinking/effort setting used for subsequent turns (if supported).
+   * Normalized to a string option id (provider-specific interpretation).
+   */
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  /**
+   * Update the provider-defined variant used for subsequent turns (if supported).
+   */
+  setVariant?(variantId: string | null): Promise<void>;
 }
 
 export interface ListModelsOptions {

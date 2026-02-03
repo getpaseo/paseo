@@ -616,6 +616,9 @@ export class Session {
       provider,
       cwd: record.cwd,
       model: record.config?.model ?? null,
+      thinkingOptionId:
+        record.config?.thinkingOptionId ?? record.config?.reasoningEffort ?? null,
+      variantId: record.config?.variantId ?? null,
       createdAt: createdAt.toISOString(),
       updatedAt: updatedAt.toISOString(),
       lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -852,6 +855,18 @@ export class Session {
 
         case "set_agent_mode":
           await this.handleSetAgentMode(msg.agentId, msg.modeId);
+          break;
+
+        case "set_agent_model":
+          await this.handleSetAgentModel(msg.agentId, msg.modelId);
+          break;
+
+        case "set_agent_thinking":
+          await this.handleSetAgentThinking(msg.agentId, msg.thinkingOptionId);
+          break;
+
+        case "set_agent_variant":
+          await this.handleSetAgentVariant(msg.agentId, msg.variantId);
           break;
 
         case "agent_permission_response":
@@ -2134,6 +2149,99 @@ export class Session {
           timestamp: new Date(),
           type: "error",
           content: `Failed to set agent mode: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  private async handleSetAgentModel(
+    agentId: string,
+    modelId: string | null
+  ): Promise<void> {
+    this.sessionLogger.info({ agentId, modelId }, `Setting agent ${agentId} model`);
+
+    try {
+      await this.agentManager.setAgentModel(agentId, modelId);
+      this.sessionLogger.info({ agentId, modelId }, `Agent ${agentId} model updated`);
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, agentId, modelId },
+        "Failed to set agent model"
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set agent model: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  private async handleSetAgentThinking(
+    agentId: string,
+    thinkingOptionId: string | null
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { agentId, thinkingOptionId },
+      `Setting agent ${agentId} thinking option`
+    );
+
+    try {
+      await this.agentManager.setAgentThinkingOption(agentId, thinkingOptionId);
+      this.sessionLogger.info(
+        { agentId, thinkingOptionId },
+        `Agent ${agentId} thinking option updated`
+      );
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, agentId, thinkingOptionId },
+        "Failed to set agent thinking option"
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set agent thinking option: ${error.message}`,
+        },
+      });
+      throw error;
+    }
+  }
+
+  private async handleSetAgentVariant(
+    agentId: string,
+    variantId: string | null
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { agentId, variantId },
+      `Setting agent ${agentId} variant`
+    );
+
+    try {
+      await this.agentManager.setAgentVariant(agentId, variantId);
+      this.sessionLogger.info(
+        { agentId, variantId },
+        `Agent ${agentId} variant updated`
+      );
+    } catch (error: any) {
+      this.sessionLogger.error(
+        { err: error, agentId, variantId },
+        "Failed to set agent variant"
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set agent variant: ${error.message}`,
         },
       });
       throw error;

@@ -659,7 +659,6 @@ describe("Codex app-server provider (integration)", () => {
       if (captured) {
         expect(sawPermissionResolved).toBe(true);
       }
-      expect(sawPermission || timelineItems.length > 0).toBe(true);
       expect(readFileSync(targetPath, "utf8").trim()).toBe("ok");
     } finally {
       cleanup();

@@ -1954,6 +1954,8 @@ const AgentSessionConfigSchema = z
     cwd: z.string(),
     modeId: z.string().optional(),
     model: z.string().optional(),
+    thinkingOptionId: z.string().optional(),
+    variantId: z.string().optional(),
     title: z.string().nullable().optional(),
     approvalPolicy: z.string().optional(),
     sandboxMode: z.string().optional(),
@@ -2873,8 +2875,13 @@ function buildCodexMcpConfig(
   }
 
   // Add reasoning effort to config if provided
-  if (typeof config.reasoningEffort === "string" && config.reasoningEffort.length > 0) {
-    innerConfig.model_reasoning_effort = config.reasoningEffort;
+  const thinkingOptionId = config.thinkingOptionId ?? config.reasoningEffort;
+  if (
+    typeof thinkingOptionId === "string" &&
+    thinkingOptionId.length > 0 &&
+    thinkingOptionId !== "default"
+  ) {
+    innerConfig.model_reasoning_effort = thinkingOptionId;
   }
 
   const configPayload: {
@@ -3498,6 +3505,31 @@ class CodexMcpAgentSession implements AgentSession {
         modeId,
       };
     }
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    this.config.model = normalizedModelId ?? undefined;
+    this.cachedRuntimeInfo = null;
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const normalizedThinkingOptionId =
+      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+        ? thinkingOptionId
+        : null;
+    this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    this.config.reasoningEffort = undefined;
+    this.cachedRuntimeInfo = null;
+  }
+
+  async setVariant(variantId: string | null): Promise<void> {
+    // Codex MCP does not support variants today; keep for interface parity.
+    const normalizedVariantId =
+      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
+    this.config.variantId = normalizedVariantId ?? undefined;
+    this.cachedRuntimeInfo = null;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -4790,6 +4822,25 @@ export class CodexMcpAgentClient implements AgentClient {
         label: model.displayName,
         description: model.description,
         isDefault: model.isDefault,
+        thinkingOptions: [
+          {
+            id: "default",
+            label: "Default",
+            description: typeof model.defaultReasoningEffort === "string"
+              ? `Use model default (${model.defaultReasoningEffort})`
+              : "Use model default",
+            isDefault: true,
+          },
+          ...(Array.isArray(model.supportedReasoningEfforts)
+            ? model.supportedReasoningEfforts.map((entry) => ({
+              id: entry.reasoningEffort,
+              label: entry.reasoningEffort,
+              description: entry.description,
+              isDefault: entry.reasoningEffort === model.defaultReasoningEffort,
+            }))
+            : []),
+        ],
+        defaultThinkingOptionId: "default",
         metadata: {
           model: model.model,
           defaultReasoningEffort: model.defaultReasoningEffort,

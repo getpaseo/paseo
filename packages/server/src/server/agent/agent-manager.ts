@@ -444,6 +444,55 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+
+    if (agent.session.setModel) {
+      await agent.session.setModel(normalizedModelId);
+    }
+
+    agent.config.model = normalizedModelId ?? undefined;
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+    }
+    this.emitState(agent);
+  }
+
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null
+  ): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    const normalizedThinkingOptionId =
+      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+        ? thinkingOptionId
+        : null;
+
+    if (agent.session.setThinkingOption) {
+      await agent.session.setThinkingOption(normalizedThinkingOptionId);
+    }
+
+    agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    // Clear deprecated alias so persistence converges to the new field.
+    agent.config.reasoningEffort = undefined;
+    this.emitState(agent);
+  }
+
+  async setAgentVariant(agentId: string, variantId: string | null): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    const normalizedVariantId =
+      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
+
+    if (agent.session.setVariant) {
+      await agent.session.setVariant(normalizedVariantId);
+    }
+
+    agent.config.variantId = normalizedVariantId ?? undefined;
+    this.emitState(agent);
+  }
+
   async setTitle(agentId: string, title: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     await this.registry?.setTitle(agentId, title);

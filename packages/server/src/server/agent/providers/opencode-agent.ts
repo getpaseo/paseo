@@ -282,6 +282,18 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error("OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).");
     }
 
+    const thinkingVariantIds = new Set([
+      // OpenAI-style reasoning effort variants
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      // Anthropic-style thinking budget variants
+      "max",
+    ]);
+
     const models: AgentModelDefinition[] = [];
     for (const provider of providers.all) {
       // Skip providers that aren't connected/configured
@@ -290,11 +302,27 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       for (const [modelId, model] of Object.entries(provider.models)) {
+        const rawVariants = model.variants ? Object.keys(model.variants) : [];
+        const variantOptions = [
+          { id: "default", label: "Default", isDefault: true },
+          ...rawVariants.map((id) => ({ id, label: id })),
+        ];
+        const thinkingOptions = [
+          { id: "default", label: "Default", isDefault: true },
+          ...rawVariants
+            .filter((id) => thinkingVariantIds.has(id))
+            .map((id) => ({ id, label: id })),
+        ];
+
         models.push({
           provider: "opencode",
           id: `${provider.id}/${modelId}`,
           label: model.name,
           description: `${provider.name} - ${model.family ?? ""}`.trim(),
+          thinkingOptions: thinkingOptions.length > 1 ? thinkingOptions : undefined,
+          defaultThinkingOptionId: "default",
+          variantOptions: variantOptions.length > 1 ? variantOptions : undefined,
+          defaultVariantOptionId: "default",
           metadata: {
             providerId: provider.id,
             providerName: provider.name,
@@ -305,6 +333,8 @@ export class OpenCodeAgentClient implements AgentClient {
             supportsReasoning: model.reasoning,
             supportsToolCall: model.tool_call,
             cost: model.cost,
+            variants: model.variants,
+            options: model.options,
           },
         });
       }
@@ -372,6 +402,27 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    this.config.model = normalizedModelId ?? undefined;
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const normalizedThinkingOptionId =
+      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+        ? thinkingOptionId
+        : null;
+    this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    this.config.reasoningEffort = undefined;
+  }
+
+  async setVariant(variantId: string | null): Promise<void> {
+    const normalizedVariantId =
+      typeof variantId === "string" && variantId.trim().length > 0 ? variantId : null;
+    this.config.variantId = normalizedVariantId ?? undefined;
+  }
+
   async run(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
     const events = this.stream(prompt);
     const timeline: AgentTimelineItem[] = [];
@@ -407,6 +458,13 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = this.buildPromptParts(prompt);
     const model = this.parseModel(this.config.model);
+    const thinkingOptionId = this.config.thinkingOptionId ?? this.config.reasoningEffort;
+    const effectiveVariant =
+      thinkingOptionId && thinkingOptionId !== "default"
+        ? thinkingOptionId
+        : this.config.variantId && this.config.variantId !== "default"
+          ? this.config.variantId
+          : undefined;
 
     // Send prompt asynchronously
     const promptResponse = await this.client.session.promptAsync({
@@ -414,6 +472,7 @@ class OpenCodeAgentSession implements AgentSession {
       directory: this.config.cwd,
       parts,
       ...(model ? { model } : {}),
+      ...(effectiveVariant ? { variant: effectiveVariant } : {}),
     });
 
     if (promptResponse.error) {
