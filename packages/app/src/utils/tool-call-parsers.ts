@@ -1,5 +1,6 @@
 import stripAnsi from "strip-ansi";
 import { z } from "zod";
+import { stripShellWrapperPrefix } from "@paseo/server/utils/tool-call-parsers";
 import { getNowMs, isPerfLoggingEnabled, perfLog } from "./perf";
 
 const TOOL_CALL_DIFF_LOG_TAG = "[ToolCallDiff]";
@@ -964,9 +965,10 @@ const ShellToolCallSchema = z
     result: z.unknown(),
   })
   .transform((data) => {
-    const command = Array.isArray(data.input.command)
+    const commandRaw = Array.isArray(data.input.command)
       ? data.input.command.join(" ")
       : data.input.command;
+    const command = stripShellWrapperPrefix(commandRaw);
 
     // Try parsing as success result first
     const resultParsed = ShellResultSchema.safeParse(data.result);

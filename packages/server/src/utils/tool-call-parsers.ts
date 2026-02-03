@@ -56,12 +56,34 @@ export function stripCwdPrefix(filePath: string, cwd?: string): string {
   return filePath;
 }
 
-// Strips shell wrapper prefixes like "/bin/zsh -lc cd /path && " from commands
-// This is used for display purposes to show the actual command being run
-const SHELL_WRAPPER_PATTERN = /^\/bin\/(?:zsh|bash|sh)\s+(?:-[a-zA-Z]+\s+)?cd\s+\S+\s+&&\s+/;
+// Strips shell wrapper prefixes like:
+// - `/bin/zsh -lc cd /path && <cmd>`
+// - `/bin/zsh -lc "cd /path && <cmd>"`
+// This is used for display purposes to show the actual command being run.
+const SHELL_WRAPPER_PREFIX_PATTERN = /^\/bin\/(?:zsh|bash|sh)\s+(?:-[a-zA-Z]+\s+)?/;
+const CD_AND_PATTERN = /^cd\s+(?:"[^"]+"|'[^']+'|\S+)\s+&&\s+/;
 
 export function stripShellWrapperPrefix(command: string): string {
-  return command.replace(SHELL_WRAPPER_PATTERN, "");
+  const prefixMatch = command.match(SHELL_WRAPPER_PREFIX_PATTERN);
+  if (!prefixMatch) {
+    return command;
+  }
+
+  let rest = command.slice(prefixMatch[0].length).trim();
+  if (rest.length >= 2) {
+    const first = rest[0];
+    const last = rest[rest.length - 1];
+    if ((first === `"` || first === `'`) && last === first) {
+      rest = rest.slice(1, -1);
+    }
+  }
+
+  const stripped = rest.replace(CD_AND_PATTERN, "");
+  if (stripped !== rest) {
+    return stripped;
+  }
+
+  return command;
 }
 
 export function extractPrincipalParam(args: unknown, cwd?: string): string | undefined {

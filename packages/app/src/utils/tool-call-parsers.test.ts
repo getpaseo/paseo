@@ -65,6 +65,21 @@ describe("parseToolCallDisplay", () => {
     }
   });
 
+  test("strips shell + cd wrapper from command (Codex exec_command style)", () => {
+    const input = {
+      command:
+        '/bin/zsh -lc "cd /Users/moboudra/dev/paseo && nl -ba packages/app/src/utils/tool-call-parsers.test.ts | sed -n \'150,260p\'"',
+    };
+
+    const display: ToolCallDisplay = parseToolCallDisplay("shell", input, undefined);
+    expect(display.type).toBe("shell");
+    if (display.type === "shell") {
+      expect(display.command).toBe(
+        "nl -ba packages/app/src/utils/tool-call-parsers.test.ts | sed -n '150,260p'"
+      );
+    }
+  });
+
   test("handles command as array", () => {
     const input = { command: ["git", "status"] };
     const result = { type: "command", output: "On branch main" };

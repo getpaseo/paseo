@@ -11,6 +11,11 @@ describe("stripShellWrapperPrefix", () => {
     expect(stripShellWrapperPrefix(command)).toBe("npm run format");
   });
 
+  test("strips /bin/zsh -lc \"cd path &&\" wrapper", () => {
+    const command = '/bin/zsh -lc "cd /Users/moboudra/dev/blankpage/editor && npm run format"';
+    expect(stripShellWrapperPrefix(command)).toBe("npm run format");
+  });
+
   test("strips /bin/zsh -c cd path && prefix", () => {
     const command = "/bin/zsh -c cd /path/to/project && git status";
     expect(stripShellWrapperPrefix(command)).toBe("git status");
@@ -36,12 +41,9 @@ describe("stripShellWrapperPrefix", () => {
     expect(stripShellWrapperPrefix(command)).toBe("/bin/zsh -lc npm run build");
   });
 
-  test("handles paths with spaces in quotes", () => {
-    // The regex matches \S+ for the path, so quoted paths won't fully match
-    // This is acceptable - quoted paths are edge cases
+  test("strips when cd path includes spaces in quotes", () => {
     const command = '/bin/zsh -lc cd "/path with spaces" && npm test';
-    // Won't strip because the path pattern expects non-whitespace
-    expect(stripShellWrapperPrefix(command)).toBe('/bin/zsh -lc cd "/path with spaces" && npm test');
+    expect(stripShellWrapperPrefix(command)).toBe("npm test");
   });
 });
 
