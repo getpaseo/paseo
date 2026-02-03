@@ -876,6 +876,8 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const hasPullRequest = Boolean(prStatus?.url);
   const hasRemote = gitStatus?.hasRemote ?? false;
   const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
+  const currentBranch = gitStatus?.currentBranch;
+  const isOnBaseBranch = currentBranch === baseRefLabel;
 
   // ==========================================================================
   // Git Actions (Data-Oriented)
@@ -950,7 +952,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     if (aheadCount > 0) {
       allActions.set("merge-branch", {
         id: "merge-branch",
-        label: "Merge branch",
+        label: `Merge into ${baseRefLabel}`,
         pendingLabel: "Merging...",
         successLabel: "Merged",
         disabled: mergeDisabled,
@@ -960,17 +962,19 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       });
     }
 
-    // Merge from base - always available
-    allActions.set("merge-from-base", {
-      id: "merge-from-base",
-      label: `Merge from ${baseRefLabel}`,
-      pendingLabel: "Merging...",
-      successLabel: "Merged",
-      disabled: mergeFromBaseDisabled,
-      status: mergeFromBaseAction.status,
-      description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
-      handler: mergeFromBaseAction.trigger,
-    });
+    // Update from base - only when not on base branch
+    if (!isOnBaseBranch) {
+      allActions.set("merge-from-base", {
+        id: "merge-from-base",
+        label: `Update from ${baseRefLabel}`,
+        pendingLabel: "Updating...",
+        successLabel: "Updated",
+        disabled: mergeFromBaseDisabled,
+        status: mergeFromBaseAction.status,
+        description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
+        handler: mergeFromBaseAction.trigger,
+      });
+    }
 
     // Archive worktree - only for Paseo worktrees
     if (isPaseoOwnedWorktree) {
@@ -1033,7 +1037,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
 
     return { primary, secondary, menu };
   }, [
-    isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree,
+    isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch,
     hasUncommittedChanges, aheadOfOrigin, shipDefault, baseRefLabel,
     commitDisabled, pushDisabled, prDisabled, mergeDisabled, mergeFromBaseDisabled, archiveDisabled,
     commitAction, pushAction, prCreateAction, mergeAction, mergeFromBaseAction, archiveAction,
@@ -1089,7 +1093,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
                     >
                       <ChevronDown size={16} color={theme.colors.foregroundMuted} />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" width={260} testID="changes-primary-cta-menu">
+                    <DropdownMenuContent align="end" testID="changes-primary-cta-menu">
                       {gitActions.secondary.map((action, index) => {
                         const needsSeparator = action.id === "merge-from-base" || action.id === "push";
                         return (
@@ -1149,7 +1153,7 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
         ) : null}
       </View>
 
-      {isGit && hasChanges ? (
+      {isGit && (hasUncommittedChanges || aheadCount > 0) ? (
         <View style={styles.diffStatusContainer}>
           <Pressable
             style={({ hovered }) => [

@@ -28,6 +28,10 @@ class TestAgentClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities = TEST_CAPABILITIES;
 
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
   async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     return new TestAgentSession(config);
   }
@@ -367,5 +371,127 @@ describe("AgentManager", () => {
 
     // Should NOT have triggered attention callback for internal agent
     expect(attentionCalls).toHaveLength(0);
+  });
+
+  test("respondToPermission updates currentModeId after plan approval", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    // Create a session that simulates plan approval mode change
+    let sessionMode = "plan";
+    class PlanModeTestSession implements AgentSession {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+      readonly id = randomUUID();
+
+      async run(): Promise<AgentRunResult> {
+        return { sessionId: this.id, finalText: "", timeline: [] };
+      }
+
+      async *stream(): AsyncGenerator<AgentStreamEvent> {
+        yield { type: "turn_started", provider: this.provider };
+        yield { type: "turn_completed", provider: this.provider };
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo() {
+        return { provider: this.provider, sessionId: this.id, model: null, modeId: sessionMode };
+      }
+
+      async getAvailableModes() {
+        return [
+          { id: "plan", label: "Plan" },
+          { id: "acceptEdits", label: "Accept Edits" },
+        ];
+      }
+
+      async getCurrentMode() {
+        return sessionMode;
+      }
+
+      async setMode(modeId: string): Promise<void> {
+        sessionMode = modeId;
+      }
+
+      getPendingPermissions() {
+        return [];
+      }
+
+      async respondToPermission(
+        _requestId: string,
+        response: { behavior: string }
+      ): Promise<void> {
+        // Simulate what claude-agent.ts does: when plan permission is approved,
+        // it calls setMode("acceptEdits") internally
+        if (response.behavior === "allow") {
+          sessionMode = "acceptEdits";
+        }
+      }
+
+      describePersistence() {
+        return { provider: this.provider, sessionId: this.id };
+      }
+
+      async interrupt(): Promise<void> {}
+      async close(): Promise<void> {}
+    }
+
+    class PlanModeTestClient implements AgentClient {
+      readonly provider = "codex" as const;
+      readonly capabilities = TEST_CAPABILITIES;
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+
+      async createSession(): Promise<AgentSession> {
+        return new PlanModeTestSession();
+      }
+
+      async resumeSession(): Promise<AgentSession> {
+        return new PlanModeTestSession();
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        codex: new PlanModeTestClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "plan-mode-agent",
+    });
+
+    // Create agent in plan mode
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "plan",
+    });
+
+    expect(snapshot.currentModeId).toBe("plan");
+
+    // Simulate a pending plan permission request
+    const agent = manager.getAgent(snapshot.id)!;
+    const permissionRequest = {
+      id: "perm-123",
+      provider: "codex" as const,
+      name: "ExitPlanMode",
+      kind: "plan" as const,
+      input: { plan: "Test plan" },
+    };
+    agent.pendingPermissions.set(permissionRequest.id, permissionRequest);
+
+    // Approve the plan permission
+    await manager.respondToPermission(snapshot.id, "perm-123", {
+      behavior: "allow",
+    });
+
+    // The session's mode has changed to "acceptEdits" internally
+    // The manager should have updated currentModeId to reflect this
+    const updatedAgent = manager.getAgent(snapshot.id);
+    expect(updatedAgent?.currentModeId).toBe("acceptEdits");
   });
 });
