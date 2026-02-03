@@ -288,8 +288,8 @@ export const UserTextMessageSchema = z.object({
   text: z.string(),
 });
 
-export const RealtimeAudioChunkMessageSchema = z.object({
-  type: z.literal("realtime_audio_chunk"),
+export const VoiceAudioChunkMessageSchema = z.object({
+  type: z.literal("voice_audio_chunk"),
   audio: z.string(), // base64 encoded
   format: z.string(),
   isLast: z.boolean(),
@@ -804,7 +804,7 @@ export const KillTerminalRequestSchema = z.object({
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   UserTextMessageSchema,
-  RealtimeAudioChunkMessageSchema,
+  VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
@@ -900,7 +900,7 @@ export const AudioOutputMessageSchema = z.object({
     audio: z.string(), // base64 encoded
     format: z.string(),
     id: z.string(),
-    isRealtimeMode: z.boolean(), // Mode when audio was generated (for drift protection)
+    isVoiceMode: z.boolean(), // Mode when audio was generated (for drift protection)
     groupId: z.string().optional(), // Logical utterance id
     chunkIndex: z.number().int().nonnegative().optional(),
     isLastChunk: z.boolean().optional(),
@@ -1643,7 +1643,7 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 
 // Type exports for inbound message types
 export type UserTextMessage = z.infer<typeof UserTextMessageSchema>;
-export type RealtimeAudioChunkMessage = z.infer<typeof RealtimeAudioChunkMessageSchema>;
+export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;

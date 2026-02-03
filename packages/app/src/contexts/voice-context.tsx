@@ -7,34 +7,38 @@ import { randomUUID } from "expo-crypto";
 
 const VOICE_CONVERSATION_ID_STORAGE_KEY = "@paseo:voice-conversation-id";
 
-interface RealtimeContextValue {
-  isRealtimeMode: boolean;
+interface VoiceContextValue {
+  isVoiceMode: boolean;
   volume: number;
   isMuted: boolean;
   isDetecting: boolean;
   isSpeaking: boolean;
   segmentDuration: number;
-  startRealtime: (serverId: string) => Promise<void>;
-  stopRealtime: () => Promise<void>;
+  startVoice: (serverId: string) => Promise<void>;
+  stopVoice: () => Promise<void>;
   toggleMute: () => void;
   activeServerId: string | null;
 }
 
-const RealtimeContext = createContext<RealtimeContextValue | null>(null);
+const VoiceContext = createContext<VoiceContextValue | null>(null);
 
-export function useRealtime() {
-  const context = useContext(RealtimeContext);
+export function useVoice() {
+  const context = useContext(VoiceContext);
   if (!context) {
-    throw new Error("useRealtime must be used within RealtimeProvider");
+    throw new Error("useVoice must be used within VoiceProvider");
   }
   return context;
 }
 
-interface RealtimeProviderProps {
+export function useVoiceOptional(): VoiceContextValue | null {
+  return useContext(VoiceContext);
+}
+
+interface VoiceProviderProps {
   children: ReactNode;
 }
 
-export function RealtimeProvider({ children }: RealtimeProviderProps) {
+export function VoiceProvider({ children }: VoiceProviderProps) {
   const getSession = useSessionStore((state) => state.getSession);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const activeSession = useSessionStore(
@@ -49,12 +53,12 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     )
   );
   const realtimeSessionRef = useRef<SessionState | null>(null);
-  const [isRealtimeMode, setIsRealtimeMode] = useState(false);
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
   const bargeInPlaybackStopRef = useRef<number | null>(null);
 
   const realtimeAudio = useSpeechmaticsAudio({
     onSpeechStart: () => {
-      console.log("[Realtime] Speech detected");
+      console.log("[Voice] Speech detected");
       // Stop audio playback if playing
       const session = realtimeSessionRef.current;
       const sessionAudioPlayer = session?.audioPlayer ?? null;
@@ -72,20 +76,20 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       try {
         if (sessionClient) {
           void sessionClient.abortRequest().catch((error) => {
-            console.error("[Realtime] Failed to send abort_request:", error);
+            console.error("[Voice] Failed to send abort_request:", error);
           });
         }
-        console.log("[Realtime] Sent abort_request before streaming audio");
+        console.log("[Voice] Sent abort_request before streaming audio");
       } catch (error) {
-        console.error("[Realtime] Failed to send abort_request:", error);
+        console.error("[Voice] Failed to send abort_request:", error);
       }
     },
     onSpeechEnd: () => {
-      console.log("[Realtime] Speech ended");
+      console.log("[Voice] Speech ended");
     },
     onAudioSegment: ({ audioData, isLast }) => {
       console.log(
-        "[Realtime] Sending audio segment, length:",
+        "[Voice] Sending audio segment, length:",
         audioData.length,
         "isLast:",
         isLast
@@ -96,25 +100,25 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
       try {
         if (session?.client) {
           void session.client
-            .sendRealtimeAudioChunk(
+            .sendVoiceAudioChunk(
               audioData,
               "audio/pcm;rate=16000;bits=16",
               isLast
             )
             .catch((error) => {
-              console.error("[Realtime] Failed to send audio segment:", error);
+              console.error("[Voice] Failed to send audio segment:", error);
             });
         }
       } catch (error) {
-        console.error("[Realtime] Failed to send audio segment:", error);
+        console.error("[Voice] Failed to send audio segment:", error);
       }
     },
     onError: (error) => {
-      console.error("[Realtime] Audio error:", error);
+      console.error("[Voice] Audio error:", error);
       const session = realtimeSessionRef.current;
       if (session?.client) {
         // Send error through websocket instead of directly manipulating messages
-        console.error("[Realtime] Cannot handle error - setMessages not available from SessionState");
+        console.error("[Voice] Cannot handle error - setMessages not available from SessionState");
       }
     },
     volumeThreshold: 0.3,
@@ -149,7 +153,7 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     }
   }, [isPlayingAudio]);
 
-  const startRealtime = useCallback(
+  const startVoice = useCallback(
     async (serverId: string) => {
       const session = getSession(serverId) ?? null;
       if (!session) {
@@ -160,8 +164,8 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
         realtimeSessionRef.current = session;
         setActiveServerId(serverId);
         await realtimeAudio.start();
-        setIsRealtimeMode(true);
-        console.log("[Realtime] Mode enabled");
+        setIsVoiceMode(true);
+        console.log("[Voice] Mode enabled");
 
         if (session?.client) {
           let voiceConversationId =
@@ -175,10 +179,10 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
           }
           await session.client.setVoiceConversation(true, voiceConversationId);
         } else {
-          console.warn("[Realtime] setRealtimeMode skipped: daemon unavailable");
+          console.warn("[Voice] setVoiceConversation skipped: daemon unavailable");
         }
       } catch (error: any) {
-        console.error("[Realtime] Failed to start:", error);
+        console.error("[Voice] Failed to start:", error);
         setActiveServerId((current) => (current === serverId ? null : current));
         throw error;
       }
@@ -186,42 +190,42 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
     [getSession, realtimeAudio]
   );
 
-  const stopRealtime = useCallback(async () => {
+  const stopVoice = useCallback(async () => {
     try {
       const session = realtimeSessionRef.current;
       session?.audioPlayer?.stop();
       await realtimeAudio.stop();
-      setIsRealtimeMode(false);
+      setIsVoiceMode(false);
       setActiveServerId(null);
-      console.log("[Realtime] Mode disabled");
+      console.log("[Voice] Mode disabled");
 
       if (session?.client) {
         await session.client.setVoiceConversation(false);
       } else {
-        console.warn("[Realtime] setRealtimeMode skipped: daemon unavailable");
+        console.warn("[Voice] setVoiceConversation skipped: daemon unavailable");
       }
     } catch (error: any) {
-      console.error("[Realtime] Failed to stop:", error);
+      console.error("[Voice] Failed to stop:", error);
       throw error;
     }
   }, [realtimeAudio]);
 
-  const value: RealtimeContextValue = {
-    isRealtimeMode,
+  const value: VoiceContextValue = {
+    isVoiceMode,
     volume: realtimeAudio.volume,
     isMuted: realtimeAudio.isMuted,
     isDetecting: realtimeAudio.isDetecting,
     isSpeaking: realtimeAudio.isSpeaking,
     segmentDuration: realtimeAudio.segmentDuration,
-    startRealtime,
-    stopRealtime,
+    startVoice,
+    stopVoice,
     toggleMute: realtimeAudio.toggleMute,
     activeServerId,
   };
 
   return (
-    <RealtimeContext.Provider value={value}>
+    <VoiceContext.Provider value={value}>
       {children}
-    </RealtimeContext.Provider>
+    </VoiceContext.Provider>
   );
 }

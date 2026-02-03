@@ -544,7 +544,7 @@ describe("daemon client v2 E2E", () => {
   );
 
   test(
-    "realtime mode buffers audio until isLast and emits transcription_result",
+    "voice mode buffers audio until isLast and emits transcription_result",
     async () => {
       requireEnv("OPENAI_API_KEY");
 
@@ -613,7 +613,7 @@ describe("daemon client v2 E2E", () => {
 
         const chunkBytes = 3200; // 100ms @ 16kHz mono PCM16
         const firstChunk = pcm16.subarray(0, Math.min(chunkBytes, pcm16.length));
-        await ctx.client.sendRealtimeAudioChunk(firstChunk.toString("base64"), format, false);
+        await ctx.client.sendVoiceAudioChunk(firstChunk.toString("base64"), format, false);
         await earlyTranscription
           .then(() => {
             throw new Error("Expected no transcription_result before isLast=true");
@@ -623,7 +623,7 @@ describe("daemon client v2 E2E", () => {
         for (let offset = chunkBytes; offset < pcm16.length; offset += chunkBytes) {
           const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
           const isLast = offset + chunkBytes >= pcm16.length;
-          await ctx.client.sendRealtimeAudioChunk(chunk.toString("base64"), format, isLast);
+          await ctx.client.sendVoiceAudioChunk(chunk.toString("base64"), format, isLast);
         }
 
         const outcome = await Promise.race([

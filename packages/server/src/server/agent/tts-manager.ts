@@ -32,7 +32,7 @@ export class TTSManager {
     text: string,
     emitMessage: (msg: SessionOutboundMessage) => void,
     abortSignal: AbortSignal,
-    isRealtimeMode: boolean
+    isVoiceMode: boolean
   ): Promise<void> {
     if (!this.tts) {
       throw new Error("TTS not configured");
@@ -117,7 +117,7 @@ export class TTSManager {
               isLastChunk: next.done,
               audio: chunkBuffer.toString("base64"),
               format,
-              isRealtimeMode,
+              isVoiceMode,
             },
           });
 

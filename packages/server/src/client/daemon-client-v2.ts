@@ -1132,12 +1132,12 @@ export class DaemonClientV2 {
     this.sendSessionMessage({ type: "set_voice_conversation", enabled, voiceConversationId });
   }
 
-  async sendRealtimeAudioChunk(
+  async sendVoiceAudioChunk(
     audio: string,
     format: string,
     isLast: boolean
   ): Promise<void> {
-    this.sendSessionMessage({ type: "realtime_audio_chunk", audio, format, isLast });
+    this.sendSessionMessage({ type: "voice_audio_chunk", audio, format, isLast });
   }
 
   startDictationStream(dictationId: string, format: string): Promise<void> {
