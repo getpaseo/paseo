@@ -700,6 +700,15 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     await agent.session.respondToPermission(requestId, response);
     agent.pendingPermissions.delete(requestId);
+
+    // Update currentModeId - the session may have changed mode internally
+    // (e.g., plan approval changes mode from "plan" to "acceptEdits")
+    try {
+      agent.currentModeId = await agent.session.getCurrentMode();
+    } catch {
+      // Ignore errors from getCurrentMode - mode tracking is best effort
+    }
+
     this.emitState(agent);
   }
 
