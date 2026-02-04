@@ -31,7 +31,6 @@ export function useGlobalKeyboardNav({
     const shouldHandle = () => {
       if (typeof document === "undefined") return false;
       if (document.visibilityState !== "visible") return false;
-      if (!document.hasFocus()) return false;
       return true;
     };
 
@@ -86,7 +85,10 @@ export function useGlobalKeyboardNav({
       }
 
       // Cmd+B: toggle sidebar
-      if ((event.metaKey || event.ctrlKey) && lowerKey === "b") {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === "KeyB" || lowerKey === "b")
+      ) {
         event.preventDefault();
         toggleAgentList();
         return;
@@ -97,7 +99,7 @@ export function useGlobalKeyboardNav({
         selectedAgentId &&
         toggleFileExplorer &&
         (event.metaKey || event.ctrlKey) &&
-        lowerKey === "e"
+        (event.code === "KeyE" || lowerKey === "e")
       ) {
         event.preventDefault();
         toggleFileExplorer();

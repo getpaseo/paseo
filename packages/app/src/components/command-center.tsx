@@ -269,7 +269,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
+    fontWeight: "400",
   },
   subtitle: {
     fontSize: theme.fontSize.sm,
