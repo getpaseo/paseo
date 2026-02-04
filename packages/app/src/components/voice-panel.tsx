@@ -35,40 +35,42 @@ export function VoicePanel() {
         </Text>
       </View>
 
-      <View style={styles.meterRow}>
-        <VolumeMeter
-          volume={volume}
-          isMuted={isMuted}
-          isDetecting={isDetecting}
-          isSpeaking={isSpeaking}
-          orientation="horizontal"
-        />
-      </View>
-
-      <View style={styles.actionsRow}>
-        <Pressable
-          onPress={toggleMute}
-          accessibilityRole="button"
-          accessibilityLabel={isMuted ? "Unmute voice" : "Mute voice"}
-          style={[
-            styles.iconButton,
-            isMuted && styles.iconButtonMuted,
-          ]}
-        >
-          <MicOff
-            size={18}
-            color={isMuted ? theme.colors.surface0 : theme.colors.foreground}
+      <View style={styles.contentRow}>
+        <View style={styles.meterContainer}>
+          <VolumeMeter
+            volume={volume}
+            isMuted={isMuted}
+            isDetecting={isDetecting}
+            isSpeaking={isSpeaking}
+            orientation="horizontal"
           />
-        </Pressable>
+        </View>
 
-        <Pressable
-          onPress={() => void stopVoice()}
-          accessibilityRole="button"
-          accessibilityLabel="Stop voice mode"
-          style={[styles.iconButton, styles.iconButtonStop]}
-        >
-          <Square size={16} color="white" fill="white" />
-        </Pressable>
+        <View style={styles.actionsRow}>
+          <Pressable
+            onPress={toggleMute}
+            accessibilityRole="button"
+            accessibilityLabel={isMuted ? "Unmute voice" : "Mute voice"}
+            style={[
+              styles.iconButton,
+              isMuted && styles.iconButtonMuted,
+            ]}
+          >
+            <MicOff
+              size={18}
+              color={isMuted ? theme.colors.surface0 : theme.colors.foreground}
+            />
+          </Pressable>
+
+          <Pressable
+            onPress={() => void stopVoice()}
+            accessibilityRole="button"
+            accessibilityLabel="Stop voice mode"
+            style={[styles.iconButton, styles.iconButtonStop]}
+          >
+            <Square size={16} color="white" fill="white" />
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -109,7 +111,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
-  meterRow: {
+  contentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  meterContainer: {
+    flex: 1,
     justifyContent: "center",
   },
   actionsRow: {
