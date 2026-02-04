@@ -105,8 +105,8 @@ const styles = StyleSheet.create((theme) => {
     },
     line: {
       minWidth: "100%",
-      paddingHorizontal: insets.paddingX,
-      paddingVertical: insets.paddingY,
+      paddingHorizontal: insets.padding,
+      paddingVertical: insets.padding,
     },
     lineText: {
       fontFamily: Fonts.mono,
