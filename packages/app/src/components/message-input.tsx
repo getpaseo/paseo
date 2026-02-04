@@ -766,12 +766,12 @@ const styles = StyleSheet.create(((theme: any) => ({
   },
   buttonRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     justifyContent: "space-between",
   },
   leftButtonGroup: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     gap: theme.spacing[2],
   },
   rightButtonGroup: {

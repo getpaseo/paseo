@@ -90,7 +90,7 @@ const DEFAULT_MODES: AgentMode[] = [
   },
   {
     id: "bypassPermissions",
-    label: "Bypass Permissions",
+    label: "Bypass",
     description: "Skip all permission prompts (use with caution)",
   },
 ];
@@ -364,8 +364,8 @@ export class ClaudeAgentClient implements AgentClient {
         label: model.displayName,
         description: model.description,
         thinkingOptions: [
-          { id: "off", label: "Thinking Off", isDefault: true },
-          { id: "on", label: "Thinking On" },
+          { id: "off", label: "Off", isDefault: true },
+          { id: "on", label: "On" },
         ],
         defaultThinkingOptionId: "off",
         metadata: {

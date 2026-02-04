@@ -1,6 +1,6 @@
 import { View, Text, Platform, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, SlidersHorizontal } from "lucide-react-native";
+import { Brain, ChevronDown, SlidersHorizontal } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
 import {
   DropdownMenu,
@@ -83,9 +83,10 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
       {agent.availableModes && agent.availableModes.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger
-            style={({ pressed }) => [
+            style={({ pressed, hovered, open }) => [
               styles.modeBadge,
-              pressed && styles.modeBadgePressed,
+              hovered && styles.modeBadgeHovered,
+              (pressed || open) && styles.modeBadgePressed,
             ]}
             accessibilityRole="button"
             accessibilityLabel="Select agent mode"
@@ -129,9 +130,10 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
         <>
           <DropdownMenu>
             <DropdownMenuTrigger
-              style={({ pressed }) => [
+              style={({ pressed, hovered, open }) => [
                 styles.modeBadge,
-                pressed && styles.modeBadgePressed,
+                hovered && styles.modeBadgeHovered,
+                (pressed || open) && styles.modeBadgePressed,
               ]}
               accessibilityRole="button"
               accessibilityLabel="Select agent model"
@@ -174,14 +176,16 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
           {thinkingOptions && thinkingOptions.length > 1 && (
             <DropdownMenu>
               <DropdownMenuTrigger
-                style={({ pressed }) => [
+                style={({ pressed, hovered, open }) => [
                   styles.modeBadge,
-                  pressed && styles.modeBadgePressed,
+                  hovered && styles.modeBadgeHovered,
+                  (pressed || open) && styles.modeBadgePressed,
                 ]}
                 accessibilityRole="button"
                 accessibilityLabel="Select thinking option"
                 testID="agent-thinking-selector"
               >
+                <Brain size={12} color={theme.colors.foregroundMuted} />
                 <Text style={styles.modeBadgeText}>{displayThinking}</Text>
                 <ChevronDown size={14} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
@@ -344,6 +348,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    marginBottom: -theme.spacing[1],
   },
   modeBadge: {
     flexDirection: "row",
@@ -353,6 +358,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius["2xl"],
+  },
+  modeBadgeHovered: {
+    backgroundColor: theme.colors.surface1,
   },
   modeBadgePressed: {
     backgroundColor: theme.colors.surface0,
