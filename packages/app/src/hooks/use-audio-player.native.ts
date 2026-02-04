@@ -56,6 +56,10 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
   const queueRef = useRef<QueuedAudio[]>([]);
   const suppressedQueueRef = useRef<QueuedAudio[]>([]);
   const isProcessingQueueRef = useRef(false);
+  const activePlaybackRef = useRef<{
+    resolve: (duration: number) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const playbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -179,6 +183,7 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
 
   async function playAudio(audioData: Blob): Promise<number> {
     return new Promise(async (resolve, reject) => {
+      activePlaybackRef.current = { resolve, reject };
       try {
         console.log(
           `[AudioPlayer] Playing audio (${audioData.size} bytes, type: ${audioData.type})`
@@ -234,6 +239,7 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
           console.log("[AudioPlayer] ✅ Playback finished");
           setIsPlaying(false);
           playbackTimeoutRef.current = null;
+          activePlaybackRef.current = null;
           resolve(durationSec);
         }, durationSec * 1000);
       } catch (error) {
@@ -246,6 +252,7 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
         }
 
         setIsPlaying(false);
+        activePlaybackRef.current = null;
         reject(error);
       }
     });
@@ -266,6 +273,12 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
     }
 
     setIsPlaying(false);
+
+    // Reject the currently playing promise, if any.
+    if (activePlaybackRef.current) {
+      activePlaybackRef.current.reject(new Error("Playback stopped"));
+      activePlaybackRef.current = null;
+    }
 
     // Reject all pending promises in the main queue
     while (queueRef.current.length > 0) {
@@ -313,5 +326,13 @@ export function useAudioPlayer(options?: AudioPlayerOptions) {
     stop,
     isPlaying: () => isPlaying,
     clearQueue,
+    warmup: async () => {
+      if (!audioInitialized) {
+        await initialize();
+        setAudioInitialized(true);
+      }
+      // Ensure playback engine isn't suspended after a previous stop.
+      resumePlayback();
+    },
   };
 }

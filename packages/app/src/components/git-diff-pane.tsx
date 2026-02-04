@@ -16,7 +16,7 @@ import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gest
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
-import { ChevronDown, ChevronRight, GitBranch, MoreVertical, ArrowLeftRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight, GitBranch, MoreVertical, ArrowLeftRight, ListChevronsDownUp, ListChevronsUpDown } from "lucide-react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -582,6 +582,23 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       [path]: !prev[path],
     }));
   }, []);
+
+  const allExpanded = useMemo(() => {
+    if (files.length === 0) return false;
+    return files.every((file) => expandedByPath[file.path]);
+  }, [files, expandedByPath]);
+
+  const handleToggleExpandAll = useCallback(() => {
+    if (allExpanded) {
+      setExpandedByPath({});
+    } else {
+      const newExpanded: Record<string, boolean> = {};
+      for (const file of files) {
+        newExpanded[file.path] = true;
+      }
+      setExpandedByPath(newExpanded);
+    }
+  }, [allExpanded, files]);
 
   // Reset manual refresh flag when fetch completes
   useEffect(() => {
@@ -1157,27 +1174,42 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
 
       {isGit && (hasUncommittedChanges || aheadCount > 0) ? (
         <View style={styles.diffStatusContainer}>
-          <Pressable
-            style={({ hovered, pressed }) => [
-              styles.diffStatusRow,
-              (hovered || pressed) && styles.diffStatusRowHovered,
-            ]}
-            testID="changes-diff-status"
-            onPress={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
-          >
-            {({ hovered, pressed }) => (
-              <>
-                <Text style={styles.diffStatusText}>
-                  {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
-                </Text>
-                <ArrowLeftRight
-                  size={12}
-                  color={theme.colors.foregroundMuted}
-                  style={hovered || pressed ? undefined : styles.diffStatusIconHidden}
-                />
-              </>
+          <View style={styles.diffStatusInner}>
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.diffStatusRow,
+                (hovered || pressed) && styles.diffStatusRowHovered,
+              ]}
+              testID="changes-diff-status"
+              onPress={() => setDiffModeOverride(diffMode === "uncommitted" ? "base" : "uncommitted")}
+            >
+              {({ hovered, pressed }) => (
+                <>
+                  <Text style={styles.diffStatusText}>
+                    {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
+                  </Text>
+                  {(hovered || pressed) ? (
+                    <ArrowLeftRight size={12} color={theme.colors.foregroundMuted} />
+                  ) : null}
+                </>
             )}
-          </Pressable>
+            </Pressable>
+            {files.length > 0 ? (
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.expandAllButton,
+                  (hovered || pressed) && styles.diffStatusRowHovered,
+                ]}
+                onPress={handleToggleExpandAll}
+              >
+                {allExpanded ? (
+                  <ListChevronsDownUp size={14} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <ListChevronsUpDown size={14} color={theme.colors.foregroundMuted} />
+                )}
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       ) : null}
 
@@ -1229,15 +1261,20 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  diffStatusInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingRight: theme.spacing[3],
+  },
   diffStatusRow: {
     flexDirection: "row",
     alignItems: "center",
-    alignSelf: "flex-start",
     gap: theme.spacing[1],
-    // Align text with chevron/branch icons (at spacing[2] from edge)
+    // Align text with header branch icon (at spacing[3] from edge, minus our horizontal padding)
+    marginLeft: theme.spacing[3] - theme.spacing[1],
     marginVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[2],
+    paddingHorizontal: theme.spacing[1],
     paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
   },
@@ -1250,6 +1287,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   diffStatusIconHidden: {
     opacity: 0,
+  },
+  expandAllButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    marginVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
   },
   splitButton: {
     flexDirection: "row",
