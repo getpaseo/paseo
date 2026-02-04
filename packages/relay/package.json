@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./e2ee": "./src/e2ee.ts",
     "./node": "./src/node-adapter.ts",
     "./cloudflare": "./src/cloudflare-adapter.ts"
   },
@@ -14,6 +15,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@sphereon/isomorphic-webcrypto": "^2.5.0-rn-crypto.2",
+    "base64-js": "^1.5.1",
     "ws": "^8.14.2"
   },
   "devDependencies": {

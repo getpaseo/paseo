@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+/* Inline code styling - applies to code elements not inside pre blocks */
+:not(pre) > code {
+  background-color: var(--color-muted);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
 @theme {
   --font-serif: 'Playfair Display', serif;
 

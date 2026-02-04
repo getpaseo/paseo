@@ -4,12 +4,13 @@ import {
   type HostProfile,
 } from "@/contexts/daemon-registry-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
+import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl, extractHostPortFromWebSocketUrl } from "@/utils/daemon-endpoints";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 function buildCandidateUrls(daemon: HostProfile): string[] {
   const endpoints = daemon.endpoints ?? [];
   const sessionId = daemon.relay?.sessionId ?? null;
+  const relayEndpoint = daemon.relay?.endpoint ?? null;
   const lastKnownGood =
     typeof daemon.metadata?.lastKnownGoodEndpoint === "string"
       ? (daemon.metadata.lastKnownGoodEndpoint as string)
@@ -20,36 +21,24 @@ function buildCandidateUrls(daemon: HostProfile): string[] {
     if (!out.includes(url)) out.push(url);
   };
 
-  if (lastKnownGood) {
+  const isLastKnownRelay = !!relayEndpoint && lastKnownGood === relayEndpoint;
+  const directEndpoints = endpoints;
+
+  if (sessionId && relayEndpoint && isLastKnownRelay) {
+    push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
+  } else if (lastKnownGood) {
     push(buildDaemonWebSocketUrl(lastKnownGood));
   }
 
-  for (const endpoint of endpoints) {
+  for (const endpoint of directEndpoints) {
     push(buildDaemonWebSocketUrl(endpoint));
   }
 
-  if (sessionId) {
-    if (lastKnownGood) {
-      push(buildRelayWebSocketUrl({ endpoint: lastKnownGood, sessionId }));
-    }
-    for (const endpoint of endpoints) {
-      push(buildRelayWebSocketUrl({ endpoint, sessionId }));
-    }
+  if (sessionId && relayEndpoint) {
+    push(buildRelayWebSocketUrl({ endpoint: relayEndpoint, sessionId }));
   }
 
   return out;
-}
-
-function extractEndpointFromUrl(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname;
-    const port = parsed.port ? Number(parsed.port) : parsed.protocol === "wss:" ? 443 : 80;
-    const isIpv6 = host.includes(":") && !host.startsWith("[") && !host.endsWith("]");
-    return isIpv6 ? `[${host}]:${port}` : `${host}:${port}`;
-  } catch {
-    return null;
-  }
 }
 
 function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
@@ -86,9 +75,15 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   useEffect(() => {
     if (!connection) return;
 
-    if (status === "online") {
-      if (pendingMetadataWriteRef.current) return;
-      const endpoint = extractEndpointFromUrl(activeUrl);
+      if (status === "online") {
+        if (pendingMetadataWriteRef.current) return;
+      const endpoint = (() => {
+        try {
+          return extractHostPortFromWebSocketUrl(activeUrl);
+        } catch {
+          return null;
+        }
+      })();
       if (!endpoint) return;
       if (daemon.metadata?.lastKnownGoodEndpoint === endpoint) return;
 
@@ -123,7 +118,12 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   ]);
 
   return (
-    <SessionProvider key={`${daemon.id}:${activeUrl}`} serverUrl={activeUrl} serverId={daemon.id}>
+    <SessionProvider
+      key={`${daemon.id}:${activeUrl}`}
+      serverUrl={activeUrl}
+      serverId={daemon.id}
+      daemonPublicKeyB64={daemon.daemonPublicKeyB64}
+    >
       {null}
     </SessionProvider>
   );

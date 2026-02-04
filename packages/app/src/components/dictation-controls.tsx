@@ -179,6 +179,7 @@ export function DictationOverlay({
             isDetecting
             isSpeaking={false}
             orientation="horizontal"
+            color={theme.colors.palette.white}
           />
           <Text
             style={[

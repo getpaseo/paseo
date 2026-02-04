@@ -53,6 +53,12 @@ import type {
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
 import { getAgentProviderDefinition } from "../server/agent/provider-manifest.js";
+import {
+  createClientChannel,
+  type EncryptedChannel,
+  type Transport as RelayTransport,
+} from "@paseo/relay/e2ee";
+import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -146,6 +152,10 @@ export type DaemonClientConfig = {
   transportFactory?: DaemonTransportFactory;
   webSocketFactory?: WebSocketFactory;
   logger?: Logger;
+  e2ee?: {
+    enabled?: boolean;
+    daemonPublicKeyB64?: string;
+  };
   reconnect?: {
     enabled?: boolean;
     baseDelayMs?: number;
@@ -328,11 +338,27 @@ export class DaemonClient {
 
     try {
       this.cleanupTransport();
-      const transportFactory =
+      const baseTransportFactory =
         this.config.transportFactory ??
         createWebSocketTransportFactory(
           this.config.webSocketFactory ?? defaultWebSocketFactory
         );
+      const shouldUseRelayE2ee =
+        this.config.e2ee?.enabled === true &&
+        isRelayClientWebSocketUrl(this.config.url);
+
+      let transportFactory = baseTransportFactory;
+      if (shouldUseRelayE2ee) {
+        const daemonPublicKeyB64 = this.config.e2ee?.daemonPublicKeyB64;
+        if (!daemonPublicKeyB64) {
+          throw new Error("daemonPublicKeyB64 is required for relay E2EE");
+        }
+        transportFactory = createRelayE2eeTransportFactory({
+          baseFactory: baseTransportFactory,
+          daemonPublicKeyB64,
+          logger: this.logger,
+        });
+      }
       const transport = transportFactory({ url: this.config.url, headers });
       this.transport = transport;
 
@@ -2547,6 +2573,202 @@ function createWebSocketTransportFactory(
       onMessage: (handler) => bindWsHandler(ws, "message", handler),
     };
   };
+}
+
+function createRelayE2eeTransportFactory(args: {
+  baseFactory: DaemonTransportFactory;
+  daemonPublicKeyB64: string;
+  logger: Logger;
+}): DaemonTransportFactory {
+  return ({ url, headers }) => {
+    const base = args.baseFactory({ url, headers });
+    return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
+  };
+}
+
+function createEncryptedTransport(
+  base: DaemonTransport,
+  daemonPublicKeyB64: string,
+  logger: Logger
+): DaemonTransport {
+  let channel: EncryptedChannel | null = null;
+  let opened = false;
+  let closed = false;
+
+  const openHandlers = new Set<() => void>();
+  const closeHandlers = new Set<(event?: unknown) => void>();
+  const errorHandlers = new Set<(event?: unknown) => void>();
+  const messageHandlers = new Set<(data: unknown) => void>();
+
+  const emitOpen = () => {
+    if (opened || closed) return;
+    opened = true;
+    for (const handler of openHandlers) {
+      try {
+        handler();
+      } catch {
+        // no-op
+      }
+    }
+  };
+
+  const emitClose = (event?: unknown) => {
+    if (closed) return;
+    closed = true;
+    for (const handler of closeHandlers) {
+      try {
+        handler(event);
+      } catch {
+        // no-op
+      }
+    }
+  };
+
+  const emitError = (event?: unknown) => {
+    if (closed) return;
+    for (const handler of errorHandlers) {
+      try {
+        handler(event);
+      } catch {
+        // no-op
+      }
+    }
+  };
+
+  const emitMessage = (data: unknown) => {
+    if (closed) return;
+    for (const handler of messageHandlers) {
+      try {
+        handler(data);
+      } catch {
+        // no-op
+      }
+    }
+  };
+
+  const relayTransport: RelayTransport = {
+    send: (data) => {
+      if (typeof data === "string") {
+        base.send(data);
+        return;
+      }
+      if (data instanceof ArrayBuffer) {
+        if (typeof TextDecoder !== "undefined") {
+          base.send(new TextDecoder().decode(data));
+          return;
+        }
+        if (typeof Buffer !== "undefined") {
+          base.send(Buffer.from(data).toString("utf8"));
+          return;
+        }
+        base.send(String(data));
+        return;
+      }
+      base.send(String(data));
+    },
+    close: (code?: number, reason?: string) => base.close(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+
+  const startHandshake = async () => {
+    try {
+      channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
+        onopen: emitOpen,
+        onmessage: (data) => emitMessage(data),
+        onclose: (code, reason) => emitClose({ code, reason }),
+        onerror: (error) => emitError(error),
+      });
+    } catch (error) {
+      logger.warn({ err: error }, "relay_e2ee_handshake_failed");
+      emitError(error);
+      base.close(1011, "E2EE handshake failed");
+    }
+  };
+
+  base.onOpen(() => {
+    void startHandshake();
+  });
+  base.onMessage((event) => {
+    relayTransport.onmessage?.(extractRelayMessageData(event));
+  });
+  base.onClose((event) => {
+    const record = event as { code?: number; reason?: string } | undefined;
+    relayTransport.onclose?.(record?.code ?? 0, record?.reason ?? "");
+    emitClose(event);
+  });
+  base.onError((event) => {
+    relayTransport.onerror?.(
+      event instanceof Error ? event : new Error(String(event))
+    );
+    emitError(event);
+  });
+
+  return {
+    send: (data) => {
+      if (!channel) {
+        throw new Error("Encrypted channel not ready");
+      }
+      void channel.send(data).catch((error) => {
+        emitError(error);
+      });
+    },
+    close: (code?: number, reason?: string) => {
+      if (channel) {
+        channel.close(code, reason);
+      } else {
+        base.close(code, reason);
+      }
+      emitClose({ code, reason });
+    },
+    onMessage: (handler) => {
+      messageHandlers.add(handler);
+      return () => messageHandlers.delete(handler);
+    },
+    onOpen: (handler) => {
+      openHandlers.add(handler);
+      if (opened) {
+        try {
+          handler();
+        } catch {
+          // no-op
+        }
+      }
+      return () => openHandlers.delete(handler);
+    },
+    onClose: (handler) => {
+      closeHandlers.add(handler);
+      if (closed) {
+        try {
+          handler();
+        } catch {
+          // no-op
+        }
+      }
+      return () => closeHandlers.delete(handler);
+    },
+    onError: (handler) => {
+      errorHandlers.add(handler);
+      return () => errorHandlers.delete(handler);
+    },
+  };
+}
+
+function extractRelayMessageData(event: unknown): string | ArrayBuffer {
+  const raw =
+    event && typeof event === "object" && "data" in event
+      ? (event as { data: unknown }).data
+      : event;
+  if (typeof raw === "string") return raw;
+  if (raw instanceof ArrayBuffer) return raw;
+  if (ArrayBuffer.isView(raw)) {
+    const view = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    const out = new Uint8Array(view.byteLength);
+    out.set(view);
+    return out.buffer;
+  }
+  return String(raw ?? "");
 }
 
 function bindWsHandler(

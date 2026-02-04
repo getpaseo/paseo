@@ -258,6 +258,7 @@ interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
+  daemonPublicKeyB64?: string;
 }
 
 const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
@@ -268,9 +269,10 @@ export function SessionProvider({
   children,
   serverUrl,
   serverId,
+  daemonPublicKeyB64,
 }: SessionProviderProps) {
   const queryClient = useQueryClient();
-  const client = useDaemonClient(serverUrl);
+  const client = useDaemonClient(serverUrl, { daemonPublicKeyB64 });
   const [connectionSnapshot, setConnectionSnapshot] =
     useState<DaemonConnectionSnapshot>(() =>
       mapConnectionState(client.getConnectionState(), client.lastError)

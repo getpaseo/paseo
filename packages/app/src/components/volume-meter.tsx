@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect } from "react";
 import { View } from "react-native";
 import ReanimatedAnimated, {
   useSharedValue,
@@ -17,16 +17,29 @@ interface VolumeMeterProps {
   isDetecting?: boolean;
   isSpeaking?: boolean;
   orientation?: "vertical" | "horizontal";
+  variant?: "default" | "compact";
+  color?: string;
 }
 
-export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSpeaking = false, orientation = "vertical" }: VolumeMeterProps) {
+export function VolumeMeter({
+  volume,
+  isMuted = false,
+  isDetecting = false,
+  isSpeaking = false,
+  orientation = "vertical",
+  variant = "default",
+  color,
+}: VolumeMeterProps) {
   const { theme } = useUnistyles();
+  const isCompact = variant === "compact";
 
   // Base dimensions
-  const LINE_SPACING = 8;
-  const LINE_WIDTH = 8;
-  const MAX_HEIGHT = orientation === "horizontal" ? 30 : 50;
-  const MIN_HEIGHT = orientation === "horizontal" ? 12 : 20;
+  const LINE_SPACING = isCompact ? 6 : 8;
+  const LINE_WIDTH = isCompact ? 6 : 8;
+  const MAX_HEIGHT =
+    orientation === "horizontal" ? (isCompact ? 18 : 30) : isCompact ? 32 : 50;
+  const MIN_HEIGHT =
+    orientation === "horizontal" ? (isCompact ? 8 : 12) : isCompact ? 14 : 20;
 
   // Create shared values for 3 dots unconditionally
   const line1Height = useSharedValue(MIN_HEIGHT);
@@ -127,8 +140,9 @@ export function VolumeMeter({ volume, isMuted = false, isDetecting = false, isSp
     }
   }, [volume, isMuted]);
 
-  const lineColor = "#FFFFFF";
-  const containerHeight = orientation === "horizontal" ? 60 : 100;
+  const lineColor = color ?? theme.colors.foreground;
+  const containerHeight =
+    orientation === "horizontal" ? (isCompact ? 32 : 60) : isCompact ? 64 : 100;
 
   // Create animated styles unconditionally at top level
   const line1Style = useAnimatedStyle(() => {

@@ -52,6 +52,8 @@ import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
+import { VoiceCompactIndicator } from "./voice-compact-indicator";
+import { useVoice } from "@/contexts/voice-context";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -59,6 +61,23 @@ const isToolSequenceItem = (item?: StreamItem) =>
 const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
 const STREAM_ITEM_LOG_MIN_COUNT = 200;
 const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
+
+function collectAssistantTurnContent(
+  flatListData: StreamItem[],
+  startIndex: number
+): string {
+  const messages: string[] = [];
+  for (let i = startIndex; i < flatListData.length; i++) {
+    const currentItem = flatListData[i];
+    if (currentItem.kind === "user_message") {
+      break;
+    }
+    if (currentItem.kind === "assistant_message") {
+      messages.push(currentItem.text);
+    }
+  }
+  return messages.reverse().join("\n\n");
+}
 export interface AgentStreamViewProps {
   agentId: string;
   serverId?: string;
@@ -77,6 +96,7 @@ export function AgentStreamView({
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const { isVoiceMode } = useVoice();
   const [isNearBottom, setIsNearBottom] = useState(true);
   const hasScrolledInitially = useRef(false);
   const hasAutoScrolledOnce = useRef(false);
@@ -362,26 +382,6 @@ export function AgentStreamView({
     [handleInlinePathPress, agent.cwd, flatListData]
   );
 
-  const collectTurnContent = useCallback(
-    (index: number) => {
-      const messages: string[] = [];
-      // Walk backwards (older items) from current index
-      // In inverted list: index+1 is the item above (older in time)
-      for (let i = index; i < flatListData.length; i++) {
-        const currentItem = flatListData[i];
-        if (currentItem.kind === "user_message") {
-          break;
-        }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
-        }
-      }
-      // Messages are collected newest-first, reverse for chronological order
-      return messages.reverse().join("\n\n");
-    },
-    [flatListData]
-  );
-
   const renderStreamItem = useCallback(
     ({ item, index }: ListRenderItemInfo<StreamItem>) => {
       const content = renderStreamItemContent(item, index);
@@ -391,30 +391,13 @@ export function AgentStreamView({
 
       const gapBelow = getGapBelow(item, index);
 
-      // Check if this is the end of a turn (before a user message or end of stream when not running)
-      // In inverted list: index-1 is the next item (newer in time)
-      const nextItem = flatListData[index - 1];
-      const isEndOfTurn =
-        item.kind !== "user_message" &&
-        (nextItem?.kind === "user_message" ||
-          (nextItem === undefined && agent.status !== "running"));
-
-      const getContent = () => collectTurnContent(index);
-
       return (
         <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
           {content}
-          {isEndOfTurn ? <TurnCopyButton getContent={getContent} /> : null}
         </View>
       );
     },
-    [
-      getGapBelow,
-      renderStreamItemContent,
-      flatListData,
-      agent.status,
-      collectTurnContent,
-    ]
+    [getGapBelow, renderStreamItemContent]
   );
 
   const pendingPermissionItems = useMemo(
@@ -494,14 +477,32 @@ export function AgentStreamView({
   }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
 
   const showWorkingIndicator = agent.status === "running";
+  const newestItem = flatListData[0] ?? null;
+  const latestTurnContent = useMemo(() => {
+    if (flatListData.length === 0) {
+      return "";
+    }
+    return collectAssistantTurnContent(flatListData, 0);
+  }, [flatListData]);
+  const showCopyButton =
+    agent.status !== "running" &&
+    newestItem?.kind === "assistant_message" &&
+    latestTurnContent.trim().length > 0;
+  const showBottomBar = showWorkingIndicator || showCopyButton || isVoiceMode;
 
   const listHeaderComponent = useMemo(() => {
     const hasPermissions = pendingPermissionItems.length > 0;
     const hasHeadItems = streamHead && streamHead.length > 0;
 
-    if (!hasPermissions && !showWorkingIndicator && !hasHeadItems) {
+    if (!hasPermissions && !showBottomBar && !hasHeadItems) {
       return null;
     }
+
+    const leftContent = showWorkingIndicator ? (
+      <WorkingIndicator />
+    ) : showCopyButton ? (
+      <TurnCopyButton getContent={() => latestTurnContent} />
+    ) : null;
 
     return (
       <View style={stylesheet.contentWrapper}>
@@ -538,9 +539,12 @@ export function AgentStreamView({
               })
             : null}
 
-          {showWorkingIndicator ? (
-            <View style={stylesheet.workingIndicatorWrapper}>
-              <WorkingIndicator />
+          {showBottomBar ? (
+            <View style={stylesheet.bottomBarWrapper}>
+              <View style={stylesheet.bottomBarLeft}>{leftContent}</View>
+              <View style={stylesheet.bottomBarRight}>
+                {isVoiceMode ? <VoiceCompactIndicator /> : null}
+              </View>
             </View>
           ) : null}
         </View>
@@ -553,14 +557,27 @@ export function AgentStreamView({
     streamHead,
     renderStreamItemContent,
     tightGap,
+    showBottomBar,
+    showCopyButton,
+    latestTurnContent,
+    isVoiceMode,
   ]);
 
   const flatListExtraData = useMemo(
     () => ({
       pendingPermissionCount: pendingPermissionItems.length,
       showWorkingIndicator,
+      showBottomBar,
+      showCopyButton,
+      isVoiceMode,
     }),
-    [pendingPermissionItems.length, showWorkingIndicator]
+    [
+      pendingPermissionItems.length,
+      showWorkingIndicator,
+      showBottomBar,
+      showCopyButton,
+      isVoiceMode,
+    ]
   );
 
   // FlatList's ListHeaderComponent renders at the *bottom* when inverted.
@@ -1178,11 +1195,23 @@ const stylesheet = StyleSheet.create((theme) => ({
   listHeaderContent: {
     gap: theme.spacing[3],
   },
-  workingIndicatorWrapper: {
-    alignItems: "flex-start",
+  bottomBarWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingLeft: 3,
+    paddingRight: 3,
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[2],
+    gap: theme.spacing[2],
+  },
+  bottomBarLeft: {
+    flex: 1,
+    alignItems: "flex-start",
+  },
+  bottomBarRight: {
+    flexShrink: 0,
+    alignItems: "flex-end",
   },
   workingIndicatorBubble: {
     flexDirection: "row",

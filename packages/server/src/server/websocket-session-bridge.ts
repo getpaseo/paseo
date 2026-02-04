@@ -1,5 +1,4 @@
 import type { IncomingMessage } from "http";
-import type { WebSocket } from "ws";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "path";
 import {
@@ -22,9 +21,30 @@ import type pino from "pino";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 
+function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffer {
+  if (typeof data === "string") return Buffer.from(data, "utf8");
+  if (Array.isArray(data)) {
+    return Buffer.concat(
+      data.map((item) =>
+        Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer)
+      )
+    );
+  }
+  if (Buffer.isBuffer(data)) return data;
+  return Buffer.from(data as ArrayBuffer);
+}
+
+type WebSocketLike = {
+  readyState: number;
+  send: (data: string) => void;
+  close: (code?: number, reason?: string) => void;
+  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
+};
+
 export class WebSocketSessionBridge {
   private readonly logger: pino.Logger;
-  private readonly sessions: Map<WebSocket, Session> = new Map();
+  private readonly sessions: Map<WebSocketLike, Session> = new Map();
   private clientIdCounter = 0;
   private readonly serverId: string;
   private readonly agentManager: AgentManager;
@@ -98,7 +118,7 @@ export class WebSocketSessionBridge {
     return this.sessions.size;
   }
 
-  public async attach(ws: WebSocket, _request: IncomingMessage): Promise<void> {
+  public async attach(ws: WebSocketLike, _request: IncomingMessage): Promise<void> {
     const clientId = `client-${++this.clientIdCounter}`;
     const connectionLogger = this.logger.child({ clientId });
 
@@ -156,7 +176,7 @@ export class WebSocketSessionBridge {
     });
   }
 
-  private async detach(ws: WebSocket, connectionLogger: pino.Logger, clientId: string): Promise<void> {
+  private async detach(ws: WebSocketLike, connectionLogger: pino.Logger, clientId: string): Promise<void> {
     const session = this.sessions.get(ws);
     if (!session) return;
 
@@ -169,9 +189,13 @@ export class WebSocketSessionBridge {
     this.sessions.delete(ws);
   }
 
-  private async handleRawMessage(ws: WebSocket, data: Buffer | ArrayBuffer | Buffer[]): Promise<void> {
+  private async handleRawMessage(
+    ws: WebSocketLike,
+    data: Buffer | ArrayBuffer | Buffer[] | string
+  ): Promise<void> {
     try {
-      const parsed = JSON.parse(data.toString());
+      const buffer = bufferFromWsData(data);
+      const parsed = JSON.parse(buffer.toString());
       const parsedMessage = WSInboundMessageSchema.safeParse(parsed);
       if (!parsedMessage.success) {
         const requestInfo = extractRequestInfoFromUnknownWsInbound(parsed);
@@ -267,13 +291,7 @@ export class WebSocketSessionBridge {
       let parsedPayload: unknown = null;
 
       try {
-        const buffer = Array.isArray(data)
-          ? Buffer.concat(
-              data.map((item) => (Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer)))
-            )
-          : Buffer.isBuffer(data)
-            ? data
-            : Buffer.from(data as ArrayBuffer);
+        const buffer = bufferFromWsData(data);
         rawPayload = buffer.toString();
         parsedPayload = JSON.parse(rawPayload);
       } catch (payloadError) {
@@ -328,7 +346,7 @@ export class WebSocketSessionBridge {
     }
   }
 
-  private sendToClient(ws: WebSocket, message: WSOutboundMessage): void {
+  private sendToClient(ws: WebSocketLike, message: WSOutboundMessage): void {
     // WebSocket.OPEN = 1
     if (ws.readyState === 1) {
       ws.send(JSON.stringify(message));
@@ -457,7 +475,7 @@ export class WebSocketSessionBridge {
     reason: "finished" | "error" | "permission";
   }): void {
     const clientEntries: Array<{
-      ws: WebSocket;
+      ws: WebSocketLike;
       state: {
         deviceType: "web" | "mobile" | null;
         focusedAgentId: string | null;

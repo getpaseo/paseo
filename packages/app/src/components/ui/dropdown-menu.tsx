@@ -208,7 +208,7 @@ export function DropdownMenuTrigger({
       collapsable={false}
       disabled={disabled}
       onPress={handlePress}
-      style={({ pressed, hovered }) => {
+      style={({ pressed, hovered = false }) => {
         if (typeof style === "function") {
           return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
         }

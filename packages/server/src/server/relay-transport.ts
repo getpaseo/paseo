@@ -1,15 +1,32 @@
+/// <reference lib="dom" />
+import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import type pino from "pino";
+import {
+  createDaemonChannel,
+  type EncryptedChannel,
+  type Transport as RelayTransport,
+} from "@paseo/relay/e2ee";
+import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 
 type RelayTransportOptions = {
   logger: pino.Logger;
-  attachSocket: (ws: WebSocket) => Promise<void>;
+  attachSocket: (ws: RelaySocketLike) => Promise<void>;
   relayEndpoint: string; // "host:port"
   sessionId: string;
+  daemonKeyPair?: CryptoKeyPair;
 };
 
 export type RelayTransportController = {
   stop: () => Promise<void>;
+};
+
+type RelaySocketLike = {
+  readyState: number;
+  send: (data: string) => void;
+  close: (code?: number, reason?: string) => void;
+  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
 };
 
 export function startRelayTransport({
@@ -17,6 +34,7 @@ export function startRelayTransport({
   attachSocket,
   relayEndpoint,
   sessionId,
+  daemonKeyPair,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
 
@@ -44,7 +62,11 @@ export function startRelayTransport({
   const connect = (): void => {
     if (stopped) return;
 
-    const url = buildRelayWebSocketUrl(relayEndpoint, sessionId, "server");
+    const url = buildRelayWebSocketUrl({
+      endpoint: relayEndpoint,
+      sessionId,
+      role: "server",
+    });
     const socket = new WebSocket(url);
     ws = socket;
 
@@ -56,7 +78,11 @@ export function startRelayTransport({
 
       if (attached) return;
       attached = true;
-      void attachSocket(socket);
+      if (daemonKeyPair) {
+        void attachEncryptedSocket(socket, daemonKeyPair, relayLogger, attachSocket);
+      } else {
+        void attachSocket(socket);
+      }
     });
 
     socket.on("close", (code, reason) => {
@@ -90,46 +116,140 @@ export function startRelayTransport({
   return { stop };
 }
 
-function buildRelayWebSocketUrl(
-  relayEndpoint: string,
-  sessionId: string,
-  role: "server" | "client"
-): string {
-  const { host, port } = parseHostPort(relayEndpoint);
-  const protocol = port === 443 ? "wss" : "ws";
-  return `${protocol}://${host}:${port}/ws?session=${encodeURIComponent(
-    sessionId
-  )}&role=${role}`;
+async function attachEncryptedSocket(
+  socket: WebSocket,
+  daemonKeyPair: CryptoKeyPair,
+  logger: pino.Logger,
+  attachSocket: (ws: RelaySocketLike) => Promise<void>
+): Promise<void> {
+  try {
+    const relayTransport = createRelayTransportAdapter(socket);
+    const emitter = new EventEmitter();
+    const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
+      onmessage: (data) => emitter.emit("message", data),
+      onclose: (code, reason) => emitter.emit("close", code, reason),
+      onerror: (error) => {
+        logger.warn({ err: error }, "relay_e2ee_error");
+        emitter.emit("error", error);
+      },
+    });
+    const encryptedSocket = createEncryptedSocket(channel, emitter);
+    await attachSocket(encryptedSocket);
+  } catch (error) {
+    logger.warn({ err: error }, "relay_e2ee_handshake_failed");
+    try {
+      socket.close(1011, "E2EE handshake failed");
+    } catch {
+      // ignore
+    }
+  }
 }
 
-function parseHostPort(input: string): { host: string; port: number } {
-  const trimmed = input.trim();
+function createRelayTransportAdapter(socket: WebSocket): RelayTransport {
+  const relayTransport: RelayTransport = {
+    send: (data) => socket.send(data),
+    close: (code?: number, reason?: string) => socket.close(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
 
-  if (trimmed.startsWith("[")) {
-    const endIdx = trimmed.indexOf("]");
-    if (endIdx === -1) {
-      throw new Error(`Invalid relay endpoint: ${input}`);
-    }
-    const host = trimmed.slice(1, endIdx);
-    const rest = trimmed.slice(endIdx + 1);
-    if (!rest.startsWith(":")) {
-      throw new Error(`Invalid relay endpoint: ${input}`);
-    }
-    const port = Number.parseInt(rest.slice(1), 10);
-    if (!Number.isFinite(port)) {
-      throw new Error(`Invalid relay port: ${input}`);
-    }
-    return { host: `[${host}]`, port };
-  }
+  socket.on("message", (data, isBinary) => {
+    relayTransport.onmessage?.(normalizeMessageData(data, isBinary));
+  });
+  socket.on("close", (code, reason) => {
+    relayTransport.onclose?.(code, reason.toString());
+  });
+  socket.on("error", (err) => {
+    relayTransport.onerror?.(err instanceof Error ? err : new Error(String(err)));
+  });
 
-  const idx = trimmed.lastIndexOf(":");
-  if (idx === -1) {
-    throw new Error(`Invalid relay endpoint (expected host:port): ${input}`);
-  }
-  const host = trimmed.slice(0, idx);
-  const port = Number.parseInt(trimmed.slice(idx + 1), 10);
-  if (!host || !Number.isFinite(port)) {
-    throw new Error(`Invalid relay endpoint: ${input}`);
-  }
-  return { host, port };
+  return relayTransport;
 }
+
+function createEncryptedSocket(
+  channel: EncryptedChannel,
+  emitter: EventEmitter
+): RelaySocketLike {
+  let readyState = 1;
+
+  channel.setState("open");
+
+  const close = (code?: number, reason?: string) => {
+    if (readyState === 3) return;
+    readyState = 3;
+    channel.close(code, reason);
+  };
+
+  emitter.on("close", () => {
+    if (readyState === 3) return;
+    readyState = 3;
+  });
+
+  return {
+    get readyState() {
+      return readyState;
+    },
+    send: (data) => {
+      void channel.send(data).catch((error) => {
+        emitter.emit("error", error);
+      });
+    },
+    close,
+    on: (event, listener) => {
+      emitter.on(event, listener);
+    },
+    once: (event, listener) => {
+      emitter.once(event, listener);
+    },
+  };
+}
+
+function normalizeMessageData(data: unknown, isBinary: boolean): string | ArrayBuffer {
+  if (!isBinary) {
+    if (typeof data === "string") return data;
+    const buffer = bufferFromWsData(data);
+    if (buffer) return buffer.toString("utf8");
+    return String(data);
+  }
+
+  if (data instanceof ArrayBuffer) return data;
+
+  const buffer = bufferFromWsData(data);
+  if (buffer) {
+    const view = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const out = new Uint8Array(view.byteLength);
+    out.set(view);
+    return out.buffer;
+  }
+
+  return String(data);
+}
+
+function bufferFromWsData(data: unknown): Buffer | null {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) {
+    const buffers: Buffer[] = [];
+    for (const part of data) {
+      if (Buffer.isBuffer(part)) {
+        buffers.push(part);
+      } else if (part instanceof ArrayBuffer) {
+        buffers.push(Buffer.from(part));
+      } else if (ArrayBuffer.isView(part)) {
+        buffers.push(Buffer.from(part.buffer, part.byteOffset, part.byteLength));
+      } else if (typeof part === "string") {
+        buffers.push(Buffer.from(part, "utf8"));
+      } else {
+        return null;
+      }
+    }
+    return Buffer.concat(buffers);
+  }
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return null;
+}
+
+// buildRelayWebSocketUrl + parseHostPort live in ../shared/daemon-endpoints.ts

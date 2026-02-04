@@ -72,15 +72,11 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
     const sessionId = url.searchParams.get("session")!;
     const role = url.searchParams.get("role") as ConnectionRole;
 
-    const connection = wrapWebSocket(ws);
+    const connection = wrapWebSocket(ws, role);
     relay.addConnection(sessionId, role, connection);
 
-    ws.on("message", (data) => {
-      const message =
-        data instanceof Buffer
-          ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-          : String(data);
-      relay.forward(sessionId, role, message as string | ArrayBuffer);
+    ws.on("message", (data, isBinary) => {
+      relay.forward(sessionId, role, normalizeWsMessageForRelay(data, isBinary));
     });
 
     ws.on("close", () => {
@@ -120,9 +116,9 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
   };
 }
 
-function wrapWebSocket(ws: NodeWebSocket): RelayConnection {
+function wrapWebSocket(ws: NodeWebSocket, role: ConnectionRole): RelayConnection {
   return {
-    role: "server",
+    role,
     send: (data) => {
       if (ws.readyState === NodeWebSocket.OPEN) {
         ws.send(data);
@@ -132,4 +128,53 @@ function wrapWebSocket(ws: NodeWebSocket): RelayConnection {
       ws.close(code, reason);
     },
   };
+}
+
+function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const out = new Uint8Array(buffer.byteLength);
+  out.set(buffer);
+  return out.buffer;
+}
+
+function normalizeWsMessageForRelay(data: unknown, isBinary: boolean): string | ArrayBuffer {
+  if (isBinary) {
+    return normalizeWsBinaryMessage(data);
+  }
+  return normalizeWsTextMessage(data);
+}
+
+function normalizeWsBinaryMessage(data: unknown): ArrayBuffer {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  return bufferToArrayBuffer(bufferFromWsData(data));
+}
+
+function normalizeWsTextMessage(data: unknown): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  return bufferFromWsData(data).toString("utf8");
+}
+
+function bufferFromWsData(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data.map(bufferFromWsData));
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data);
+  }
+
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+
+  if (typeof data === "string") {
+    return Buffer.from(data, "utf8");
+  }
+
+  return Buffer.from(String(data), "utf8");
 }
