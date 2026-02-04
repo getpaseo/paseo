@@ -49,11 +49,40 @@ let shellConfig: { type: ShellType } = { type: "bash" };
 const ANSI_ESCAPE_REGEX =
   /\u001B[\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
+const EXIT_CODE_MARKER = "__PASEO_EXIT_CODE__:";
+
 function stripAnsiSequences(value: string): string {
   if (!value) {
     return "";
   }
   return value.replace(ANSI_ESCAPE_REGEX, "");
+}
+
+export function extractExitCodeMarkerFromOutput(output: string): {
+  exitCode: number | null;
+  output: string;
+} {
+  if (!output) {
+    return { exitCode: null, output };
+  }
+
+  let exitCode: number | null = null;
+  const kept: string[] = [];
+
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(EXIT_CODE_MARKER)) {
+      const codeStr = trimmed.slice(EXIT_CODE_MARKER.length).trim();
+      const parsed = parseInt(codeStr, 10);
+      if (Number.isFinite(parsed)) {
+        exitCode = parsed;
+      }
+      continue;
+    }
+    kept.push(line);
+  }
+
+  return { exitCode, output: kept.join("\n").trimEnd() };
 }
 
 export function setShellConfig(config: { type: string }): void {
@@ -559,7 +588,7 @@ export async function executeCommand({
 
   // Execute command via respawn-pane with bash -c wrapper
   // This ensures all bash features work (pipes, operators, etc.)
-  const wrappedCommand = `bash -c 'cd "${expandedPath}" && ${command.replace(/'/g, "'\\''")} 2>&1; exit $?'`;
+  const wrappedCommand = `bash -c 'cd "${expandedPath}" && ${command.replace(/'/g, "'\\''")} 2>&1; code=$?; echo ${EXIT_CODE_MARKER}$code; exit $code'`;
   await executeTmux(["respawn-pane", "-t", pane.id, "-k", wrappedCommand]);
 
   // Wait for command to finish or reach stability
@@ -584,6 +613,8 @@ export async function executeCommand({
     if (isDead) {
       // Command finished - capture output and exit code
       output = await capturePaneContent(pane.id, 1000, false);
+      const extracted = extractExitCodeMarkerFromOutput(output);
+      output = extracted.output;
       const exitCodeStr = await executeTmux([
         "display-message",
         "-p",
@@ -592,7 +623,7 @@ export async function executeCommand({
         "#{pane_dead_status}",
       ]);
       const parsed = parseInt(exitCodeStr, 10);
-      exitCode = Number.isFinite(parsed) ? parsed : null;
+      exitCode = Number.isFinite(parsed) ? parsed : extracted.exitCode;
       break;
     }
 

@@ -6,6 +6,7 @@ import {
   listPanes,
   findWindowByName,
   capturePaneContent,
+  extractExitCodeMarkerFromOutput,
   sendText as tmuxSendText,
   sendKeys as tmuxSendKeys,
   renameWindow,
@@ -382,7 +383,9 @@ export class TerminalManager {
       // Use stored values for dead panes, current values for live ones
       const workingDirectory = await getStoredWorkingDirectory(window.id, paneId);
       const currentCommand = await getStoredCommand(window.id, paneId);
-      const lastLines = await capturePaneContent(paneId, 5, false);
+      const rawLastLines = await capturePaneContent(paneId, 5, false);
+      const lastLinesExtracted = extractExitCodeMarkerFromOutput(rawLastLines);
+      const lastLines = lastLinesExtracted.output;
 
       let exitCode: number | null = null;
       if (isDead) {
@@ -394,7 +397,7 @@ export class TerminalManager {
           "#{pane_dead_status}",
         ]);
         const parsed = parseInt(exitCodeStr, 10);
-        exitCode = Number.isFinite(parsed) ? parsed : null;
+        exitCode = Number.isFinite(parsed) ? parsed : lastLinesExtracted.exitCode;
       }
 
       commands.push({
@@ -427,9 +430,11 @@ export class TerminalManager {
       throw new Error(`Session '${this.sessionName}' not found.`);
     }
 
-    const paneId = `${commandId}.0`;
+      const paneId = `${commandId}.0`;
 
-    const output = await capturePaneContent(paneId, lines, false);
+    const rawOutput = await capturePaneContent(paneId, lines, false);
+    const extracted = extractExitCodeMarkerFromOutput(rawOutput);
+    const output = extracted.output;
 
     const deadStatus = await executeTmux([
       "display-message",
@@ -450,7 +455,7 @@ export class TerminalManager {
         "#{pane_dead_status}",
       ]);
       const parsed = parseInt(exitCodeStr, 10);
-      exitCode = Number.isFinite(parsed) ? parsed : null;
+      exitCode = Number.isFinite(parsed) ? parsed : extracted.exitCode;
     }
 
     return {
