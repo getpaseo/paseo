@@ -16,6 +16,7 @@ import {
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { Pencil, Eye, SquareTerminal, Search, Wrench, X } from "lucide-react-native";
+import { extractPrincipalParam } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent, useToolCallDetails } from "./tool-call-details";
 
 // ----- Types -----
@@ -24,6 +25,7 @@ export interface ToolCallSheetData {
   toolName: string;
   kind?: string;
   status?: "executing" | "completed" | "failed";
+  cwd?: string;
   args?: unknown;
   result?: unknown;
   error?: unknown;
@@ -138,13 +140,14 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { toolName, kind, args, result, error } = data;
+  const { toolName, kind, cwd, args, result, error } = data;
 
   const IconComponent = kind
     ? toolKindIcons[kind.toLowerCase()] || Wrench
     : Wrench;
 
   const { display, errorText } = useToolCallDetails({ toolName, args, result, error });
+  const principalParam = useMemo(() => extractPrincipalParam(args, cwd), [args, cwd]);
 
   return (
     <View style={styles.container}>
@@ -152,9 +155,16 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <IconComponent size={20} color={styles.headerIcon.color} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {display.toolName}
-          </Text>
+          <View style={styles.headerTextColumn}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {display.toolName}
+            </Text>
+            {principalParam ? (
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                {principalParam}
+              </Text>
+            ) : null}
+          </View>
         </View>
         <Pressable onPress={onClose} style={styles.closeButton}>
           <X size={20} color={styles.closeIcon.color} />
@@ -200,6 +210,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     flex: 1,
   },
+  headerTextColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
   headerIcon: {
     color: theme.colors.foreground,
   },
@@ -208,6 +222,11 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
     flex: 1,
+  },
+  headerSubtitle: {
+    marginTop: theme.spacing[1],
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   closeButton: {
     padding: theme.spacing[2],
@@ -220,8 +239,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   contentContainer: {
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[8],
+    padding: 0,
   },
 }));

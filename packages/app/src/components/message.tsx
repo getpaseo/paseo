@@ -389,8 +389,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderTopWidth: 0,
     borderColor: theme.colors.borderAccent,
     backgroundColor: theme.colors.surface0,
-    padding: theme.spacing[2],
-    gap: theme.spacing[2],
+    padding: 0,
+    gap: 0,
     flexShrink: 1,
     minWidth: 0,
   },
@@ -781,6 +781,9 @@ interface TodoListCardProps {
 }
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
+  detailsWrapper: {
+    padding: theme.spacing[2],
+  },
   list: {
     gap: theme.spacing[1],
   },
@@ -832,26 +835,28 @@ export const TodoListCard = memo(function TodoListCard({
 
   const renderDetails = useCallback(() => {
     return (
-      <View style={todoListCardStylesheet.list}>
-        {items.length === 0 ? (
-          <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
-        ) : (
-          items.map((item, idx) => (
-            <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
-              <View style={todoListCardStylesheet.radioOuter}>
-                {item.completed ? <View style={todoListCardStylesheet.radioInner} /> : null}
+      <View style={todoListCardStylesheet.detailsWrapper}>
+        <View style={todoListCardStylesheet.list}>
+          {items.length === 0 ? (
+            <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
+          ) : (
+            items.map((item, idx) => (
+              <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
+                <View style={todoListCardStylesheet.radioOuter}>
+                  {item.completed ? <View style={todoListCardStylesheet.radioInner} /> : null}
+                </View>
+                <Text
+                  style={[
+                    todoListCardStylesheet.itemText,
+                    item.completed && todoListCardStylesheet.itemTextCompleted,
+                  ]}
+                >
+                  {item.text}
+                </Text>
               </View>
-              <Text
-                style={[
-                  todoListCardStylesheet.itemText,
-                  item.completed && todoListCardStylesheet.itemTextCompleted,
-                ]}
-              >
-                {item.text}
-              </Text>
-            </View>
-          ))
-        )}
+            ))
+          )}
+        </View>
       </View>
     );
   }, [items]);
@@ -1099,12 +1104,13 @@ export const ToolCall = memo(function ToolCall({
         args,
         result,
         error,
+        cwd,
       });
     } else {
       // Desktop: toggle inline expansion
       setIsExpanded((prev) => !prev);
     }
-  }, [isMobile, openToolCall, toolName, kind, status, args, result, error]);
+  }, [isMobile, openToolCall, toolName, kind, status, args, result, error, cwd]);
 
   useEffect(() => {
     if (isMobile || !isPerfLoggingEnabled()) {
@@ -1136,15 +1142,7 @@ export const ToolCall = memo(function ToolCall({
   // Render inline details for desktop
   const renderDetails = useCallback(() => {
     if (isMobile) return null;
-    return (
-      <View style={toolCallInlineStyles.detailsContainer}>
-        <ToolCallDetailsContent
-          display={display}
-          errorText={errorText}
-          maxHeight={400}
-        />
-      </View>
-    );
+    return <ToolCallDetailsContent display={display} errorText={errorText} maxHeight={400} />;
   }, [isMobile, display, errorText]);
 
   return (
@@ -1169,10 +1167,3 @@ export const ToolCall = memo(function ToolCall({
     />
   );
 });
-
-const toolCallInlineStyles = StyleSheet.create((theme) => ({
-  detailsContainer: {
-    paddingTop: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-  },
-}));
