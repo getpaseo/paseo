@@ -4,6 +4,7 @@ import { ScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
+import { getCodeInsets } from "./code-insets";
 
 interface DiffViewerProps {
   diffLines: DiffLine[];
@@ -86,64 +87,70 @@ export function DiffViewer({ diffLines, maxHeight = 280, emptyLabel = "No change
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  verticalScroll: {},
-  verticalContent: {
-    flexGrow: 1,
-  },
-  horizontalContent: {
-    flexDirection: "column" as const,
-  },
-  linesContainer: {
-    alignSelf: "flex-start",
-  },
-  line: {
-    minWidth: "100%",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-  },
-  lineText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foreground,
-  },
-  headerLine: {
-    backgroundColor: theme.colors.surface2,
-  },
-  headerText: {
-    color: theme.colors.foregroundMuted,
-  },
-  addLine: {
-    backgroundColor: "rgba(46, 160, 67, 0.15)",
-  },
-  addText: {
-    color: theme.colors.foreground,
-  },
-  removeLine: {
-    backgroundColor: "rgba(248, 81, 73, 0.1)",
-  },
-  removeText: {
-    color: theme.colors.foreground,
-  },
-  addHighlight: {
-    backgroundColor: "rgba(46, 160, 67, 0.4)",
-  },
-  removeHighlight: {
-    backgroundColor: "rgba(248, 81, 73, 0.35)",
-  },
-  contextLine: {
-    backgroundColor: theme.colors.surface2,
-  },
-  contextText: {
-    color: theme.colors.foregroundMuted,
-  },
-  emptyState: {
-    padding: theme.spacing[4],
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
-  },
-  emptyText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-}));
+const styles = StyleSheet.create((theme) => {
+  const insets = getCodeInsets(theme);
+
+  return {
+    verticalScroll: {},
+    verticalContent: {
+      flexGrow: 1,
+      paddingBottom: insets.extraBottom,
+    },
+    horizontalContent: {
+      flexDirection: "column" as const,
+      paddingRight: insets.extraRight,
+    },
+    linesContainer: {
+      alignSelf: "flex-start",
+    },
+    line: {
+      minWidth: "100%",
+      paddingHorizontal: insets.paddingX,
+      paddingVertical: insets.paddingY,
+    },
+    lineText: {
+      fontFamily: Fonts.mono,
+      fontSize: theme.fontSize.xs,
+      color: theme.colors.foreground,
+    },
+    headerLine: {
+      backgroundColor: theme.colors.surface2,
+    },
+    headerText: {
+      color: theme.colors.foregroundMuted,
+    },
+    addLine: {
+      backgroundColor: "rgba(46, 160, 67, 0.15)",
+    },
+    addText: {
+      color: theme.colors.foreground,
+    },
+    removeLine: {
+      backgroundColor: "rgba(248, 81, 73, 0.1)",
+    },
+    removeText: {
+      color: theme.colors.foreground,
+    },
+    addHighlight: {
+      backgroundColor: "rgba(46, 160, 67, 0.4)",
+    },
+    removeHighlight: {
+      backgroundColor: "rgba(248, 81, 73, 0.35)",
+    },
+    contextLine: {
+      backgroundColor: theme.colors.surface2,
+    },
+    contextText: {
+      color: theme.colors.foregroundMuted,
+    },
+    emptyState: {
+      padding: theme.spacing[4],
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+    },
+    emptyText: {
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foregroundMuted,
+    },
+  };
+});

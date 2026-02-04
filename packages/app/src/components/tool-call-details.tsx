@@ -11,6 +11,7 @@ import {
   type ToolCallDisplay,
 } from "@/utils/tool-call-parsers";
 import { DiffViewer } from "./diff-viewer";
+import { getCodeInsets } from "./code-insets";
 
 // ---- Types ----
 
@@ -157,46 +158,37 @@ export function ToolCallDetailsContent({
   }, [display]);
 
   const sections: ReactNode[] = [];
+  const isFullBleed = display.type === "edit" || display.type === "shell";
 
   if (display.type === "shell") {
+    const combinedText = `$ ${display.command}${display.output ? `\n${display.output}` : ""}`;
     sections.push(
       <View key="shell" style={styles.section}>
-        <Text style={styles.sectionTitle}>Command</Text>
-        <ScrollView
-          horizontal
-          nestedScrollEnabled
-          style={styles.jsonScroll}
-          contentContainerStyle={styles.jsonContent}
-          showsHorizontalScrollIndicator={true}
-        >
-          <Text selectable style={styles.scrollText}>{display.command}</Text>
-        </ScrollView>
-        {display.output ? (
+        <View style={styles.diffContainer}>
           <ScrollView
-            style={[styles.scrollArea, { maxHeight }]}
-            contentContainerStyle={styles.scrollContent}
+            style={[styles.codeVerticalScroll, { maxHeight }]}
+            contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
+            showsVerticalScrollIndicator
           >
             <ScrollView
               horizontal
               nestedScrollEnabled
-              showsHorizontalScrollIndicator={true}
+              showsHorizontalScrollIndicator
+              contentContainerStyle={styles.codeHorizontalContent}
             >
-              <Text selectable style={styles.scrollText}>{display.output}</Text>
+              <View style={styles.codeLine}>
+                <Text selectable style={styles.scrollText}>{combinedText}</Text>
+              </View>
             </ScrollView>
           </ScrollView>
-        ) : null}
+        </View>
       </View>
     );
   } else if (display.type === "edit") {
     sections.push(
       <View key="edit" style={styles.section}>
-        <Text style={styles.sectionTitle}>File</Text>
-        <View style={styles.fileBadge}>
-          <Text style={styles.fileBadgeText}>{display.filePath}</Text>
-        </View>
-        {diffLines && diffLines.length > 0 ? (
+        {diffLines ? (
           <View style={styles.diffContainer}>
             <DiffViewer diffLines={diffLines} maxHeight={maxHeight} />
           </View>
@@ -206,10 +198,6 @@ export function ToolCallDetailsContent({
   } else if (display.type === "read") {
     sections.push(
       <View key="read" style={styles.section}>
-        <Text style={styles.sectionTitle}>File</Text>
-        <View style={styles.fileBadge}>
-          <Text style={styles.fileBadgeText}>{display.filePath}</Text>
-        </View>
         {(display.offset !== undefined || display.limit !== undefined) ? (
           <Text style={styles.rangeText}>
             {display.offset !== undefined ? `Offset: ${display.offset}` : ""}
@@ -326,7 +314,11 @@ export function ToolCallDetailsContent({
     );
   }
 
-  return <View style={styles.container}>{sections}</View>;
+  return (
+    <View style={isFullBleed ? styles.fullBleedContainer : styles.paddedContainer}>
+      {sections}
+    </View>
+  );
 }
 
 // ---- Hook for parsing tool call data ----
@@ -362,10 +354,18 @@ export function useToolCallDetails(data: ToolCallDetailsData) {
 
 // ---- Styles ----
 
-const styles = StyleSheet.create((theme) => ({
-  container: {
-    gap: theme.spacing[4],
-  },
+const styles = StyleSheet.create((theme) => {
+  const insets = getCodeInsets(theme);
+
+  return {
+    paddedContainer: {
+      gap: theme.spacing[4],
+      padding: theme.spacing[2],
+    },
+    fullBleedContainer: {
+      gap: theme.spacing[2],
+      padding: 0,
+    },
   groupHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -391,20 +391,6 @@ const styles = StyleSheet.create((theme) => ({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  fileBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.borderRadius.base,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-  },
-  fileBadgeText: {
-    color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.xs,
-  },
   rangeText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
@@ -415,6 +401,19 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     overflow: "hidden",
     backgroundColor: theme.colors.surface2,
+  },
+  codeVerticalScroll: {},
+  codeVerticalContent: {
+    flexGrow: 1,
+    paddingBottom: insets.extraBottom,
+  },
+  codeHorizontalContent: {
+    paddingRight: insets.extraRight,
+  },
+  codeLine: {
+    minWidth: "100%",
+    paddingHorizontal: insets.paddingX,
+    paddingVertical: insets.paddingY,
   },
   scrollArea: {
     borderWidth: theme.borderWidth[1],
@@ -451,4 +450,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontStyle: "italic",
   },
-}));
+  };
+});
