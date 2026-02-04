@@ -18,12 +18,6 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
 import { useTempClaudeConfigDir } from "../../test-utils/claude-config.js";
-import {
-  hydrateStreamState,
-  type StreamItem,
-  type AgentToolCallData,
-  isAgentToolCallItem,
-} from "../../../../../app/src/types/stream.js";
 import type { AgentStreamEventPayload } from "../../messages.js";
 import type {
   AgentProvider,
@@ -40,6 +34,9 @@ const createHTTPServer = createServer;
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+
+type StreamItem = any;
+type AgentToolCallData = any;
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "claude-agent-e2e-"));
@@ -231,6 +228,10 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
   "ClaudeAgentClient (SDK integration)",
   () => {
   const logger = createTestLogger();
+  let hydrateStreamState: (updates: unknown[]) => unknown = () => {
+    throw new Error("hydrateStreamState not initialized");
+  };
+  let isAgentToolCallItem: (item: unknown) => boolean = () => false;
   let agentMcpServer: AgentMcpServerHandle;
   let restoreClaudeConfigDir: (() => void) | null = null;
   const buildConfig = (
@@ -252,6 +253,11 @@ async function startAgentMcpServer(): Promise<AgentMcpServerHandle> {
 
   beforeAll(() => {
     restoreClaudeConfigDir = useTempClaudeConfigDir();
+  });
+  beforeAll(async () => {
+    const stream = await import("../../../../../app/src/types/stream.js");
+    hydrateStreamState = stream.hydrateStreamState as typeof hydrateStreamState;
+    isAgentToolCallItem = stream.isAgentToolCallItem as typeof isAgentToolCallItem;
   });
   beforeAll(async () => {
     agentMcpServer = await startAgentMcpServer();

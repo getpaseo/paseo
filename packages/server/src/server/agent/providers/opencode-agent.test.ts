@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
@@ -74,7 +75,18 @@ async function collectTurnEvents(
   return result;
 }
 
-describe("OpenCodeAgentClient", () => {
+function isBinaryInstalled(binary: string): boolean {
+  try {
+    const out = execFileSync("which", [binary], { encoding: "utf8" }).trim();
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const hasOpenCode = isBinaryInstalled("opencode");
+
+(hasOpenCode ? describe : describe.skip)("OpenCodeAgentClient", () => {
   const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
     provider: "opencode",
