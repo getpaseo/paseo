@@ -162,6 +162,32 @@ describe("AgentStorage", () => {
     expect(updatedRecord?.lastStatus).toBe("running");
   });
 
+  test("applySnapshot preserves archivedAt (soft-delete) status", async () => {
+    const agentId = "agent-archived";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "idle",
+      })
+    );
+
+    const archivedAt = "2025-01-03T00:00:00.000Z";
+    const recordBeforeArchive = await storage.get(agentId);
+    expect(recordBeforeArchive).not.toBeNull();
+    await storage.upsert({ ...recordBeforeArchive!, archivedAt });
+
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2025-01-04T00:00:00.000Z"),
+      })
+    );
+
+    const recordAfterSnapshot = await storage.get(agentId);
+    expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
+  });
+
   test("stores titles independently of snapshots", async () => {
     await storage.applySnapshot(
       createManagedAgent({
