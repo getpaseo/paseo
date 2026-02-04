@@ -159,12 +159,15 @@ export function ToolCallDetailsContent({
 
   const sections: ReactNode[] = [];
   const isFullBleed = display.type === "edit" || display.type === "shell";
+  const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
 
   if (display.type === "shell") {
-    const hasOutput = Boolean(display.output);
+    const command = display.command.replace(/\n+$/, "");
+    const output = display.output.replace(/^\n+/, "");
+    const hasOutput = output.length > 0;
     sections.push(
       <View key="shell" style={styles.section}>
-        <View style={styles.diffContainer}>
+        <View style={codeBlockStyle}>
           <ScrollView
             style={[styles.codeVerticalScroll, { maxHeight }]}
             contentContainerStyle={styles.codeVerticalContent}
@@ -180,8 +183,8 @@ export function ToolCallDetailsContent({
               <View style={styles.codeLine}>
                 <Text selectable style={styles.scrollText}>
                   <Text style={styles.shellPrompt}>$ </Text>
-                  {display.command}
-                  {hasOutput ? `\n${display.output}` : ""}
+                  {command}
+                  {hasOutput ? `\n\n${output}` : ""}
                 </Text>
               </View>
             </ScrollView>
@@ -193,7 +196,7 @@ export function ToolCallDetailsContent({
     sections.push(
       <View key="edit" style={styles.section}>
         {diffLines ? (
-          <View style={styles.diffContainer}>
+          <View style={codeBlockStyle}>
             <DiffViewer diffLines={diffLines} maxHeight={maxHeight} />
           </View>
         ) : null}
@@ -399,13 +402,19 @@ const styles = StyleSheet.create((theme) => {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
-  diffContainer: {
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.base,
-    overflow: "hidden",
-    backgroundColor: theme.colors.surface2,
-  },
+    diffContainer: {
+      borderWidth: theme.borderWidth[1],
+      borderColor: theme.colors.border,
+      borderRadius: theme.borderRadius.base,
+      overflow: "hidden",
+      backgroundColor: theme.colors.surface2,
+    },
+    fullBleedBlock: {
+      borderWidth: 0,
+      borderRadius: 0,
+      overflow: "hidden",
+      backgroundColor: theme.colors.surface2,
+    },
   codeVerticalScroll: {},
   codeVerticalContent: {
     flexGrow: 1,
