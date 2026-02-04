@@ -127,14 +127,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     detectionGracePeriod: 200,
   });
 
-  // Update voice detection flags whenever they change
-  useEffect(() => {
-    activeSession?.methods?.setVoiceDetectionFlags(
-      realtimeAudio.isDetecting,
-      realtimeAudio.isSpeaking
-    );
-  }, [activeSession?.methods, realtimeAudio.isDetecting, realtimeAudio.isSpeaking]);
-
   useEffect(() => {
     realtimeSessionRef.current = activeSession;
   }, [activeSession]);
@@ -196,7 +188,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       const session = realtimeSessionRef.current;
       session?.audioPlayer?.stop();
       await realtimeAudio.stop();
-      session?.methods?.setVoiceDetectionFlags(false, false);
       setIsVoiceMode(false);
       setActiveServerId(null);
       console.log("[Voice] Mode disabled");

@@ -2,22 +2,120 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
-const PersistedConfigSchema = z.object({
-  listen: z.string().optional(),
-  cors: z
-    .object({
-      allowedOrigins: z.array(z.string()).default([]),
-    })
-    .default({}),
-  log: z
-    .object({
-      level: z
-        .enum(["trace", "debug", "info", "warn", "error", "fatal"])
-        .optional(),
-      format: z.enum(["pretty", "json"]).optional(),
-    })
-    .optional(),
-});
+const LogConfigSchema = z
+  .object({
+    level: z
+      .enum(["trace", "debug", "info", "warn", "error", "fatal"])
+      .optional(),
+    format: z.enum(["pretty", "json"]).optional(),
+  })
+  .strict();
+
+const ProviderCredentialsSchema = z
+  .object({
+    apiKey: z.string().min(1).optional(),
+  })
+  .strict();
+
+const ProvidersSchema = z
+  .object({
+    openai: ProviderCredentialsSchema.optional(),
+    openrouter: ProviderCredentialsSchema.optional(),
+  })
+  .strict();
+
+const FeatureDictationSchema = z
+  .object({
+    stt: z
+      .object({
+        provider: z.enum(["openai"]).optional(),
+        model: z.string().min(1).optional(),
+        confidenceThreshold: z.number().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const FeatureVoiceModeSchema = z
+  .object({
+    llm: z
+      .object({
+        provider: z.enum(["openrouter"]).optional(),
+        model: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    stt: z
+      .object({
+        provider: z.enum(["openai"]).optional(),
+        model: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    tts: z
+      .object({
+        provider: z.enum(["openai"]).optional(),
+        model: z.enum(["tts-1", "tts-1-hd"]).optional(),
+        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export const PersistedConfigSchema = z
+  .object({
+    // v1 schema marker
+    version: z.literal(1).optional(),
+
+    // v1 config layout
+    daemon: z
+      .object({
+        listen: z.string().optional(),
+        allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
+        mcp: z
+          .object({
+            enabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        cors: z
+          .object({
+            allowedOrigins: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
+        relay: z
+          .object({
+            enabled: z.boolean().optional(),
+            endpoint: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+
+    app: z
+      .object({
+        baseUrl: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+
+    providers: ProvidersSchema.optional(),
+    features: z
+      .object({
+        dictation: FeatureDictationSchema.optional(),
+        voiceMode: FeatureVoiceModeSchema.optional(),
+      })
+      .strict()
+      .optional(),
+
+    log: LogConfigSchema.optional(),
+  })
+  .strict();
 
 export type PersistedConfig = z.infer<typeof PersistedConfigSchema>;
 

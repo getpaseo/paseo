@@ -60,6 +60,7 @@ import type {
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
 import { acquirePidLock, releasePidLock } from "./pid-lock.js";
+import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -73,8 +74,8 @@ export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
   corsAllowedOrigins: string[];
-  agentMcpRoute: string;
-  agentMcpAllowedHosts: string[];
+  allowedHosts?: AllowedHostsConfig;
+  mcpEnabled?: boolean;
   staticDir: string;
   mcpDebug: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
@@ -83,6 +84,8 @@ export type PaseoDaemonConfig = {
   relayEndpoint?: string;
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
+  openrouterApiKey?: string | null;
+  voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
 };
@@ -104,7 +107,6 @@ export async function createPaseoDaemon(
   const connectionSessionId = randomUUID();
   let relayTransport: RelayTransportController | null = null;
 
-  const agentMcpRoute = config.agentMcpRoute;
   const staticDir = config.staticDir;
   const downloadTokenTtlMs = config.downloadTokenTtlMs ?? 60000;
 
@@ -113,6 +115,19 @@ export async function createPaseoDaemon(
   const listenTarget = parseListenString(config.listen);
 
   const app = express();
+
+  // Host allowlist / DNS rebinding protection (vite-like semantics).
+  // For non-TCP (unix sockets), skip host validation.
+  if (listenTarget.type === "tcp") {
+    app.use((req, res, next) => {
+      const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
+      if (!isHostAllowed(hostHeader, config.allowedHosts)) {
+        res.status(403).json({ error: "Invalid Host header" });
+        return;
+      }
+      next();
+    });
+  }
 
   // CORS - allow same-origin + configured origins
   const allowedOrigins = new Set([
@@ -227,45 +242,6 @@ export async function createPaseoDaemon(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
   );
 
-  const agentMcpTransports: AgentMcpTransportMap = new Map();
-  const allowedHosts = config.agentMcpAllowedHosts;
-
-  const createAgentMcpTransport = async (callerAgentId?: string) => {
-    const agentMcpServer = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      paseoHome: config.paseoHome,
-      callerAgentId,
-      logger,
-    });
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sessionId) => {
-        agentMcpTransports.set(sessionId, transport);
-        logger.debug({ sessionId }, "Agent MCP session initialized");
-      },
-      onsessionclosed: (sessionId) => {
-        agentMcpTransports.delete(sessionId);
-        logger.debug({ sessionId }, "Agent MCP session closed");
-      },
-      enableDnsRebindingProtection: true,
-      allowedHosts,
-    });
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        agentMcpTransports.delete(transport.sessionId);
-      }
-    };
-    transport.onerror = (err) => {
-      logger.error({ err }, "Agent MCP transport error");
-    };
-
-    await agentMcpServer.connect(transport);
-
-    return transport;
-  };
-
   // Create in-memory transport for Session's Agent MCP client (voice assistant tools)
   const createInMemoryAgentMcpTransport = async (): Promise<InMemoryTransport> => {
     const agentMcpServer = await createAgentMcpServer({
@@ -282,76 +258,121 @@ export async function createPaseoDaemon(
     return clientTransport;
   };
 
-  const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
-    if (config.mcpDebug) {
-      logger.debug(
-        {
-          method: req.method,
-          url: req.originalUrl,
-          sessionId: req.header("mcp-session-id"),
-          authorization: req.header("authorization"),
-          body: req.body,
+  const mcpEnabled = config.mcpEnabled ?? true;
+  if (mcpEnabled) {
+    const agentMcpRoute = "/mcp/agents";
+    const agentMcpTransports: AgentMcpTransportMap = new Map();
+
+    const createAgentMcpTransport = async (callerAgentId?: string) => {
+      const agentMcpServer = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        paseoHome: config.paseoHome,
+        callerAgentId,
+        logger,
+      });
+
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sessionId) => {
+          agentMcpTransports.set(sessionId, transport);
+          logger.debug({ sessionId }, "Agent MCP session initialized");
         },
-        "Agent MCP request"
-      );
-    }
-    try {
-      const sessionId = req.header("mcp-session-id");
-      let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
+        onsessionclosed: (sessionId) => {
+          agentMcpTransports.delete(sessionId);
+          logger.debug({ sessionId }, "Agent MCP session closed");
+        },
+        // NOTE: We enforce a Vite-like host allowlist at the app/websocket layer.
+        // StreamableHTTPServerTransport's built-in check requires exact Host header matches.
+        enableDnsRebindingProtection: false,
+      });
 
-      if (!transport) {
-        if (req.method !== "POST") {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Missing or invalid MCP session",
-            },
-            id: null,
-          });
-          return;
+      transport.onclose = () => {
+        if (transport.sessionId) {
+          agentMcpTransports.delete(transport.sessionId);
         }
-        if (!isInitializeRequest(req.body)) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Initialization request expected",
-            },
-            id: null,
-          });
-          return;
-        }
-        const callerAgentIdRaw = req.query.callerAgentId;
-        const callerAgentId =
-          typeof callerAgentIdRaw === "string"
-            ? callerAgentIdRaw
-            : Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string"
-              ? callerAgentIdRaw[0]
-              : undefined;
-        transport = await createAgentMcpTransport(callerAgentId);
-      }
+      };
+      transport.onerror = (err) => {
+        logger.error({ err }, "Agent MCP transport error");
+      };
 
-      await transport.handleRequest(req as any, res as any, req.body);
-    } catch (err) {
-      logger.error({ err }, "Failed to handle Agent MCP request");
-      if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal MCP server error",
+      await agentMcpServer.connect(transport);
+      return transport;
+    };
+
+    const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
+      if (config.mcpDebug) {
+        logger.debug(
+          {
+            method: req.method,
+            url: req.originalUrl,
+            sessionId: req.header("mcp-session-id"),
+            authorization: req.header("authorization"),
+            body: req.body,
           },
-          id: null,
-        });
+          "Agent MCP request"
+        );
       }
-    }
-  };
+      try {
+        const sessionId = req.header("mcp-session-id");
+        let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
 
-  app.post(agentMcpRoute, handleAgentMcpRequest);
-  app.get(agentMcpRoute, handleAgentMcpRequest);
-  app.delete(agentMcpRoute, handleAgentMcpRequest);
-  logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
+        if (!transport) {
+          if (req.method !== "POST") {
+            res.status(400).json({
+              jsonrpc: "2.0",
+              error: {
+                code: -32000,
+                message: "Missing or invalid MCP session",
+              },
+              id: null,
+            });
+            return;
+          }
+          if (!isInitializeRequest(req.body)) {
+            res.status(400).json({
+              jsonrpc: "2.0",
+              error: {
+                code: -32000,
+                message: "Initialization request expected",
+              },
+              id: null,
+            });
+            return;
+          }
+          const callerAgentIdRaw = req.query.callerAgentId;
+          const callerAgentId =
+            typeof callerAgentIdRaw === "string"
+              ? callerAgentIdRaw
+              : Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string"
+                ? callerAgentIdRaw[0]
+                : undefined;
+          transport = await createAgentMcpTransport(callerAgentId);
+        }
+
+        await transport.handleRequest(req as any, res as any, req.body);
+      } catch (err) {
+        logger.error({ err }, "Failed to handle Agent MCP request");
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32603,
+              message: "Internal MCP server error",
+            },
+            id: null,
+          });
+        }
+      }
+    };
+
+    app.post(agentMcpRoute, handleAgentMcpRequest);
+    app.get(agentMcpRoute, handleAgentMcpRequest);
+    app.delete(agentMcpRoute, handleAgentMcpRequest);
+    logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
+  } else {
+    logger.info("Agent MCP HTTP endpoint disabled");
+  }
 
 
   let sttService: OpenAISTT | null = null;
@@ -400,9 +421,13 @@ export async function createPaseoDaemon(
     downloadTokenStore,
     config.paseoHome,
     createInMemoryAgentMcpTransport,
-    { allowedOrigins },
+    { allowedOrigins, allowedHosts: config.allowedHosts },
     { stt: sttService, tts: ttsService },
     terminalManager,
+    {
+      openrouterApiKey: config.openrouterApiKey ?? null,
+      voiceLlmModel: config.voiceLlmModel ?? null,
+    },
     {
       openaiApiKey: config.openai?.apiKey ?? null,
       finalTimeoutMs: config.dictationFinalTimeoutMs,

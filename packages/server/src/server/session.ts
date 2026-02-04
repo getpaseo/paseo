@@ -312,6 +312,8 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private terminalSubscriptions: Map<string, () => void> = new Map();
+  private readonly openrouterApiKey: string | null;
+  private readonly voiceLlmModel: string | null;
 
   constructor(
     clientId: string,
@@ -327,6 +329,10 @@ export class Session {
     tts: OpenAITTS | null,
     terminalManager: TerminalManager | null,
     voiceConversationStore: VoiceConversationStore,
+    voice?: {
+      openrouterApiKey?: string | null;
+      voiceLlmModel?: string | null;
+    },
     dictation?: {
       openaiApiKey?: string | null;
       finalTimeoutMs?: number;
@@ -343,6 +349,8 @@ export class Session {
     this.createAgentMcpTransport = createAgentMcpTransport;
     this.terminalManager = terminalManager;
     this.voiceConversationStore = voiceConversationStore;
+    this.openrouterApiKey = voice?.openrouterApiKey ?? null;
+    this.voiceLlmModel = voice?.voiceLlmModel ?? null;
     this.abortController = new AbortController();
     this.sessionLogger = logger.child({
       module: "session",
@@ -4416,13 +4424,15 @@ export class Session {
       // Debug: dump conversation before LLM call
       await this.dumpConversation();
 
+      const openrouterApiKey =
+        this.openrouterApiKey ?? process.env.OPENROUTER_API_KEY ?? null;
       invariant(
-        process.env.OPENROUTER_API_KEY,
-        "OPENROUTER_API_KEY is required"
+        openrouterApiKey,
+        "OpenRouter API key is required (set providers.openrouter.apiKey in config.json or OPENROUTER_API_KEY)"
       );
 
       const openrouter = createOpenRouter({
-        apiKey: process.env.OPENROUTER_API_KEY,
+        apiKey: openrouterApiKey,
       });
 
       // Wait for agent MCP to initialize if needed
@@ -4440,7 +4450,7 @@ export class Session {
       const allTools = getAllTools(this.agentTools ?? undefined);
 
       const result = await streamText({
-        model: openrouter("anthropic/claude-haiku-4.5"),
+        model: openrouter(this.voiceLlmModel ?? "anthropic/claude-haiku-4.5"),
         system: getSystemPrompt(),
         providerOptions: {
           openrouter: {
