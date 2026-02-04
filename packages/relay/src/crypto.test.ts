@@ -149,7 +149,7 @@ describe("crypto", () => {
       const daemonKeyPair = await generateKeyPair();
       const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
 
-      // QR code would contain: { s: sessionId, k: daemonPubKeyB64, c: [...urls] }
+      // QR code would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
       // === CLIENT SIDE (scans QR) ===
       const clientKeyPair = await generateKeyPair();

@@ -35,9 +35,9 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
   liveIt("bridges encrypted traffic end-to-end", { timeout: 45_000 }, async () => {
     await withRetry(
       async () => {
-        const sessionId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const serverUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(sessionId)}&role=server`;
-        const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(sessionId)}&role=client`;
+        const serverId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const serverUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=server`;
+        const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(serverId)}&role=client`;
 
         // === Key setup ===
         const daemonKeyPair = await generateKeyPair();

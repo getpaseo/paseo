@@ -1,0 +1,39 @@
+appId: com.moboudra.paseo
+---
+- runFlow:
+    when:
+      visible: "Open in.*Paseo.*\\?"
+    commands:
+      - tapOn: "Open"
+
+- tapOn:
+    text: "Open"
+    optional: true
+
+- runFlow:
+    when:
+      visible: "Development servers"
+    commands:
+      - tapOn:
+          text: ".*(localhost|127\\.0\\.0\\.1|10\\.0\\.2\\.2|192\\.168\\.).*"
+          optional: true
+      - tapOn:
+          text: "Enter URL manually"
+          optional: true
+
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+
+- runFlow:
+    when:
+      visible: "Go home"
+    commands:
+      - tapOn:
+          point: "50%,20%"
+
+- extendedWaitUntil:
+    visible: ".*Online.*"
+    timeout: 90000

@@ -25,18 +25,18 @@ describe("E2E Relay with E2EE", () => {
   });
 
   it("full flow: daemon and client exchange encrypted messages through relay", async () => {
-    const sessionId = "test-session-" + Date.now();
+    const serverId = "test-session-" + Date.now();
 
     // === DAEMON SIDE ===
     // Generate keypair (public key goes in QR)
     const daemonKeyPair = await generateKeyPair();
     const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
 
-    // QR would contain: { s: sessionId, k: daemonPubKeyB64, c: [...urls] }
+    // QR would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
     // Daemon connects to relay as "server" role
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=server`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -59,7 +59,7 @@ describe("E2E Relay with E2EE", () => {
 
     // Client connects to relay as "client" role
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=client`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -149,7 +149,7 @@ describe("E2E Relay with E2EE", () => {
   });
 
   it("relay only sees opaque bytes after handshake", async () => {
-    const sessionId = "opaque-test-" + Date.now();
+    const serverId = "opaque-test-" + Date.now();
 
     // Setup keys
     const daemonKeyPair = await generateKeyPair();
@@ -172,10 +172,10 @@ describe("E2E Relay with E2EE", () => {
 
     // Connect both
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=server`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=server`
     );
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=client`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${serverId}&role=client`
     );
 
     await Promise.all([
@@ -212,7 +212,7 @@ describe("E2E Relay with E2EE", () => {
   });
 
   it("wrong key cannot decrypt", async () => {
-    const sessionId = "wrong-key-test-" + Date.now();
+    const serverId = "wrong-key-test-" + Date.now();
 
     // Setup - daemon and client with correct keys
     const daemonKeyPair = await generateKeyPair();

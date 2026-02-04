@@ -297,15 +297,24 @@ function OfferLinkListener({
 }: {
   upsertDaemonFromOfferUrl: (offerUrlOrFragment: string) => Promise<unknown>;
 }) {
+  const router = useRouter();
+
   useEffect(() => {
     let cancelled = false;
     const handleUrl = (url: string | null) => {
       if (!url) return;
       if (!url.includes("#offer=")) return;
-      void upsertDaemonFromOfferUrl(url).catch((error) => {
-        if (cancelled) return;
-        console.warn("[Linking] Failed to import pairing offer", error);
-      });
+      void upsertDaemonFromOfferUrl(url)
+        .then((profile) => {
+          if (cancelled) return;
+          const serverId = (profile as any)?.serverId;
+          if (typeof serverId !== "string" || !serverId) return;
+          router.replace({ pathname: "/", params: { serverId } });
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.warn("[Linking] Failed to import pairing offer", error);
+        });
     };
 
     void Linking.getInitialURL().then(handleUrl).catch(() => undefined);
@@ -318,7 +327,7 @@ function OfferLinkListener({
       cancelled = true;
       subscription.remove();
     };
-  }, [upsertDaemonFromOfferUrl]);
+  }, [router, upsertDaemonFromOfferUrl]);
 
   return null;
 }

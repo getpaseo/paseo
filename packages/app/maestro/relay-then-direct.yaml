@@ -1,15 +1,14 @@
-appId: com.moboudra.paseo.dev
+appId: com.moboudra.paseo
 ---
 - launchApp:
     clearState: true
 - runFlow: flows/launch.yaml
 
 - tapOn: "Paste pairing link"
-- tapOn:
-    text: "https://app.paseo.sh/#offer=..."
 - eraseText
 - inputText: ${PAIRING_OFFER_URL}
-- tapOn: "Pair"
+- tapOn:
+    point: "75%,36%"
 
 - extendedWaitUntil:
     visible: "New agent"

@@ -2,8 +2,8 @@
 # via `runFlow`. Keep this aligned with the dev build application id.
 appId: com.moboudra.paseo
 ---
-# Reusable flow to handle dev client screens after launchApp
-# Works with both release builds (no-ops) and dev builds
+# Reusable flow to handle Expo dev client screens after launch.
+# Unlike `flows/launch.yaml`, this does not assert any particular app route.
 
 # Handle dev launcher - tap localhost server (dev builds only)
 - tapOn:
@@ -25,8 +25,3 @@ appId: com.moboudra.paseo
       - tapOn:
           point: "50%,20%"
 
-- runFlow:
-    when:
-      visible: "Welcome to Paseo"
-    commands:
-      - assertVisible: "Welcome to Paseo"
