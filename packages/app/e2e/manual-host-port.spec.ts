@@ -1,9 +1,13 @@
 import { test, expect } from './fixtures';
 
-test('manual host add accepts host:port only and persists endpoints', async ({ page }) => {
+test('manual host add accepts host:port only and persists a direct connection', async ({ page }) => {
   const daemonPort = process.env.E2E_DAEMON_PORT;
+  const serverId = process.env.E2E_SERVER_ID;
   if (!daemonPort) {
     throw new Error('E2E_DAEMON_PORT is not set (expected from globalSetup).');
+  }
+  if (!serverId) {
+    throw new Error('E2E_SERVER_ID is not set (expected from globalSetup).');
   }
 
   // Override the default fixture seeding for this navigation (must run before app boot).
@@ -26,7 +30,7 @@ test('manual host add accepts host:port only and persists endpoints', async ({ p
   await expect(page.getByText('Online', { exact: true })).toBeVisible({ timeout: 15000 });
 
   await page.waitForFunction(
-    (port) => {
+    ({ port, serverId }) => {
       const raw = localStorage.getItem('@paseo:daemon-registry');
       if (!raw) return false;
       try {
@@ -34,14 +38,17 @@ test('manual host add accepts host:port only and persists endpoints', async ({ p
         if (!Array.isArray(parsed) || parsed.length !== 1) return false;
         const entry = parsed[0];
         return (
-          Array.isArray(entry?.endpoints) &&
-          entry.endpoints.some((endpoint: unknown) => endpoint === `127.0.0.1:${port}`)
+          entry?.serverId === serverId &&
+          Array.isArray(entry?.connections) &&
+          entry.connections.some(
+            (conn: any) => conn?.type === 'direct' && conn?.endpoint === `127.0.0.1:${port}`
+          )
         );
       } catch {
         return false;
       }
     },
-    daemonPort,
+    { port: daemonPort, serverId },
     { timeout: 10000 }
   );
 });

@@ -1,23 +1,29 @@
-/// <reference lib="dom" />
-import { webcrypto } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type pino from "pino";
 
+import {
+  generateKeyPair,
+  exportPublicKey,
+  exportSecretKey,
+  importPublicKey,
+  importSecretKey,
+  type KeyPair,
+} from "@paseo/relay/e2ee";
+
 const KeyPairSchema = z.object({
-  v: z.literal(1),
-  publicKeyJwk: z.record(z.any()),
-  privateKeyJwk: z.record(z.any()),
+  v: z.literal(2),
+  publicKeyB64: z.string().min(1),
+  secretKeyB64: z.string().min(1),
 });
 
 type StoredKeyPair = z.infer<typeof KeyPairSchema>;
 
 const KEYPAIR_FILENAME = "daemon-keypair.json";
-const ECDH_ALGORITHM = { name: "ECDH", namedCurve: "P-256" };
 
 export type DaemonKeyPairBundle = {
-  keyPair: CryptoKeyPair;
+  keyPair: KeyPair;
   publicKeyB64: string;
 };
 
@@ -32,33 +38,26 @@ export async function loadOrCreateDaemonKeyPair(
     try {
       const raw = readFileSync(filePath, "utf8");
       const parsed = KeyPairSchema.parse(JSON.parse(raw)) as StoredKeyPair;
-      const [publicKey, privateKey] = await Promise.all([
-        webcrypto.subtle.importKey("jwk", parsed.publicKeyJwk, ECDH_ALGORITHM, true, []),
-        webcrypto.subtle.importKey("jwk", parsed.privateKeyJwk, ECDH_ALGORITHM, true, [
-          "deriveBits",
-        ]),
-      ]);
-      const publicKeyB64 = await exportPublicKeyB64(publicKey);
+
+      const publicKey = importPublicKey(parsed.publicKeyB64);
+      const secretKey = importSecretKey(parsed.secretKeyB64);
+      const publicKeyB64 = exportPublicKey(publicKey);
+
       log?.info({ filePath }, "Loaded daemon keypair");
-      return { keyPair: { publicKey, privateKey }, publicKeyB64 };
+      return { keyPair: { publicKey, secretKey }, publicKeyB64 };
     } catch (error) {
       log?.warn({ err: error, filePath }, "Failed to load daemon keypair, regenerating");
     }
   }
 
-  const keyPair = (await webcrypto.subtle.generateKey(ECDH_ALGORITHM, true, [
-    "deriveBits",
-  ])) as CryptoKeyPair;
-  const [publicKeyJwk, privateKeyJwk, publicKeyB64] = await Promise.all([
-    webcrypto.subtle.exportKey("jwk", keyPair.publicKey),
-    webcrypto.subtle.exportKey("jwk", keyPair.privateKey),
-    exportPublicKeyB64(keyPair.publicKey),
-  ]);
+  const keyPair = generateKeyPair();
+  const publicKeyB64 = exportPublicKey(keyPair.publicKey);
+  const secretKeyB64 = exportSecretKey(keyPair.secretKey);
 
   const payload: StoredKeyPair = {
-    v: 1,
-    publicKeyJwk: publicKeyJwk as Record<string, unknown>,
-    privateKeyJwk: privateKeyJwk as Record<string, unknown>,
+    v: 2,
+    publicKeyB64,
+    secretKeyB64,
   };
 
   writeFileSync(filePath, JSON.stringify(payload, null, 2) + "\n", { mode: 0o600 });
@@ -67,7 +66,3 @@ export async function loadOrCreateDaemonKeyPair(
   return { keyPair, publicKeyB64 };
 }
 
-async function exportPublicKeyB64(publicKey: CryptoKey): Promise<string> {
-  const raw = await webcrypto.subtle.exportKey("raw", publicKey);
-  return Buffer.from(new Uint8Array(raw)).toString("base64");
-}

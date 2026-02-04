@@ -123,6 +123,7 @@ export function PairLinkModal({ visible, onClose, onSaved }: PairLinkModalProps)
       <View style={styles.field}>
         <Text style={styles.label}>Pairing link</Text>
         <InputComponent
+          testID="pair-link-input"
           value={offerUrl}
           onChangeText={setOfferUrl}
           placeholder="https://app.paseo.sh/#offer=..."
@@ -136,13 +137,14 @@ export function PairLinkModal({ visible, onClose, onSaved }: PairLinkModalProps)
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.button} onPress={handleClose} disabled={isSaving}>
+        <Pressable style={styles.button} onPress={handleClose} disabled={isSaving} testID="pair-link-cancel">
           <Text style={styles.buttonText}>Cancel</Text>
         </Pressable>
         <Pressable
           style={[styles.button, styles.primaryButton, isSaving ? { opacity: 0.7 } : null]}
           onPress={() => void handleSave()}
           disabled={isSaving}
+          testID="pair-link-submit"
         >
           <View style={styles.connectRow}>
             <Link size={16} color={theme.colors.palette.white} />

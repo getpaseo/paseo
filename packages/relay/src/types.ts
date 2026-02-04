@@ -11,7 +11,7 @@
 export type ConnectionRole = "server" | "client";
 
 export interface RelaySession {
-  id: string;
+  serverId: string;
   server: RelayConnection | null;
   client: RelayConnection | null;
   createdAt: number;
@@ -24,14 +24,14 @@ export interface RelayConnection {
 }
 
 export interface RelaySessionAttachment {
-  sessionId: string;
+  serverId: string;
   role: ConnectionRole;
   createdAt: number;
 }
 
 export interface RelayEvents {
-  onSessionCreated?(sessionId: string): void;
-  onSessionBridged?(sessionId: string): void;
-  onSessionClosed?(sessionId: string): void;
-  onError?(sessionId: string, error: Error): void;
+  onSessionCreated?(serverId: string): void;
+  onSessionBridged?(serverId: string): void;
+  onSessionClosed?(serverId: string): void;
+  onError?(serverId: string, error: Error): void;
 }

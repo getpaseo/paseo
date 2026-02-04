@@ -75,14 +75,14 @@ export class RelayDurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const role = url.searchParams.get("role") as ConnectionRole | null;
-    const sessionId = url.searchParams.get("session");
+    const serverId = url.searchParams.get("serverId");
 
     if (!role || (role !== "server" && role !== "client")) {
       return new Response("Missing or invalid role parameter", { status: 400 });
     }
 
-    if (!sessionId) {
-      return new Response("Missing session parameter", { status: 400 });
+    if (!serverId) {
+      return new Response("Missing serverId parameter", { status: 400 });
     }
 
     const upgradeHeader = request.headers.get("Upgrade");
@@ -105,13 +105,13 @@ export class RelayDurableObject {
 
     // Store attachment for hibernation recovery
     const attachment: RelaySessionAttachment = {
-      sessionId,
+      serverId,
       role,
       createdAt: Date.now(),
     };
     (server as WebSocketWithAttachment).serializeAttachment(attachment);
 
-    console.log(`[Relay DO] ${role} connected to session ${sessionId}`);
+    console.log(`[Relay DO] ${role} connected to session ${serverId}`);
 
     return new Response(null, {
       status: 101,
@@ -155,7 +155,7 @@ export class RelayDurableObject {
     if (!attachment) return;
 
     console.log(
-      `[Relay DO] ${attachment.role} disconnected from session ${attachment.sessionId} (${code}: ${reason})`
+      `[Relay DO] ${attachment.role} disconnected from session ${attachment.serverId} (${code}: ${reason})`
     );
 
     // Note: The other connection remains open.
@@ -190,13 +190,13 @@ export default {
 
     // Relay endpoint
     if (url.pathname === "/ws") {
-      const sessionId = url.searchParams.get("session");
-      if (!sessionId) {
-        return new Response("Missing session parameter", { status: 400 });
+      const serverId = url.searchParams.get("serverId");
+      if (!serverId) {
+        return new Response("Missing serverId parameter", { status: 400 });
       }
 
       // Route to Durable Object instance for this session
-      const id = env.RELAY.idFromName(sessionId);
+      const id = env.RELAY.idFromName(serverId);
       const stub = env.RELAY.get(id);
       return stub.fetch(request);
     }

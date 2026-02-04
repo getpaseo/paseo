@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { Image, Pressable, Text, View, Platform } from "react-native";
+import { Image, Pressable, Text, View, Platform, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2 } from "lucide-react-native";
+import { QrCode, Link2, ClipboardPaste } from "lucide-react-native";
 import type { HostProfile } from "@/contexts/daemon-registry-context";
 import { AddHostModal } from "./add-host-modal";
+import { PairLinkModal } from "./pair-link-modal";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
-    padding: theme.spacing[8],
+    padding: theme.spacing[6],
     justifyContent: "center",
     alignItems: "center",
   },
@@ -70,9 +71,15 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const [isDirectOpen, setIsDirectOpen] = useState(false);
+  const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
 
   return (
-    <View style={styles.container} testID="welcome-screen">
+    <ScrollView
+      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
+      contentContainerStyle={styles.container}
+      showsVerticalScrollIndicator={false}
+      testID="welcome-screen"
+    >
       <Image
         source={require("../../assets/images/icon.png")}
         style={styles.logo}
@@ -85,15 +92,26 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
         <Pressable
           style={[styles.actionButton, styles.actionButtonPrimary]}
           onPress={() => setIsDirectOpen(true)}
+          testID="welcome-direct-connection"
         >
           <Link2 size={18} color={theme.colors.palette.white} />
           <Text style={[styles.actionText, styles.actionTextPrimary]}>Direct connection</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.actionButton}
+          onPress={() => setIsPasteLinkOpen(true)}
+          testID="welcome-paste-pairing-link"
+        >
+          <ClipboardPaste size={18} color={theme.colors.foreground} />
+          <Text style={styles.actionText}>Paste pairing link</Text>
         </Pressable>
 
         {Platform.OS !== "web" ? (
           <Pressable
             style={styles.actionButton}
             onPress={() => router.push("/pair-scan")}
+            testID="welcome-scan-qr"
           >
             <QrCode size={18} color={theme.colors.foreground} />
             <Text style={styles.actionText}>Scan QR code</Text>
@@ -106,9 +124,18 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
         onClose={() => setIsDirectOpen(false)}
         onSaved={(profile) => {
           onHostAdded?.(profile);
-          router.replace({ pathname: "/", params: { serverId: profile.id } });
+          router.replace({ pathname: "/", params: { serverId: profile.serverId } });
         }}
       />
-    </View>
+
+      <PairLinkModal
+        visible={isPasteLinkOpen}
+        onClose={() => setIsPasteLinkOpen(false)}
+        onSaved={(profile) => {
+          onHostAdded?.(profile);
+          router.replace({ pathname: "/", params: { serverId: profile.serverId } });
+        }}
+      />
+    </ScrollView>
   );
 }

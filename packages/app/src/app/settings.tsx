@@ -17,8 +17,8 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyl
 import { Sun, Moon, Monitor } from "lucide-react-native";
 import { Fonts } from "@/constants/theme";
 import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
-import { useDaemonRegistry, type DaemonProfile } from "@/contexts/daemon-registry-context";
-import { useDaemonConnections, type ConnectionStatus } from "@/contexts/daemon-connections-context";
+import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
+import { useDaemonConnections, type ActiveConnection, type ConnectionStatus } from "@/contexts/daemon-connections-context";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { theme as defaultTheme } from "@/styles/theme";
 import { MenuHeader } from "@/components/headers/menu-header";
@@ -27,6 +27,8 @@ import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { normalizeHostPort } from "@/utils/daemon-endpoints";
+import { probeDaemonEndpoint } from "@/utils/test-daemon-connection";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -385,15 +387,19 @@ export default function SettingsScreen() {
   const {
     daemons,
     isLoading: daemonLoading,
-    updateDaemon,
-    removeDaemon,
+    updateHost,
+    removeHost,
+    removeConnection,
+    upsertDirectConnection,
   } = useDaemonRegistry();
-  const { connectionStates, updateConnectionStatus } = useDaemonConnections();
+  const { connectionStates } = useDaemonConnections();
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
-  const [editingDaemon, setEditingDaemon] = useState<DaemonProfile | null>(null);
+  const [editingDaemon, setEditingDaemon] = useState<HostProfile | null>(null);
   const [editLabel, setEditLabel] = useState("");
+  const [newEndpointRaw, setNewEndpointRaw] = useState("");
+  const [isAddingConnection, setIsAddingConnection] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const isLoading = settingsLoading || daemonLoading;
   const isMountedRef = useRef(true);
@@ -421,15 +427,17 @@ export default function SettingsScreen() {
     []
   );
 
-  const handleEditDaemon = useCallback((profile: DaemonProfile) => {
+  const handleEditDaemon = useCallback((profile: HostProfile) => {
     setEditingDaemon(profile);
     setEditLabel(profile.label ?? "");
+    setNewEndpointRaw("");
   }, []);
 
   const handleCloseEditDaemon = useCallback(() => {
     if (isSavingEdit) return;
     setEditingDaemon(null);
     setEditLabel("");
+    setNewEndpointRaw("");
   }, [isSavingEdit]);
 
   const handleSaveEditDaemon = useCallback(async () => {
@@ -444,7 +452,7 @@ export default function SettingsScreen() {
 
     try {
       setIsSavingEdit(true);
-      await updateDaemon(editingDaemon.id, { label: nextLabel });
+      await updateHost(editingDaemon.serverId, { label: nextLabel });
       handleCloseEditDaemon();
     } catch (error) {
       console.error("[Settings] Failed to rename host", error);
@@ -452,10 +460,63 @@ export default function SettingsScreen() {
     } finally {
       setIsSavingEdit(false);
     }
-  }, [editLabel, editingDaemon, handleCloseEditDaemon, isSavingEdit, updateDaemon]);
+  }, [editLabel, editingDaemon, handleCloseEditDaemon, isSavingEdit, updateHost]);
+
+  const handleRemoveConnection = useCallback(
+    async (serverId: string, connectionId: string) => {
+      await removeConnection(serverId, connectionId);
+    },
+    [removeConnection]
+  );
+
+  const handleAddDirectConnectionToHost = useCallback(async () => {
+    if (!editingDaemon) return;
+    if (isAddingConnection) return;
+
+    const raw = newEndpointRaw.trim();
+    if (!raw) {
+      Alert.alert("Host required", "Enter host:port.");
+      return;
+    }
+    if (raw.includes("://") || raw.includes("/")) {
+      Alert.alert("Invalid host", "Enter host:port only (no ws://, no /ws).");
+      return;
+    }
+
+    let endpoint: string;
+    try {
+      endpoint = normalizeHostPort(raw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid host:port";
+      Alert.alert("Invalid host", message);
+      return;
+    }
+
+    try {
+      setIsAddingConnection(true);
+      const { serverId } = await probeDaemonEndpoint(endpoint, { timeoutMs: 6000 });
+      if (serverId !== editingDaemon.serverId) {
+        Alert.alert(
+          "Wrong daemon",
+          `That endpoint belongs to ${serverId}, but this host is ${editingDaemon.serverId}.`
+        );
+        return;
+      }
+      await upsertDirectConnection({
+        serverId,
+        endpoint,
+      });
+      setNewEndpointRaw("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to add connection";
+      Alert.alert("Connection failed", message);
+    } finally {
+      setIsAddingConnection(false);
+    }
+  }, [editingDaemon, isAddingConnection, newEndpointRaw, upsertDirectConnection]);
 
   const handleRemoveDaemon = useCallback(
-    (profile: DaemonProfile) => {
+    (profile: HostProfile) => {
       if (Platform.OS === "web") {
         const hasBrowserConfirm =
           typeof globalThis !== "undefined" &&
@@ -464,7 +525,7 @@ export default function SettingsScreen() {
         const confirmed = hasBrowserConfirm ? (globalThis as any).confirm(`Remove ${profile.label}?`) : true;
         if (!confirmed) return;
 
-        void removeDaemon(profile.id).catch((error) => {
+        void removeHost(profile.serverId).catch((error) => {
           console.error("[Settings] Failed to remove daemon", error);
           Alert.alert("Error", "Unable to remove host");
         });
@@ -481,7 +542,7 @@ export default function SettingsScreen() {
             style: "destructive",
             onPress: async () => {
               try {
-                await removeDaemon(profile.id);
+                await removeHost(profile.serverId);
               } catch (error) {
                 console.error("[Settings] Failed to remove daemon", error);
                 Alert.alert("Error", "Unable to remove host");
@@ -491,7 +552,7 @@ export default function SettingsScreen() {
         ]
       );
     },
-    [removeDaemon]
+    [removeHost]
   );
 
   const handleToggleUseSpeaker = useCallback(
@@ -576,14 +637,16 @@ export default function SettingsScreen() {
               </View>
             ) : (
               daemons.map((daemon) => {
-                const connection = connectionStates.get(daemon.id);
+                const connection = connectionStates.get(daemon.serverId);
                 const connectionStatus = connection?.status ?? "idle";
+                const activeConnection = connection?.activeConnection ?? null;
                 const lastConnectionError = connection?.lastError ?? null;
                 return (
                   <DaemonCard
-                    key={daemon.id}
+                    key={daemon.serverId}
                     daemon={daemon}
                     connectionStatus={connectionStatus}
+                    activeConnection={activeConnection}
                     lastError={lastConnectionError}
                     onEdit={handleEditDaemon}
                     onRemove={handleRemoveDaemon}
@@ -615,7 +678,7 @@ export default function SettingsScreen() {
             visible={isDirectHostVisible}
             onClose={() => setIsDirectHostVisible(false)}
             onSaved={(profile) => {
-              router.replace({ pathname: "/", params: { serverId: profile.id } });
+              router.replace({ pathname: "/", params: { serverId: profile.serverId } });
             }}
           />
 
@@ -623,7 +686,7 @@ export default function SettingsScreen() {
             visible={isPasteLinkVisible}
             onClose={() => setIsPasteLinkVisible(false)}
             onSaved={(profile) => {
-              router.replace({ pathname: "/", params: { serverId: profile.id } });
+              router.replace({ pathname: "/", params: { serverId: profile.serverId } });
             }}
           />
 
@@ -643,6 +706,77 @@ export default function SettingsScreen() {
                 placeholderTextColor={defaultTheme.colors.mutedForeground}
               />
             </View>
+
+            {editingDaemon ? (
+              <View style={styles.formField}>
+                <Text style={styles.label}>Connections</Text>
+                <View style={{ gap: 8 }}>
+                  {editingDaemon.connections.map((conn) => {
+                    const title =
+                      conn.type === "relay"
+                        ? `Relay (${conn.relayEndpoint})`
+                        : `Direct (${conn.endpoint})`;
+                    return (
+                      <View
+                        key={conn.id}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 12,
+                          borderWidth: 1,
+                          borderColor: theme.colors.border,
+                          backgroundColor: theme.colors.surface2,
+                        }}
+                      >
+                        <Text style={{ color: theme.colors.foreground, fontSize: 12, fontFamily: Fonts.mono, flex: 1 }}>
+                          {title}
+                        </Text>
+                        <Pressable
+                          onPress={() => void handleRemoveConnection(editingDaemon.serverId, conn.id)}
+                        >
+                          <Text style={{ color: theme.colors.destructive, fontSize: 12, fontWeight: "600" }}>
+                            Remove
+                          </Text>
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
+
+            {editingDaemon ? (
+              <View style={styles.formField}>
+                <Text style={styles.label}>Add direct connection</Text>
+                <TextInput
+                  style={[styles.input, styles.inputUrl]}
+                  value={newEndpointRaw}
+                  onChangeText={setNewEndpointRaw}
+                  placeholder="192.168.1.10:6767"
+                  placeholderTextColor={defaultTheme.colors.mutedForeground}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Pressable
+                  style={[
+                    styles.formButton,
+                    styles.formButtonPrimary,
+                    (isAddingConnection || !newEndpointRaw.trim()) && styles.hostActionDisabled,
+                    { alignSelf: "flex-end" },
+                  ]}
+                  onPress={() => void handleAddDirectConnectionToHost()}
+                  disabled={isAddingConnection || !newEndpointRaw.trim()}
+                >
+                  <Text style={[styles.formButtonText, styles.formButtonPrimaryText]}>
+                    {isAddingConnection ? "Adding..." : "Add"}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <View style={styles.formActionsRow}>
               <Pressable
@@ -779,11 +913,12 @@ export default function SettingsScreen() {
 }
 
 interface DaemonCardProps {
-  daemon: DaemonProfile;
+  daemon: HostProfile;
   connectionStatus: ConnectionStatus;
+  activeConnection: ActiveConnection | null;
   lastError: string | null;
-  onEdit: (daemon: DaemonProfile) => void;
-  onRemove: (daemon: DaemonProfile) => void;
+  onEdit: (daemon: HostProfile) => void;
+  onRemove: (daemon: HostProfile) => void;
   restartConfirmationMessage: string;
   waitForCondition: (predicate: () => boolean, timeoutMs: number, intervalMs?: number) => Promise<boolean>;
   isScreenMountedRef: MutableRefObject<boolean>;
@@ -792,6 +927,7 @@ interface DaemonCardProps {
 function DaemonCard({
   daemon,
   connectionStatus,
+  activeConnection,
   lastError,
   onEdit,
   onRemove,
@@ -813,9 +949,9 @@ function DaemonCard({
   const badgeText = statusLabel;
   const connectionError = typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
   const daemonConnection = useSessionStore(
-    (state) => state.sessions[daemon.id]?.connection ?? null
+    (state) => state.sessions[daemon.serverId]?.connection ?? null
   );
-  const daemonClient = useSessionStore((state) => state.sessions[daemon.id]?.client ?? null);
+  const daemonClient = useSessionStore((state) => state.sessions[daemon.serverId]?.client ?? null);
   const [isRestarting, setIsRestarting] = useState(false);
   const isConnected = daemonConnection?.isConnected ?? false;
   const isConnectedRef = useRef(isConnected);
@@ -866,7 +1002,7 @@ function DaemonCard({
 
     setIsRestarting(true);
     void daemonClient
-      .restartServer(`settings_daemon_restart_${daemon.id}`)
+      .restartServer(`settings_daemon_restart_${daemon.serverId}`)
       .catch((error) => {
         console.error(`[Settings] Failed to restart daemon ${daemon.label}`, error);
         if (!isScreenMountedRef.current) {
@@ -880,7 +1016,7 @@ function DaemonCard({
       });
 
     void waitForDaemonRestart();
-  }, [daemon.id, daemon.label, daemonClient, isScreenMountedRef, waitForDaemonRestart]);
+  }, [daemon.label, daemon.serverId, daemonClient, isScreenMountedRef, waitForDaemonRestart]);
 
   const handleRestartPress = useCallback(() => {
     if (!daemonClient) {
@@ -927,7 +1063,7 @@ function DaemonCard({
           : "rgba(161, 161, 170, 0.1)";
 
   return (
-    <View style={styles.hostCard} testID={`daemon-card-${daemon.id}`}>
+    <View style={styles.hostCard} testID={`daemon-card-${daemon.serverId}`}>
       <View style={styles.hostCardContent}>
         <View style={styles.hostHeaderRow}>
           <Text style={styles.hostLabel}>{daemon.label}</Text>
@@ -936,7 +1072,31 @@ function DaemonCard({
             <Text style={[styles.statusText, { color: statusColor }]}>{badgeText}</Text>
           </View>
         </View>
-        <Text style={styles.hostUrl}>{daemon.endpoints?.[0] ?? ""}</Text>
+        <Text style={styles.hostUrl}>
+          {(() => {
+            if (connectionStatus === "online") {
+              if (activeConnection?.type === "relay") return "Connected via relay";
+              if (activeConnection?.type === "direct") return `Connected via ${activeConnection.display}`;
+              return "Connected";
+            }
+
+            if (connectionStatus === "connecting" && activeConnection) {
+              if (activeConnection.type === "relay") return "Trying relay";
+              return `Trying ${activeConnection.display}`;
+            }
+
+            if ((connectionStatus === "offline" || connectionStatus === "error") && activeConnection) {
+              if (activeConnection.type === "relay") return "Last tried: relay";
+              return `Last tried: ${activeConnection.display}`;
+            }
+
+            const relay = daemon.connections.find((c) => c.type === "relay");
+            const direct = daemon.connections.find((c) => c.type === "direct");
+            if (direct) return direct.endpoint;
+            if (relay) return "Relay";
+            return "";
+          })()}
+        </Text>
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
       </View>
       <View style={styles.hostActionsRow}>

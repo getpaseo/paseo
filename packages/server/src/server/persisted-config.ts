@@ -90,6 +90,7 @@ export const PersistedConfigSchema = z
           .object({
             enabled: z.boolean().optional(),
             endpoint: z.string().optional(),
+            publicEndpoint: z.string().optional(),
           })
           .strict()
           .optional(),

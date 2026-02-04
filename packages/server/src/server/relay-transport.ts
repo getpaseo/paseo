@@ -6,6 +6,7 @@ import {
   createDaemonChannel,
   type EncryptedChannel,
   type Transport as RelayTransport,
+  type KeyPair,
 } from "@paseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 
@@ -13,8 +14,8 @@ type RelayTransportOptions = {
   logger: pino.Logger;
   attachSocket: (ws: RelaySocketLike) => Promise<void>;
   relayEndpoint: string; // "host:port"
-  sessionId: string;
-  daemonKeyPair?: CryptoKeyPair;
+  serverId: string;
+  daemonKeyPair?: KeyPair;
 };
 
 export type RelayTransportController = {
@@ -33,7 +34,7 @@ export function startRelayTransport({
   logger,
   attachSocket,
   relayEndpoint,
-  sessionId,
+  serverId,
   daemonKeyPair,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
@@ -64,7 +65,7 @@ export function startRelayTransport({
 
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
-      sessionId,
+      serverId,
       role: "server",
     });
     const socket = new WebSocket(url);
@@ -118,7 +119,7 @@ export function startRelayTransport({
 
 async function attachEncryptedSocket(
   socket: WebSocket,
-  daemonKeyPair: CryptoKeyPair,
+  daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike) => Promise<void>
 ): Promise<void> {

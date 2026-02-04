@@ -36,7 +36,7 @@ describe("E2E Relay with E2EE", () => {
 
     // Daemon connects to relay as "server" role
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?session=${sessionId}&role=server`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=server`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -53,13 +53,13 @@ describe("E2E Relay with E2EE", () => {
     // Client imports daemon's public key and derives shared secret
     const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
     const clientSharedKey = await deriveSharedKey(
-      clientKeyPair.privateKey,
+      clientKeyPair.secretKey,
       daemonPubKeyOnClient
     );
 
     // Client connects to relay as "client" role
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?session=${sessionId}&role=client`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=client`
     );
 
     await new Promise<void>((resolve, reject) => {
@@ -83,7 +83,7 @@ describe("E2E Relay with E2EE", () => {
     // Daemon imports client's public key and derives shared secret
     const clientPubKeyOnDaemon = await importPublicKey(hello.key);
     const daemonSharedKey = await deriveSharedKey(
-      daemonKeyPair.privateKey,
+      daemonKeyPair.secretKey,
       clientPubKeyOnDaemon
     );
 
@@ -162,20 +162,20 @@ describe("E2E Relay with E2EE", () => {
     const daemonPubKey = await importPublicKey(daemonPubKeyB64);
 
     const daemonSharedKey = await deriveSharedKey(
-      daemonKeyPair.privateKey,
+      daemonKeyPair.secretKey,
       clientPubKey
     );
     const clientSharedKey = await deriveSharedKey(
-      clientKeyPair.privateKey,
+      clientKeyPair.secretKey,
       daemonPubKey
     );
 
     // Connect both
     const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?session=${sessionId}&role=server`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=server`
     );
     const clientWs = new WebSocket(
-      `ws://127.0.0.1:${TEST_PORT}/ws?session=${sessionId}&role=client`
+      `ws://127.0.0.1:${TEST_PORT}/ws?serverId=${sessionId}&role=client`
     );
 
     await Promise.all([
@@ -223,7 +223,7 @@ describe("E2E Relay with E2EE", () => {
       await exportPublicKey(clientKeyPair.publicKey)
     );
     const daemonSharedKey = await deriveSharedKey(
-      daemonKeyPair.privateKey,
+      daemonKeyPair.secretKey,
       clientPubKey
     );
 
@@ -232,7 +232,7 @@ describe("E2E Relay with E2EE", () => {
       await exportPublicKey(attackerKeyPair.publicKey)
     );
     const attackerKey = await deriveSharedKey(
-      attackerKeyPair.privateKey,
+      attackerKeyPair.secretKey,
       attackerPubKey
     );
 
@@ -241,6 +241,6 @@ describe("E2E Relay with E2EE", () => {
     const ciphertext = await encrypt(daemonSharedKey, secret);
 
     // Attacker cannot decrypt
-    await expect(decrypt(attackerKey, ciphertext)).rejects.toThrow();
+    expect(() => decrypt(attackerKey, ciphertext)).toThrow();
   });
 });

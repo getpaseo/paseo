@@ -1,8 +1,8 @@
 import os from "node:os";
 
 import {
-  ConnectionOfferV1Schema,
-  type ConnectionOfferV1,
+  ConnectionOfferV2Schema,
+  type ConnectionOffer,
 } from "../shared/connection-offer.js";
 
 type BuildOfferEndpointsArgs = {
@@ -35,23 +35,21 @@ export function buildOfferEndpoints({
   return dedupePreserveOrder(endpoints);
 }
 
-export async function createConnectionOfferV1(args: {
-  sessionId: string;
-  endpoints: string[];
+export async function createConnectionOfferV2(args: {
+  serverId: string;
   daemonPublicKeyB64: string;
-  relay?: { endpoint: string } | null;
-}): Promise<ConnectionOfferV1> {
-  return ConnectionOfferV1Schema.parse({
-    v: 1,
-    sessionId: args.sessionId,
-    endpoints: args.endpoints,
+  relay: { endpoint: string };
+}): Promise<ConnectionOffer> {
+  return ConnectionOfferV2Schema.parse({
+    v: 2,
+    serverId: args.serverId,
     daemonPublicKeyB64: args.daemonPublicKeyB64,
-    relay: args.relay ?? null,
+    relay: args.relay,
   });
 }
 
 export function encodeOfferToFragmentUrl(args: {
-  offer: ConnectionOfferV1;
+  offer: ConnectionOffer;
   appBaseUrl: string;
 }): string {
   const json = JSON.stringify(args.offer);

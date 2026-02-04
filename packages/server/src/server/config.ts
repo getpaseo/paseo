@@ -120,6 +120,11 @@ export function loadConfig(
     persisted.daemon?.relay?.endpoint ??
     DEFAULT_RELAY_ENDPOINT;
 
+  const relayPublicEndpoint =
+    env.PASEO_RELAY_PUBLIC_ENDPOINT ??
+    persisted.daemon?.relay?.publicEndpoint ??
+    relayEndpoint;
+
   const appBaseUrl =
     env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL;
 
@@ -150,6 +155,7 @@ export function loadConfig(
     agentClients: {},
     relayEnabled,
     relayEndpoint,
+    relayPublicEndpoint,
     appBaseUrl,
     openai,
     openrouterApiKey,

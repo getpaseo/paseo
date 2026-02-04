@@ -38,10 +38,10 @@ export class DaemonConnectionTestError extends Error {
   }
 }
 
-export async function testDaemonEndpointConnection(
+export async function probeDaemonEndpoint(
   endpoint: string,
   options?: { timeoutMs?: number }
-): Promise<void> {
+): Promise<{ serverId: string }> {
   const timeoutMs = options?.timeoutMs ?? 6000;
   const url = buildDaemonWebSocketUrl(endpoint);
 
@@ -51,20 +51,26 @@ export async function testDaemonEndpointConnection(
   });
 
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<{ serverId: string }>((resolve, reject) => {
       let cleanedUp = false;
       let unsubscribe: (() => void) | null = null;
+      let unsubscribeStatus: (() => void) | null = null;
+      let isConnected = false;
+      let serverId: string | null = null;
 
       const cleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
         clearTimeout(timeout);
         unsubscribe?.();
+        unsubscribeStatus?.();
       };
 
-      const finishOk = () => {
+      const maybeFinishOk = () => {
+        if (!isConnected) return;
+        if (!serverId) return;
         cleanup();
-        resolve();
+        resolve({ serverId });
       };
 
       const finishErr = (error: Error) => {
@@ -83,7 +89,8 @@ export async function testDaemonEndpointConnection(
 
       unsubscribe = client.subscribeConnectionStatus((state) => {
         if (state.status === "connected") {
-          finishOk();
+          isConnected = true;
+          maybeFinishOk();
           return;
         }
         if (state.status === "disconnected") {
@@ -92,6 +99,16 @@ export async function testDaemonEndpointConnection(
           const message = pickBestReason(reason, lastError);
           finishErr(new DaemonConnectionTestError(message, { reason, lastError }));
         }
+      });
+
+      unsubscribeStatus = client.on("status", (message) => {
+        if (message.type !== "status") return;
+        const payload = message.payload as { status?: unknown; serverId?: unknown };
+        if (payload?.status !== "server_info") return;
+        const raw = typeof payload.serverId === "string" ? payload.serverId.trim() : "";
+        if (!raw) return;
+        serverId = raw;
+        maybeFinishOk();
       });
 
       void client.connect().catch(() => undefined);

@@ -10,9 +10,9 @@ import {
 
 describe("crypto", () => {
   describe("generateKeyPair", () => {
-    it("generates a valid ECDH keypair", async () => {
+    it("generates a valid keypair", async () => {
       const keypair = await generateKeyPair();
-      expect(keypair.privateKey).toBeDefined();
+      expect(keypair.secretKey).toBeDefined();
       expect(keypair.publicKey).toBeDefined();
     });
   });
@@ -50,11 +50,11 @@ describe("crypto", () => {
 
       // Derive shared keys
       const daemonSharedKey = await deriveSharedKey(
-        daemonKeyPair.privateKey,
+        daemonKeyPair.secretKey,
         daemonSeesClientPubKey
       );
       const clientSharedKey = await deriveSharedKey(
-        clientKeyPair.privateKey,
+        clientKeyPair.secretKey,
         clientSeesDaemonPubKey
       );
 
@@ -72,7 +72,7 @@ describe("crypto", () => {
       const daemonKeyPair = await generateKeyPair();
       const clientKeyPair = await generateKeyPair();
       const sharedKey = await deriveSharedKey(
-        daemonKeyPair.privateKey,
+        daemonKeyPair.secretKey,
         clientKeyPair.publicKey
       );
 
@@ -90,7 +90,7 @@ describe("crypto", () => {
       const daemonKeyPair = await generateKeyPair();
       const clientKeyPair = await generateKeyPair();
       const sharedKey = await deriveSharedKey(
-        daemonKeyPair.privateKey,
+        daemonKeyPair.secretKey,
         clientKeyPair.publicKey
       );
 
@@ -107,24 +107,24 @@ describe("crypto", () => {
       const keypair3 = await generateKeyPair();
 
       const correctKey = await deriveSharedKey(
-        keypair1.privateKey,
+        keypair1.secretKey,
         keypair2.publicKey
       );
       const wrongKey = await deriveSharedKey(
-        keypair1.privateKey,
+        keypair1.secretKey,
         keypair3.publicKey
       );
 
       const ciphertext = await encrypt(correctKey, "secret");
 
-      await expect(decrypt(wrongKey, ciphertext)).rejects.toThrow();
+      expect(() => decrypt(wrongKey, ciphertext)).toThrow();
     });
 
     it("produces different ciphertext for same plaintext (random IV)", async () => {
       const keypair1 = await generateKeyPair();
       const keypair2 = await generateKeyPair();
       const sharedKey = await deriveSharedKey(
-        keypair1.privateKey,
+        keypair1.secretKey,
         keypair2.publicKey
       );
 
@@ -160,7 +160,7 @@ describe("crypto", () => {
 
       // Client derives shared key
       const clientSharedKey = await deriveSharedKey(
-        clientKeyPair.privateKey,
+        clientKeyPair.secretKey,
         daemonPubKeyOnClient
       );
 
@@ -172,7 +172,7 @@ describe("crypto", () => {
 
       // Daemon derives shared key
       const daemonSharedKey = await deriveSharedKey(
-        daemonKeyPair.privateKey,
+        daemonKeyPair.secretKey,
         clientPubKeyOnDaemon
       );
 

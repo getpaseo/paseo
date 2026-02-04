@@ -1,4 +1,5 @@
 import * as ExpoCrypto from "expo-crypto";
+import { Buffer } from "buffer";
 
 declare global {
   interface Crypto {
@@ -7,30 +8,41 @@ declare global {
 }
 
 export function polyfillCrypto(): void {
-  let webcrypto: Crypto | null = null;
-  try {
-    // Prefer the React Native entrypoint to avoid the browser shim.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const rnModule = require("@sphereon/isomorphic-webcrypto/src/react-native");
-    webcrypto = (rnModule?.default ?? rnModule) as Crypto;
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const fallbackModule = require("@sphereon/isomorphic-webcrypto");
-    webcrypto = (fallbackModule?.default ?? fallbackModule) as Crypto;
+  // Ensure TextEncoder/TextDecoder exist for shared E2EE code (tweetnacl + relay transport).
+  // Hermes may not provide them in all configurations.
+  if (typeof (globalThis as any).TextEncoder !== "function") {
+    class BufferTextEncoder {
+      encode(input = ""): Uint8Array {
+        return Uint8Array.from(Buffer.from(String(input), "utf8"));
+      }
+    }
+    (globalThis as any).TextEncoder = BufferTextEncoder as any;
+  }
+
+  if (typeof (globalThis as any).TextDecoder !== "function") {
+    class BufferTextDecoder {
+      constructor(_label?: string, _options?: unknown) {
+        // no-op
+      }
+      decode(input?: ArrayBuffer | ArrayBufferView): string {
+        if (input == null) return "";
+        if (input instanceof ArrayBuffer) {
+          return Buffer.from(input).toString("utf8");
+        }
+        if (ArrayBuffer.isView(input)) {
+          return Buffer.from(input.buffer, input.byteOffset, input.byteLength).toString("utf8");
+        }
+        return Buffer.from(String(input), "utf8").toString("utf8");
+      }
+    }
+    (globalThis as any).TextDecoder = BufferTextDecoder as any;
   }
 
   const existing = (globalThis as any).crypto as Crypto | null | undefined;
   let target = existing;
-  if (!target || typeof (target as Crypto).subtle === "undefined") {
-    target = (webcrypto && typeof webcrypto === "object" ? (webcrypto as Crypto) : undefined) ?? ({} as Crypto);
+  if (!target) {
+    target = {} as Crypto;
     (globalThis as any).crypto = target;
-  }
-
-  const ensureSecure = (globalThis as any).crypto?.ensureSecure as
-    | (() => Promise<void>)
-    | undefined;
-  if (typeof ensureSecure === "function") {
-    void ensureSecure();
   }
 
   if (typeof (globalThis as any).crypto?.randomUUID !== "function") {

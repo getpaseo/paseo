@@ -1,16 +1,21 @@
 import { z } from "zod";
 
-export const ConnectionOfferV1Schema = z.object({
-  v: z.literal(1),
-  sessionId: z.string().min(1),
-  endpoints: z.array(z.string().min(1)).min(1),
+/**
+ * Relay-only pairing offer.
+ *
+ * `serverId` is a stable daemon identifier scoped to `PASEO_HOME`, and is also
+ * used as the relay session identifier.
+ */
+export const ConnectionOfferV2Schema = z.object({
+  v: z.literal(2),
+  serverId: z.string().min(1),
   daemonPublicKeyB64: z.string().min(1),
-  relay: z
-    .object({
-      endpoint: z.string().min(1),
-    })
-    .nullable()
-    .optional(),
+  relay: z.object({
+    endpoint: z.string().min(1),
+  }),
 });
 
-export type ConnectionOfferV1 = z.infer<typeof ConnectionOfferV1Schema>;
+export type ConnectionOfferV2 = z.infer<typeof ConnectionOfferV2Schema>;
+
+export const ConnectionOfferSchema = ConnectionOfferV2Schema;
+export type ConnectionOffer = ConnectionOfferV2;

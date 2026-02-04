@@ -2,8 +2,12 @@ import { test, expect } from './fixtures';
 
 test('host removal removes the host from UI and persists after reload', async ({ page }) => {
   const daemonPort = process.env.E2E_DAEMON_PORT;
+  const seededServerId = process.env.E2E_SERVER_ID;
   if (!daemonPort) {
     throw new Error('E2E_DAEMON_PORT is not set (expected from globalSetup).');
+  }
+  if (!seededServerId) {
+    throw new Error('E2E_SERVER_ID is not set (expected from globalSetup).');
   }
 
   const extraPort = Number(daemonPort) + 1;
@@ -11,21 +15,23 @@ test('host removal removes the host from UI and persists after reload', async ({
   const nowIso = new Date().toISOString();
 
   const extraDaemon = {
-    id: 'e2e-extra-daemon',
+    serverId: 'srv_e2e_extra_daemon',
     label: 'extra',
-    endpoints: [extraEndpoint],
-    relay: null,
-    metadata: null,
+    connections: [
+      { id: `direct:${extraEndpoint}`, type: 'direct', endpoint: extraEndpoint },
+    ],
+    preferredConnectionId: `direct:${extraEndpoint}`,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
 
   const seededTestDaemon = {
-    id: 'e2e-test-daemon',
+    serverId: seededServerId,
     label: 'localhost',
-    endpoints: [`127.0.0.1:${daemonPort}`],
-    relay: null,
-    metadata: null,
+    connections: [
+      { id: `direct:127.0.0.1:${daemonPort}`, type: 'direct', endpoint: `127.0.0.1:${daemonPort}` },
+    ],
+    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -52,12 +58,12 @@ test('host removal removes the host from UI and persists after reload', async ({
       localStorage.setItem(seedOnceKey, '1');
 
       const next = [...list];
-      const hasSeeded = next.some((entry: any) => entry && entry.id === seededTestDaemon.id);
+      const hasSeeded = next.some((entry: any) => entry && entry.serverId === seededTestDaemon.serverId);
       if (!hasSeeded) {
         next.push(seededTestDaemon);
       }
 
-      const alreadyPresent = next.some((entry: any) => entry && entry.id === daemon.id);
+      const alreadyPresent = next.some((entry: any) => entry && entry.serverId === daemon.serverId);
       if (!alreadyPresent) {
         next.push(daemon);
       }
@@ -80,17 +86,17 @@ test('host removal removes the host from UI and persists after reload', async ({
 
   await expect(page.getByText(extraEndpoint, { exact: true })).toHaveCount(0);
   await page.waitForFunction(
-    (daemonId) => {
+    (serverId) => {
       const raw = localStorage.getItem('@paseo:daemon-registry');
       if (!raw) return false;
       try {
         const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) && !parsed.some((entry: any) => entry && entry.id === daemonId);
+        return Array.isArray(parsed) && !parsed.some((entry: any) => entry && entry.serverId === serverId);
       } catch {
         return false;
       }
     },
-    extraDaemon.id,
+    extraDaemon.serverId,
     { timeout: 10000 }
   );
 

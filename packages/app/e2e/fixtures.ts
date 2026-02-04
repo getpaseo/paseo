@@ -54,19 +54,28 @@ test.beforeEach(async ({ page }) => {
 
   const nowIso = new Date().toISOString();
   const seedNonce = Math.random().toString(36).slice(2);
+  const serverId = process.env.E2E_SERVER_ID;
+  if (!serverId) {
+    throw new Error('E2E_SERVER_ID is not set - expected from Playwright globalSetup.');
+  }
   const testDaemon = {
-    id: 'e2e-test-daemon',
+    serverId,
     label: 'localhost',
-    endpoints: [`127.0.0.1:${daemonPort}`],
-    relay: null,
-    metadata: null,
+    connections: [
+      {
+        id: `direct:127.0.0.1:${daemonPort}`,
+        type: 'direct',
+        endpoint: `127.0.0.1:${daemonPort}`,
+      },
+    ],
+    preferredConnectionId: `direct:127.0.0.1:${daemonPort}`,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
 
   const createAgentPreferences = {
     // Ensure create flow never uses a remembered host from the developer's real app.
-    serverId: testDaemon.id,
+    serverId: testDaemon.serverId,
     // Keep e2e fast/cheap by default.
     provider: 'claude',
     providerPreferences: {

@@ -7,6 +7,7 @@ import net from "node:net";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createClientChannel, type Transport } from "@paseo/relay/e2ee";
 import { createRelayServer } from "@paseo/relay/node";
+import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
 
 function createCapturingLogger() {
   const lines: string[] = [];
@@ -36,7 +37,7 @@ function parseOfferUrlFromLogs(lines: string[]): string {
 }
 
 function decodeOfferFromFragmentUrl(url: string): {
-  sessionId: string;
+  serverId: string;
   daemonPublicKeyB64: string;
 } {
   const marker = "#offer=";
@@ -46,10 +47,11 @@ function decodeOfferFromFragmentUrl(url: string): {
   }
   const encoded = url.slice(idx + marker.length);
   const json = Buffer.from(encoded, "base64url").toString("utf8");
-  const offer = JSON.parse(json) as { sessionId?: string; daemonPublicKeyB64?: string };
-  if (!offer.sessionId) throw new Error("offer.sessionId missing");
+  const offer = JSON.parse(json) as { v?: unknown; serverId?: string; daemonPublicKeyB64?: string };
+  if (offer.v !== 2) throw new Error("expected offer.v=2");
+  if (!offer.serverId) throw new Error("offer.serverId missing");
   if (!offer.daemonPublicKeyB64) throw new Error("offer.daemonPublicKeyB64 missing");
-  return { sessionId: offer.sessionId, daemonPublicKeyB64: offer.daemonPublicKeyB64 };
+  return { serverId: offer.serverId, daemonPublicKeyB64: offer.daemonPublicKeyB64 };
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -87,12 +89,14 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
 
       try {
         const offerUrl = parseOfferUrlFromLogs(lines);
-        const { sessionId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+        const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
 
         const ws = new WebSocket(
-          `ws://127.0.0.1:${relayPort}/ws?session=${encodeURIComponent(
-            sessionId
-          )}&role=client`
+          buildRelayWebSocketUrl({
+            endpoint: `127.0.0.1:${relayPort}`,
+            serverId,
+            role: "client",
+          })
         );
 
         const received = await new Promise<unknown>((resolve, reject) => {
@@ -168,5 +172,105 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
       }
     },
     30000
+  );
+
+  test(
+    "daemon keeps relay socket open while idle (no handshake timeout loop)",
+    async () => {
+      process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+      const { logger, lines } = createCapturingLogger();
+      const relayPort = await getAvailablePort();
+      const relay = createRelayServer({ host: "127.0.0.1", port: relayPort });
+      await relay.start();
+
+      const daemon = await createTestPaseoDaemon({
+        listen: "127.0.0.1",
+        logger,
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${relayPort}`,
+      });
+
+      try {
+        const offerUrl = parseOfferUrlFromLogs(lines);
+        const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+
+        // Previously, the daemon would time out waiting for `hello` and reconnect every ~10s.
+        // Wait long enough to catch that regression.
+        await new Promise((r) => setTimeout(r, 12_000));
+
+        const handshakeFailures = lines.filter((line) =>
+          line.includes("relay_e2ee_handshake_failed")
+        );
+        expect(handshakeFailures.length).toBe(0);
+
+        const ws = new WebSocket(
+          buildRelayWebSocketUrl({
+            endpoint: `127.0.0.1:${relayPort}`,
+            serverId,
+            role: "client",
+          })
+        );
+
+        const received = await new Promise<unknown>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error("timed out waiting for pong"));
+          }, 20000);
+
+          const transport: Transport = {
+            send: (data) => ws.send(data),
+            close: (code?: number, reason?: string) => ws.close(code, reason),
+            onmessage: null,
+            onclose: null,
+            onerror: null,
+          };
+
+          ws.on("message", (data) => {
+            transport.onmessage?.(typeof data === "string" ? data : data.toString());
+          });
+          ws.on("close", (code, reason) => {
+            transport.onclose?.(code, reason.toString());
+          });
+          ws.on("error", (err) => {
+            transport.onerror?.(err);
+          });
+
+          ws.on("open", async () => {
+            try {
+              const channel = await createClientChannel(transport, daemonPublicKeyB64, {
+                onmessage: (data) => {
+                  const payload = typeof data === "string" ? JSON.parse(data) : data;
+                  if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                    clearTimeout(timeout);
+                    resolve(payload);
+                    ws.close();
+                  }
+                },
+                onerror: (err) => {
+                  clearTimeout(timeout);
+                  reject(err);
+                },
+              });
+              await channel.send(JSON.stringify({ type: "ping" }));
+            } catch (err) {
+              clearTimeout(timeout);
+              reject(err);
+            }
+          });
+        });
+
+        expect(received).toEqual({ type: "pong" });
+      } catch (err) {
+        const tail = lines.slice(-50).join("");
+        // eslint-disable-next-line no-console
+        console.error("daemon logs (tail):\n", tail);
+        throw err;
+      } finally {
+        await daemon.close();
+        await relay.stop();
+      }
+    },
+    45000
   );
 });

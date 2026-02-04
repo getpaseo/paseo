@@ -30,12 +30,14 @@ async function withRetry<T>(
 }
 
 describe("Live relay (relay.paseo.sh) E2E", () => {
-  it("bridges encrypted traffic end-to-end", { timeout: 45_000 }, async () => {
+  const liveIt = process.env.RUN_LIVE_RELAY_E2E === "1" ? it : it.skip;
+
+  liveIt("bridges encrypted traffic end-to-end", { timeout: 45_000 }, async () => {
     await withRetry(
       async () => {
         const sessionId = `live-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const serverUrl = `${RELAY_BASE_URL}/ws?session=${encodeURIComponent(sessionId)}&role=server`;
-        const clientUrl = `${RELAY_BASE_URL}/ws?session=${encodeURIComponent(sessionId)}&role=client`;
+        const serverUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(sessionId)}&role=server`;
+        const clientUrl = `${RELAY_BASE_URL}/ws?serverId=${encodeURIComponent(sessionId)}&role=client`;
 
         // === Key setup ===
         const daemonKeyPair = await generateKeyPair();
@@ -46,7 +48,7 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
 
         const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
         const clientSharedKey = await deriveSharedKey(
-          clientKeyPair.privateKey,
+          clientKeyPair.secretKey,
           daemonPubKeyOnClient
         );
 
@@ -97,7 +99,7 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
 
           const clientPubKeyOnDaemon = await importPublicKey(hello.key!);
           const daemonSharedKey = await deriveSharedKey(
-            daemonKeyPair.privateKey,
+            daemonKeyPair.secretKey,
             clientPubKeyOnDaemon
           );
 

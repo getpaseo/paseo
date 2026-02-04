@@ -1,4 +1,5 @@
 import "@/styles/unistyles";
+import { polyfillCrypto } from "@/polyfills/crypto";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -36,6 +37,8 @@ import { getIsTauri, getIsTauriMac } from "@/constants/layout";
 import { useTrafficLightPadding } from "@/utils/tauri-window";
 import { CommandCenter } from "@/components/command-center";
 import { useGlobalKeyboardNav } from "@/hooks/use-global-keyboard-nav";
+
+polyfillCrypto();
 
 function PushNotificationRouter() {
   const router = useRouter();

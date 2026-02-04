@@ -46,9 +46,10 @@ let paseoHome: string | null = null;
 let relayServer: RelayServer | null = null;
 
 type OfferPayload = {
-  sessionId: string;
+  v: 2;
+  serverId: string;
   daemonPublicKeyB64: string;
-  endpoints: string[];
+  relay: { endpoint: string };
 };
 
 function stripAnsi(input: string): string {
@@ -64,11 +65,10 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   const encoded = url.slice(idx + marker.length);
   const json = Buffer.from(encoded, 'base64url').toString('utf8');
   const offer = JSON.parse(json) as Partial<OfferPayload>;
-  if (!offer.sessionId) throw new Error('offer.sessionId missing');
+  if (offer.v !== 2) throw new Error('offer.v missing/invalid');
+  if (!offer.serverId) throw new Error('offer.serverId missing');
   if (!offer.daemonPublicKeyB64) throw new Error('offer.daemonPublicKeyB64 missing');
-  if (!Array.isArray(offer.endpoints) || offer.endpoints.length === 0) {
-    throw new Error('offer.endpoints missing');
-  }
+  if (!offer.relay?.endpoint) throw new Error('offer.relay.endpoint missing');
   return offer as OfferPayload;
 }
 
@@ -118,7 +118,7 @@ export default async function globalSetup() {
     env: {
       ...process.env,
       PASEO_HOME: paseoHome,
-      PASEO_SERVER_ID: 'e2e-test-daemon',
+      PASEO_SERVER_ID: 'srv_e2e_test_daemon',
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
@@ -184,7 +184,7 @@ export default async function globalSetup() {
 
   process.env.E2E_DAEMON_PORT = String(port);
   process.env.E2E_RELAY_PORT = String(relayPort);
-  process.env.E2E_RELAY_SESSION_ID = offer.sessionId;
+  process.env.E2E_SERVER_ID = offer.serverId;
   process.env.E2E_RELAY_DAEMON_PUBLIC_KEY = offer.daemonPublicKeyB64;
   process.env.E2E_METRO_PORT = String(metroPort);
   console.log(`[e2e] Test daemon started on port ${port}, Metro on port ${metroPort}, home: ${paseoHome}`);

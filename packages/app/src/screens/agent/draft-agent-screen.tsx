@@ -32,7 +32,7 @@ import {
   checkoutStatusQueryKey,
 } from "@/hooks/use-checkout-status-query";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { resolveCanonicalDaemonId, useDaemonRegistry } from "@/contexts/daemon-registry-context";
+import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -151,28 +151,11 @@ export function DraftAgentScreen({
     if (daemons.length === 0) return [];
     const out: string[] = [];
     for (const daemon of daemons) {
-      const status = connectionStates.get(daemon.id)?.status ?? "idle";
-      if (status === "online") out.push(daemon.id);
+      const status = connectionStates.get(daemon.serverId)?.status ?? "idle";
+      if (status === "online") out.push(daemon.serverId);
     }
     return out;
   }, [connectionStates, daemons]);
-
-  // If the URL contains a legacy host id, redirect to the canonical daemon-provided id.
-  useEffect(() => {
-    if (!resolvedServerId) return;
-    const canonical = resolveCanonicalDaemonId(daemons, resolvedServerId);
-    if (!canonical || canonical === resolvedServerId) return;
-
-    const nextParams: Record<string, string> = {};
-    for (const [key, value] of Object.entries(params)) {
-      if (key === "serverId") continue;
-      if (typeof value === "string") nextParams[key] = value;
-      if (Array.isArray(value) && typeof value[0] === "string") nextParams[key] = value[0] as string;
-    }
-    nextParams.serverId = canonical;
-
-    router.replace({ pathname: "/", params: nextParams as any });
-  }, [daemons, params, resolvedServerId, router]);
 
   const initialValues = useMemo((): CreateAgentInitialValues => {
     const values: CreateAgentInitialValues = {};
@@ -830,7 +813,7 @@ export function DraftAgentScreen({
     return (
       <WelcomeScreen
         onHostAdded={(profile) => {
-          setSelectedServerIdFromUser(profile.id);
+          setSelectedServerIdFromUser(profile.serverId);
         }}
       />
     );
@@ -935,17 +918,17 @@ export function DraftAgentScreen({
             ) : (
               <View style={styles.dropdownSheetList}>
                 {Array.from(connectionStates.values()).map(({ daemon, status }) => {
-                  const isSelected = daemon.id === selectedServerId;
-                  const label = daemon.label ?? daemon.endpoints?.[0] ?? daemon.id;
+                  const isSelected = daemon.serverId === selectedServerId;
+                  const label = daemon.label?.trim() ? daemon.label : daemon.serverId;
                   return (
                     <Pressable
-                      key={daemon.id}
+                      key={daemon.serverId}
                       style={[
                         styles.dropdownSheetOption,
                         isSelected && styles.dropdownSheetOptionSelected,
                       ]}
                       onPress={() => {
-                        setSelectedServerIdFromUser(daemon.id);
+                        setSelectedServerIdFromUser(daemon.serverId);
                         closeDropdown();
                       }}
                     >

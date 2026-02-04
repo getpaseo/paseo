@@ -69,14 +69,14 @@ export function buildDaemonWebSocketUrl(endpoint: string): string {
 
 export function buildRelayWebSocketUrl(params: {
   endpoint: string;
-  sessionId: string;
+  serverId: string;
   role: RelayRole;
 }): string {
   const { host, port, isIpv6 } = parseHostPort(params.endpoint);
   const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
   const url = new URL(`${protocol}://${hostPart}:${port}/ws`);
-  url.searchParams.set("session", params.sessionId);
+  url.searchParams.set("serverId", params.serverId);
   url.searchParams.set("role", params.role);
   return url.toString();
 }
@@ -108,10 +108,9 @@ export function isRelayClientWebSocketUrl(url: string): boolean {
     const parsed = new URL(url);
     return (
       parsed.searchParams.get("role") === "client" &&
-      parsed.searchParams.has("session")
+      parsed.searchParams.has("serverId")
     );
   } catch {
     return false;
   }
 }
-

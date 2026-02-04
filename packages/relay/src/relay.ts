@@ -24,22 +24,25 @@ export class Relay {
    * If both server and client are connected, messages are bridged.
    */
   addConnection(
-    sessionId: string,
+    serverId: string,
     role: ConnectionRole,
     connection: RelayConnection
   ): void {
-    let session = this.sessions.get(sessionId);
+    let session = this.sessions.get(serverId);
 
     if (!session) {
       session = {
-        id: sessionId,
+        serverId,
         server: null,
         client: null,
         createdAt: Date.now(),
       };
-      this.sessions.set(sessionId, session);
-      this.events.onSessionCreated?.(sessionId);
+      this.sessions.set(serverId, session);
+      this.events.onSessionCreated?.(serverId);
     }
+
+    const previousServer = session.server;
+    const previousClient = session.client;
 
     const existingConnection = session[role];
     if (existingConnection) {
@@ -48,8 +51,25 @@ export class Relay {
 
     session[role] = connection;
 
+    // Important: the E2EE handshake is tied to a specific server↔client socket pair.
+    // If the daemon reconnects (server socket changes) while the client socket stays
+    // open, the client will continue sending encrypted frames using its existing
+    // channel state — but the new daemon socket hasn't handshaked yet. This leads
+    // to immediate decrypt/handshake failures.
+    //
+    // To keep the protocol simple and robust, whenever a new *server* connection
+    // arrives while a client socket is still connected, force the client to reconnect.
+    if (role === "server" && previousClient) {
+      // Only close if the server socket actually changed (or was previously missing).
+      const serverChanged = !previousServer || previousServer !== connection;
+      if (serverChanged) {
+        session.client = null;
+        previousClient.close(1012, "Server reconnected");
+      }
+    }
+
     if (session.server && session.client) {
-      this.events.onSessionBridged?.(sessionId);
+      this.events.onSessionBridged?.(serverId);
     }
   }
 
@@ -57,15 +77,15 @@ export class Relay {
    * Remove a connection from a session.
    * If both connections are gone, the session is cleaned up.
    */
-  removeConnection(sessionId: string, role: ConnectionRole): void {
-    const session = this.sessions.get(sessionId);
+  removeConnection(serverId: string, role: ConnectionRole): void {
+    const session = this.sessions.get(serverId);
     if (!session) return;
 
     session[role] = null;
 
     if (!session.server && !session.client) {
-      this.sessions.delete(sessionId);
-      this.events.onSessionClosed?.(sessionId);
+      this.sessions.delete(serverId);
+      this.events.onSessionClosed?.(serverId);
     }
   }
 
@@ -73,11 +93,11 @@ export class Relay {
    * Forward a message from one side to the other.
    */
   forward(
-    sessionId: string,
+    serverId: string,
     fromRole: ConnectionRole,
     data: string | ArrayBuffer
   ): void {
-    const session = this.sessions.get(sessionId);
+    const session = this.sessions.get(serverId);
     if (!session) return;
 
     const target = fromRole === "server" ? session.client : session.server;
@@ -86,7 +106,7 @@ export class Relay {
         target.send(data);
       } catch (error) {
         this.events.onError?.(
-          sessionId,
+          serverId,
           error instanceof Error ? error : new Error(String(error))
         );
       }
@@ -96,8 +116,8 @@ export class Relay {
   /**
    * Get session info for debugging/monitoring.
    */
-  getSession(sessionId: string): RelaySession | undefined {
-    return this.sessions.get(sessionId);
+  getSession(serverId: string): RelaySession | undefined {
+    return this.sessions.get(serverId);
   }
 
   /**
@@ -110,15 +130,15 @@ export class Relay {
   /**
    * Close a session and both connections.
    */
-  closeSession(sessionId: string, code = 1000, reason = "Session closed"): void {
-    const session = this.sessions.get(sessionId);
+  closeSession(serverId: string, code = 1000, reason = "Session closed"): void {
+    const session = this.sessions.get(serverId);
     if (!session) return;
 
     session.server?.close(code, reason);
     session.client?.close(code, reason);
 
-    this.sessions.delete(sessionId);
-    this.events.onSessionClosed?.(sessionId);
+    this.sessions.delete(serverId);
+    this.events.onSessionClosed?.(serverId);
   }
 
   /**
@@ -126,7 +146,7 @@ export class Relay {
    */
   restoreSessions(sessions: RelaySession[]): void {
     for (const session of sessions) {
-      this.sessions.set(session.id, session);
+      this.sessions.set(session.serverId, session);
     }
   }
 }

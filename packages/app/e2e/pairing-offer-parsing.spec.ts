@@ -9,12 +9,7 @@ function encodeBase64Url(input: string): string {
     .replace(/=+$/g, '');
 }
 
-test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpoints', async ({ page }) => {
-  const daemonPort = process.env.E2E_DAEMON_PORT;
-  if (!daemonPort) {
-    throw new Error('E2E_DAEMON_PORT is not set (expected from globalSetup).');
-  }
-
+test('pairing flow accepts #offer=ConnectionOfferV2 and stores relay-only host', async ({ page }) => {
   // Override the default fixture seeding for this test.
   await page.goto('/settings');
   await page.evaluate(() => {
@@ -26,10 +21,10 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
   await page.reload();
 
   const offer = {
-    v: 1 as const,
-    sessionId: 'e2e-session-123',
-    endpoints: [`127.0.0.1:${daemonPort}`, 'relay.local:443'],
+    v: 2 as const,
+    serverId: 'e2e-server-123',
     daemonPublicKeyB64: Buffer.from('e2e-public-key', 'utf8').toString('base64'),
+    relay: { endpoint: 'relay.local:443' },
   };
 
   const offerUrl = `https://app.paseo.sh/#offer=${encodeBase64Url(JSON.stringify(offer))}`;
@@ -53,12 +48,15 @@ test('pairing flow accepts #offer=ConnectionOfferV1 and stores sessionId + endpo
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed) || parsed.length !== 1) return false;
         const entry = parsed[0];
+        const relayId = `relay:${expected.relay.endpoint}`;
         return (
-          entry?.daemonPublicKeyB64 === expected.daemonPublicKeyB64 &&
-          entry?.relay?.sessionId === expected.sessionId &&
-          Array.isArray(entry?.endpoints) &&
-          entry.endpoints[0] === expected.endpoints[0] &&
-          entry.endpoints[1] === expected.endpoints[1]
+          entry?.serverId === expected.serverId &&
+          Array.isArray(entry?.connections) &&
+          entry.connections.length === 1 &&
+          entry.connections[0]?.id === relayId &&
+          entry.connections[0]?.type === 'relay' &&
+          entry.connections[0]?.relayEndpoint === expected.relay.endpoint &&
+          entry.connections[0]?.daemonPublicKeyB64 === expected.daemonPublicKeyB64
         );
       } catch {
         return false;

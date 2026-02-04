@@ -15,8 +15,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@sphereon/isomorphic-webcrypto": "^2.5.0-rn-crypto.2",
     "base64-js": "^1.5.1",
+    "tweetnacl": "^1.0.3",
     "ws": "^8.14.2"
   },
   "devDependencies": {

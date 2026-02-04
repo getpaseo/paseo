@@ -177,7 +177,7 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     }
 
     if (voiceEligibleHosts.length === 1) {
-      void startVoice(voiceEligibleHosts[0].daemon.id).catch((error) => {
+      void startVoice(voiceEligibleHosts[0].daemon.serverId).catch((error) => {
         console.error("[SlidingSidebar] Failed to start voice", error);
         Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
       });
@@ -188,9 +188,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
   }, [hasAnyConfiguredHosts, isVoiceMode, startVoice, stopVoice, voiceEligibleHosts]);
 
   const handleSelectVoiceHost = useCallback(
-    (daemonId: string) => {
+    (serverId: string) => {
       setShowVoiceHostPicker(false);
-      void startVoice(daemonId).catch((error) => {
+      void startVoice(serverId).catch((error) => {
         console.error("[SlidingSidebar] Failed to start voice", error);
         Alert.alert("Voice failed", "Unable to start Voice mode for this host.");
       });
@@ -320,14 +320,19 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                   )}
                 </Pressable>
                 <View style={styles.footerIconRow}>
-                  <Pressable
-                    style={styles.footerIconButton}
-                    testID="sidebar-voice"
-                    onPress={handleToggleVoice}
-                  >
-                    {({ hovered }) => (
-                      <AudioLines
-                        size={20}
+                <Pressable
+                  style={styles.footerIconButton}
+                  testID="sidebar-voice"
+                  nativeID="sidebar-voice"
+                  collapsable={false}
+                  accessible
+                  accessibilityLabel="Voice"
+                  accessibilityRole="button"
+                  onPress={handleToggleVoice}
+                >
+                  {({ hovered }) => (
+                    <AudioLines
+                      size={20}
                         color={
                           isVoiceMode
                             ? theme.colors.foreground
@@ -340,6 +345,12 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
                   </Pressable>
                 <Pressable
                   style={styles.footerIconButton}
+                  testID="sidebar-settings"
+                  nativeID="sidebar-settings"
+                  collapsable={false}
+                  accessible
+                  accessibilityLabel="Settings"
+                  accessibilityRole="button"
                   onPress={handleSettingsMobile}
                 >
                   {({ hovered }) => (
@@ -362,9 +373,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           <View style={styles.hostPickerList}>
             {voiceEligibleHosts.map((entry) => (
               <Pressable
-                key={entry.daemon.id}
+                key={entry.daemon.serverId}
                 style={styles.hostPickerOption}
-                onPress={() => handleSelectVoiceHost(entry.daemon.id)}
+                onPress={() => handleSelectVoiceHost(entry.daemon.serverId)}
               >
                 <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
               </Pressable>
@@ -436,6 +447,11 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           <Pressable
             style={styles.footerIconButton}
             testID="sidebar-voice"
+            nativeID="sidebar-voice"
+            collapsable={false}
+            accessible
+            accessibilityLabel="Voice"
+            accessibilityRole="button"
             onPress={handleToggleVoice}
           >
             {({ hovered }) => (
@@ -453,6 +469,12 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           </Pressable>
           <Pressable
             style={styles.footerIconButton}
+            testID="sidebar-settings"
+            nativeID="sidebar-settings"
+            collapsable={false}
+            accessible
+            accessibilityLabel="Settings"
+            accessibilityRole="button"
             onPress={handleSettingsDesktop}
           >
             {({ hovered }) => (
@@ -472,9 +494,9 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
         <View style={styles.hostPickerList}>
           {voiceEligibleHosts.map((entry) => (
             <Pressable
-              key={entry.daemon.id}
+              key={entry.daemon.serverId}
               style={styles.hostPickerOption}
-              onPress={() => handleSelectVoiceHost(entry.daemon.id)}
+              onPress={() => handleSelectVoiceHost(entry.daemon.serverId)}
             >
               <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
             </Pressable>

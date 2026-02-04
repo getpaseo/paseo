@@ -1,4 +1,5 @@
 import http from "http";
+import type { Socket } from "net";
 import { WebSocketServer, WebSocket as NodeWebSocket } from "ws";
 import { Relay } from "./relay.js";
 import type { ConnectionRole, RelayConnection } from "./types.js";
@@ -21,8 +22,8 @@ export interface NodeRelayServerConfig {
  * ```
  *
  * Clients connect via:
- * - ws://host:port/ws?session=abc&role=server
- * - ws://host:port/ws?session=abc&role=client
+ * - ws://host:port/ws?serverId=abc&role=server
+ * - ws://host:port/ws?serverId=abc&role=client
  */
 export interface RelayServer {
   start(): Promise<void>;
@@ -32,6 +33,8 @@ export interface RelayServer {
 
 export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
   const { port, host = "0.0.0.0" } = config;
+  const logFrames = process.env.PASEO_RELAY_LOG_FRAMES === "1";
+  const logUpgrades = process.env.PASEO_RELAY_LOG_UPGRADES === "1";
 
   const relay = new Relay({
     onSessionCreated: (id) => console.log(`[Relay] Session created: ${id}`),
@@ -50,41 +53,93 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
     res.end("Not found");
   });
 
-  const wss = new WebSocketServer({
-    server: httpServer,
-    path: "/ws",
-    verifyClient: ({ req }, callback) => {
-      const url = new URL(req.url ?? "", `http://${req.headers.host}`);
-      const session = url.searchParams.get("session");
-      const role = url.searchParams.get("role");
+  // NOTE: We intentionally use `noServer` + a manual `upgrade` handler instead
+  // of `new WebSocketServer({ server, path })`.
+  //
+  // In some environments (notably when running via `tsx -e`), we observed
+  // websocket upgrade requests falling through to the HTTP handler (404),
+  // despite `ws` being configured with `{ server, path: "/ws" }`.
+  // Handling `upgrade` explicitly is more robust and easier to debug.
+  const wss = new WebSocketServer({ noServer: true });
 
-      if (!session || !role || (role !== "server" && role !== "client")) {
-        callback(false, 400, "Missing or invalid session/role parameters");
+  httpServer.on("upgrade", (req, socket: Socket, head) => {
+    if (logUpgrades) {
+      try {
+        console.log(
+          `[Relay] upgrade url=${JSON.stringify(req.url)} host=${JSON.stringify(req.headers.host)}`
+        );
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      const url = new URL(req.url ?? "", `http://${req.headers.host}`);
+      if (url.pathname !== "/ws") {
+        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+        socket.destroy();
         return;
       }
 
-      callback(true);
-    },
+      const serverId = url.searchParams.get("serverId");
+      const role = url.searchParams.get("role");
+      if (!serverId || !role || (role !== "server" && role !== "client")) {
+        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    } catch {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+    }
   });
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url ?? "", `http://${req.headers.host}`);
-    const sessionId = url.searchParams.get("session")!;
+    const serverId = url.searchParams.get("serverId")!;
     const role = url.searchParams.get("role") as ConnectionRole;
 
     const connection = wrapWebSocket(ws, role);
-    relay.addConnection(sessionId, role, connection);
+    relay.addConnection(serverId, role, connection);
 
     ws.on("message", (data, isBinary) => {
-      relay.forward(sessionId, role, normalizeWsMessageForRelay(data, isBinary));
+      // If this socket was replaced, ignore any late frames.
+      if (relay.getSession(serverId)?.[role] !== connection) return;
+
+      if (logFrames) {
+        const preview = (() => {
+          try {
+            if (isBinary) return "<binary>";
+            return bufferFromWsData(data).toString("utf8").slice(0, 200);
+          } catch {
+            return "<unavailable>";
+          }
+        })();
+        const len = (() => {
+          try {
+            return bufferFromWsData(data).byteLength;
+          } catch {
+            return -1;
+          }
+        })();
+        console.log(
+          `[Relay] frame ${serverId}/${role} binary=${isBinary} len=${len} preview=${JSON.stringify(preview)}`
+        );
+      }
+      relay.forward(serverId, role, normalizeWsMessageForRelay(data, isBinary));
     });
 
     ws.on("close", () => {
-      relay.removeConnection(sessionId, role);
+      // Avoid clearing the current connection if this socket was replaced.
+      if (relay.getSession(serverId)?.[role] !== connection) return;
+      relay.removeConnection(serverId, role);
     });
 
     ws.on("error", (error) => {
-      console.error(`[Relay] WebSocket error for ${sessionId}/${role}:`, error);
+      console.error(`[Relay] WebSocket error for ${serverId}/${role}:`, error);
     });
   });
 
@@ -101,12 +156,49 @@ export function createRelayServer(config: NodeRelayServerConfig): RelayServer {
 
     stop() {
       return new Promise((resolve) => {
-        for (const session of relay.listSessions()) {
-          relay.closeSession(session.id, 1001, "Server shutting down");
+        // Stop accepting new connections immediately. Waiting for `wss.close`
+        // can leave the HTTP server listening while the WS server is closing,
+        // causing upgrade requests to get 503 responses.
+        try {
+          httpServer.close(() => undefined);
+        } catch {
+          // ignore
         }
-        wss.close(() => {
-          httpServer.close(() => resolve());
-        });
+
+        // Close active sessions + force-close any remaining clients.
+        for (const session of relay.listSessions()) {
+          relay.closeSession(session.serverId, 1001, "Server shutting down");
+        }
+        for (const ws of wss.clients) {
+          try {
+            // terminate() is the fastest way to ensure `wss.close` completes.
+            (ws as unknown as { terminate?: () => void }).terminate?.();
+          } catch {
+            try {
+              ws.close(1001, "Server shutting down");
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          resolve();
+        };
+
+        const timeout = setTimeout(() => finish(), 1500);
+        try {
+          wss.close(() => {
+            clearTimeout(timeout);
+            finish();
+          });
+        } catch {
+          clearTimeout(timeout);
+          finish();
+        }
       });
     },
 

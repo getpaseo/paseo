@@ -28,7 +28,17 @@ export function MenuHeader({ title, rightContent }: MenuHeaderProps) {
     <ScreenHeader
       left={
         <>
-          <Pressable onPress={toggleAgentList} style={styles.menuButton}>
+          <Pressable
+            onPress={toggleAgentList}
+            style={styles.menuButton}
+            testID="menu-button"
+            nativeID="menu-button"
+            collapsable={false}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
+            accessibilityState={{ expanded: isOpen }}
+          >
             <MenuIcon size={isMobile ? 20 : 16} color={menuIconColor} />
           </Pressable>
           {title && (

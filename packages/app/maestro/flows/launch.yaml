@@ -1,11 +1,13 @@
-appId: com.moboudra.paseo
+# NOTE: Maestro requires a config section for every flow file, even when used
+# via `runFlow`. Keep this aligned with the dev build application id.
+appId: com.moboudra.paseo.dev
 ---
 # Reusable flow to handle dev client screens after launchApp
 # Works with both release builds (no-ops) and dev builds
 
 # Handle dev launcher - tap localhost server (dev builds only)
 - tapOn:
-    text: ".*localhost.*"
+    text: ".*(localhost|127\\.0\\.0\\.1|10\\.0\\.2\\.2|192\\.168\\.).*"
     optional: true
 
 # Dismiss dev menu intro modal
@@ -23,4 +25,8 @@ appId: com.moboudra.paseo
       - tapOn:
           point: "50%,20%"
 
-- assertVisible: "New Agent"
+- runFlow:
+    when:
+      visible: "Welcome to Paseo"
+    commands:
+      - assertVisible: "Welcome to Paseo"

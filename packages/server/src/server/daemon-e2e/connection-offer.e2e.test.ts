@@ -62,14 +62,14 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
-describe("ConnectionOfferV1 (daemon E2E)", () => {
+describe("ConnectionOfferV2 (daemon E2E)", () => {
   const ORIGINAL_ENV = { ...process.env };
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  test("emits offer URL with sessionId + host:port endpoints (includes relay unless opted out)", async () => {
+  test("emits relay-only offer URL with stable serverId", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
     const { logger, lines } = createCapturingLogger();
@@ -86,30 +86,92 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
 
       const offer = decodeOfferFromFragmentUrl(offerUrl) as {
         v: number;
-        sessionId: string;
-        endpoints: string[];
+        serverId: string;
         daemonPublicKeyB64: string;
-        relay?: { endpoint: string } | null;
+        relay: { endpoint: string };
       };
 
-      expect(offer.v).toBe(1);
-      expect(typeof offer.sessionId).toBe("string");
-      expect(offer.sessionId.length).toBeGreaterThan(0);
-      expect(Array.isArray(offer.endpoints)).toBe(true);
-      expect(offer.endpoints).toContain(`192.168.1.12:${daemon.port}`);
-      expect(offer.endpoints).toContain(`localhost:${daemon.port}`);
-      expect(offer.endpoints).not.toContain("relay.paseo.sh:443");
-      expect(offer.relay?.endpoint).toBe("relay.paseo.sh:443");
+      expect(offer.v).toBe(2);
+      expect(typeof offer.serverId).toBe("string");
+      expect(offer.serverId.length).toBeGreaterThan(0);
+      expect(offer.serverId.startsWith("srv_")).toBe(true);
+      expect(offer.relay.endpoint).toBe("relay.paseo.sh:443");
       expect(typeof offer.daemonPublicKeyB64).toBe("string");
       expect(offer.daemonPublicKeyB64.length).toBeGreaterThan(0);
       expect(() => Buffer.from(offer.daemonPublicKeyB64, "base64")).not.toThrow();
+
+      expect("endpoints" in offer).toBe(false);
     } finally {
       await daemon.close();
     }
   });
 
+  test("persists serverId and daemon keypair across daemon restarts", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const tempHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-offer-home-"));
+
+    const { logger: logger1, lines: lines1 } = createCapturingLogger();
+    const daemon1 = await createTestPaseoDaemon({
+      listen: "0.0.0.0",
+      logger: logger1,
+      relayEnabled: true,
+      paseoHomeRoot: tempHomeRoot,
+      cleanup: false,
+    });
+
+    let staticDir1: string | null = daemon1.staticDir;
+    let staticDir2: string | null = null;
+
+    try {
+      const offerUrl1 = parseOfferUrlFromLogs(lines1);
+      const offer1 = decodeOfferFromFragmentUrl(offerUrl1) as {
+        serverId: string;
+        daemonPublicKeyB64: string;
+        relay: { endpoint: string };
+      };
+
+      await daemon1.close();
+
+      const { logger: logger2, lines: lines2 } = createCapturingLogger();
+      const daemon2 = await createTestPaseoDaemon({
+        listen: "0.0.0.0",
+        logger: logger2,
+        relayEnabled: true,
+        paseoHomeRoot: tempHomeRoot,
+        cleanup: false,
+      });
+      staticDir2 = daemon2.staticDir;
+
+      try {
+        const offerUrl2 = parseOfferUrlFromLogs(lines2);
+        const offer2 = decodeOfferFromFragmentUrl(offerUrl2) as {
+          serverId: string;
+          daemonPublicKeyB64: string;
+          relay: { endpoint: string };
+        };
+
+        expect(offer2.serverId).toBe(offer1.serverId);
+        expect(offer2.daemonPublicKeyB64).toBe(offer1.daemonPublicKeyB64);
+        expect(offer2.relay.endpoint).toBe(offer1.relay.endpoint);
+      } finally {
+        await daemon2.close();
+      }
+    } finally {
+      await rm(tempHomeRoot, { recursive: true, force: true });
+      if (staticDir1) {
+        await rm(staticDir1, { recursive: true, force: true });
+        staticDir1 = null;
+      }
+      if (staticDir2) {
+        await rm(staticDir2, { recursive: true, force: true });
+        staticDir2 = null;
+      }
+    }
+  });
+
   test(
-    "respects --no-relay (CLI) by omitting relay endpoint from offer",
+    "respects --no-relay (CLI) by not emitting a pairing offer",
     async () => {
       process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
@@ -124,6 +186,7 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
         PASEO_HOME: tempHome,
         PASEO_LISTEN: `0.0.0.0:${port}`,
         OPENAI_API_KEY: "",
+        PASEO_LOG_FORMAT: "json",
       };
 
       const stdoutLines: string[] = [];
@@ -133,10 +196,10 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
       });
 
       try {
-        const offerUrl = await new Promise<string>((resolve, reject) => {
+        const directConnect = await new Promise<{ endpoints: string[] }>((resolve, reject) => {
           const timeout = setTimeout(() => {
             proc.kill();
-            reject(new Error("timed out waiting for pairing_offer log"));
+            reject(new Error("timed out waiting for direct_connect log"));
           }, 15000);
 
           const onData = (data: Buffer) => {
@@ -144,12 +207,24 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
             stdoutLines.push(text);
             for (const line of text.split("\n")) {
               if (!line.trim()) continue;
-              if (!line.includes("pairing_offer")) continue;
-              const match = line.match(/"url":"([^"]+)"/);
-              if (match) {
+              if (line.includes("pairing_offer")) {
                 clearTimeout(timeout);
-                resolve(match[1]);
+                reject(new Error("unexpected pairing_offer log when --no-relay is set"));
                 return;
+              }
+              if (!line.includes("direct_connect")) continue;
+              try {
+                const parsed = JSON.parse(line) as { msg?: string; endpoints?: unknown };
+                if (parsed.msg !== "direct_connect") continue;
+                const endpoints = Array.isArray(parsed.endpoints)
+                  ? parsed.endpoints.filter((v) => typeof v === "string")
+                  : [];
+                if (endpoints.length === 0) continue;
+                clearTimeout(timeout);
+                resolve({ endpoints });
+                return;
+              } catch {
+                // ignore
               }
             }
           };
@@ -167,15 +242,8 @@ describe("ConnectionOfferV1 (daemon E2E)", () => {
           });
         });
 
-        const offer = decodeOfferFromFragmentUrl(offerUrl) as {
-          endpoints: string[];
-          relay?: { endpoint: string } | null;
-        };
-
-        expect(offer.endpoints).not.toContain("relay.paseo.sh:443");
-        expect(offer.relay).toBe(null);
-        expect(offer.endpoints).toContain(`localhost:${port}`);
-        expect(offer.endpoints).toContain(`192.168.1.12:${port}`);
+        expect(directConnect.endpoints).toContain(`localhost:${port}`);
+        expect(directConnect.endpoints).toContain(`192.168.1.12:${port}`);
       } catch (err) {
         throw new Error(
           `failed; stdout so far:\\n${stdoutLines.join("")}\\n\\n${String(err)}`

@@ -1,7 +1,6 @@
 import { useRef, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useClientActivity } from "@/hooks/use-client-activity";
@@ -23,7 +22,7 @@ import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-type
 import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
-import { useDaemonRegistry } from "./daemon-registry-context";
+import type { ActiveConnection } from "./daemon-connections-context";
 import {
   useSessionStore,
   type SessionState,
@@ -258,27 +257,24 @@ interface SessionProviderProps {
   children: ReactNode;
   serverUrl: string;
   serverId: string;
+  activeConnection: ActiveConnection | null;
   daemonPublicKeyB64?: string;
 }
-
-const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
-const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
 
 // SessionProvider: Daemon client message handler that updates Zustand store
 export function SessionProvider({
   children,
   serverUrl,
   serverId,
+  activeConnection,
   daemonPublicKeyB64,
 }: SessionProviderProps) {
-  const queryClient = useQueryClient();
   const client = useDaemonClient(serverUrl, { daemonPublicKeyB64 });
   const [connectionSnapshot, setConnectionSnapshot] =
     useState<DaemonConnectionSnapshot>(() =>
       mapConnectionState(client.getConnectionState(), client.lastError)
     );
   const { updateConnectionStatus } = useDaemonConnections();
-  const { adoptDaemonServerId } = useDaemonRegistry();
 
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
@@ -357,7 +353,6 @@ export function SessionProvider({
   );
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const hasAdoptedServerIdRef = useRef(false);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -452,47 +447,6 @@ export function SessionProvider({
     return unsubscribe;
   }, [client]);
 
-  // Daemon identity handshake: adopt stable serverId from the daemon.
-  useEffect(() => {
-    return client.on("status", (message) => {
-      if (message.type !== "status") return;
-      const payload = message.payload as { status?: unknown; serverId?: unknown };
-      if (payload?.status !== "server_info") return;
-
-      const remoteServerId = typeof payload.serverId === "string" ? payload.serverId.trim() : "";
-      if (!remoteServerId) return;
-
-      // Avoid loops if multiple server_info messages arrive.
-      if (hasAdoptedServerIdRef.current) return;
-      hasAdoptedServerIdRef.current = true;
-
-      if (remoteServerId === serverId) {
-        return;
-      }
-
-      void (async () => {
-        const canonicalId = await adoptDaemonServerId(serverId, remoteServerId);
-
-        // Migrate persisted "create agent" preferences if they reference the old id.
-        try {
-          const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
-          if (stored) {
-            const parsed = JSON.parse(stored) as { serverId?: unknown } & Record<string, unknown>;
-            if (typeof parsed.serverId === "string" && parsed.serverId === serverId) {
-              const next = { ...parsed, serverId: canonicalId };
-              await AsyncStorage.setItem(FORM_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
-              queryClient.setQueryData(FORM_PREFERENCES_QUERY_KEY, next);
-            }
-          }
-        } catch (error) {
-          console.warn("[Session] Failed to migrate form preferences serverId", { error });
-        }
-      })().catch((error) => {
-        console.warn("[Session] Failed to adopt daemon serverId", { error });
-      });
-    });
-  }, [adoptDaemonServerId, client, queryClient, serverId]);
-
   useEffect(() => {
     updateSessionConnection(serverId, connectionSnapshot);
   }, [serverId, connectionSnapshot, updateSessionConnection]);
@@ -511,31 +465,34 @@ export function SessionProvider({
     if (connectionSnapshot.isConnected) {
       updateConnectionStatus(serverId, {
         status: "online",
+        activeConnection,
         lastOnlineAt: new Date().toISOString(),
       });
       return;
     }
 
     if (connectionSnapshot.isConnecting) {
-      updateConnectionStatus(serverId, { status: "connecting" });
+      updateConnectionStatus(serverId, { status: "connecting", activeConnection });
       return;
     }
 
     if (connectionSnapshot.lastError) {
       updateConnectionStatus(serverId, {
         status: "error",
+        activeConnection,
         lastError: connectionSnapshot.lastError,
       });
       return;
     }
 
-    updateConnectionStatus(serverId, { status: "offline" });
+    updateConnectionStatus(serverId, { status: "offline", activeConnection });
   }, [
     serverId,
     updateConnectionStatus,
     connectionSnapshot.isConnected,
     connectionSnapshot.isConnecting,
     connectionSnapshot.lastError,
+    activeConnection,
   ]);
 
   // If the client drops mid-initialization, clear pending flags
@@ -547,9 +504,9 @@ export function SessionProvider({
 
   useEffect(() => {
     return () => {
-      updateConnectionStatus(serverId, { status: "offline", lastError: null });
+      updateConnectionStatus(serverId, { status: "offline", activeConnection, lastError: null });
     };
-  }, [serverId, updateConnectionStatus]);
+  }, [serverId, updateConnectionStatus, activeConnection]);
 
   const updateExplorerState = useCallback(
     (agentId: string, updater: (state: any) => any) => {

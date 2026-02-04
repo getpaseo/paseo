@@ -50,7 +50,7 @@ import { createAllClients, shutdownProviders } from "./agent/provider-registry.j
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import {
   buildOfferEndpoints,
-  createConnectionOfferV1,
+  createConnectionOfferV2,
   encodeOfferToFragmentUrl,
 } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -84,6 +84,7 @@ export type PaseoDaemonConfig = {
   agentStoragePath: string;
   relayEnabled?: boolean;
   relayEndpoint?: string;
+  relayPublicEndpoint?: string;
   appBaseUrl?: string;
   openai?: PaseoOpenAIConfig;
   openrouterApiKey?: string | null;
@@ -107,7 +108,6 @@ export async function createPaseoDaemon(
 ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
-  const connectionSessionId = serverId;
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   let relayTransport: RelayTransportController | null = null;
 
@@ -460,23 +460,36 @@ export async function createPaseoDaemon(
 
             const relayEnabled = config.relayEnabled ?? true;
             const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+            const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
             const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
 
-            const endpoints = buildOfferEndpoints({
+            const directEndpoints = buildOfferEndpoints({
               listenHost: listenTarget.host,
               port: listenTarget.port,
             });
 
-            const offer = await createConnectionOfferV1({
-              sessionId: connectionSessionId,
-              endpoints,
-              daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
-              relay: relayEnabled ? { endpoint: relayEndpoint } : null,
-            });
+            logger.info(
+              {
+                serverId,
+                endpoints: directEndpoints,
+                wsUrls: directEndpoints.map((endpoint) => `ws://${endpoint}/ws`),
+              },
+              "direct_connect"
+            );
 
-            const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
-            logger.info({ url }, "pairing_offer");
-            void printPairingQrIfEnabled({ url, logger }).catch(() => undefined);
+            if (relayEnabled) {
+              const offer = await createConnectionOfferV2({
+                serverId,
+                daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
+                relay: { endpoint: relayPublicEndpoint },
+              });
+
+              const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
+              logger.info({ url }, "pairing_offer");
+              void printPairingQrIfEnabled({ url, logger }).catch(() => undefined);
+            } else {
+              logger.info("relay_disabled");
+            }
 
             if (relayEnabled) {
               relayTransport?.stop().catch(() => undefined);
@@ -484,7 +497,7 @@ export async function createPaseoDaemon(
                 logger,
                 attachSocket: (ws) => wsServer.attachExternalSocket(ws),
                 relayEndpoint,
-                sessionId: connectionSessionId,
+                serverId,
                 daemonKeyPair: daemonKeyPair.keyPair,
               });
             }

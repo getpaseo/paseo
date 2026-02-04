@@ -245,7 +245,7 @@ export function useAgentFormState(
 
   // Build a set of valid server IDs for preference validation
   const validServerIds = useMemo(
-    () => new Set(daemons.map((d) => d.id)),
+    () => new Set(daemons.map((d) => d.serverId)),
     [daemons]
   );
 

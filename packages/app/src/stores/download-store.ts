@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
-import type { DaemonProfile } from "@/contexts/daemon-registry-context";
+import type { HostProfile } from "@/contexts/daemon-registry-context";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 
 interface DownloadProgress {
@@ -34,7 +34,7 @@ interface DownloadState {
     agentId: string;
     fileName: string;
     path: string;
-    daemonProfile: DaemonProfile | undefined;
+    daemonProfile: HostProfile | undefined;
     requestFileDownloadToken: (
       agentId: string,
       path: string
@@ -246,8 +246,9 @@ type DownloadTarget = {
   authCredentials: { username: string; password: string } | null;
 };
 
-function resolveDaemonDownloadTarget(daemon?: DaemonProfile): DownloadTarget {
-  const endpoint = daemon?.endpoints?.[0] ?? null;
+function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
+  const endpoint =
+    daemon?.connections.find((conn) => conn.type === "direct")?.endpoint ?? null;
   if (!endpoint) {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }

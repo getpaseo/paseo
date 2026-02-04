@@ -5,7 +5,7 @@ import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { Link2 } from "lucide-react-native";
 import { useDaemonRegistry, type HostProfile } from "@/contexts/daemon-registry-context";
 import { normalizeHostPort } from "@/utils/daemon-endpoints";
-import { DaemonConnectionTestError, testDaemonEndpointConnection } from "@/utils/test-daemon-connection";
+import { DaemonConnectionTestError, probeDaemonEndpoint } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet } from "./adaptive-modal-sheet";
 
 const styles = StyleSheet.create((theme) => ({
@@ -151,7 +151,7 @@ export interface AddHostModalProps {
 
 export function AddHostModal({ visible, onClose, onSaved }: AddHostModalProps) {
   const { theme } = useUnistyles();
-  const { addDaemon } = useDaemonRegistry();
+  const { upsertDirectConnection } = useDaemonRegistry();
   const isMobile =
     UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
 
@@ -198,11 +198,11 @@ export function AddHostModal({ visible, onClose, onSaved }: AddHostModalProps) {
       setIsSaving(true);
       setErrorMessage("");
 
-      await testDaemonEndpointConnection(endpoint);
-
-      const profile = await addDaemon({
+      const { serverId } = await probeDaemonEndpoint(endpoint);
+      const profile = await upsertDirectConnection({
+        serverId,
+        endpoint,
         label: label.trim(),
-        endpoints: [endpoint],
       });
 
       onSaved?.(profile);
@@ -223,7 +223,7 @@ export function AddHostModal({ visible, onClose, onSaved }: AddHostModalProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [addDaemon, endpointRaw, handleClose, isMobile, isSaving, label, onSaved]);
+  }, [endpointRaw, handleClose, isMobile, isSaving, label, onSaved, upsertDirectConnection]);
 
   return (
     <AdaptiveModalSheet title="Direct connection" visible={visible} onClose={handleClose} testID="add-host-modal">

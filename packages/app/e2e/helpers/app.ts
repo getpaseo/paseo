@@ -18,22 +18,27 @@ function getE2EDaemonPort(): string {
 async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   const port = getE2EDaemonPort();
   const expectedEndpoint = `127.0.0.1:${port}`;
+  const expectedServerId = process.env.E2E_SERVER_ID;
+  if (!expectedServerId) {
+    throw new Error('E2E_SERVER_ID is not set (expected from Playwright globalSetup).');
+  }
 
-  const needsReset = await page.evaluate(({ expectedEndpoint }) => {
+  const needsReset = await page.evaluate(({ expectedEndpoint, expectedServerId }) => {
     const raw = localStorage.getItem('@paseo:daemon-registry');
     if (!raw) return true;
     try {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed) || parsed.length !== 1) return true;
       const entry = parsed[0] as any;
-      const endpoints = entry?.endpoints;
-      if (!Array.isArray(endpoints)) return true;
-      if (endpoints.some((e: unknown) => typeof e === 'string' && /:6767\b/.test(e))) return true;
-      return !endpoints.some((e: unknown) => e === expectedEndpoint);
+      if (entry?.serverId !== expectedServerId) return true;
+      const connections = entry?.connections;
+      if (!Array.isArray(connections)) return true;
+      if (connections.some((c: any) => c?.type === 'direct' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) return true;
+      return !connections.some((c: any) => c?.type === 'direct' && c?.endpoint === expectedEndpoint);
     } catch {
       return true;
     }
-  }, { expectedEndpoint });
+  }, { expectedEndpoint, expectedServerId });
 
   if (!needsReset) {
     return;
@@ -41,17 +46,22 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
 
   const nowIso = new Date().toISOString();
   await page.evaluate(
-    ({ expectedEndpoint, nowIso }) => {
+    ({ expectedEndpoint, nowIso, expectedServerId }) => {
       localStorage.setItem('@paseo:e2e', '1');
       localStorage.setItem(
         '@paseo:daemon-registry',
         JSON.stringify([
           {
-            id: 'e2e-test-daemon',
+            serverId: expectedServerId,
             label: 'localhost',
-            endpoints: [expectedEndpoint],
-            relay: null,
-            metadata: null,
+            connections: [
+              {
+                id: `direct:${expectedEndpoint}`,
+                type: 'direct',
+                endpoint: expectedEndpoint,
+              },
+            ],
+            preferredConnectionId: `direct:${expectedEndpoint}`,
             createdAt: nowIso,
             updatedAt: nowIso,
           },
@@ -60,7 +70,7 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
       localStorage.setItem(
         '@paseo:create-agent-preferences',
         JSON.stringify({
-          serverId: 'e2e-test-daemon',
+          serverId: expectedServerId,
           provider: 'claude',
           providerPreferences: {
             claude: { model: 'haiku' },
@@ -70,7 +80,7 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
       );
       localStorage.removeItem('@paseo:settings');
     },
-    { expectedEndpoint, nowIso }
+    { expectedEndpoint, nowIso, expectedServerId }
   );
 
   await page.reload();
@@ -79,6 +89,10 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
 async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   const port = getE2EDaemonPort();
   const expectedEndpoint = `127.0.0.1:${port}`;
+  const expectedServerId = process.env.E2E_SERVER_ID;
+  if (!expectedServerId) {
+    throw new Error('E2E_SERVER_ID is not set (expected from Playwright globalSetup).');
+  }
 
   const snapshot = await page.evaluate(() => {
     const registryRaw = localStorage.getItem('@paseo:daemon-registry');
@@ -104,18 +118,24 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   }
 
   const daemon = registry[0];
-  if (typeof daemon?.id !== 'string' || daemon.id.length === 0) {
-    throw new Error(`E2E expected seeded daemon to have a string id (got ${String(daemon?.id)}).`);
+  if (typeof daemon?.serverId !== 'string' || daemon.serverId.length === 0) {
+    throw new Error(`E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`);
+  }
+  if (daemon.serverId !== expectedServerId) {
+    throw new Error(`E2E expected seeded daemon serverId to be ${expectedServerId} (got ${daemon.serverId}).`);
   }
 
-  const endpoints: unknown = daemon?.endpoints;
-  if (!Array.isArray(endpoints) || !endpoints.some((e) => e === expectedEndpoint)) {
+  const connections: unknown = daemon?.connections;
+  if (
+    !Array.isArray(connections) ||
+    !connections.some((c: any) => c?.type === 'direct' && c?.endpoint === expectedEndpoint)
+  ) {
     throw new Error(
-      `E2E expected seeded daemon endpoints to include ${expectedEndpoint} (got ${JSON.stringify(endpoints)}).`
+      `E2E expected seeded daemon connections to include direct ${expectedEndpoint} (got ${JSON.stringify(connections)}).`
     );
   }
-  if (Array.isArray(endpoints) && endpoints.some((e) => typeof e === 'string' && /:6767\b/.test(e))) {
-    throw new Error(`E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(endpoints)}).`);
+  if (Array.isArray(connections) && connections.some((c: any) => c?.type === 'direct' && typeof c?.endpoint === 'string' && /:6767\b/.test(c.endpoint))) {
+    throw new Error(`E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`);
   }
 
   if (!snapshot.prefsRaw) {
@@ -123,9 +143,9 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   }
   try {
     const prefs = JSON.parse(snapshot.prefsRaw) as any;
-    if (prefs?.serverId !== daemon.id) {
+    if (prefs?.serverId !== daemon.serverId) {
       throw new Error(
-        `E2E expected create-agent-preferences.serverId to match seeded daemon id (${daemon.id}) (got ${String(prefs?.serverId)}).`
+        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${daemon.serverId}) (got ${String(prefs?.serverId)}).`
       );
     }
   } catch (error) {
@@ -261,9 +281,9 @@ export const ensureHostSelected = async (page: Page) => {
       const registry = JSON.parse(registryRaw) as any[];
       const prefs = JSON.parse(prefsRaw) as any;
       if (!Array.isArray(registry) || registry.length !== 1) return { ok: false, reason: 'registry shape' } as const;
-      const daemonId = registry[0]?.id;
-      if (typeof daemonId !== 'string' || daemonId.length === 0) return { ok: false, reason: 'missing daemon id' } as const;
-      prefs.serverId = daemonId;
+      const serverId = registry[0]?.serverId;
+      if (typeof serverId !== 'string' || serverId.length === 0) return { ok: false, reason: 'missing serverId' } as const;
+      prefs.serverId = serverId;
       localStorage.setItem('@paseo:create-agent-preferences', JSON.stringify(prefs));
       // Prevent the fixture's init-script from overwriting the corrected prefs on reload.
       const nonce = localStorage.getItem('@paseo:e2e-seed-nonce') ?? '1';
@@ -292,7 +312,7 @@ export const ensureHostSelected = async (page: Page) => {
 
     // E2E safety: we enforce a single seeded daemon, so the option should be unambiguous.
     const localhostOption = page.getByText('localhost', { exact: true }).first();
-    const daemonIdOption = page.getByText('e2e-test-daemon', { exact: true }).first();
+    const daemonIdOption = page.getByText(process.env.E2E_SERVER_ID ?? 'srv_e2e_test_daemon', { exact: true }).first();
 
     if (await localhostOption.isVisible()) {
       await localhostOption.click();

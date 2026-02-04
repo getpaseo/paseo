@@ -1,129 +1,150 @@
 /// <reference lib="dom" />
 /**
- * E2EE crypto primitives using WebCrypto API.
+ * E2EE crypto primitives using NaCl (tweetnacl).
  *
- * - ECDH P-256 for key exchange
- * - HKDF for key derivation
- * - AES-256-GCM for authenticated encryption
- */
-
-import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
-
-const ECDH_ALGORITHM = { name: "ECDH", namedCurve: "P-256" };
-const AES_ALGORITHM = { name: "AES-GCM", length: 256 };
-const IV_LENGTH = 12;
-
-/**
- * Generate an ECDH P-256 keypair for key exchange.
- */
-export async function generateKeyPair(): Promise<CryptoKeyPair> {
-  return crypto.subtle.generateKey(ECDH_ALGORITHM, true, ["deriveBits"]);
-}
-
-/**
- * Export a public key to base64 string (for transmission).
- */
-export async function exportPublicKey(key: CryptoKey): Promise<string> {
-  const raw = await crypto.subtle.exportKey("raw", key);
-  return arrayBufferToBase64(raw);
-}
-
-/**
- * Import a public key from base64 string.
- */
-export async function importPublicKey(base64: string): Promise<CryptoKey> {
-  const raw = base64ToArrayBuffer(base64);
-  return crypto.subtle.importKey("raw", raw, ECDH_ALGORITHM, true, []);
-}
-
-/**
- * Derive a shared AES-256-GCM key from ECDH key exchange.
+ * - Key exchange: Curve25519 (nacl.box.before)
+ * - Encryption: XSalsa20-Poly1305 (nacl.box.after / open.after)
  *
- * Uses HKDF with SHA-256 to derive the final key.
+ * Bundle format (binary):
+ *   [nonce (24 bytes)] [ciphertext...]
+ *
+ * Transport format:
+ *   The encrypted-channel sends the bundle as base64 text over WebSocket.
  */
-export async function deriveSharedKey(
-  privateKey: CryptoKey,
-  peerPublicKey: CryptoKey
-): Promise<CryptoKey> {
-  // Perform ECDH to get shared secret bits
-  const sharedBits = await crypto.subtle.deriveBits(
-    { name: "ECDH", public: peerPublicKey },
-    privateKey,
-    256
-  );
 
-  // Import shared bits as HKDF key material
-  const hkdfKey = await crypto.subtle.importKey(
-    "raw",
-    sharedBits,
-    "HKDF",
-    false,
-    ["deriveKey"]
-  );
+import nacl from "tweetnacl";
+import { fromByteArray, toByteArray } from "base64-js";
 
-  // Derive AES-256-GCM key using HKDF
-  return crypto.subtle.deriveKey(
-    {
-      name: "HKDF",
-      hash: "SHA-256",
-      salt: new Uint8Array(0),
-      info: new TextEncoder().encode("paseo-e2ee-v1"),
-    },
-    hkdfKey,
-    AES_ALGORITHM,
-    false,
-    ["encrypt", "decrypt"]
-  );
+export type KeyPair = {
+  publicKey: Uint8Array; // 32 bytes
+  secretKey: Uint8Array; // 32 bytes
+};
+
+export type SharedKey = Uint8Array; // 32 bytes (box.before)
+
+const NONCE_LENGTH = nacl.box.nonceLength; // 24
+
+let prngReady = false;
+
+function ensurePrng(): void {
+  if (prngReady) return;
+
+  try {
+    nacl.randomBytes(1);
+    prngReady = true;
+    return;
+  } catch {
+    // fallthrough
+  }
+
+  const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  if (cryptoObj?.getRandomValues) {
+    nacl.setPRNG((x, n) => {
+      cryptoObj.getRandomValues(x.subarray(0, n));
+    });
+    prngReady = true;
+    return;
+  }
+
+  throw new Error("No secure PRNG available for tweetnacl (missing crypto.getRandomValues)");
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  return fromByteArray(bytes);
+}
+
+function decodeBase64(base64: string): Uint8Array {
+  return toByteArray(base64);
+}
+
+function toUint8(data: string | ArrayBuffer): Uint8Array {
+  return typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out.buffer;
+}
+
+export function generateKeyPair(): KeyPair {
+  ensurePrng();
+  const { publicKey, secretKey } = nacl.box.keyPair();
+  return { publicKey, secretKey };
+}
+
+export function exportPublicKey(publicKey: Uint8Array): string {
+  if (!(publicKey instanceof Uint8Array) || publicKey.byteLength !== nacl.box.publicKeyLength) {
+    throw new Error(`Invalid public key length (expected ${nacl.box.publicKeyLength})`);
+  }
+  return encodeBase64(publicKey);
+}
+
+export function importPublicKey(base64: string): Uint8Array {
+  const bytes = decodeBase64(base64);
+  if (bytes.byteLength !== nacl.box.publicKeyLength) {
+    throw new Error(`Invalid public key length (expected ${nacl.box.publicKeyLength})`);
+  }
+  return bytes;
+}
+
+export function exportSecretKey(secretKey: Uint8Array): string {
+  if (!(secretKey instanceof Uint8Array) || secretKey.byteLength !== nacl.box.secretKeyLength) {
+    throw new Error(`Invalid secret key length (expected ${nacl.box.secretKeyLength})`);
+  }
+  return encodeBase64(secretKey);
+}
+
+export function importSecretKey(base64: string): Uint8Array {
+  const bytes = decodeBase64(base64);
+  if (bytes.byteLength !== nacl.box.secretKeyLength) {
+    throw new Error(`Invalid secret key length (expected ${nacl.box.secretKeyLength})`);
+  }
+  return bytes;
+}
+
+export function deriveSharedKey(
+  ourSecretKey: Uint8Array,
+  peerPublicKey: Uint8Array
+): SharedKey {
+  if (ourSecretKey.byteLength !== nacl.box.secretKeyLength) {
+    throw new Error(`Invalid secret key length (expected ${nacl.box.secretKeyLength})`);
+  }
+  if (peerPublicKey.byteLength !== nacl.box.publicKeyLength) {
+    throw new Error(`Invalid peer public key length (expected ${nacl.box.publicKeyLength})`);
+  }
+  return nacl.box.before(peerPublicKey, ourSecretKey);
 }
 
 /**
- * Encrypt data with AES-256-GCM.
- *
- * Returns: [IV (12 bytes)][ciphertext + auth tag]
+ * Encrypts data and returns the binary bundle:
+ *   [nonce (24)] [ciphertext...]
  */
-export async function encrypt(
-  key: CryptoKey,
-  data: string | ArrayBuffer
-): Promise<ArrayBuffer> {
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  const plaintext =
-    typeof data === "string" ? new TextEncoder().encode(data) : data;
-
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    plaintext
-  );
-
-  // Prepend IV to ciphertext
-  const result = new Uint8Array(IV_LENGTH + ciphertext.byteLength);
-  result.set(iv, 0);
-  result.set(new Uint8Array(ciphertext), IV_LENGTH);
-
-  return result.buffer;
+export function encrypt(sharedKey: SharedKey, data: string | ArrayBuffer): ArrayBuffer {
+  ensurePrng();
+  const nonce = nacl.randomBytes(NONCE_LENGTH);
+  const plaintext = toUint8(data);
+  const ciphertext = nacl.box.after(plaintext, nonce, sharedKey);
+  const out = new Uint8Array(nonce.byteLength + ciphertext.byteLength);
+  out.set(nonce, 0);
+  out.set(ciphertext, nonce.byteLength);
+  return toArrayBuffer(out);
 }
 
-/**
- * Decrypt data with AES-256-GCM.
- *
- * Input format: [IV (12 bytes)][ciphertext + auth tag]
- * Returns string if original was string, ArrayBuffer if binary.
- */
-export async function decrypt(
-  key: CryptoKey,
-  data: ArrayBuffer
-): Promise<string | ArrayBuffer> {
-  const dataArray = new Uint8Array(data);
-  const iv = dataArray.slice(0, IV_LENGTH);
-  const ciphertext = dataArray.slice(IV_LENGTH);
+export function decrypt(sharedKey: SharedKey, data: ArrayBuffer): string | ArrayBuffer {
+  const bytes = new Uint8Array(data);
+  if (bytes.byteLength < NONCE_LENGTH) {
+    throw new Error("Ciphertext bundle too short");
+  }
 
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    key,
-    ciphertext
-  );
+  const nonce = bytes.slice(0, NONCE_LENGTH);
+  const ciphertext = bytes.slice(NONCE_LENGTH);
+  const opened = nacl.box.open.after(ciphertext, nonce, sharedKey);
+  if (!opened) {
+    throw new Error("Decryption failed");
+  }
 
-  // Try to decode as UTF-8 string, fall back to ArrayBuffer
+  const plaintext = toArrayBuffer(opened);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
   } catch {
