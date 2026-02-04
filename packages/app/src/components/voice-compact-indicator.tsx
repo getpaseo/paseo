@@ -14,7 +14,7 @@ export function VoiceCompactIndicator() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isMuted && styles.containerMuted]}>
       <View style={styles.meterContainer}>
         <VolumeMeter
           volume={volume}
@@ -30,10 +30,11 @@ export function VoiceCompactIndicator() {
         onPress={toggleMute}
         accessibilityRole="button"
         accessibilityLabel={isMuted ? "Unmute voice" : "Mute voice"}
-        style={[styles.muteButton, isMuted && styles.muteButtonMuted]}
+        style={styles.muteButton}
+        hitSlop={8}
       >
         {isMuted ? (
-          <MicOff size={14} color={theme.colors.surface0} />
+          <MicOff size={14} color={theme.colors.palette.white} />
         ) : (
           <Mic size={14} color={theme.colors.foreground} />
         )}
@@ -55,6 +56,10 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
   },
+  containerMuted: {
+    backgroundColor: theme.colors.palette.red[600],
+    borderWidth: 0,
+  },
   meterContainer: {
     justifyContent: "center",
   },
@@ -64,12 +69,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.colors.surface0,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  muteButtonMuted: {
-    backgroundColor: theme.colors.palette.red[600],
-    borderColor: theme.colors.palette.red[800],
+    backgroundColor: "transparent",
+    borderWidth: 0,
   },
 }));
