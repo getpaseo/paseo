@@ -10,9 +10,10 @@ import {
   ScrollView as RNScrollView,
   Text,
   View,
+  Platform,
   useWindowDimensions,
 } from "react-native";
-import { ScrollView } from "react-native-gesture-handler";
+import { ScrollView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -83,6 +84,8 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   } = useFileExplorerActions(serverId);
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
+  const splitRatio = usePanelStore((state) => state.explorerFilesSplitRatio);
+  const setSplitRatio = usePanelStore((state) => state.setExplorerFilesSplitRatio);
 
   const directories = explorerState?.directories ?? new Map();
   const files = explorerState?.files ?? new Map();
@@ -110,6 +113,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const [menuEntry, setMenuEntry] = useState<ExplorerEntry | null>(null);
   const [menuAnchor, setMenuAnchor] = useState({ top: 0, left: 0 });
   const [menuHeight, setMenuHeight] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
 
   // Bottom sheet for file preview (mobile)
   const previewSheetRef = useRef<BottomSheetModal>(null);
@@ -261,7 +265,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     if (!menuEntry) {
       return null;
     }
-    const menuWidth = 180;
+    const menuWidth = 240;
     const horizontalPadding = theme.spacing[2];
     const verticalPadding = theme.spacing[2];
     const maxLeft = Math.max(horizontalPadding, windowWidth - menuWidth - horizontalPadding);
@@ -301,6 +305,66 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     Boolean(isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === ".");
 
   const shouldShowInlinePreview = !isMobile && Boolean(selectedEntryPath);
+  const dividerWidth = 10;
+  const minTreeWidth = 220;
+  const minPreviewWidth = 320;
+
+  const treePaneWidth = useMemo(() => {
+    if (!shouldShowInlinePreview || containerWidth <= 0) {
+      return null;
+    }
+
+    const available = Math.max(0, containerWidth - dividerWidth);
+    const maxTree = Math.max(minTreeWidth, available - minPreviewWidth);
+    const raw = Math.round(available * splitRatio);
+    return Math.max(minTreeWidth, Math.min(maxTree, raw));
+  }, [containerWidth, shouldShowInlinePreview, splitRatio]);
+
+  const resizeStartRef = useRef<{ startWidth: number; startX: number; available: number } | null>(
+    null
+  );
+
+  const splitResizeGesture = useMemo(() => {
+    if (!shouldShowInlinePreview || containerWidth <= 0 || treePaneWidth === null) {
+      return Gesture.Pan().enabled(false);
+    }
+
+    const available = Math.max(0, containerWidth - dividerWidth);
+
+    return Gesture.Pan()
+      .enabled(!isMobile)
+      .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
+      .onBegin((event) => {
+        resizeStartRef.current = {
+          startWidth: treePaneWidth,
+          startX: event.absoluteX,
+          available,
+        };
+      })
+      .onUpdate((event) => {
+        const start = resizeStartRef.current;
+        if (!start) {
+          return;
+        }
+        const deltaX = event.absoluteX - start.startX;
+        const nextWidth = start.startWidth + deltaX;
+        const maxTree = Math.max(minTreeWidth, start.available - minPreviewWidth);
+        const clamped = Math.max(minTreeWidth, Math.min(maxTree, nextWidth));
+        const nextRatio = start.available > 0 ? clamped / start.available : splitRatio;
+        setSplitRatio(nextRatio);
+      })
+      .onFinalize(() => {
+        resizeStartRef.current = null;
+      });
+  }, [
+    containerWidth,
+    dividerWidth,
+    isMobile,
+    setSplitRatio,
+    shouldShowInlinePreview,
+    splitRatio,
+    treePaneWidth,
+  ]);
 
   const renderTreeRow = useCallback(
     ({ item }: ListRenderItemInfo<TreeRow>) => {
@@ -401,7 +465,10 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   }
 
   return (
-    <View style={styles.container}>
+    <View
+      style={styles.container}
+      onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
+    >
       {error ? (
         <View style={styles.centerState}>
           <Text style={styles.errorText}>{error}</Text>
@@ -430,7 +497,13 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
         </View>
       ) : (
         <View style={styles.desktopSplit}>
-          <View style={[styles.treePane, shouldShowInlinePreview && styles.treePaneWithPreview]}>
+          <View
+            style={[
+              styles.treePane,
+              shouldShowInlinePreview && styles.treePaneWithPreview,
+              shouldShowInlinePreview && treePaneWidth !== null ? { width: treePaneWidth } : null,
+            ]}
+          >
             <FlatList
               data={treeRows}
               renderItem={renderTreeRow}
@@ -444,7 +517,16 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
           </View>
 
           {shouldShowInlinePreview ? (
-            <View style={styles.previewPane}>
+            <>
+              <GestureDetector gesture={splitResizeGesture}>
+                <View
+                  style={[
+                    styles.splitResizeHandle,
+                    Platform.OS === "web" && ({ cursor: "col-resize" } as any),
+                  ]}
+                />
+              </GestureDetector>
+              <View style={styles.previewPane}>
               <View style={styles.previewHeaderContainer}>
                 <View style={styles.previewHeaderInner}>
                   <Pressable
@@ -482,6 +564,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
 
               <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="inline" />
             </View>
+            </>
           ) : null}
         </View>
       )}
@@ -517,7 +600,10 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
               </View>
               <View style={styles.entryMenuDivider} />
               <Pressable
-                style={styles.entryMenuItem}
+                style={({ hovered, pressed }) => [
+                  styles.entryMenuItem,
+                  (hovered || pressed) && styles.entryMenuItemHovered,
+                ]}
                 onPress={() => {
                   handleCopyPath(menuEntry.path);
                   handleCloseMenu();
@@ -527,7 +613,10 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
               </Pressable>
               {menuEntry.kind === "file" ? (
                 <Pressable
-                  style={styles.entryMenuItem}
+                  style={({ hovered, pressed }) => [
+                    styles.entryMenuItem,
+                    (hovered || pressed) && styles.entryMenuItemHovered,
+                  ]}
                   onPress={async () => {
                     handleCloseMenu();
                     handleDownloadEntry(menuEntry);
@@ -869,8 +958,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   treePaneWithPreview: {
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
+  },
+  splitResizeHandle: {
+    width: 10,
+    backgroundColor: "transparent",
+    borderLeftWidth: 1,
+    borderLeftColor: theme.colors.border,
   },
   previewPane: {
     flex: 1,
@@ -974,36 +1067,43 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(0, 0, 0, 0.2)",
   },
   entryMenu: {
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    padding: theme.spacing[1],
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    overflow: "hidden",
+    ...(Platform.OS === "web"
+      ? ({ boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)" } as any)
+      : {
+          shadowColor: "#000",
+          shadowOpacity: 0.35,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 10 },
+          elevation: 14,
+        }),
   },
   entryMenuHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
   },
   entryMenuMeta: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   entryMenuDivider: {
     height: 1,
     backgroundColor: theme.colors.border,
-    marginHorizontal: theme.spacing[2],
-    marginVertical: theme.spacing[1],
   },
   entryMenuItem: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  entryMenuItemHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   entryMenuText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
   },
   previewHeaderContainer: {
