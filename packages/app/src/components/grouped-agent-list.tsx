@@ -17,25 +17,20 @@ import {
 import { router, usePathname } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
-import { useQueries, useQueryClient, type UseQueryOptions } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Archive, ChevronDown, ChevronRight, Plus } from "lucide-react-native";
 import {
   DraggableList,
   type DraggableRenderItemInfo,
 } from "./draggable-list";
 import { formatTimeAgo } from "@/utils/time";
-import {
-  groupAgents,
-  parseRepoNameFromRemoteUrl,
-  parseRepoShortNameFromRemoteUrl,
-} from "@/utils/agent-grouping";
+import { parseRepoNameFromRemoteUrl, parseRepoShortNameFromRemoteUrl } from "@/utils/agent-grouping";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  type CheckoutStatusPayload,
+  CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
   useCheckoutStatusCacheOnly,
-  CHECKOUT_STATUS_STALE_TIME,
 } from "@/hooks/use-checkout-status-query";
 import {
   buildAgentNavigationKey,
@@ -43,22 +38,14 @@ import {
 } from "@/utils/navigation-timing";
 import {
   useSectionOrderStore,
-  sortProjectsByStoredOrder,
 } from "@/stores/section-order-store";
 import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
+import { useSidebarAgentSections, type SidebarSectionData } from "@/hooks/use-sidebar-agent-sections";
+import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
+import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
+import { getIsTauri } from "@/constants/layout";
 
-interface SectionData {
-  key: string;
-  projectKey: string;
-  title: string;
-  agents: AggregatedAgent[];
-  /** For project sections, the first agent's serverId (to lookup checkout status) */
-  firstAgentServerId?: string;
-  /** For project sections, the first agent's id (to lookup checkout status) */
-  firstAgentId?: string;
-  /** Working directory for the project (from first agent) */
-  workingDir?: string;
-}
+type SectionData = SidebarSectionData;
 
 interface GroupedAgentListProps {
   agents: AggregatedAgent[];
@@ -209,9 +196,24 @@ export function GroupedAgentList({
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    new Set()
-  );
+
+  const collapsedProjectKeys = useSidebarCollapsedSectionsStore((s) => s.collapsedProjectKeys);
+  const toggleProjectCollapsed = useSidebarCollapsedSectionsStore((s) => s.toggleProjectCollapsed);
+
+  const altDown = useKeyboardNavStore((s) => s.altDown);
+  const cmdOrCtrlDown = useKeyboardNavStore((s) => s.cmdOrCtrlDown);
+  const sidebarShortcutAgentKeys = useKeyboardNavStore((s) => s.sidebarShortcutAgentKeys);
+  const isTauri = getIsTauri();
+  const showShortcutBadges = altDown || (isTauri && cmdOrCtrlDown);
+  const shortcutIndexByAgentKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < sidebarShortcutAgentKeys.length; i++) {
+      const key = sidebarShortcutAgentKeys[i];
+      if (!key) continue;
+      map.set(key, i + 1);
+    }
+    return map;
+  }, [sidebarShortcutAgentKeys]);
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? state.sessions[actionAgent.serverId]?.client ?? null : null
@@ -265,18 +267,6 @@ export function GroupedAgentList({
     setActionAgent(null);
   }, [actionAgent, actionClient]);
 
-  const toggleSection = useCallback((sectionKey: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(sectionKey)) {
-        next.delete(sectionKey);
-      } else {
-        next.add(sectionKey);
-      }
-      return next;
-    });
-  }, []);
-
   const handleCreateAgentInProject = useCallback(
     (workingDir: string) => {
       onAgentSelect?.();
@@ -315,87 +305,10 @@ export function GroupedAgentList({
     }
   }, [agents, queryClient]);
 
-  // Subscribe to checkout status cache entries so project grouping can react
-  // to remote URL updates (e.g. git worktrees in different directories).
-  const checkoutCacheQueries = useQueries({
-    queries: agents.map(
-      (agent): UseQueryOptions<CheckoutStatusPayload> => ({
-      queryKey: checkoutStatusQueryKey(agent.serverId, agent.cwd),
-      enabled: false,
-      staleTime: CHECKOUT_STATUS_STALE_TIME,
-      queryFn: async (): Promise<CheckoutStatusPayload> => {
-        throw new Error("checkout status cache-only query should not run");
-      },
-      })
-    ),
-  });
-
-  const remoteUrlByAgentKey = useMemo(() => {
-    const result = new Map<string, string | null>();
-    for (let i = 0; i < agents.length; i++) {
-      const agent = agents[i];
-      if (!agent) {
-        continue;
-      }
-      const checkout = checkoutCacheQueries[i]?.data ?? null;
-      const remoteUrl = checkout?.remoteUrl ?? null;
-      result.set(`${agent.serverId}:${agent.id}`, remoteUrl);
-    }
-    return result;
-  }, [agents, checkoutCacheQueries]);
-
   // Section order from store
-  const projectOrder = useSectionOrderStore((state) => state.projectOrder);
   const setProjectOrder = useSectionOrderStore((state) => state.setProjectOrder);
 
-  // Group agents
-  const { activeGroups } = useMemo(
-    () =>
-      groupAgents(agents, {
-        getRemoteUrl: (agent) =>
-          remoteUrlByAgentKey.get(`${agent.serverId}:${agent.id}`) ?? null,
-      }),
-    [agents, remoteUrlByAgentKey]
-  );
-
-  // Sort groups by persisted order
-  const sortedGroups = useMemo(
-    () => sortProjectsByStoredOrder(activeGroups, projectOrder),
-    [activeGroups, projectOrder]
-  );
-
-  // Build sections for DraggableFlatList
-  const sections: SectionData[] = useMemo(() => {
-    const result: SectionData[] = [];
-
-    for (const group of sortedGroups) {
-      const sectionKey = `project:${group.projectKey}`;
-      const firstAgent = group.agents[0];
-      result.push({
-        key: sectionKey,
-        projectKey: group.projectKey,
-        title: group.projectName,
-        agents: group.agents,
-        firstAgentServerId: firstAgent?.serverId,
-        firstAgentId: firstAgent?.id,
-        workingDir: firstAgent?.cwd,
-      });
-    }
-
-    return result;
-  }, [sortedGroups]);
-
-  // Sync section order when new projects appear
-  useEffect(() => {
-    const currentKeys = sections.map((s) => s.projectKey);
-    const storedKeys = new Set(projectOrder);
-    const newKeys = currentKeys.filter((key) => !storedKeys.has(key));
-
-    if (newKeys.length > 0) {
-      // Add new projects at the end of the stored order
-      setProjectOrder([...projectOrder, ...newKeys]);
-    }
-  }, [sections, projectOrder, setProjectOrder]);
+  const sections: SectionData[] = useSidebarAgentSections(agents);
 
   const handleDragEnd = useCallback(
     (newData: SectionData[]) => {
@@ -424,6 +337,8 @@ export function GroupedAgentList({
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
       const isRunning = agent.status === "running";
+      const shortcutNumber =
+        showShortcutBadges ? (shortcutIndexByAgentKey.get(agentKey) ?? null) : null;
       const statusColor = isRunning
         ? theme.colors.palette.blue[500]
         : agent.requiresAttention
@@ -476,7 +391,13 @@ export function GroupedAgentList({
               >
                 {agent.title || "New agent"}
               </Text>
-              {isHovered && canArchive ? (
+              {shortcutNumber !== null ? (
+                <View style={styles.branchBadge}>
+                  <Text style={styles.branchBadgeText} numberOfLines={1}>
+                    {shortcutNumber}
+                  </Text>
+                </View>
+              ) : isHovered && canArchive ? (
                 <Pressable
                   style={styles.branchBadge}
                   onPress={(e) => handleArchiveAgent(e, agent)}
@@ -512,6 +433,8 @@ export function GroupedAgentList({
       handleAgentPress,
       handleArchiveAgent,
       selectedAgentId,
+      showShortcutBadges,
+      shortcutIndexByAgentKey,
       theme.colors.foreground,
       theme.colors.foregroundMuted,
       theme.colors.palette.blue,
@@ -521,14 +444,14 @@ export function GroupedAgentList({
 
   const renderSection = useCallback(
     ({ item: section, drag, isActive }: DraggableRenderItemInfo<SectionData>) => {
-      const isCollapsed = collapsedSections.has(section.key);
+      const isCollapsed = collapsedProjectKeys.has(section.projectKey);
 
       return (
         <View style={[styles.sectionContainer, isActive && styles.sectionDragging]}>
           <SectionHeader
             section={section}
             isCollapsed={isCollapsed}
-            onToggle={() => toggleSection(section.key)}
+            onToggle={() => toggleProjectCollapsed(section.projectKey)}
             onCreateAgent={handleCreateAgentInProject}
             onDrag={drag}
             isDragging={isActive}
@@ -540,7 +463,7 @@ export function GroupedAgentList({
         </View>
       );
     },
-    [AgentListRow, collapsedSections, handleCreateAgentInProject, toggleSection]
+    [AgentListRow, collapsedProjectKeys, handleCreateAgentInProject, toggleProjectCollapsed]
   );
 
   const keyExtractor = useCallback(
