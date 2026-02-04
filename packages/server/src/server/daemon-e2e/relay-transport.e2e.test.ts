@@ -126,15 +126,19 @@ describe("Relay transport (E2EE) - daemon E2E", () => {
                 daemonPublicKeyB64,
                 {
                   onmessage: (data) => {
-                    clearTimeout(timeout);
                     try {
                       const payload =
                         typeof data === "string" ? JSON.parse(data) : data;
-                      resolve(payload);
+                      // The daemon may send an initial `server_info` status message
+                      // immediately upon connect; ignore everything until we see `pong`.
+                      if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                        clearTimeout(timeout);
+                        resolve(payload);
+                        ws.close();
+                      }
                     } catch (err) {
+                      clearTimeout(timeout);
                       reject(err);
-                    } finally {
-                      ws.close();
                     }
                   },
                   onerror: (err) => {
