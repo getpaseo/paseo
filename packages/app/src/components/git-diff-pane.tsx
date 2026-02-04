@@ -6,11 +6,11 @@ import {
   Text,
   ActivityIndicator,
   Pressable,
-  FlatList,
+  SectionList,
   Platform,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
-  type ListRenderItem,
+  type SectionListRenderItem,
 } from "react-native";
 import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -259,18 +259,13 @@ function DiffLineView({ line }: { line: DiffLine }) {
   );
 }
 
-const DiffFileSection = memo(function DiffFileSection({
+const DiffFileHeader = memo(function DiffFileHeader({
   file,
   isExpanded,
   onToggle,
   testID,
 }: DiffFileSectionProps) {
   const { theme } = useUnistyles();
-  const [scrollViewWidth, setScrollViewWidth] = useState(0);
-  const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
-  const horizontalScroll = useHorizontalScrollOptional();
-  const scrollId = useId();
-  const scrollViewRef = useRef<ScrollViewType>(null);
   const expandStartRef = useRef<number | null>(null);
 
   const { hunkCount, lineCount, tokenCount } = useMemo(() => {
@@ -294,15 +289,6 @@ const DiffFileSection = memo(function DiffFileSection({
   const shouldLogFileMetrics =
     lineCount >= DIFF_FILE_LOG_LINE_THRESHOLD ||
     tokenCount >= DIFF_FILE_LOG_TOKEN_THRESHOLD;
-
-  // Get the close gesture ref from animation context (may not be available outside sidebar)
-  let closeGestureRef: React.MutableRefObject<any> | undefined;
-  try {
-    const animation = useExplorerSidebarAnimation();
-    closeGestureRef = animation.closeGestureRef;
-  } catch {
-    // Not inside ExplorerSidebarAnimationProvider, which is fine
-  }
 
   const toggleExpanded = useCallback(() => {
     if (isPerfLoggingEnabled() && shouldLogFileMetrics) {
@@ -346,30 +332,14 @@ const DiffFileSection = memo(function DiffFileSection({
     }
   }, [isExpanded, file.path, hunkCount, lineCount, tokenCount, shouldLogFileMetrics]);
 
-  // Register/unregister scroll offset tracking
-  useEffect(() => {
-    if (!horizontalScroll || !isExpanded) return;
-    // Start at 0 (not scrolled)
-    horizontalScroll.registerScrollOffset(scrollId, 0);
-    return () => {
-      horizontalScroll.unregisterScrollOffset(scrollId);
-    };
-  }, [horizontalScroll, isExpanded, scrollId]);
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const offsetX = event.nativeEvent.contentOffset.x;
-      // Track if we're at the left edge (with small threshold for float precision)
-      setIsAtLeftEdge(offsetX <= 1);
-      if (horizontalScroll) {
-        horizontalScroll.registerScrollOffset(scrollId, offsetX);
-      }
-    },
-    [horizontalScroll, scrollId]
-  );
-
   return (
-    <View style={styles.fileSection} testID={testID}>
+    <View
+      style={[
+        styles.fileSectionHeaderContainer,
+        !isExpanded && styles.fileSectionBorder,
+      ]}
+      testID={testID}
+    >
       <Pressable
         testID={testID ? `${testID}-toggle` : undefined}
         style={({ pressed }) => [
@@ -412,13 +382,57 @@ const DiffFileSection = memo(function DiffFileSection({
           <Text style={styles.deletions}>-{file.deletions}</Text>
         </View>
       </Pressable>
-      {isExpanded && (file.status === "too_large" || file.status === "binary") ? (
+    </View>
+  );
+});
+
+function DiffFileBody({ file, testID }: { file: ParsedDiffFile; testID?: string }) {
+  const [scrollViewWidth, setScrollViewWidth] = useState(0);
+  const [isAtLeftEdge, setIsAtLeftEdge] = useState(true);
+  const horizontalScroll = useHorizontalScrollOptional();
+  const scrollId = useId();
+  const scrollViewRef = useRef<ScrollViewType>(null);
+
+  // Get the close gesture ref from animation context (may not be available outside sidebar)
+  let closeGestureRef: React.MutableRefObject<any> | undefined;
+  try {
+    const animation = useExplorerSidebarAnimation();
+    closeGestureRef = animation.closeGestureRef;
+  } catch {
+    // Not inside ExplorerSidebarAnimationProvider, which is fine
+  }
+
+  // Register/unregister scroll offset tracking
+  useEffect(() => {
+    if (!horizontalScroll) return;
+    // Start at 0 (not scrolled)
+    horizontalScroll.registerScrollOffset(scrollId, 0);
+    return () => {
+      horizontalScroll.unregisterScrollOffset(scrollId);
+    };
+  }, [horizontalScroll, scrollId]);
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = event.nativeEvent.contentOffset.x;
+      // Track if we're at the left edge (with small threshold for float precision)
+      setIsAtLeftEdge(offsetX <= 1);
+      if (horizontalScroll) {
+        horizontalScroll.registerScrollOffset(scrollId, offsetX);
+      }
+    },
+    [horizontalScroll, scrollId]
+  );
+
+  return (
+    <View style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]} testID={testID}>
+      {file.status === "too_large" || file.status === "binary" ? (
         <View style={styles.statusMessageContainer}>
           <Text style={styles.statusMessageText}>
             {file.status === "binary" ? "Binary file" : "Diff too large to display"}
           </Text>
         </View>
-      ) : isExpanded ? (
+      ) : (
         <ScrollView
           ref={scrollViewRef}
           horizontal
@@ -444,16 +458,24 @@ const DiffFileSection = memo(function DiffFileSection({
             )}
           </View>
         </ScrollView>
-      ) : null}
+      )}
     </View>
   );
-});
+}
 
 interface GitDiffPaneProps {
   serverId: string;
   agentId: string;
   cwd: string;
 }
+
+type GitDiffSection = {
+  key: string;
+  index: number;
+  file: ParsedDiffFile;
+  isExpanded: boolean;
+  data: ParsedDiffFile[];
+};
 
 export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
@@ -582,6 +604,19 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
       [path]: !prev[path],
     }));
   }, []);
+
+  const diffSections = useMemo((): GitDiffSection[] => {
+    return files.map((file, index) => {
+      const isExpanded = expandedByPath[file.path] ?? false;
+      return {
+        key: file.path,
+        index,
+        file,
+        isExpanded,
+        data: isExpanded ? [file] : [],
+      };
+    });
+  }, [files, expandedByPath]);
 
   const allExpanded = useMemo(() => {
     if (files.length === 0) return false;
@@ -786,16 +821,23 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
   const pushAction = useActionStatus(pushMutation);
   const archiveAction = useActionStatus(archiveMutation);
 
-  const renderFileSection: ListRenderItem<ParsedDiffFile> = useCallback(
-    ({ item, index }) => (
-      <DiffFileSection
-        file={item}
-        isExpanded={expandedByPath[item.path] ?? false}
+  const renderFileBody: SectionListRenderItem<ParsedDiffFile, GitDiffSection> = useCallback(
+    ({ item, section }) => (
+      <DiffFileBody file={item} testID={`diff-file-${section.index}-body`} />
+    ),
+    []
+  );
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: GitDiffSection }) => (
+      <DiffFileHeader
+        file={section.file}
+        isExpanded={section.isExpanded}
         onToggle={handleToggleExpanded}
-        testID={`diff-file-${index}`}
+        testID={`diff-file-${section.index}`}
       />
     ),
-    [expandedByPath, handleToggleExpanded]
+    [handleToggleExpanded]
   );
 
   const keyExtractor = useCallback((item: ParsedDiffFile) => item.path, []);
@@ -875,10 +917,12 @@ export function GitDiffPane({ serverId, agentId, cwd }: GitDiffPaneProps) {
     );
   } else {
     bodyContent = (
-      <FlatList
-        data={files}
-        renderItem={renderFileSection}
+      <SectionList
+        sections={diffSections}
+        renderItem={renderFileBody}
+        renderSectionHeader={renderSectionHeader}
         keyExtractor={keyExtractor}
+        stickySectionHeadersEnabled
         extraData={expandedByPath}
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
@@ -1449,6 +1493,18 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.borderAccent,
   },
+  fileSectionHeaderContainer: {
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface2,
+  },
+  fileSectionBodyContainer: {
+    overflow: "hidden",
+    backgroundColor: theme.colors.surface2,
+  },
+  fileSectionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderAccent,
+  },
   fileHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1456,6 +1512,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[2],
     gap: theme.spacing[1],
+    backgroundColor: theme.colors.surface2,
+    zIndex: 2,
+    elevation: 2,
   },
   fileHeaderPressed: {
     opacity: 0.7,
