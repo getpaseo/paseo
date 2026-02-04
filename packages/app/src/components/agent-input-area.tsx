@@ -406,12 +406,41 @@ export function AgentInputArea({
     if (!req) return;
     if (req.agentKey !== `${serverId}:${agentId}`) return;
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        messageInputRef.current?.focus();
+    let cancelled = false;
+    const deadlineMs = Date.now() + 1500;
+
+    const tryFocus = () => {
+      if (cancelled) return;
+      const ref = messageInputRef.current;
+      ref?.focus();
+
+      const el = ref?.getNativeElement?.() ?? null;
+      const active = typeof document !== "undefined" ? document.activeElement : null;
+      const didFocus = !!el && active === el;
+
+      if (didFocus) {
         clearFocusChatInputRequest();
+        return;
+      }
+
+      if (Date.now() >= deadlineMs) {
+        // Don't keep stealing focus forever; allow other interactions.
+        clearFocusChatInputRequest();
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(tryFocus);
       });
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(tryFocus);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [agentId, clearFocusChatInputRequest, focusChatInputRequest, serverId]);
 
   // Handle command selection from autocomplete

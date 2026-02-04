@@ -130,8 +130,16 @@ export function useGlobalKeyboardNav({
         event.preventDefault();
         const s = useKeyboardNavStore.getState();
         if (!s.commandCenterOpen) {
+          const target =
+            event.target instanceof Element ? (event.target as Element) : null;
+          const targetEl =
+            target?.closest?.("textarea, input, [contenteditable='true']") ??
+            (target instanceof HTMLElement ? target : null);
           const active = document.activeElement;
-          s.setFocusRestoreElement(active instanceof HTMLElement ? active : null);
+          const activeEl = active instanceof HTMLElement ? active : null;
+          s.setFocusRestoreElement(
+            (targetEl as HTMLElement | null) ?? activeEl ?? null
+          );
         }
         s.setCommandCenterOpen(!s.commandCenterOpen);
         return;

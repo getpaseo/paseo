@@ -62,6 +62,12 @@ export function CommandCenter() {
     return filtered;
   }, [agents, query]);
 
+  const agentKeyFromPathname = useMemo(() => {
+    const match = pathname.match(/^\/agent\/([^/]+)\/([^/]+)/);
+    if (!match) return null;
+    return `${match[1]}:${match[2]}`;
+  }, [pathname]);
+
   useEffect(() => {
     const prevOpen = prevOpenRef.current;
     prevOpenRef.current = open;
@@ -72,18 +78,43 @@ export function CommandCenter() {
 
       if (prevOpen && !didNavigateRef.current) {
         const el = takeFocusRestoreElement();
-        if (el && el.isConnected) {
-          // Modal unmount can steal focus; restore on next tick.
+        const deadlineMs = Date.now() + 1500;
+        const tryRestore = () => {
+          if (el && el.isConnected) {
+            try {
+              el.focus();
+            } catch {
+              // ignore
+            }
+          }
+
+          if (
+            el &&
+            typeof document !== "undefined" &&
+            document.activeElement === el
+          ) {
+            return;
+          }
+
+          if (Date.now() >= deadlineMs) {
+            // If we failed to restore focus to the original element (RN web can
+            // remount textareas), fall back to focusing the chat input for the
+            // current agent route.
+            if (agentKeyFromPathname) {
+              requestFocusChatInput(agentKeyFromPathname);
+            }
+            return;
+          }
+
           requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              try {
-                el.focus();
-              } catch {
-                // ignore
-              }
-            });
+            requestAnimationFrame(tryRestore);
           });
-        }
+        };
+
+        // Modal unmount can steal focus; restore on next tick (and retry).
+        requestAnimationFrame(() => {
+          requestAnimationFrame(tryRestore);
+        });
       }
 
       return;
@@ -95,7 +126,7 @@ export function CommandCenter() {
       inputRef.current?.focus();
     }, 0);
     return () => clearTimeout(id);
-  }, [open, takeFocusRestoreElement]);
+  }, [agentKeyFromPathname, open, requestFocusChatInput, takeFocusRestoreElement]);
 
   useEffect(() => {
     if (!open) return;

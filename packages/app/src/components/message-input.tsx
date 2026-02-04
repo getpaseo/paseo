@@ -72,6 +72,11 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  /**
+   * Web-only: return the underlying DOM element for focus assertions/retries.
+   * May return null if not mounted or on native.
+   */
+  getNativeElement?: () => HTMLElement | null;
 }
 
 const MIN_INPUT_HEIGHT = 30;
@@ -133,6 +138,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
       blur: () => {
         textInputRef.current?.blur?.();
+      },
+      getNativeElement: () => {
+        if (!IS_WEB) return null;
+        const current = textInputRef.current as
+          | (TextInput & { getNativeRef?: () => unknown })
+          | null;
+        const native =
+          typeof current?.getNativeRef === "function"
+            ? current.getNativeRef()
+            : current;
+        return native instanceof HTMLElement ? native : null;
       },
     }));
     const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
