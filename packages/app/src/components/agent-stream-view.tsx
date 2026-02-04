@@ -496,7 +496,16 @@ export function AgentStreamView({
 
     return (
       <View style={stylesheet.contentWrapper}>
-        <View style={stylesheet.listHeaderContent}>
+        <View
+          style={[
+            stylesheet.listHeaderContent,
+            // In an inverted FlatList, the header is rendered at the visual bottom, so its
+            // top edge can sit directly against the newest timeline item. Add a small
+            // padding to prevent badges (e.g. Thinking/Setup) from butting up against
+            // the last user message when the streaming head is present.
+            hasHeadItems ? { paddingTop: tightGap } : null,
+          ]}
+        >
           {hasPermissions ? (
             <View style={stylesheet.permissionsContainer}>
               {pendingPermissionItems.map((permission) => (
@@ -534,6 +543,7 @@ export function AgentStreamView({
     client,
     streamHead,
     renderStreamItemContent,
+    tightGap,
   ]);
 
   const flatListExtraData = useMemo(
@@ -544,6 +554,16 @@ export function AgentStreamView({
     [pendingPermissionItems.length, showWorkingIndicator]
   );
 
+  // FlatList's ListHeaderComponent renders at the *bottom* when inverted.
+  // Without explicit spacing, the newest "head" rows (like Thinking/Setup tool badges)
+  // can butt up directly against the most recent stream item.
+  const headerGapStyle = useMemo(() => {
+    if (!listHeaderComponent) {
+      return undefined;
+    }
+    return { marginBottom: tightGap };
+  }, [listHeaderComponent, tightGap]);
+
   return (
     <ToolCallSheetProvider>
       <View style={stylesheet.container}>
@@ -553,6 +573,7 @@ export function AgentStreamView({
               data={flatListData}
               renderItem={renderStreamItem}
               keyExtractor={(item) => item.id}
+              ListHeaderComponentStyle={headerGapStyle}
               contentContainerStyle={{
                 paddingVertical: 0,
                 flexGrow: 1,
