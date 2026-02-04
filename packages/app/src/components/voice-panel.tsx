@@ -48,7 +48,7 @@ export function VoicePanel() {
           >
             <MicOff
               size={18}
-              color={isMuted ? theme.colors.surface0 : theme.colors.foreground}
+              color={isMuted ? theme.colors.palette.white : theme.colors.foreground}
             />
           </Pressable>
 
@@ -86,6 +86,7 @@ const styles = StyleSheet.create((theme) => ({
   meterContainer: {
     flex: 1,
     justifyContent: "center",
+    alignItems: "flex-start",
   },
   actionsRow: {
     flexDirection: "row",
@@ -105,7 +106,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   iconButtonMuted: {
     backgroundColor: theme.colors.palette.red[500],
-    borderColor: theme.colors.palette.red[600],
+    borderWidth: 0,
   },
   iconButtonStop: {
     backgroundColor: theme.colors.palette.red[600],
