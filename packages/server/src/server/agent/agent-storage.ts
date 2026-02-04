@@ -230,6 +230,13 @@ export class AgentStorage {
         ? options?.internal
         : (agent.internal ?? existing?.internal),
     });
+
+    // Preserve soft-delete/archive status across snapshot flushes.
+    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
+    // would wipe it during normal persistence (including on daemon restart).
+    if (existing && existing.archivedAt !== undefined) {
+      record.archivedAt = existing.archivedAt;
+    }
     await this.upsert(record);
   }
 
