@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'packages/website/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'patches/**'
       - '.github/workflows/deploy-website.yml'
   workflow_dispatch:
 
