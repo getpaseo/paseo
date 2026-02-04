@@ -114,10 +114,39 @@ async function execSetupCommand(
   }
 }
 
+async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<string> {
+  try {
+    const commonDir = await getGitCommonDir(worktreePath);
+    const normalizedCommonDir = normalizePathForOwnership(commonDir);
+    // Normal repo/worktree: common dir is <repoRoot>/.git
+    if (basename(normalizedCommonDir) === ".git") {
+      return dirname(normalizedCommonDir);
+    }
+    // Bare repo: common dir is the repo dir itself
+    return normalizedCommonDir;
+  } catch {
+    // Fallback: best-effort resolve toplevel (will be the worktree root in typical cases)
+    try {
+      const { stdout } = await execAsync(
+        "git rev-parse --path-format=absolute --show-toplevel",
+        { cwd: worktreePath, env: READ_ONLY_GIT_ENV }
+      );
+      const topLevel = stdout.trim();
+      if (topLevel) {
+        return normalizePathForOwnership(topLevel);
+      }
+    } catch {
+      // ignore
+    }
+    return normalizePathForOwnership(worktreePath);
+  }
+}
+
 export async function runWorktreeSetupCommands(options: {
   worktreePath: string;
   branchName: string;
   cleanupOnFailure: boolean;
+  repoRootPath?: string;
 }): Promise<WorktreeSetupCommandResult[]> {
   // Read paseo.json from the worktree (it will have the same content as the source repo)
   const setupCommands = getWorktreeSetupCommands(options.worktreePath);
@@ -125,9 +154,14 @@ export async function runWorktreeSetupCommands(options: {
     return [];
   }
 
+  const repoRootPath =
+    options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
+
   const setupEnv = {
     ...process.env,
-    PASEO_ROOT_PATH: options.worktreePath,
+    // Root is the original git repo root (shared across worktrees), not the worktree itself.
+    // This allows setup scripts to copy uncommitted local files (e.g. .env) from the main checkout.
+    PASEO_ROOT_PATH: repoRootPath,
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: options.branchName,
   };
