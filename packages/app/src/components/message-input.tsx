@@ -121,6 +121,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const { theme } = useUnistyles();
     const voice = useVoiceOptional();
     const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+    const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
   const textInputRef = useRef<
     TextInput | (TextInput & { getNativeRef?: () => unknown }) | null
@@ -439,6 +440,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     if ((metaKey || ctrlKey) && key === "b") {
       event.preventDefault();
       toggleAgentList();
+      return;
+    }
+
+    // Cmd+E or Ctrl+E: toggle explorer sidebar
+    if ((metaKey || ctrlKey) && key === "e") {
+      event.preventDefault();
+      toggleFileExplorer();
       return;
     }
 

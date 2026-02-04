@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef } from "react";
-import { View, Text, Pressable, Platform } from "react-native";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { View, Text, Pressable, Platform, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -8,12 +8,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { X, LayoutGrid, List as ListIcon } from "lucide-react-native";
+import { X } from "lucide-react-native";
 import {
   usePanelStore,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
-  type ViewMode,
   type ExplorerTab,
 } from "@/stores/panel-store";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
@@ -21,6 +20,8 @@ import { HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { GitDiffPane } from "./git-diff-pane";
 import { FileExplorerPane } from "./file-explorer-pane";
+
+const MIN_CHAT_WIDTH = 400;
 
 interface ExplorerSidebarProps {
   serverId: string;
@@ -38,10 +39,22 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
   const explorerTab = usePanelStore((state) => state.explorerTab);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
-  const explorerViewMode = usePanelStore((state) => state.explorerViewMode);
   const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
   const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
-  const setExplorerViewMode = usePanelStore((state) => state.setExplorerViewMode);
+  const { width: viewportWidth } = useWindowDimensions();
+
+  useEffect(() => {
+    if (isMobile) {
+      return;
+    }
+    const maxWidth = Math.max(
+      MIN_EXPLORER_SIDEBAR_WIDTH,
+      Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH)
+    );
+    if (explorerWidth > maxWidth) {
+      setExplorerWidth(maxWidth);
+    }
+  }, [explorerWidth, isMobile, setExplorerWidth, viewportWidth]);
 
   // Derive isOpen from the unified panel state
   const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
@@ -133,16 +146,20 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
         .onUpdate((event) => {
           // Dragging left (negative translationX) increases width
           const newWidth = startWidthRef.current - event.translationX;
+          const maxWidth = Math.max(
+            MIN_EXPLORER_SIDEBAR_WIDTH,
+            Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH)
+          );
           const clampedWidth = Math.max(
             MIN_EXPLORER_SIDEBAR_WIDTH,
-            Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, newWidth)
+            Math.min(maxWidth, newWidth)
           );
           resizeWidth.value = clampedWidth;
         })
         .onEnd(() => {
           runOnJS(setExplorerWidth)(resizeWidth.value);
         }),
-    [isMobile, explorerWidth, resizeWidth, setExplorerWidth]
+    [isMobile, explorerWidth, resizeWidth, setExplorerWidth, viewportWidth]
   );
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
@@ -185,8 +202,6 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
               serverId={serverId}
               agentId={agentId}
               cwd={cwd}
-              fileViewMode={explorerViewMode}
-              onFileViewModeChange={setExplorerViewMode}
               isMobile={isMobile}
             />
           </Animated.View>
@@ -219,8 +234,6 @@ export function ExplorerSidebar({ serverId, agentId, cwd }: ExplorerSidebarProps
         serverId={serverId}
         agentId={agentId}
         cwd={cwd}
-        fileViewMode={explorerViewMode}
-        onFileViewModeChange={setExplorerViewMode}
         isMobile={false}
       />
     </Animated.View>
@@ -234,8 +247,6 @@ interface SidebarContentProps {
   serverId: string;
   agentId: string;
   cwd: string;
-  fileViewMode: ViewMode;
-  onFileViewModeChange: (mode: ViewMode) => void;
   isMobile: boolean;
 }
 
@@ -246,8 +257,6 @@ function SidebarContent({
   serverId,
   agentId,
   cwd,
-  fileViewMode,
-  onFileViewModeChange,
   isMobile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
@@ -292,9 +301,6 @@ function SidebarContent({
           </Pressable>
         </View>
         <View style={styles.headerRightSection}>
-          {effectiveTab === "files" && (
-            <ViewToggle viewMode={fileViewMode} onChange={onFileViewModeChange} />
-          )}
           {isMobile && (
             <Pressable onPress={onClose} style={styles.closeButton}>
               <X size={18} color={theme.colors.foregroundMuted} />
@@ -312,33 +318,6 @@ function SidebarContent({
           <FileExplorerPane serverId={serverId} agentId={agentId} />
         )}
       </View>
-    </View>
-  );
-}
-
-function ViewToggle({
-  viewMode,
-  onChange,
-}: {
-  viewMode: ViewMode;
-  onChange: (mode: ViewMode) => void;
-}) {
-  const { theme } = useUnistyles();
-
-  return (
-    <View style={styles.viewToggleContainer}>
-      <Pressable
-        style={[styles.viewToggleButton, viewMode === "list" && styles.viewToggleActive]}
-        onPress={() => onChange("list")}
-      >
-        <ListIcon size={14} color={theme.colors.foreground} />
-      </Pressable>
-      <Pressable
-        style={[styles.viewToggleButton, viewMode === "grid" && styles.viewToggleActive]}
-        onPress={() => onChange("grid")}
-      >
-        <LayoutGrid size={14} color={theme.colors.foreground} />
-      </Pressable>
     </View>
   );
 }
@@ -422,18 +401,5 @@ const styles = StyleSheet.create((theme) => ({
   contentArea: {
     flex: 1,
     minHeight: 0,
-  },
-  viewToggleContainer: {
-    flexDirection: "row",
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    overflow: "hidden",
-  },
-  viewToggleButton: {
-    padding: theme.spacing[2],
-  },
-  viewToggleActive: {
-    backgroundColor: theme.colors.surface2,
   },
 }));

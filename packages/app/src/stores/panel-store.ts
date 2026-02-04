@@ -28,12 +28,12 @@ interface DesktopSidebarState {
 }
 
 export type ExplorerTab = "changes" | "files";
-export type ViewMode = "list" | "grid";
 export type SortOption = "name" | "modified" | "size";
 
 export const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 400;
 export const MIN_EXPLORER_SIDEBAR_WIDTH = 280;
-export const MAX_EXPLORER_SIDEBAR_WIDTH = 800;
+// Upper bound is intentionally generous; desktop resizing enforces a min-chat-width constraint.
+export const MAX_EXPLORER_SIDEBAR_WIDTH = 2000;
 
 interface PanelState {
   // Mobile: which panel is currently shown
@@ -45,7 +45,6 @@ interface PanelState {
   // File explorer settings (shared between mobile/desktop)
   explorerTab: ExplorerTab;
   explorerWidth: number;
-  explorerViewMode: ViewMode;
   explorerSortOption: SortOption;
 
   // Actions
@@ -58,7 +57,6 @@ interface PanelState {
   // File explorer settings actions
   setExplorerTab: (tab: ExplorerTab) => void;
   setExplorerWidth: (width: number) => void;
-  setExplorerViewMode: (mode: ViewMode) => void;
   setExplorerSortOption: (option: SortOption) => void;
 }
 
@@ -83,7 +81,6 @@ export const usePanelStore = create<PanelState>()(
       // File explorer defaults
       explorerTab: "changes",
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
-      explorerViewMode: "list",
       explorerSortOption: "name",
 
       openAgentList: () =>
@@ -139,7 +136,6 @@ export const usePanelStore = create<PanelState>()(
 
       setExplorerTab: (tab) => set({ explorerTab: tab }),
       setExplorerWidth: (width) => set({ explorerWidth: clampWidth(width) }),
-      setExplorerViewMode: (mode) => set({ explorerViewMode: mode }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
     }),
     {
@@ -150,7 +146,6 @@ export const usePanelStore = create<PanelState>()(
         desktop: state.desktop,
         explorerTab: state.explorerTab,
         explorerWidth: state.explorerWidth,
-        explorerViewMode: state.explorerViewMode,
         explorerSortOption: state.explorerSortOption,
       }),
     }
@@ -181,11 +176,9 @@ export function usePanelState(isMobile: boolean) {
       // Explorer settings
       explorerTab: store.explorerTab,
       explorerWidth: store.explorerWidth,
-      explorerViewMode: store.explorerViewMode,
       explorerSortOption: store.explorerSortOption,
       setExplorerTab: store.setExplorerTab,
       setExplorerWidth: store.setExplorerWidth,
-      setExplorerViewMode: store.setExplorerViewMode,
       setExplorerSortOption: store.setExplorerSortOption,
     };
   }
@@ -209,11 +202,9 @@ export function usePanelState(isMobile: boolean) {
     // Explorer settings
     explorerTab: store.explorerTab,
     explorerWidth: store.explorerWidth,
-    explorerViewMode: store.explorerViewMode,
     explorerSortOption: store.explorerSortOption,
     setExplorerTab: store.setExplorerTab,
     setExplorerWidth: store.setExplorerWidth,
-    setExplorerViewMode: store.setExplorerViewMode,
     setExplorerSortOption: store.setExplorerSortOption,
   };
 }
