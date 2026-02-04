@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useRef,
-  ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useRef, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMutation } from "@tanstack/react-query";
@@ -39,12 +31,13 @@ import {
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
+import { getInitKey, getInitDeferred, resolveInitDeferred, rejectInitDeferred, createInitDeferred } from "@/utils/agent-initialization";
+import { encodeImages } from "@/utils/encode-images";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
 export type {
   MessageEntry,
-  ProviderModelState,
   Agent,
   ExplorerEntry,
   ExplorerFile,
@@ -195,20 +188,6 @@ type FileDownloadTokenPayload = Extract<
   { type: "file_download_token_response" }
 >["payload"];
 
-// Module-level map for agent initialization promises
-// Key: `${serverId}:${agentId}`, Value: { promise, resolve, reject }
-// This survives Fast Refresh because it's outside React component tree
-interface DeferredInit {
-  promise: Promise<void>;
-  resolve: () => void;
-  reject: (error: Error) => void;
-}
-const agentInitializationPromises = new Map<string, DeferredInit>();
-
-function getInitKey(serverId: string, agentId: string): string {
-  return `${serverId}:${agentId}`;
-}
-
 function normalizeAgentSnapshot(
   snapshot: AgentSnapshotPayload,
   serverId: string
@@ -244,6 +223,7 @@ function normalizeAgentSnapshot(
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
+    thinkingOptionId: snapshot.thinkingOptionId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
@@ -271,56 +251,6 @@ const pushHistory = (history: string[], path: string): string[] => {
   }
   return [...normalizedHistory, path];
 };
-
-// Lightweight context for imperative APIs only (no state)
-export interface SessionContextValue {
-  serverId: string;
-  client: DaemonClientV2;
-  audioPlayer: ReturnType<typeof useAudioPlayer>;
-  setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
-  requestGitDiff: (agentId: string) => void;
-  requestDirectoryListing: (
-    agentId: string,
-    path: string,
-    options?: { recordHistory?: boolean }
-  ) => void;
-  requestFilePreview: (agentId: string, path: string) => void;
-  requestFileDownloadToken: (
-    agentId: string,
-    path: string
-  ) => Promise<FileDownloadTokenPayload>;
-  navigateExplorerBack: (agentId: string) => string | null;
-  requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
-  restartServer: (reason?: string) => void;
-  initializeAgent: (params: { agentId: string; requestId?: string }) => void;
-  refreshAgent: (params: { agentId: string; requestId?: string }) => void;
-  refreshSession: () => void;
-  cancelAgentRun: (agentId: string) => void;
-  sendAgentMessage: (
-    agentId: string,
-    message: string,
-    images?: Array<{ uri: string; mimeType?: string }>
-  ) => Promise<void>;
-  deleteAgent: (agentId: string) => void;
-  archiveAgent: (agentId: string) => void;
-  createAgent: (options: {
-    config: any;
-    initialPrompt: string;
-    images?: Array<{ uri: string; mimeType?: string }>;
-    git?: any;
-    worktreeName?: string;
-    requestId?: string;
-  }) => Promise<unknown>;
-  setAgentMode: (agentId: string, modeId: string) => void;
-  respondToPermission: (
-    agentId: string,
-    requestId: string,
-    response: any
-  ) => void;
-  ensureAgentIsInitialized: (agentId: string) => Promise<void>;
-}
-
-const SessionContext = createContext<SessionContextValue | null>(null);
 
 interface SessionProviderProps {
   children: ReactNode;
@@ -373,7 +303,6 @@ export function SessionProvider({
   );
   const setGitDiffs = useSessionStore((state) => state.setGitDiffs);
   const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
-  const setProviderModels = useSessionStore((state) => state.setProviderModels);
   const clearDraftInput = useDraftStore((state) => state.clearDraftInput);
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const getSession = useSessionStore((state) => state.getSession);
@@ -404,7 +333,6 @@ export function SessionProvider({
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(
     new Map()
   );
-  const providerModelRequestIdsRef = useRef<Map<any, string>>(new Map());
   const sendAgentMessageRef = useRef<
     | ((
         agentId: string,
@@ -1029,11 +957,7 @@ export function SessionProvider({
 
         // Resolve the initialization promise (even for empty history)
         const initKey = getInitKey(serverId, agentId);
-        const deferred = agentInitializationPromises.get(initKey);
-        if (deferred) {
-          deferred.resolve();
-          // Keep the promise in the map so subsequent calls return immediately
-        }
+        resolveInitDeferred(initKey);
       }
     );
 
@@ -1351,35 +1275,6 @@ export function SessionProvider({
       }
     });
 
-    const unsubProviderModels = client.on(
-      "list_provider_models_response",
-      (message) => {
-        if (message.type !== "list_provider_models_response") {
-          return;
-        }
-        const { provider, models, error, fetchedAt, requestId } =
-          message.payload;
-        const latestRequestId =
-          providerModelRequestIdsRef.current.get(provider);
-        if (latestRequestId && requestId && requestId !== latestRequestId) {
-          return;
-        }
-        if (requestId) {
-          providerModelRequestIdsRef.current.delete(provider);
-        }
-        setProviderModels(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(provider, {
-            models: models ?? null,
-            error: error ?? null,
-            fetchedAt: new Date(fetchedAt),
-            isLoading: false,
-          });
-          return next;
-        });
-      }
-    );
-
     const unsubAgentDeleted = client.on("agent_deleted", (message) => {
       if (message.type !== "agent_deleted") {
         return;
@@ -1494,7 +1389,6 @@ export function SessionProvider({
       unsubActivity();
       unsubChunk();
       unsubTranscription();
-      unsubProviderModels();
       unsubAgentDeleted();
       unsubAgentArchived();
     };
@@ -1514,7 +1408,6 @@ export function SessionProvider({
     setPendingPermissions,
     setGitDiffs,
     setFileExplorer,
-    setProviderModels,
     setHasHydratedAgents,
     updateConnectionStatus,
     getSession,
@@ -1593,226 +1486,6 @@ export function SessionProvider({
       setInitializingAgents,
       clearAgentStreamHead,
     ]
-  );
-
-  const INIT_TIMEOUT_MS = 10000;
-
-  const ensureAgentIsInitialized = useCallback(
-    (agentId: string): Promise<void> => {
-      const key = getInitKey(serverId, agentId);
-
-      // If we already have a promise (resolved or in-flight), return it
-      const existing = agentInitializationPromises.get(key);
-      if (existing) {
-        return existing.promise;
-      }
-
-      // Create a deferred promise
-      let resolve: () => void;
-      let reject: (error: Error) => void;
-      const promise = new Promise<void>((res, rej) => {
-        resolve = res;
-        reject = rej;
-      });
-
-      const deferred: DeferredInit = {
-        promise,
-        resolve: resolve!,
-        reject: reject!,
-      };
-      agentInitializationPromises.set(key, deferred);
-
-      // Set up timeout
-      const timeoutId = setTimeout(() => {
-        const entry = agentInitializationPromises.get(key);
-        if (entry === deferred) {
-          agentInitializationPromises.delete(key);
-          deferred.reject(new Error(`Agent initialization timed out after ${INIT_TIMEOUT_MS}ms`));
-        }
-      }, INIT_TIMEOUT_MS);
-
-      // Set UI loading state
-      setInitializingAgents(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, true);
-        return next;
-      });
-
-      // Clear existing stream state
-      setAgentStreamTail(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentId, []);
-        return next;
-      });
-      clearAgentStreamHead(serverId, agentId);
-
-      if (!client) {
-        console.warn("[Session] ensureAgentIsInitialized skipped: daemon unavailable");
-        clearTimeout(timeoutId);
-        agentInitializationPromises.delete(key);
-        setInitializingAgents(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, false);
-          return next;
-        });
-        deferred.reject(new Error("Daemon unavailable"));
-        return promise;
-      }
-
-      client
-        .initializeAgent(agentId)
-        .then(() => {
-          // Note: We don't resolve here - we wait for agent_stream_snapshot
-          // The snapshot handler will call deferred.resolve()
-          clearTimeout(timeoutId);
-        })
-        .catch((error) => {
-          console.warn("[Session] ensureAgentIsInitialized failed", { agentId, error });
-          clearTimeout(timeoutId);
-          agentInitializationPromises.delete(key);
-          setInitializingAgents(serverId, (prev) => {
-            const next = new Map(prev);
-            next.set(agentId, false);
-            return next;
-          });
-          deferred.reject(error instanceof Error ? error : new Error(String(error)));
-        });
-
-      return promise;
-    },
-    [serverId, client, setAgentStreamTail, setInitializingAgents, clearAgentStreamHead]
-  );
-
-  const requestProviderModels = useCallback(
-    (provider: any, options?: { cwd?: string }) => {
-      const requestId = generateMessageId();
-      providerModelRequestIdsRef.current.set(provider, requestId);
-      setProviderModels(serverId, (prev) => {
-        const next = new Map(prev);
-        const current = prev.get(provider) ?? {
-          models: null,
-          fetchedAt: null,
-          error: null,
-          isLoading: false,
-        };
-        next.set(provider, {
-          ...current,
-          isLoading: true,
-          error: null,
-        });
-        return next;
-      });
-      if (!client) {
-        console.warn(
-          "[Session] requestProviderModels skipped: daemon unavailable",
-          { provider }
-        );
-        providerModelRequestIdsRef.current.delete(provider);
-        setProviderModels(serverId, (prev) => {
-          const next = new Map(prev);
-          const current = prev.get(provider) ?? {
-            models: null,
-            fetchedAt: null,
-            error: null,
-            isLoading: false,
-          };
-          next.set(provider, {
-            ...current,
-            error: "Daemon unavailable",
-            isLoading: false,
-          });
-          return next;
-        });
-        return;
-      }
-      void client
-        .listProviderModels(provider, { cwd: options?.cwd, requestId })
-        .catch((error) => {
-          providerModelRequestIdsRef.current.delete(provider);
-          setProviderModels(serverId, (prev) => {
-            const next = new Map(prev);
-            const current = next.get(provider) ?? {
-              models: null,
-              fetchedAt: null,
-              error: null,
-              isLoading: false,
-            };
-            next.set(provider, {
-              ...current,
-              error: error instanceof Error ? error.message : String(error),
-              isLoading: false,
-            });
-            return next;
-          });
-        });
-    },
-    [serverId, client, setProviderModels]
-  );
-
-  const encodeImages = useCallback(
-    async (images?: Array<{ uri: string; mimeType?: string }>) => {
-      if (!images || images.length === 0) {
-        return undefined;
-      }
-      const encodedImages = await Promise.all(
-        images.map(async ({ uri, mimeType }) => {
-          try {
-            const data = await (async () => {
-              if (Platform.OS === "web") {
-                if (uri.startsWith("data:")) {
-                  const [, base64] = uri.split(",", 2);
-                  if (!base64) {
-                    throw new Error("Malformed data URI for image.");
-                  }
-                  return base64;
-                }
-                const response = await fetch(uri);
-                if (!response.ok) {
-                  throw new Error(`Failed to fetch image: ${response.status}`);
-                }
-                const blob = await response.blob();
-                const base64 = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    if (typeof reader.result !== "string") {
-                      reject(new Error("Unexpected FileReader result type."));
-                      return;
-                    }
-                    const [, resultBase64] = reader.result.split(",", 2);
-                    if (!resultBase64) {
-                      reject(new Error("Failed to read image data as base64."));
-                      return;
-                    }
-                    resolve(resultBase64);
-                  };
-                  reader.onerror = () => {
-                    reject(
-                      reader.error ?? new Error("Failed to read image data.")
-                    );
-                  };
-                  reader.readAsDataURL(blob);
-                });
-                return base64;
-              }
-              const file = new File(uri);
-              return await file.base64();
-            })();
-            return {
-              data,
-              mimeType: mimeType ?? "image/jpeg",
-            };
-          } catch (error) {
-            console.error("[Session] Failed to convert image:", error);
-            return null;
-          }
-        })
-      );
-      const validImages = encodedImages.filter(
-        (entry): entry is { data: string; mimeType: string } => entry !== null
-      );
-      return validImages.length > 0 ? validImages : undefined;
-    },
-    []
   );
 
   const sendAgentMessage = useCallback(
@@ -1975,6 +1648,34 @@ export function SessionProvider({
       void client.setAgentMode(agentId, modeId).catch((error) => {
         console.error("[Session] Failed to set agent mode:", error);
       });
+    },
+    [client]
+  );
+
+  const setAgentModel = useCallback(
+    (agentId: string, modelId: string | null) => {
+      if (!client) {
+        console.warn("[Session] setAgentModel skipped: daemon unavailable");
+        return;
+      }
+      void client.setAgentModel(agentId, modelId).catch((error) => {
+        console.error("[Session] Failed to set agent model:", error);
+      });
+    },
+    [client]
+  );
+
+  const setAgentThinkingOption = useCallback(
+    (agentId: string, thinkingOptionId: string | null) => {
+      if (!client) {
+        console.warn("[Session] setAgentThinkingOption skipped: daemon unavailable");
+        return;
+      }
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .catch((error) => {
+          console.error("[Session] Failed to set agent thinking option:", error);
+        });
     },
     [client]
   );
@@ -2236,113 +1937,5 @@ export function SessionProvider({
     };
   }, [serverId, clearSession]);
 
-  const value = useMemo<SessionContextValue>(
-    () => ({
-      serverId,
-      client,
-      audioPlayer,
-      setVoiceDetectionFlags,
-      requestGitDiff,
-      requestDirectoryListing,
-      requestFilePreview,
-      requestFileDownloadToken,
-      navigateExplorerBack,
-      requestProviderModels,
-      restartServer,
-      initializeAgent,
-      refreshAgent,
-      refreshSession,
-      cancelAgentRun,
-      deleteAgent,
-      archiveAgent,
-      sendAgentMessage,
-      createAgent,
-      setAgentMode,
-      respondToPermission,
-      ensureAgentIsInitialized,
-    }),
-    [
-      serverId,
-      client,
-      audioPlayer,
-      setVoiceDetectionFlags,
-      requestGitDiff,
-      requestDirectoryListing,
-      requestFilePreview,
-      requestFileDownloadToken,
-      navigateExplorerBack,
-      requestProviderModels,
-      restartServer,
-      initializeAgent,
-      refreshAgent,
-      refreshSession,
-      cancelAgentRun,
-      deleteAgent,
-      archiveAgent,
-      sendAgentMessage,
-      createAgent,
-      setAgentMode,
-      respondToPermission,
-      ensureAgentIsInitialized,
-    ]
-  );
-
-  // Sync imperative methods to Zustand store so components can access them via selectors
-  // Memoize the methods object to avoid infinite re-renders (object reference must be stable)
-  const setSessionMethods = useSessionStore((state) => state.setSessionMethods);
-  const methods = useMemo(
-    () => ({
-      setVoiceDetectionFlags,
-      requestGitDiff,
-      requestDirectoryListing,
-      requestFilePreview,
-      requestFileDownloadToken,
-      navigateExplorerBack,
-      requestProviderModels,
-      restartServer,
-      initializeAgent,
-      refreshAgent,
-      refreshSession,
-      cancelAgentRun,
-      sendAgentMessage,
-      deleteAgent,
-      archiveAgent,
-      createAgent,
-      setAgentMode,
-      respondToPermission,
-      ensureAgentIsInitialized,
-    }),
-    [
-      setVoiceDetectionFlags,
-      requestGitDiff,
-      requestDirectoryListing,
-      requestFilePreview,
-      requestFileDownloadToken,
-      navigateExplorerBack,
-      requestProviderModels,
-      restartServer,
-      initializeAgent,
-      refreshAgent,
-      refreshSession,
-      cancelAgentRun,
-      sendAgentMessage,
-      deleteAgent,
-      archiveAgent,
-      createAgent,
-      setAgentMode,
-      respondToPermission,
-      ensureAgentIsInitialized,
-    ]
-  );
-
-  useEffect(() => {
-    setSessionMethods(serverId, methods);
-  }, [serverId, setSessionMethods, methods]);
-
-  return (
-    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
-  );
+  return children;
 }
-
-// Export the context for components that need imperative APIs
-export { SessionContext };

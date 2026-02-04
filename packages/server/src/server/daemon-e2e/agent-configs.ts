@@ -6,7 +6,7 @@
 export interface AgentTestConfig {
   provider: "claude" | "codex";
   model: string;
-  reasoningEffort?: string;
+  thinkingOptionId?: string;
   modes: {
     full: string; // No permissions required
     ask: string; // Requires permission approval
@@ -25,7 +25,7 @@ export const agentConfigs = {
   codex: {
     provider: "codex",
     model: "gpt-5.1-codex-mini",
-    reasoningEffort: "low",
+    thinkingOptionId: "low",
     modes: {
       full: "full-access",
       ask: "auto",
@@ -40,11 +40,11 @@ export type AgentProvider = keyof typeof agentConfigs;
  */
 export function getFullAccessConfig(provider: AgentProvider) {
   const config = agentConfigs[provider];
-  const reasoningEffort = "reasoningEffort" in config ? config.reasoningEffort : undefined;
+  const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
   return {
     provider: config.provider,
     model: config.model,
-    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingOptionId ? { thinkingOptionId } : {}),
     modeId: config.modes.full,
   };
 }
@@ -54,11 +54,11 @@ export function getFullAccessConfig(provider: AgentProvider) {
  */
 export function getAskModeConfig(provider: AgentProvider) {
   const config = agentConfigs[provider];
-  const reasoningEffort = "reasoningEffort" in config ? config.reasoningEffort : undefined;
+  const thinkingOptionId = "thinkingOptionId" in config ? config.thinkingOptionId : undefined;
   return {
     provider: config.provider,
     model: config.model,
-    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(thinkingOptionId ? { thinkingOptionId } : {}),
     modeId: config.modes.ask,
   };
 }

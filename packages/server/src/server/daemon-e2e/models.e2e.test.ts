@@ -13,9 +13,7 @@ function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
 
-// Use gpt-5.1-codex-mini with low reasoning effort for faster test execution
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
 
 describe("daemon E2E", () => {
   let ctx: DaemonTestContext;
@@ -75,6 +73,26 @@ describe("daemon E2E", () => {
         expect(model.label).toBeTruthy();
       },
       60000 // 1 minute timeout
+    );
+
+    test(
+      "returns model list for OpenCode provider",
+      async () => {
+        const result = await ctx.client.listProviderModels("opencode");
+
+        expect(result.provider).toBe("opencode");
+        expect(result.error).toBeNull();
+        expect(result.fetchedAt).toBeTruthy();
+
+        expect(result.models).toBeTruthy();
+        expect(result.models.length).toBeGreaterThan(0);
+
+        const model = result.models[0];
+        expect(model.provider).toBe("opencode");
+        expect(model.id).toBeTruthy();
+        expect(model.label).toBeTruthy();
+      },
+      60000
     );
   });
 

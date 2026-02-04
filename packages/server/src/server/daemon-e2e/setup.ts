@@ -11,7 +11,7 @@ import { agentConfigs } from "./agent-configs.js";
 
 // Re-export for backward compatibility - prefer using agentConfigs instead
 export const CODEX_TEST_MODEL = agentConfigs.codex.model;
-export const CODEX_TEST_REASONING_EFFORT = agentConfigs.codex.reasoningEffort;
+export const CODEX_TEST_THINKING_OPTION_ID = agentConfigs.codex.thinkingOptionId;
 
 // Re-export agent configs
 export {

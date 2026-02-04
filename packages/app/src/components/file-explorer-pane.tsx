@@ -39,6 +39,7 @@ import type { ExplorerEntry } from "@/stores/session-store";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useDownloadStore } from "@/stores/download-store";
+import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import {
   usePanelStore,
   type SortOption,
@@ -81,11 +82,12 @@ export function FileExplorerPane({
       : undefined
   );
 
-  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
-  const requestDirectoryListing = methods?.requestDirectoryListing;
-  const requestFilePreview = methods?.requestFilePreview;
-  const requestFileDownloadToken = methods?.requestFileDownloadToken;
-  const navigateExplorerBack = methods?.navigateExplorerBack;
+  const {
+    requestDirectoryListing,
+    requestFilePreview,
+    requestFileDownloadToken,
+    navigateExplorerBack,
+  } = useFileExplorerActions(serverId);
   const viewMode = usePanelStore((state) => state.explorerViewMode);
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);

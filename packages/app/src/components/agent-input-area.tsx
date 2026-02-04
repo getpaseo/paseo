@@ -27,6 +27,7 @@ import {
 import { Theme } from "@/styles/theme";
 import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
+import { encodeImages } from "@/utils/encode-images";
 
 type QueuedMessage = {
   id: string;
@@ -85,11 +86,8 @@ export function AgentInputArea({
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
-  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
-  const sendAgentMessage = methods?.sendAgentMessage;
-  const cancelAgentRun = methods?.cancelAgentRun;
-
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
 
   const { isVoiceMode, isMuted: isVoiceMuted, toggleMute: toggleVoiceMute } = useVoice();
 
@@ -129,7 +127,9 @@ export function AgentInputArea({
 
   const { pickImages } = useImageAttachmentPicker();
   const agentIdRef = useRef(agentId);
-  const sendAgentMessageRef = useRef(sendAgentMessage);
+  const sendAgentMessageRef = useRef<
+    ((agentId: string, text: string, images?: ImageAttachment[]) => Promise<void>) | null
+  >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
   const messageInputRef = useRef<MessageInputRef>(null);
 
@@ -148,7 +148,10 @@ export function AgentInputArea({
         await onSubmitMessageRef.current({ text, images });
         return;
       }
-      await sendAgentMessageRef.current?.(agentIdRef.current, text, images);
+      if (!sendAgentMessageRef.current) {
+        throw new Error("Host is not connected");
+      }
+      await sendAgentMessageRef.current(agentIdRef.current, text, images);
     },
     []
   );
@@ -158,8 +161,36 @@ export function AgentInputArea({
   }, [agentId]);
 
   useEffect(() => {
-    sendAgentMessageRef.current = sendAgentMessage;
-  }, [sendAgentMessage]);
+    sendAgentMessageRef.current = async (
+      agentId: string,
+      text: string,
+      images?: ImageAttachment[]
+    ) => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+
+      const messageId = generateMessageId();
+      setAgentStreamTail(serverId, (prev) => {
+        const currentStream = prev.get(agentId) || [];
+        const nextItem: any = {
+          kind: "user_message",
+          id: messageId,
+          text,
+          timestamp: new Date(),
+        };
+        const updated = new Map(prev);
+        updated.set(agentId, [...currentStream, nextItem]);
+        return updated;
+      });
+
+      const imagesData = await encodeImages(images);
+      await client.sendAgentMessage(agentId, text, {
+        messageId,
+        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+      });
+    };
+  }, [client, serverId, setAgentStreamTail]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -213,7 +244,7 @@ export function AgentInputArea({
     // decide what to do even if the socket is currently disconnected (so we
     // don't no-op and lose deterministic error handling in the UI/tests).
     if (!onSubmitMessageRef.current && !socketConnected) return;
-    if (!sendAgentMessage && !onSubmitMessageRef.current) return;
+    if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
 
     if (agent?.status === "running" && !forceSend) {
       queueMessage(trimmedMessage, imageAttachments);
@@ -334,11 +365,11 @@ export function AgentInputArea({
     if (!agent || agent.status !== "running" || isCancellingAgent) {
       return;
     }
-    if (!isConnected || !cancelAgentRun) {
+    if (!isConnected || !client) {
       return;
     }
     setIsCancellingAgent(true);
-    cancelAgentRun(agentIdRef.current);
+    void client.cancelAgent(agentIdRef.current);
     messageInputRef.current?.focus();
   }
 
@@ -354,7 +385,7 @@ export function AgentInputArea({
   async function handleSendQueuedNow(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
     if (!item || !isConnected) return;
-    if (!sendAgentMessage && !onSubmitMessageRef.current) return;
+    if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
 
     updateQueue((current) => current.filter((q) => q.id !== id));
 

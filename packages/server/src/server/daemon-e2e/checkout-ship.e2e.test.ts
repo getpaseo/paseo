@@ -11,7 +11,7 @@ import {
 import { createWorktree } from "../../utils/worktree.js";
 
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
+const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
@@ -125,7 +125,7 @@ describe("daemon checkout ship loop", () => {
         const agent = await ctx.client.createAgent({
           provider: "codex",
           model: CODEX_TEST_MODEL,
-          reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
           cwd: worktree.worktreePath,
           title: "Checkout Ship Loop",
         });
@@ -281,7 +281,7 @@ describe("daemon checkout ship loop", () => {
 				const agent = await ctx.client.createAgent({
 					provider: "codex",
 					model: CODEX_TEST_MODEL,
-					reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+					thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
 					cwd: worktree.worktreePath,
 					title: "Merge From Base Test",
 				});
@@ -351,7 +351,7 @@ describe("daemon checkout ship loop", () => {
         const agent = await ctx.client.createAgent({
           provider: "codex",
           model: CODEX_TEST_MODEL,
-          reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
           cwd,
           title: "Checkout Non-Git",
         });

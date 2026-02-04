@@ -12,7 +12,7 @@ import { generateAndApplyAgentMetadata } from "./agent-metadata-generator.js";
 import { createWorktree, validateBranchSlug } from "../../utils/worktree.js";
 
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
+const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
@@ -76,7 +76,7 @@ describe("agent metadata generation (real agents)", () => {
       const agent = await manager.createAgent({
         provider: "codex",
         model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
         modeId: "auto",
         cwd: repoDir,
         title: "Main Agent",
@@ -116,7 +116,7 @@ describe("agent metadata generation (real agents)", () => {
       const agent = await manager.createAgent({
         provider: "codex",
         model: CODEX_TEST_MODEL,
-        reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
         modeId: "auto",
         cwd: worktree.worktreePath,
         title: "Worktree Agent",

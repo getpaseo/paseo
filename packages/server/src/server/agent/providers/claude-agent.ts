@@ -242,9 +242,6 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   if (typeof metadata.webSearch === "boolean") {
     result.webSearch = metadata.webSearch;
   }
-  if (typeof metadata.reasoningEffort === "string") {
-    result.reasoningEffort = metadata.reasoningEffort;
-  }
   if (isMetadata(metadata.extra)) {
     const extra: AgentSessionConfig["extra"] = {};
     if (isMetadata(metadata.extra.codex)) {
@@ -366,6 +363,11 @@ export class ClaudeAgentClient implements AgentClient {
         id: model.value,
         label: model.displayName,
         description: model.description,
+        thinkingOptions: [
+          { id: "off", label: "Thinking Off", isDefault: true },
+          { id: "on", label: "Thinking On" },
+        ],
+        defaultThinkingOptionId: "off",
         metadata: {
           description: model.description,
         },
@@ -552,8 +554,9 @@ class ClaudeAgentSession implements AgentSession {
 
   async *stream(
     prompt: AgentPromptInput,
-    _options?: AgentRunOptions
+    options?: AgentRunOptions
   ): AsyncGenerator<AgentStreamEvent> {
+    void options;
     // Increment turn ID to invalidate any in-flight processPrompt() loops from previous turns.
     // This prevents race conditions where an interrupted turn's events get mixed with the new turn.
     const turnId = ++this.currentTurnId;
@@ -674,6 +677,57 @@ class ClaudeAgentSession implements AgentSession {
     this.currentMode = normalized;
   }
 
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    const query = await this.ensureQuery();
+    await query.setModel(normalizedModelId ?? undefined);
+    this.config.model = normalizedModelId ?? undefined;
+    this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
+    this.cachedRuntimeInfo = null;
+    // Model change affects persistence metadata, so invalidate cached handle.
+    this.persistence = null;
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const normalizedThinkingOptionId =
+      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+        ? thinkingOptionId
+        : null;
+
+    const query = await this.ensureQuery();
+
+    if (!normalizedThinkingOptionId || normalizedThinkingOptionId === "default") {
+      // Claude Code TUI exposes only ON/OFF. Default to OFF.
+      try {
+        await query.setMaxThinkingTokens(0);
+      } catch {
+        await query.setMaxThinkingTokens(1);
+      }
+      this.config.thinkingOptionId = undefined;
+      return;
+    }
+
+    if (normalizedThinkingOptionId === "on") {
+      await query.setMaxThinkingTokens(null);
+      this.config.thinkingOptionId = normalizedThinkingOptionId;
+      return;
+    }
+
+    if (normalizedThinkingOptionId === "off") {
+      try {
+        await query.setMaxThinkingTokens(0);
+      } catch {
+        // Some runtimes may reject 0; use a tiny cap as "off".
+        await query.setMaxThinkingTokens(1);
+      }
+      this.config.thinkingOptionId = "off";
+      return;
+    }
+
+    throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
+  }
+
   getPendingPermissions(): AgentPermissionRequest[] {
     return Array.from(this.pendingPermissions.values()).map((entry) => entry.request);
   }
@@ -725,12 +779,11 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
-    const { model: _ignoredModel, ...restConfig } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: restConfig,
+      metadata: this.config,
     };
     return this.persistence;
   }
@@ -808,6 +861,19 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildOptions(): ClaudeOptions {
+    const configuredThinkingOptionId = this.config.thinkingOptionId;
+    const thinkingOptionId =
+      configuredThinkingOptionId && configuredThinkingOptionId !== "default"
+        ? configuredThinkingOptionId
+        : "off";
+    let maxThinkingTokens: number | undefined;
+    if (typeof thinkingOptionId === "string" && thinkingOptionId.length > 0) {
+      if (thinkingOptionId === "off") {
+        maxThinkingTokens = 0;
+      }
+      // For "on" we omit maxThinkingTokens (SDK default max).
+    }
+
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
@@ -834,6 +900,7 @@ class ClaudeAgentSession implements AgentSession {
       // If we have a session ID from a previous query (e.g., after interrupt),
       // resume that session to continue the conversation history.
       ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
+      ...(maxThinkingTokens !== undefined ? { maxThinkingTokens } : {}),
       ...this.config.extra?.claude,
     };
 

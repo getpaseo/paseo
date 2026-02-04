@@ -815,7 +815,7 @@ function DaemonCard({
   const daemonConnection = useSessionStore(
     (state) => state.sessions[daemon.id]?.connection ?? null
   );
-  const restartServerFn = useSessionStore((state) => state.sessions[daemon.id]?.methods?.restartServer);
+  const daemonClient = useSessionStore((state) => state.sessions[daemon.id]?.client ?? null);
   const [isRestarting, setIsRestarting] = useState(false);
   const isConnected = daemonConnection?.isConnected ?? false;
   const isConnectedRef = useRef(isConnected);
@@ -848,7 +848,7 @@ function DaemonCard({
   }, [daemon.label, isScreenMountedRef, waitForCondition]);
 
   const beginServerRestart = useCallback(() => {
-    if (!restartServerFn) {
+    if (!daemonClient) {
       Alert.alert(
         "Host unavailable",
         `${daemon.label} is not connected. Wait for it to come online before restarting.`
@@ -865,23 +865,25 @@ function DaemonCard({
     }
 
     setIsRestarting(true);
-    try {
-      restartServerFn(`settings_daemon_restart_${daemon.id}`);
-    } catch (error) {
-      console.error(`[Settings] Failed to restart daemon ${daemon.label}`, error);
-      setIsRestarting(false);
-      Alert.alert(
-        "Error",
-        "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online."
-      );
-      return;
-    }
+    void daemonClient
+      .restartServer(`settings_daemon_restart_${daemon.id}`)
+      .catch((error) => {
+        console.error(`[Settings] Failed to restart daemon ${daemon.label}`, error);
+        if (!isScreenMountedRef.current) {
+          return;
+        }
+        setIsRestarting(false);
+        Alert.alert(
+          "Error",
+          "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online."
+        );
+      });
 
     void waitForDaemonRestart();
-  }, [daemon.id, daemon.label, restartServerFn, waitForDaemonRestart]);
+  }, [daemon.id, daemon.label, daemonClient, isScreenMountedRef, waitForDaemonRestart]);
 
   const handleRestartPress = useCallback(() => {
-    if (!restartServerFn) {
+    if (!daemonClient) {
       Alert.alert(
         "Host unavailable",
         `${daemon.label} is not connected. Wait for it to come online before restarting.`
@@ -912,7 +914,7 @@ function DaemonCard({
         onPress: beginServerRestart,
       },
     ]);
-  }, [beginServerRestart, daemon.label, restartConfirmationMessage, restartServerFn]);
+  }, [beginServerRestart, daemon.label, daemonClient, restartConfirmationMessage]);
 
   // Status pill background with 10% opacity
   const statusPillBg =

@@ -55,6 +55,16 @@ export type AgentModelDefinition = {
   description?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
+  thinkingOptions?: AgentSelectOption[];
+  defaultThinkingOptionId?: string;
+};
+
+export type AgentSelectOption = {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+  metadata?: AgentMetadata;
 };
 
 export type AgentCapabilityFlags = {
@@ -228,12 +238,12 @@ export type AgentSessionConfig = {
   cwd: string;
   modeId?: string;
   model?: string;
+  thinkingOptionId?: string;
   title?: string | null;
   approvalPolicy?: string;
   sandboxMode?: string;
   networkAccess?: boolean;
   webSearch?: boolean;
-  reasoningEffort?: string;
   extra?: {
     codex?: AgentMetadata;
     claude?: Partial<ClaudeAgentOptions>;
@@ -274,6 +284,15 @@ export interface AgentSession {
    * @param args Optional arguments to pass to the command
    */
   executeCommand?(commandName: string, args?: string): Promise<AgentCommandResult>;
+  /**
+   * Update the model used for subsequent turns (if supported by provider).
+   */
+  setModel?(modelId: string | null): Promise<void>;
+  /**
+   * Update the thinking/effort setting used for subsequent turns (if supported).
+   * Normalized to a string option id (provider-specific interpretation).
+   */
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
 }
 
 export interface ListModelsOptions {

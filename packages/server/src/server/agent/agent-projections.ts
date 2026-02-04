@@ -66,12 +66,14 @@ export function toAgentPayload(
   options?: ProjectionOptions
 ): AgentSnapshotPayload {
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
+  const thinkingOptionId = agent.config.thinkingOptionId ?? null;
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
     model: agent.config.model ?? null,
+    thinkingOptionId,
     runtimeInfo,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
@@ -119,6 +121,9 @@ function buildSerializableConfig(
   }
   if (config.model) {
     serializable.model = config.model;
+  }
+  if (config.thinkingOptionId) {
+    serializable.thinkingOptionId = config.thinkingOptionId;
   }
   const extra = sanitizeMetadata(config.extra);
   if (extra !== undefined) {
