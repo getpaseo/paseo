@@ -7,6 +7,7 @@ import { execSync } from "node:child_process";
 import {
   createDaemonTestContext,
   type DaemonTestContext,
+  DaemonClient,
 } from "./test-utils/index.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import {
@@ -87,6 +88,29 @@ describe("daemon client E2E", () => {
     expect(deleteResult.success).toBe(false);
     expect(deleteResult.error).toBeTruthy();
   }, 30000);
+
+  test("emits server_info on websocket connect", async () => {
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    });
+
+    const infoPromise = waitForSignal<{ serverId: string }>(5000, (resolve) => {
+      const unsubscribe = client.on("status", (message) => {
+        if (message.type !== "status") return;
+        const payload = message.payload as { status?: unknown; serverId?: unknown };
+        if (payload.status !== "server_info") return;
+        if (typeof payload.serverId !== "string" || payload.serverId.trim().length === 0) return;
+        resolve({ serverId: payload.serverId.trim() });
+      });
+      return unsubscribe;
+    });
+
+    await client.connect();
+    const info = await infoPromise;
+    expect(info.serverId.length).toBeGreaterThan(0);
+
+    await client.close();
+  }, 15000);
 
   test("matches request IDs for concurrent session requests", async () => {
     const firstRequestId = `list-${Date.now()}-a`;

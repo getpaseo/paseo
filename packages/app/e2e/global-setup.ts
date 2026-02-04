@@ -118,6 +118,7 @@ export default async function globalSetup() {
     env: {
       ...process.env,
       PASEO_HOME: paseoHome,
+      PASEO_SERVER_ID: 'e2e-test-daemon',
       PASEO_LISTEN: `0.0.0.0:${port}`,
       PASEO_RELAY_ENDPOINT: `127.0.0.1:${relayPort}`,
       PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,

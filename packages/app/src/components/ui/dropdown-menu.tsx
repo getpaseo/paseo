@@ -210,7 +210,7 @@ export function DropdownMenuTrigger({
       onPress={handlePress}
       style={({ pressed, hovered }) => {
         if (typeof style === "function") {
-          return style({ pressed, hovered, open: ctx.open });
+          return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
         }
         return style;
       }}
