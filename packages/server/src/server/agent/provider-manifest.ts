@@ -27,7 +27,7 @@ const CLAUDE_MODES: AgentMode[] = [
   },
   {
     id: "bypassPermissions",
-    label: "Bypass Permissions",
+    label: "Bypass",
     description: "Skip all permission prompts (use with caution)",
   },
 ];

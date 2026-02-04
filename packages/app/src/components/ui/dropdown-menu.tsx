@@ -21,6 +21,7 @@ import {
   StatusBar,
   type PressableProps,
   type ViewStyle,
+  type StyleProp,
 } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -178,11 +179,21 @@ export function DropdownMenu({
   return <DropdownMenuContext.Provider value={value}>{children}</DropdownMenuContext.Provider>;
 }
 
+type TriggerState = { pressed: boolean; hovered: boolean; open: boolean };
+type TriggerStyleProp =
+  | StyleProp<ViewStyle>
+  | ((state: TriggerState) => StyleProp<ViewStyle>);
+
+interface DropdownMenuTriggerProps extends Omit<PressableProps, "style"> {
+  style?: TriggerStyleProp;
+}
+
 export function DropdownMenuTrigger({
   children,
   disabled,
+  style,
   ...props
-}: PropsWithChildren<PressableProps>): ReactElement {
+}: PropsWithChildren<DropdownMenuTriggerProps>): ReactElement {
   const { setOpen, open, triggerRef } = useDropdownMenuContext("DropdownMenuTrigger");
 
   const handlePress = useCallback(() => {
@@ -197,6 +208,12 @@ export function DropdownMenuTrigger({
       collapsable={false}
       disabled={disabled}
       onPress={handlePress}
+      style={({ pressed, hovered }) => {
+        if (typeof style === "function") {
+          return style({ pressed, hovered, open });
+        }
+        return style;
+      }}
     >
       {children}
     </Pressable>
