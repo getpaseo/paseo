@@ -518,7 +518,7 @@ describe("daemon client E2E", () => {
     120000
   );
 
-  test(
+  test.runIf(Boolean(process.env.OPENROUTER_API_KEY))(
     "streams session activity logs and chunks",
     async () => {
       await ctx.client.setVoiceConversation(false);
