@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
-import { View, Pressable, Text, Platform, Modal, Alert } from "react-native";
+import { View, Pressable, Text, Platform, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useAnimatedStyle,
@@ -23,6 +23,7 @@ import { useSidebarAgentSections } from "@/hooks/use-sidebar-agent-sections";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { deriveSidebarShortcutAgentKeys } from "@/utils/sidebar-shortcuts";
+import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 const SIDEBAR_AGENT_LIMIT = 15;
@@ -351,31 +352,31 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           </Animated.View>
         </GestureDetector>
 
-        <Modal
+        <AdaptiveModalSheet
+          title="Choose a host"
           visible={showVoiceHostPicker}
-          transparent
-          animationType="fade"
-          onRequestClose={handleDismissVoiceHostPicker}
+          onClose={handleDismissVoiceHostPicker}
+          snapPoints={["45%", "70%"]}
+          testID="voice-host-picker"
         >
-          <View style={styles.hostPickerOverlay}>
-            <Pressable style={styles.hostPickerBackdrop} onPress={handleDismissVoiceHostPicker} />
-            <View style={styles.hostPickerContainer}>
-              <Text style={styles.hostPickerTitle}>Choose a host</Text>
-              {voiceEligibleHosts.map((entry) => (
-                <Pressable
-                  key={entry.daemon.id}
-                  style={styles.hostPickerButton}
-                  onPress={() => handleSelectVoiceHost(entry.daemon.id)}
-                >
-                  <Text style={styles.hostPickerButtonText}>{entry.daemon.label}</Text>
-                </Pressable>
-              ))}
-              <Pressable style={styles.hostPickerCancel} onPress={handleDismissVoiceHostPicker}>
-                <Text style={styles.hostPickerCancelText}>Cancel</Text>
+          <View style={styles.hostPickerList}>
+            {voiceEligibleHosts.map((entry) => (
+              <Pressable
+                key={entry.daemon.id}
+                style={styles.hostPickerOption}
+                onPress={() => handleSelectVoiceHost(entry.daemon.id)}
+              >
+                <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
               </Pressable>
-            </View>
+            ))}
+            <Pressable
+              style={styles.hostPickerCancel}
+              onPress={handleDismissVoiceHostPicker}
+            >
+              <Text style={styles.hostPickerCancelText}>Cancel</Text>
+            </Pressable>
           </View>
-        </Modal>
+        </AdaptiveModalSheet>
       </View>
     );
   }
@@ -460,6 +461,32 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
           </Pressable>
         </View>
       </View>
+
+      <AdaptiveModalSheet
+        title="Choose a host"
+        visible={showVoiceHostPicker}
+        onClose={handleDismissVoiceHostPicker}
+        snapPoints={["45%", "70%"]}
+        testID="voice-host-picker"
+      >
+        <View style={styles.hostPickerList}>
+          {voiceEligibleHosts.map((entry) => (
+            <Pressable
+              key={entry.daemon.id}
+              style={styles.hostPickerOption}
+              onPress={() => handleSelectVoiceHost(entry.daemon.id)}
+            >
+              <Text style={styles.hostPickerOptionText}>{entry.daemon.label}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            style={styles.hostPickerCancel}
+            onPress={handleDismissVoiceHostPicker}
+          >
+            <Text style={styles.hostPickerCancelText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </AdaptiveModalSheet>
     </View>
   );
 }
@@ -547,33 +574,10 @@ const styles = StyleSheet.create((theme) => ({
   footerButtonTextHovered: {
     color: theme.colors.foreground,
   },
-  hostPickerOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    padding: theme.spacing[4],
-  },
-  hostPickerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  hostPickerContainer: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: theme.colors.surface0,
-    borderRadius: theme.borderRadius["2xl"],
-    padding: theme.spacing[4],
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
+  hostPickerList: {
     gap: theme.spacing[2],
   },
-  hostPickerTitle: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.foreground,
-    marginBottom: theme.spacing[2],
-  },
-  hostPickerButton: {
+  hostPickerOption: {
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
@@ -581,12 +585,11 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
   },
-  hostPickerButtonText: {
+  hostPickerOptionText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
   hostPickerCancel: {
-    marginTop: theme.spacing[2],
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,

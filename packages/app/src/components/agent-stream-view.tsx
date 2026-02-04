@@ -52,6 +52,7 @@ import { ToolCallSheetProvider } from "./tool-call-sheet";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
+import { VoiceCompactIndicator } from "./voice-compact-indicator";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -541,6 +542,7 @@ export function AgentStreamView({
           {showWorkingIndicator ? (
             <View style={stylesheet.workingIndicatorWrapper}>
               <WorkingIndicator />
+              <VoiceCompactIndicator />
             </View>
           ) : null}
         </View>
@@ -1179,8 +1181,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   workingIndicatorWrapper: {
-    alignItems: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingLeft: 3,
+    paddingRight: 3,
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[2],
   },
