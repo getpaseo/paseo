@@ -412,8 +412,8 @@ const styles = StyleSheet.create((theme) => {
   },
   codeLine: {
     minWidth: "100%",
-    paddingHorizontal: insets.paddingX,
-    paddingVertical: insets.paddingY,
+    paddingHorizontal: insets.padding,
+    paddingVertical: insets.padding,
   },
   scrollArea: {
     borderWidth: theme.borderWidth[1],
@@ -422,7 +422,7 @@ const styles = StyleSheet.create((theme) => {
     backgroundColor: theme.colors.surface2,
   },
   scrollContent: {
-    padding: theme.spacing[2],
+    padding: insets.padding,
   },
   scrollText: {
     fontFamily: Fonts.mono,
@@ -440,7 +440,7 @@ const styles = StyleSheet.create((theme) => {
     borderColor: theme.colors.destructive,
   },
   jsonContent: {
-    padding: theme.spacing[2],
+    padding: insets.padding,
   },
   errorText: {
     color: theme.colors.destructive,
