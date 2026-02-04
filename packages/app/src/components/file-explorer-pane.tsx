@@ -15,6 +15,11 @@ import {
 } from "react-native";
 import { ScrollView, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -309,7 +314,6 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     Boolean(isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === ".");
 
   const shouldShowInlinePreview = !isMobile && Boolean(selectedEntryPath);
-  const dividerWidth = 10;
   const minTreeWidth = 220;
   const minPreviewWidth = 320;
 
@@ -317,60 +321,78 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     ? splitRatio
     : DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
 
-  const treePaneWidth = useMemo(() => {
-    if (!shouldShowInlinePreview || containerWidth <= 0) {
-      return null;
+  const splitAvailableWidth = useSharedValue(0);
+  const splitMaxTreeWidth = useSharedValue(minTreeWidth);
+  const splitTreeWidth = useSharedValue(minTreeWidth);
+  const splitStartTreeWidth = useSharedValue(minTreeWidth);
+
+  useEffect(() => {
+    if (!shouldShowInlinePreview) {
+      return;
+    }
+    if (containerWidth <= 0) {
+      return;
     }
 
-    const available = Math.max(0, containerWidth - dividerWidth);
+    const available = Math.max(0, containerWidth);
     const maxTree = Math.max(minTreeWidth, available - minPreviewWidth);
-    const raw = Math.round(available * safeSplitRatio);
-    return Math.max(minTreeWidth, Math.min(maxTree, raw));
-  }, [containerWidth, safeSplitRatio, shouldShowInlinePreview]);
+    const desired = Math.round(available * safeSplitRatio);
+    const clamped = Math.max(minTreeWidth, Math.min(maxTree, desired));
 
-  const resizeStartRef = useRef<{ startWidth: number; available: number } | null>(null);
+    splitAvailableWidth.value = available;
+    splitMaxTreeWidth.value = maxTree;
+    splitTreeWidth.value = clamped;
+  }, [
+    containerWidth,
+    minPreviewWidth,
+    minTreeWidth,
+    safeSplitRatio,
+    shouldShowInlinePreview,
+    splitAvailableWidth,
+    splitMaxTreeWidth,
+    splitTreeWidth,
+  ]);
+
+  const treePaneAnimatedStyle = useAnimatedStyle(() => ({
+    width: splitTreeWidth.value,
+    flexBasis: splitTreeWidth.value,
+    flexGrow: 0,
+    flexShrink: 0,
+  }));
 
   const splitResizeGesture = useMemo(() => {
-    if (!shouldShowInlinePreview || containerWidth <= 0 || treePaneWidth === null) {
+    if (isMobile || !shouldShowInlinePreview) {
       return Gesture.Pan().enabled(false);
     }
 
-    const available = Math.max(0, containerWidth - dividerWidth);
-
     return Gesture.Pan()
-      .enabled(!isMobile)
-      .runOnJS(true)
-      .activeOffsetX([-2, 2])
-      .failOffsetY([-5, 5])
       .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
-      .onBegin(() => {
-        resizeStartRef.current = {
-          startWidth: treePaneWidth,
-          available,
-        };
+      .onStart(() => {
+        splitStartTreeWidth.value = splitTreeWidth.value;
       })
       .onUpdate((event) => {
-        const start = resizeStartRef.current;
-        if (!start) {
-          return;
-        }
-        const nextWidth = start.startWidth + (event.translationX ?? 0);
-        const maxTree = Math.max(minTreeWidth, start.available - minPreviewWidth);
-        const clamped = Math.max(minTreeWidth, Math.min(maxTree, nextWidth));
-        const nextRatio = start.available > 0 ? clamped / start.available : safeSplitRatio;
-        setSplitRatio(nextRatio);
+        const nextWidth = splitStartTreeWidth.value + event.translationX;
+        const clamped = Math.max(
+          minTreeWidth,
+          Math.min(splitMaxTreeWidth.value, nextWidth)
+        );
+        splitTreeWidth.value = clamped;
       })
-      .onFinalize(() => {
-        resizeStartRef.current = null;
+      .onEnd(() => {
+        const available = splitAvailableWidth.value;
+        const ratio = available > 0 ? splitTreeWidth.value / available : safeSplitRatio;
+        runOnJS(setSplitRatio)(ratio);
       });
   }, [
-    containerWidth,
-    dividerWidth,
     isMobile,
+    minTreeWidth,
+    safeSplitRatio,
     setSplitRatio,
     shouldShowInlinePreview,
-    safeSplitRatio,
-    treePaneWidth,
+    splitAvailableWidth,
+    splitMaxTreeWidth,
+    splitStartTreeWidth,
+    splitTreeWidth,
   ]);
 
   const renderTreeRow = useCallback(
@@ -431,16 +453,6 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
       theme.spacing,
     ]
   );
-
-  const listHeaderComponent = useMemo(() => {
-    return (
-      <View style={styles.headerContainer}>
-        <Pressable style={styles.sortButton} onPress={handleSortCycle}>
-          <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
-        </Pressable>
-      </View>
-    );
-  }, [currentSortLabel, handleSortCycle]);
 
   const handlePreviewSheetChange = useCallback(
     (index: number) => {
@@ -504,32 +516,36 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
         </View>
       ) : (
         <View style={styles.desktopSplit}>
-          <View
+          <Animated.View
             style={[
               styles.treePane,
-              shouldShowInlinePreview && styles.treePaneWithPreview,
-              shouldShowInlinePreview && treePaneWidth !== null
-                ? { width: treePaneWidth, flex: 0, flexGrow: 0, flexShrink: 0 }
-                : null,
+              shouldShowInlinePreview
+                ? [styles.treePaneWithPreview, { minWidth: minTreeWidth }, treePaneAnimatedStyle]
+                : styles.treePaneFill,
             ]}
           >
+            <View style={styles.paneHeader} testID="files-pane-header">
+              <View style={styles.paneHeaderLeft} />
+              <Pressable style={styles.sortButton} onPress={handleSortCycle}>
+                <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
+              </Pressable>
+            </View>
             <FlatList
+              style={styles.treeList}
               data={treeRows}
               renderItem={renderTreeRow}
               keyExtractor={(row) => row.entry.path}
               contentContainerStyle={styles.entriesContent}
-              ListHeaderComponent={listHeaderComponent}
               initialNumToRender={24}
               maxToRenderPerBatch={40}
               windowSize={12}
             />
-          </View>
+          </Animated.View>
 
           {shouldShowInlinePreview ? (
-            <>
+            <View style={styles.previewPane}>
               <GestureDetector gesture={splitResizeGesture}>
                 <View
-                  pointerEvents="box-only"
                   style={[
                     styles.splitResizeHandle,
                     Platform.OS === "web" && ({ cursor: "col-resize" } as any),
@@ -537,33 +553,20 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                   ]}
                 />
               </GestureDetector>
-              <View style={styles.previewPane}>
-              <View style={styles.previewHeaderContainer}>
-                <View style={styles.previewHeaderInner}>
-                  <Pressable
-                    onPress={() => {
-                      if (selectedEntryPath) {
-                        void Clipboard.setStringAsync(selectedEntryPath);
-                      }
-                    }}
-                    style={({ hovered, pressed }) => [
-                      styles.previewHeaderRow,
-                      (hovered || pressed) && styles.previewHeaderRowHovered,
-                    ]}
-                  >
-                    <Text style={styles.previewHeaderText} numberOfLines={1}>
-                      {selectedEntryPath?.split("/").pop() ?? "Preview"}
-                    </Text>
-                    {isPreviewLoading ? (
-                      <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-                    ) : null}
-                  </Pressable>
+              <View style={styles.paneHeader} testID="preview-pane-header">
+                <Text style={styles.previewHeaderText} numberOfLines={1}>
+                  {selectedEntryPath?.split("/").pop() ?? "Preview"}
+                </Text>
+                <View style={styles.previewHeaderRight}>
+                  {isPreviewLoading ? (
+                    <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+                  ) : null}
                   <Pressable
                     onPress={handleClosePreview}
                     hitSlop={8}
                     style={({ hovered, pressed }) => [
                       styles.iconButton,
-                      (hovered || pressed) && styles.previewHeaderRowHovered,
+                      (hovered || pressed) && styles.iconButtonHovered,
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Close preview"
@@ -575,7 +578,6 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
 
               <FilePreviewBody preview={preview} isLoading={isPreviewLoading} variant="inline" />
             </View>
-            </>
           ) : null}
         </View>
       )}
@@ -697,22 +699,26 @@ function FilePreviewBody({
   if (preview.kind === "text") {
     if (variant === "sheet") {
       return (
-        <BottomSheetScrollView
-          style={styles.previewContent}
-          contentContainerStyle={styles.previewTextContent}
-        >
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+        <BottomSheetScrollView style={styles.previewContent}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            contentContainerStyle={styles.previewCodeScrollContent}
+          >
             <Text style={styles.codeText}>{preview.content}</Text>
           </ScrollView>
         </BottomSheetScrollView>
       );
     }
     return (
-      <RNScrollView
-        style={styles.previewContent}
-        contentContainerStyle={styles.previewTextContent}
-      >
-        <RNScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+      <RNScrollView style={styles.previewContent}>
+        <RNScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator
+          contentContainerStyle={styles.previewCodeScrollContent}
+        >
           <Text style={styles.codeText}>{preview.content}</Text>
         </RNScrollView>
       </RNScrollView>
@@ -965,33 +971,56 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   treePane: {
-    flex: 1,
     minWidth: 0,
   },
+  treePaneFill: {
+    flex: 1,
+  },
   treePaneWithPreview: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   splitResizeHandle: {
+    position: "absolute",
+    left: -5,
+    top: 0,
+    bottom: 0,
     width: 10,
-    backgroundColor: theme.colors.surface0,
-    borderLeftWidth: 1,
-    borderLeftColor: theme.colors.border,
-    borderRightWidth: 1,
-    borderRightColor: theme.colors.border,
+    zIndex: 20,
   },
   previewPane: {
     flex: 1,
     minWidth: 0,
+    position: "relative",
+    borderLeftWidth: 1,
+    borderLeftColor: theme.colors.border,
   },
-  headerContainer: {
-    paddingHorizontal: theme.spacing[2],
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[1],
-  },
-  sortButton: {
-    alignSelf: "flex-end",
+  paneHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: theme.spacing[1],
+    justifyContent: "space-between",
+    height: 32 + theme.spacing[2] * 2,
+    paddingHorizontal: theme.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  paneHeaderLeft: {
+    flex: 1,
+    minWidth: 0,
+  },
+  previewHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 0,
+  },
+  sortButton: {
+    height: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
@@ -1000,6 +1029,10 @@ const styles = StyleSheet.create((theme) => ({
   sortButtonText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  treeList: {
+    flex: 1,
+    minHeight: 0,
   },
   entriesContent: {
     paddingBottom: theme.spacing[4],
@@ -1119,36 +1152,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
   },
-  previewHeaderContainer: {
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  previewHeaderInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-  },
-  previewHeaderRow: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-  },
-  previewHeaderRowHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
   previewHeaderText: {
     flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
   },
   iconButton: {
     width: 32,
@@ -1157,11 +1165,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  iconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
   previewContent: {
     flex: 1,
   },
-  previewTextContent: {
-    padding: theme.spacing[3],
+  previewCodeScrollContent: {
+    paddingTop: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[3] + theme.spacing[2],
   },
   codeText: {
     color: theme.colors.foreground,
