@@ -22,11 +22,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
+      - name: Fetch origin/main (worktree tests)
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install server dependencies
         run: npm install --workspace=@paseo/server --include-workspace-root
