@@ -19,6 +19,10 @@ import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-wind
 import { useVoice } from "@/contexts/voice-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { VoicePanel } from "./voice-panel";
+import { useSidebarAgentSections } from "@/hooks/use-sidebar-agent-sections";
+import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
+import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
+import { deriveSidebarShortcutAgentKeys } from "@/utils/sidebar-shortcuts";
 
 const DESKTOP_SIDEBAR_WIDTH = 320;
 const SIDEBAR_AGENT_LIMIT = 15;
@@ -82,6 +86,17 @@ export function SlidingSidebar({ selectedAgentId }: SlidingSidebarProps) {
     () => sortedAgents.slice(0, SIDEBAR_AGENT_LIMIT),
     [sortedAgents]
   );
+
+  const sidebarSections = useSidebarAgentSections(limitedAgents);
+  const collapsedProjectKeys = useSidebarCollapsedSectionsStore((s) => s.collapsedProjectKeys);
+  const setSidebarShortcutAgentKeys = useKeyboardNavStore((s) => s.setSidebarShortcutAgentKeys);
+  const sidebarShortcutAgentKeys = useMemo(() => {
+    return deriveSidebarShortcutAgentKeys(sidebarSections, collapsedProjectKeys, 9);
+  }, [collapsedProjectKeys, sidebarSections]);
+
+  useEffect(() => {
+    setSidebarShortcutAgentKeys(sidebarShortcutAgentKeys);
+  }, [setSidebarShortcutAgentKeys, sidebarShortcutAgentKeys]);
 
   const handleClose = useCallback(() => {
     closeToAgent();
