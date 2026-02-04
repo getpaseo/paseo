@@ -194,7 +194,8 @@ export function DropdownMenuTrigger({
   style,
   ...props
 }: PropsWithChildren<DropdownMenuTriggerProps>): ReactElement {
-  const { setOpen, open, triggerRef } = useDropdownMenuContext("DropdownMenuTrigger");
+  const { setOpen, open: isOpen, triggerRef } = useDropdownMenuContext("DropdownMenuTrigger");
+  const open: boolean = isOpen;
 
   const handlePress = useCallback(() => {
     if (disabled) return;
@@ -210,7 +211,7 @@ export function DropdownMenuTrigger({
       onPress={handlePress}
       style={({ pressed, hovered }) => {
         if (typeof style === "function") {
-          return style({ pressed, hovered, open: open ?? false });
+          return style({ pressed, hovered, open });
         }
         return style;
       }}
