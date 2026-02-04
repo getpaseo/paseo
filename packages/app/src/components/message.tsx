@@ -261,7 +261,6 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
   container: {
     alignSelf: "flex-start",
     padding: theme.spacing[2],
-    marginLeft: theme.spacing[4],
   },
   iconColor: {
     color: theme.colors.foregroundMuted,

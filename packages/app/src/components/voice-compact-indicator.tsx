@@ -1,6 +1,6 @@
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AudioLines, MicOff } from "lucide-react-native";
+import { Mic, MicOff } from "lucide-react-native";
 import { VolumeMeter } from "@/components/volume-meter";
 import { useVoice } from "@/contexts/voice-context";
 
@@ -35,7 +35,7 @@ export function VoiceCompactIndicator() {
         {isMuted ? (
           <MicOff size={14} color={theme.colors.surface0} />
         ) : (
-          <AudioLines size={14} color={theme.colors.foreground} />
+          <Mic size={14} color={theme.colors.foreground} />
         )}
       </Pressable>
     </View>
@@ -73,4 +73,3 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.palette.red[800],
   },
 }));
-
