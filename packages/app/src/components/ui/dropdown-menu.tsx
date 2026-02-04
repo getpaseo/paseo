@@ -194,24 +194,23 @@ export function DropdownMenuTrigger({
   style,
   ...props
 }: PropsWithChildren<DropdownMenuTriggerProps>): ReactElement {
-  const { setOpen, open: isOpen, triggerRef } = useDropdownMenuContext("DropdownMenuTrigger");
-  const open: boolean = isOpen;
+  const ctx = useDropdownMenuContext("DropdownMenuTrigger");
 
   const handlePress = useCallback(() => {
     if (disabled) return;
-    setOpen(!open);
-  }, [disabled, open, setOpen]);
+    ctx.setOpen(!ctx.open);
+  }, [disabled, ctx]);
 
   return (
     <Pressable
       {...props}
-      ref={triggerRef}
+      ref={ctx.triggerRef}
       collapsable={false}
       disabled={disabled}
       onPress={handlePress}
       style={({ pressed, hovered }) => {
         if (typeof style === "function") {
-          return style({ pressed, hovered, open });
+          return style({ pressed, hovered, open: ctx.open });
         }
         return style;
       }}
