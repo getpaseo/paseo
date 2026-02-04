@@ -792,20 +792,19 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  radioOuter: {
+  radioBadge: {
     width: 16,
     height: 16,
     borderRadius: 8,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.foregroundMuted,
+    backgroundColor: theme.colors.foregroundMuted,
     alignItems: "center",
     justifyContent: "center",
   },
-  radioInner: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.colors.foregroundMuted,
+  radioBadgeIncomplete: {
+    opacity: 0.55,
+  },
+  radioBadgeComplete: {
+    opacity: 0.95,
   },
   itemText: {
     flex: 1,
@@ -827,7 +826,9 @@ export const TodoListCard = memo(function TodoListCard({
   disableOuterSpacing,
 }: TodoListCardProps) {
   const { theme: unistylesTheme } = useUnistyles();
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
 
   const handleToggle = useCallback(() => {
     setIsExpanded((prev) => !prev);
@@ -842,8 +843,17 @@ export const TodoListCard = memo(function TodoListCard({
           ) : (
             items.map((item, idx) => (
               <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
-                <View style={todoListCardStylesheet.radioOuter}>
-                  {item.completed ? <View style={todoListCardStylesheet.radioInner} /> : null}
+                <View
+                  style={[
+                    todoListCardStylesheet.radioBadge,
+                    item.completed
+                      ? todoListCardStylesheet.radioBadgeComplete
+                      : todoListCardStylesheet.radioBadgeIncomplete,
+                  ]}
+                >
+                  {item.completed ? (
+                    <Check size={12} color={unistylesTheme.colors.primaryForeground} />
+                  ) : null}
                 </View>
                 <Text
                   style={[
@@ -864,6 +874,7 @@ export const TodoListCard = memo(function TodoListCard({
   return (
     <ExpandableBadge
       label="Tasks"
+      secondaryLabel={nextTask}
       icon={CheckSquare}
       isExpanded={isExpanded}
       onToggle={handleToggle}
