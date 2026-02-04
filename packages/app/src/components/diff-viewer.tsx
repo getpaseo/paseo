@@ -102,11 +102,12 @@ const styles = StyleSheet.create((theme) => {
     },
     linesContainer: {
       alignSelf: "flex-start",
+      padding: insets.padding,
     },
     line: {
       minWidth: "100%",
-      paddingHorizontal: insets.padding,
-      paddingVertical: insets.padding,
+      paddingHorizontal: 0,
+      paddingVertical: theme.spacing[1],
     },
     lineText: {
       fontFamily: Fonts.mono,
