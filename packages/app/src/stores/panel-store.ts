@@ -67,6 +67,9 @@ interface PanelState {
 }
 
 function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
   return Math.max(min, Math.min(max, value));
 }
 
@@ -153,7 +156,11 @@ export const usePanelStore = create<PanelState>()(
       setExplorerWidth: (width) => set({ explorerWidth: clampWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       setExplorerFilesSplitRatio: (ratio) =>
-        set({ explorerFilesSplitRatio: clampExplorerFilesSplitRatio(ratio) }),
+        set({
+          explorerFilesSplitRatio: Number.isFinite(ratio)
+            ? clampExplorerFilesSplitRatio(ratio)
+            : DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+        }),
     }),
     {
       name: "panel-state",

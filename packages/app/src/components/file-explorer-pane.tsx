@@ -36,7 +36,11 @@ import { useDaemonConnections } from "@/contexts/daemon-connections-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useDownloadStore } from "@/stores/download-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import { usePanelStore, type SortOption } from "@/stores/panel-store";
+import {
+  usePanelStore,
+  DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
+  type SortOption,
+} from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
@@ -309,6 +313,10 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
   const minTreeWidth = 220;
   const minPreviewWidth = 320;
 
+  const safeSplitRatio = Number.isFinite(splitRatio)
+    ? splitRatio
+    : DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
+
   const treePaneWidth = useMemo(() => {
     if (!shouldShowInlinePreview || containerWidth <= 0) {
       return null;
@@ -316,9 +324,9 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
 
     const available = Math.max(0, containerWidth - dividerWidth);
     const maxTree = Math.max(minTreeWidth, available - minPreviewWidth);
-    const raw = Math.round(available * splitRatio);
+    const raw = Math.round(available * safeSplitRatio);
     return Math.max(minTreeWidth, Math.min(maxTree, raw));
-  }, [containerWidth, shouldShowInlinePreview, splitRatio]);
+  }, [containerWidth, safeSplitRatio, shouldShowInlinePreview]);
 
   const resizeStartRef = useRef<{ startWidth: number; available: number } | null>(null);
 
@@ -332,6 +340,8 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     return Gesture.Pan()
       .enabled(!isMobile)
       .runOnJS(true)
+      .activeOffsetX([-2, 2])
+      .failOffsetY([-5, 5])
       .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
       .onBegin(() => {
         resizeStartRef.current = {
@@ -344,10 +354,10 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
         if (!start) {
           return;
         }
-        const nextWidth = start.startWidth + event.translationX;
+        const nextWidth = start.startWidth + (event.translationX ?? 0);
         const maxTree = Math.max(minTreeWidth, start.available - minPreviewWidth);
         const clamped = Math.max(minTreeWidth, Math.min(maxTree, nextWidth));
-        const nextRatio = start.available > 0 ? clamped / start.available : splitRatio;
+        const nextRatio = start.available > 0 ? clamped / start.available : safeSplitRatio;
         setSplitRatio(nextRatio);
       })
       .onFinalize(() => {
@@ -359,7 +369,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     isMobile,
     setSplitRatio,
     shouldShowInlinePreview,
-    splitRatio,
+    safeSplitRatio,
     treePaneWidth,
   ]);
 
@@ -519,6 +529,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
             <>
               <GestureDetector gesture={splitResizeGesture}>
                 <View
+                  pointerEvents="box-only"
                   style={[
                     styles.splitResizeHandle,
                     Platform.OS === "web" && ({ cursor: "col-resize" } as any),
