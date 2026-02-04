@@ -17,8 +17,7 @@
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "expo export --platform web",
-    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app",
-    "postinstall": "patch-package --patch-dir ../../patches"
+    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app"
   },
   "dependencies": {
     "@boudra/expo-two-way-audio": "^0.1.3",

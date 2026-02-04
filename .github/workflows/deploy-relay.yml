@@ -1,0 +1,33 @@
+name: Deploy Relay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/relay/**'
+      - '.github/workflows/deploy-relay.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --workspace=@paseo/relay --include-workspace-root
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=@paseo/relay
+
+      - name: Deploy worker
+        run: cd packages/relay && npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+

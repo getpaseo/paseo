@@ -18,6 +18,11 @@ import pino from "pino";
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
+const hasOpenAICredentials = !!process.env.OPENAI_API_KEY;
+const hasClaudeCredentials =
+  !!process.env.CLAUDE_SESSION_TOKEN || !!process.env.ANTHROPIC_API_KEY;
+const shouldRun = !process.env.CI && (hasOpenAICredentials || hasClaudeCredentials);
+
 type AgentMcpServerHandle = {
   url: string;
   close: () => Promise<void>;
@@ -136,7 +141,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
   };
 }
 
-describe("getStructuredAgentResponse (e2e)", () => {
+(shouldRun ? describe : describe.skip)("getStructuredAgentResponse (e2e)", () => {
   let manager: AgentManager;
   let cwd: string;
   let agentMcpServer: AgentMcpServerHandle;
@@ -163,7 +168,7 @@ describe("getStructuredAgentResponse (e2e)", () => {
     await shutdownProviders(logger);
   }, 60000);
 
-  test(
+  test.runIf(hasOpenAICredentials)(
     "returns schema-valid JSON from a real Codex agent",
     async () => {
       const schema = z.object({
@@ -191,7 +196,7 @@ describe("getStructuredAgentResponse (e2e)", () => {
     180000
   );
 
-  test(
+  test.runIf(hasClaudeCredentials)(
     "returns schema-valid JSON from Claude Haiku",
     async () => {
       const schema = z.object({

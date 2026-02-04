@@ -18,6 +18,8 @@ import {
   wordSimilarity,
 } from "./test-utils/dictation-e2e.js";
 
+const hasOpenAICredentials = !!process.env.OPENAI_API_KEY;
+
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-"));
 }
@@ -53,11 +55,11 @@ function waitForSignal<T>(
   });
 }
 
-describe("daemon client E2E", () => {
+(hasOpenAICredentials ? describe : describe.skip)("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
-    const openaiApiKey = requireEnv("OPENAI_API_KEY");
+    const openaiApiKey = process.env.OPENAI_API_KEY ?? "";
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,
       openai: { apiKey: openaiApiKey },

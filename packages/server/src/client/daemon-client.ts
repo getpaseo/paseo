@@ -755,6 +755,40 @@ export class DaemonClient {
     });
   }
 
+  async ping(params?: { requestId?: string; timeoutMs?: number }): Promise<{
+    requestId: string;
+    clientSentAt: number;
+    serverReceivedAt: number;
+    serverSentAt: number;
+    rttMs: number;
+  }> {
+    const requestId =
+      params?.requestId ??
+      `ping-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const clientSentAt = Date.now();
+
+    const payload = await this.sendRequest({
+      requestId,
+      message: { type: "ping", requestId, clientSentAt },
+      timeout: params?.timeoutMs ?? 5000,
+      select: (msg) => {
+        if (msg.type !== "pong") return null;
+        if (msg.payload.requestId !== requestId) return null;
+        if (typeof msg.payload.serverReceivedAt !== "number") return null;
+        if (typeof msg.payload.serverSentAt !== "number") return null;
+        return msg.payload;
+      },
+    });
+
+    return {
+      requestId,
+      clientSentAt,
+      serverReceivedAt: payload.serverReceivedAt,
+      serverSentAt: payload.serverSentAt,
+      rttMs: Date.now() - clientSentAt,
+    };
+  }
+
   // ============================================================================
   // Agent RPCs (requestId-correlated)
   // ============================================================================

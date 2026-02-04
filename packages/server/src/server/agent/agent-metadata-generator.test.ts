@@ -14,6 +14,8 @@ import { createWorktree, validateBranchSlug } from "../../utils/worktree.js";
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
+const shouldRun = !process.env.CI && !!process.env.OPENAI_API_KEY;
+
 function tmpCwd(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
 }
@@ -36,7 +38,7 @@ function initGitRepo(repoDir: string): void {
   });
 }
 
-describe("agent metadata generation (real agents)", () => {
+(shouldRun ? describe : describe.skip)("agent metadata generation (real agents)", () => {
   const logger = pino({ level: "silent" });
   let repoDir: string;
   let paseoHome: string;

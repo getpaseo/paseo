@@ -981,6 +981,20 @@ export class Session {
           this.handleClientHeartbeat(msg);
           break;
 
+        case "ping": {
+          const now = Date.now();
+          this.emit({
+            type: "pong",
+            payload: {
+              requestId: msg.requestId,
+              clientSentAt: msg.clientSentAt,
+              serverReceivedAt: now,
+              serverSentAt: now,
+            },
+          });
+          break;
+        }
+
         case "list_commands_request":
           await this.handleListCommandsRequest(msg.agentId, msg.requestId);
           break;

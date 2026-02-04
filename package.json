@@ -15,6 +15,7 @@
     "dev:server": "NODE_ENV=development tsx packages/server/scripts/dev-runner.ts",
     "dev:app": "npm run start --workspace=@paseo/app",
     "dev:website": "npm run dev --workspace=@paseo/website",
+    "postinstall": "patch-package",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

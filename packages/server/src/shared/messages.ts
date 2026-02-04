@@ -787,6 +787,12 @@ export const ClientHeartbeatMessageSchema = z.object({
   appVisible: z.boolean(),
 });
 
+export const PingMessageSchema = z.object({
+  type: z.literal("ping"),
+  requestId: z.string(),
+  clientSentAt: z.number().int().optional(),
+});
+
 export const ListCommandsRequestSchema = z.object({
   type: z.literal("list_commands_request"),
   agentId: z.string(),
@@ -908,6 +914,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileDownloadTokenRequestSchema,
   ClearAgentAttentionMessageSchema,
   ClientHeartbeatMessageSchema,
+  PingMessageSchema,
   ListCommandsRequestSchema,
   ExecuteCommandRequestSchema,
   RegisterPushTokenMessageSchema,
@@ -1022,6 +1029,16 @@ export const StatusMessageSchema = z.object({
       status: z.string(),
     })
     .passthrough(), // Allow additional fields
+});
+
+export const PongMessageSchema = z.object({
+  type: z.literal("pong"),
+  payload: z.object({
+    requestId: z.string(),
+    clientSentAt: z.number().int().optional(),
+    serverReceivedAt: z.number().int(),
+    serverSentAt: z.number().int(),
+  }),
 });
 
 export const RpcErrorMessageSchema = z.object({
@@ -1617,6 +1634,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DictationStreamFinalMessageSchema,
   DictationStreamErrorMessageSchema,
   StatusMessageSchema,
+  PongMessageSchema,
   RpcErrorMessageSchema,
   InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
