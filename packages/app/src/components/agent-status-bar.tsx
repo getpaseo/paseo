@@ -22,6 +22,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const { theme } = useUnistyles();
   const IS_WEB = Platform.OS === "web";
   const [prefsOpen, setPrefsOpen] = useState(false);
+  const dropdownMaxWidth = IS_WEB ? 360 : undefined;
 
   // Select only the specific agent (not all agents)
   const agent = useSessionStore((state) =>
@@ -101,6 +102,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
           <DropdownMenuContent
             side="top"
             align="start"
+            maxWidth={dropdownMaxWidth}
             testID="agent-mode-menu"
           >
             <DropdownMenuLabel>Mode</DropdownMenuLabel>
@@ -138,7 +140,12 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
               <Text style={styles.modeBadgeText}>{displayModel}</Text>
               <ChevronDown size={14} color={theme.colors.foregroundMuted} />
             </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" testID="agent-model-menu">
+            <DropdownMenuContent
+              side="top"
+              align="start"
+              maxWidth={dropdownMaxWidth}
+              testID="agent-model-menu"
+            >
               <DropdownMenuLabel>Model</DropdownMenuLabel>
               {models?.map((model) => {
                 const isActive = model.id === agent.model;
@@ -178,7 +185,12 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                 <Text style={styles.modeBadgeText}>{displayThinking}</Text>
                 <ChevronDown size={14} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" testID="agent-thinking-menu">
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                maxWidth={dropdownMaxWidth}
+                testID="agent-thinking-menu"
+              >
                 <DropdownMenuLabel>Thinking</DropdownMenuLabel>
                 {thinkingOptions.map((opt) => {
                   const isActive = opt.id === selectedThinkingId;
@@ -331,15 +343,15 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
+    gap: theme.spacing[1],
   },
   modeBadge: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.colors.surface2,
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius["2xl"],
   },
   modeBadgePressed: {
@@ -348,8 +360,7 @@ const styles = StyleSheet.create((theme) => ({
   modeBadgeText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
-    textTransform: "capitalize",
+    fontWeight: theme.fontWeight.normal,
   },
   prefsButton: {
     width: 32,
