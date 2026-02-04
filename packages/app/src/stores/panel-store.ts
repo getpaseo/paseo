@@ -173,6 +173,10 @@ export const usePanelStore = create<PanelState>()(
 
           if (typeof state.explorerFilesSplitRatio !== "number") {
             state.explorerFilesSplitRatio = DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
+          } else {
+            state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(
+              state.explorerFilesSplitRatio
+            );
           }
         }
 
