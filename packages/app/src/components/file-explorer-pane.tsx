@@ -331,6 +331,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
 
     return Gesture.Pan()
       .enabled(!isMobile)
+      .runOnJS(true)
       .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
       .onBegin(() => {
         resizeStartRef.current = {
