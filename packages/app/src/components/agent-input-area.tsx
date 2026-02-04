@@ -7,11 +7,10 @@ import {
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ArrowUp, AudioLines, MicOff, Square, Pencil } from "lucide-react-native";
+import { ArrowUp, Square, Pencil } from "lucide-react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useVoice } from "@/contexts/voice-context";
 import { useIsFocused } from "@react-navigation/native";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { generateMessageId } from "@/types/stream";
@@ -93,8 +92,6 @@ export function AgentInputArea({
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
-
-  const { isVoiceMode, isMuted: isVoiceMuted, toggleMute: toggleVoiceMute } = useVoice();
 
   const [internalInput, setInternalInput] = useState("");
   const userInput = value ?? internalInput;
@@ -573,35 +570,6 @@ export function AgentInputArea({
             />
           )}
 
-          {/* Voice quick mute indicator */}
-          {isVoiceMode && (
-            <View style={styles.voiceIndicatorRow}>
-              <Pressable
-                onPress={toggleVoiceMute}
-                accessibilityRole="button"
-                accessibilityLabel={isVoiceMuted ? "Unmute voice" : "Mute voice"}
-                style={[
-                  styles.voiceIndicatorPill,
-                  isVoiceMuted && styles.voiceIndicatorPillMuted,
-                ]}
-              >
-                {isVoiceMuted ? (
-                  <MicOff size={14} color={theme.colors.surface0} />
-                ) : (
-                  <AudioLines size={14} color={theme.colors.foreground} />
-                )}
-                <Text
-                  style={[
-                    styles.voiceIndicatorText,
-                    isVoiceMuted && styles.voiceIndicatorTextMuted,
-                  ]}
-                >
-                  {isVoiceMuted ? "Voice muted" : "Voice on"}
-                </Text>
-              </Pressable>
-            </View>
-          )}
-
           {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
           <MessageInput
             ref={messageInputRef}
@@ -665,33 +633,6 @@ const styles = StyleSheet.create(((theme: Theme) => ({
   },
   buttonDisabled: {
     opacity: 0.5,
-  },
-  voiceIndicatorRow: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  voiceIndicatorPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    height: 32,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface2,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  voiceIndicatorPillMuted: {
-    backgroundColor: theme.colors.palette.red[600],
-    borderColor: theme.colors.palette.red[800],
-  },
-  voiceIndicatorText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-  },
-  voiceIndicatorTextMuted: {
-    color: theme.colors.surface0,
   },
   queueContainer: {
     flexDirection: "column",
