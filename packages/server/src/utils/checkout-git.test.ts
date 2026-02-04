@@ -102,6 +102,36 @@ describe("checkout git utilities", () => {
     expect(logMessage).toBe(message);
   });
 
+  it("diffs base mode against merge-base (no base-only deletions)", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+
+    // Advance base branch after feature splits off.
+    execSync("git checkout main", { cwd: repoDir });
+    writeFileSync(join(repoDir, "base-only.txt"), "base\n");
+    execSync("git add base-only.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'base only'", { cwd: repoDir });
+
+    // Make a feature change.
+    execSync("git checkout feature", { cwd: repoDir });
+    writeFileSync(join(repoDir, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", { cwd: repoDir });
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" });
+    expect(diff.diff).toContain("feature.txt");
+    expect(diff.diff).not.toContain("base-only.txt");
+  });
+
+  it("does not throw on large diffs (marks file as too_large)", async () => {
+    const large = Array.from({ length: 200_000 }, (_, i) => `line ${i}`).join("\n") + "\n";
+    writeFileSync(join(repoDir, "file.txt"), large);
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    expect(diff.structured?.some((f) => f.path === "file.txt" && f.status === "too_large")).toBe(
+      true
+    );
+  });
+
   it("handles status/diff/commit in a .paseo worktree", async () => {
     const result = await createWorktree({
       branchName: "main",

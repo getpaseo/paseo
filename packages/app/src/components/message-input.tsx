@@ -26,7 +26,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
 
@@ -51,7 +51,7 @@ export interface MessageInputProps {
   images?: ImageAttachment[];
   onPickImages?: () => void;
   onRemoveImage?: (index: number) => void;
-  client: DaemonClientV2 | null;
+  client: DaemonClient | null;
   placeholder?: string;
   autoFocus?: boolean;
   disabled?: boolean;

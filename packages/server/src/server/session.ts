@@ -1023,17 +1023,36 @@ export class Session {
           break;
       }
     } catch (error: any) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.sessionLogger.error(
-        { err: error },
+        { err },
         "Error handling message"
       );
+
+      const requestId = (msg as { requestId?: unknown }).requestId;
+      if (typeof requestId === "string") {
+        try {
+          this.emit({
+            type: "rpc_error",
+            payload: {
+              requestId,
+              requestType: msg.type,
+              error: "Request failed",
+              code: "handler_error",
+            },
+          });
+        } catch (emitError) {
+          this.sessionLogger.error({ err: emitError }, "Failed to emit rpc_error");
+        }
+      }
+
       this.emit({
         type: "activity_log",
         payload: {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Error: ${error.message}`,
+          content: `Error: ${err.message}`,
         },
       });
     }
@@ -1976,7 +1995,11 @@ export class Session {
   }
 
   private async generateCommitMessage(cwd: string): Promise<string> {
-    const diff = await getCheckoutDiff(cwd, { mode: "uncommitted" }, { paseoHome: this.paseoHome });
+    const diff = await getCheckoutDiff(
+      cwd,
+      { mode: "uncommitted", includeStructured: true },
+      { paseoHome: this.paseoHome }
+    );
     const schema = z.object({
       message: z
         .string()
@@ -1984,11 +2007,29 @@ export class Session {
         .max(72)
         .describe("Concise git commit message, imperative mood, no trailing period."),
     });
+    const fileList =
+      diff.structured && diff.structured.length > 0
+        ? [
+            "Files changed:",
+            ...diff.structured.map((file) => {
+              const changeType = file.isNew ? "A" : file.isDeleted ? "D" : "M";
+              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
+              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
+            }),
+          ].join("\n")
+        : "Files changed: (unknown)";
+    const maxPatchChars = 120_000;
+    const patch =
+      diff.diff.length > maxPatchChars
+        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
+        : diff.diff;
     const prompt = [
       "Write a concise git commit message for the changes below.",
       "Return JSON only with a single field 'message'.",
       "",
-      diff.diff.length > 0 ? diff.diff : "(No diff available)",
+      fileList,
+      "",
+      patch.length > 0 ? patch : "(No diff available)",
     ].join("\n");
     try {
       const result = await generateStructuredAgentResponse({
@@ -2023,6 +2064,7 @@ export class Session {
       {
         mode: "base",
         baseRef,
+        includeStructured: true,
       },
       { paseoHome: this.paseoHome }
     );
@@ -2030,11 +2072,29 @@ export class Session {
       title: z.string().min(1).max(72),
       body: z.string().min(1),
     });
+    const fileList =
+      diff.structured && diff.structured.length > 0
+        ? [
+            "Files changed:",
+            ...diff.structured.map((file) => {
+              const changeType = file.isNew ? "A" : file.isDeleted ? "D" : "M";
+              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
+              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
+            }),
+          ].join("\n")
+        : "Files changed: (unknown)";
+    const maxPatchChars = 200_000;
+    const patch =
+      diff.diff.length > maxPatchChars
+        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
+        : diff.diff;
     const prompt = [
       "Write a pull request title and body for the changes below.",
       "Return JSON only with fields 'title' and 'body'.",
       "",
-      diff.diff.length > 0 ? diff.diff : "(No diff available)",
+      fileList,
+      "",
+      patch.length > 0 ? patch : "(No diff available)",
     ].join("\n");
     try {
       return await generateStructuredAgentResponse({
