@@ -547,8 +547,14 @@ export async function getCheckoutDiff(
       throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
     } else {
       const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
-      // Diff base ref against working tree (includes uncommitted changes)
-      const { stdout: trackedDiff } = await execAsync(`git diff ${normalizedBaseRef}`, {
+      // Find the merge-base (common ancestor) to diff only changes on this branch
+      const { stdout: mergeBaseOut } = await execAsync(
+        `git merge-base ${normalizedBaseRef} HEAD`,
+        { cwd, env: READ_ONLY_GIT_ENV }
+      );
+      const mergeBase = mergeBaseOut.trim();
+      // Diff from merge-base to working tree (includes uncommitted changes)
+      const { stdout: trackedDiff } = await execAsync(`git diff ${mergeBase}`, {
         cwd,
         env: READ_ONLY_GIT_ENV,
       });
