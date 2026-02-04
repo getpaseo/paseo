@@ -181,7 +181,7 @@ export function ToolCallDetailsContent({
                 <Text selectable style={styles.scrollText}>
                   <Text style={styles.shellPrompt}>$ </Text>
                   {display.command}
-                  {hasOutput ? `\n\n${display.output}` : ""}
+                  {hasOutput ? `\n${display.output}` : ""}
                 </Text>
               </View>
             </ScrollView>
