@@ -413,7 +413,7 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 0,
       borderRadius: 0,
       overflow: "hidden",
-      backgroundColor: theme.colors.surface2,
+      backgroundColor: theme.colors.surface1,
     },
   codeVerticalScroll: {},
   codeVerticalContent: {
