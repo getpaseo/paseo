@@ -1,6 +1,6 @@
-import { View, Text, Pressable } from "react-native";
+import { View, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MicOff, Square, AudioLines } from "lucide-react-native";
+import { MicOff, Square } from "lucide-react-native";
 import { VolumeMeter } from "./volume-meter";
 import { useVoice } from "@/contexts/voice-context";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
@@ -20,21 +20,10 @@ export function VoicePanel() {
 
   const activeHost = activeServerId ? connectionStates.get(activeServerId) ?? null : null;
   const hostLabel = activeHost?.daemon.label ?? null;
-  const hostStatus = activeHost?.status ?? null;
+  const hostSuffix = hostLabel ? ` (${hostLabel})` : "";
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <View style={styles.titleRow}>
-          <AudioLines size={16} color={theme.colors.foregroundMuted} />
-          <Text style={styles.titleText}>Voice</Text>
-        </View>
-        <Text style={styles.hostText} numberOfLines={1}>
-          {hostLabel ? `Host: ${hostLabel}` : "Host: unknown"}
-          {hostStatus ? ` (${hostStatus})` : ""}
-        </Text>
-      </View>
-
       <View style={styles.contentRow}>
         <View style={styles.meterContainer}>
           <VolumeMeter
@@ -43,6 +32,7 @@ export function VoicePanel() {
             isDetecting={isDetecting}
             isSpeaking={isSpeaking}
             orientation="horizontal"
+            variant="compact"
           />
         </View>
 
@@ -50,7 +40,7 @@ export function VoicePanel() {
           <Pressable
             onPress={toggleMute}
             accessibilityRole="button"
-            accessibilityLabel={isMuted ? "Unmute voice" : "Mute voice"}
+            accessibilityLabel={`${isMuted ? "Unmute voice" : "Mute voice"}${hostSuffix}`}
             style={[
               styles.iconButton,
               isMuted && styles.iconButtonMuted,
@@ -65,7 +55,7 @@ export function VoicePanel() {
           <Pressable
             onPress={() => void stopVoice()}
             accessibilityRole="button"
-            accessibilityLabel="Stop voice mode"
+            accessibilityLabel={`Stop voice mode${hostSuffix}`}
             style={[styles.iconButton, styles.iconButtonStop]}
           >
             <Square size={16} color="white" fill="white" />
@@ -84,32 +74,8 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    gap: theme.spacing[3],
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[3],
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flexShrink: 0,
-  },
-  titleText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  hostText: {
-    flex: 1,
-    textAlign: "right",
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
   },
   contentRow: {
     flexDirection: "row",
