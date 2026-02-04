@@ -84,12 +84,13 @@ describe("agent MCP end-to-end (offline)", () => {
         listen: `127.0.0.1:${port}`,
         paseoHome,
         corsAllowedOrigins: [],
-        agentMcpRoute: "/mcp/agents",
-        agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+        allowedHosts: true,
+        mcpEnabled: true,
         staticDir,
         mcpDebug: false,
         agentClients: createTestAgentClients(),
         agentStoragePath: path.join(paseoHome, "agents"),
+        openrouterApiKey: null,
       };
 
       const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));

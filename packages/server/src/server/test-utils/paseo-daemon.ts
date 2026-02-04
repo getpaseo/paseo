@@ -66,8 +66,8 @@ export async function createTestPaseoDaemon(
       listen: `${listenHost}:${port}`,
       paseoHome,
       corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-      agentMcpRoute: "/mcp/agents",
-      agentMcpAllowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`, `${listenHost}:${port}`],
+      allowedHosts: true,
+      mcpEnabled: true,
       staticDir,
       mcpDebug: false,
       agentClients: options.agentClients ?? createTestAgentClients(),
@@ -76,6 +76,7 @@ export async function createTestPaseoDaemon(
       relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
       appBaseUrl: "https://app.paseo.sh",
       openai: options.openai,
+      openrouterApiKey: null,
       dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
     };

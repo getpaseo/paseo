@@ -13,6 +13,8 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsIndexRouteImport } from './routes/docs/index'
 import { Route as DocsBestPracticesRouteImport } from './routes/docs/best-practices'
+import { Route as DocsConfigurationRouteImport } from './routes/docs/configuration'
+import { Route as DocsSecurityRouteImport } from './routes/docs/security'
 
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
@@ -34,16 +36,30 @@ const DocsBestPracticesRoute = DocsBestPracticesRouteImport.update({
   path: '/best-practices',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsConfigurationRoute = DocsConfigurationRouteImport.update({
+  id: '/configuration',
+  path: '/configuration',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSecurityRoute = DocsSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
+  getParentRoute: () => DocsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/docs': typeof DocsRouteWithChildren
   '/docs/best-practices': typeof DocsBestPracticesRoute
+  '/docs/configuration': typeof DocsConfigurationRoute
+  '/docs/security': typeof DocsSecurityRoute
   '/docs/': typeof DocsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/docs/best-practices': typeof DocsBestPracticesRoute
+  '/docs/configuration': typeof DocsConfigurationRoute
+  '/docs/security': typeof DocsSecurityRoute
   '/docs': typeof DocsIndexRoute
 }
 export interface FileRoutesById {
@@ -51,14 +67,16 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/docs': typeof DocsRouteWithChildren
   '/docs/best-practices': typeof DocsBestPracticesRoute
+  '/docs/configuration': typeof DocsConfigurationRoute
+  '/docs/security': typeof DocsSecurityRoute
   '/docs/': typeof DocsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/docs' | '/docs/best-practices' | '/docs/'
+  fullPaths: '/' | '/docs' | '/docs/best-practices' | '/docs/configuration' | '/docs/security' | '/docs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/docs/best-practices' | '/docs'
-  id: '__root__' | '/' | '/docs' | '/docs/best-practices' | '/docs/'
+  to: '/' | '/docs/best-practices' | '/docs/configuration' | '/docs/security' | '/docs'
+  id: '__root__' | '/' | '/docs' | '/docs/best-practices' | '/docs/configuration' | '/docs/security' | '/docs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -96,16 +114,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsBestPracticesRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/configuration': {
+      id: '/docs/configuration'
+      path: '/configuration'
+      fullPath: '/docs/configuration'
+      preLoaderRoute: typeof DocsConfigurationRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/security': {
+      id: '/docs/security'
+      path: '/security'
+      fullPath: '/docs/security'
+      preLoaderRoute: typeof DocsSecurityRouteImport
+      parentRoute: typeof DocsRoute
+    }
   }
 }
 
 interface DocsRouteChildren {
   DocsBestPracticesRoute: typeof DocsBestPracticesRoute
+  DocsConfigurationRoute: typeof DocsConfigurationRoute
+  DocsSecurityRoute: typeof DocsSecurityRoute
   DocsIndexRoute: typeof DocsIndexRoute
 }
 
 const DocsRouteChildren: DocsRouteChildren = {
   DocsBestPracticesRoute: DocsBestPracticesRoute,
+  DocsConfigurationRoute: DocsConfigurationRoute,
+  DocsSecurityRoute: DocsSecurityRoute,
   DocsIndexRoute: DocsIndexRoute,
 }
 

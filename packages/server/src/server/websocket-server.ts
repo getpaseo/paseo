@@ -10,11 +10,14 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { WSOutboundMessage } from "./messages.js";
 import { WebSocketSessionBridge } from "./websocket-session-bridge.js";
+import type { AllowedHostsConfig } from "./allowed-hosts.js";
+import { isHostAllowed } from "./allowed-hosts.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
+  allowedHosts?: AllowedHostsConfig;
 };
 
 /**
@@ -36,6 +39,10 @@ export class VoiceAssistantWebSocketServer {
     wsConfig: WebSocketServerConfig,
     speech?: { stt: OpenAISTT | null; tts: OpenAITTS | null },
     terminalManager?: TerminalManager | null,
+    voice?: {
+      openrouterApiKey?: string | null;
+      voiceLlmModel?: string | null;
+    },
     dictation?: {
       openaiApiKey?: string | null;
       finalTimeoutMs?: number;
@@ -51,16 +58,22 @@ export class VoiceAssistantWebSocketServer {
       createAgentMcpTransport,
       speech,
       terminalManager,
+      voice,
       dictation
     );
 
-    const { allowedOrigins } = wsConfig;
+    const { allowedOrigins, allowedHosts } = wsConfig;
     this.wss = new WebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
         const origin = req.headers.origin;
         const requestHost = typeof req.headers.host === "string" ? req.headers.host : null;
+        if (requestHost && !isHostAllowed(requestHost, allowedHosts)) {
+          this.logger.warn({ host: requestHost }, "Rejected connection from disallowed host");
+          callback(false, 403, "Host not allowed");
+          return;
+        }
         const sameOrigin =
           !!origin &&
           !!requestHost &&

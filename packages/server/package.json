@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.typecheck.json --noEmit",
+    "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
