@@ -147,7 +147,56 @@ export class WebSocketSessionBridge {
   private async handleRawMessage(ws: WebSocket, data: Buffer | ArrayBuffer | Buffer[]): Promise<void> {
     try {
       const parsed = JSON.parse(data.toString());
-      const message = WSInboundMessageSchema.parse(parsed);
+      const parsedMessage = WSInboundMessageSchema.safeParse(parsed);
+      if (!parsedMessage.success) {
+        const requestInfo = extractRequestInfoFromUnknownWsInbound(parsed);
+        const isUnknownSchema =
+          requestInfo?.requestId != null &&
+          typeof parsed === "object" &&
+          parsed != null &&
+          "type" in parsed &&
+          (parsed as { type?: unknown }).type === "session";
+
+        this.logger.warn(
+          {
+            requestId: requestInfo?.requestId,
+            requestType: requestInfo?.requestType,
+            error: parsedMessage.error.message,
+          },
+          "WS inbound message validation failed"
+        );
+
+        if (requestInfo) {
+          this.sendToClient(
+            ws,
+            wrapSessionMessage({
+              type: "rpc_error",
+              payload: {
+                requestId: requestInfo.requestId,
+                requestType: requestInfo.requestType,
+                error: isUnknownSchema ? "Unknown request schema" : "Invalid message",
+                code: isUnknownSchema ? "unknown_schema" : "invalid_message",
+              },
+            })
+          );
+          return;
+        }
+
+        const errorMessage = `Invalid message: ${parsedMessage.error.message}`;
+        this.sendToClient(
+          ws,
+          wrapSessionMessage({
+            type: "status",
+            payload: {
+              status: "error",
+              message: errorMessage,
+            },
+          })
+        );
+        return;
+      }
+
+      const message = parsedMessage.data;
 
       const messageSummary = {
         type: message.type,
@@ -223,6 +272,23 @@ export class WebSocketSessionBridge {
         },
         "Failed to parse/handle message"
       );
+
+      const requestInfo = extractRequestInfoFromUnknownWsInbound(parsedPayload);
+      if (requestInfo) {
+        this.sendToClient(
+          ws,
+          wrapSessionMessage({
+            type: "rpc_error",
+            payload: {
+              requestId: requestInfo.requestId,
+              requestType: requestInfo.requestType,
+              error: "Invalid message",
+              code: "invalid_message",
+            },
+          })
+        );
+        return;
+      }
 
       this.sendToClient(
         ws,
@@ -455,4 +521,39 @@ export class WebSocketSessionBridge {
       this.sendToClient(ws, message);
     }
   }
+}
+
+function extractRequestInfoFromUnknownWsInbound(
+  payload: unknown
+): { requestId: string; requestType?: string } | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as {
+    type?: unknown;
+    requestId?: unknown;
+    message?: unknown;
+  };
+
+  // Session-wrapped messages
+  if (record.type === "session" && record.message && typeof record.message === "object") {
+    const msg = record.message as { requestId?: unknown; type?: unknown };
+    if (typeof msg.requestId === "string") {
+      return {
+        requestId: msg.requestId,
+        ...(typeof msg.type === "string" ? { requestType: msg.type } : {}),
+      };
+    }
+  }
+
+  // Non-session messages (future-proof)
+  if (typeof record.requestId === "string") {
+    return {
+      requestId: record.requestId,
+      ...(typeof record.type === "string" ? { requestType: record.type } : {}),
+    };
+  }
+
+  return null;
 }

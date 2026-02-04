@@ -137,4 +137,38 @@ describe("DaemonClientV2", () => {
       isGit: false,
     });
   });
+
+  test("cancels waiters when send fails (no leaked timeouts)", async () => {
+    vi.useFakeTimers();
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const transportFactory = () => ({
+      ...mock.transport,
+      send: () => {
+        throw new Error("boom");
+      },
+    });
+
+    const client = new DaemonClientV2({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.getCheckoutStatus("/tmp/project");
+    await expect(promise).rejects.toThrow("boom");
+
+    // Ensure we didn't leave a waiter behind that will reject later.
+    expect((client as any).waiters.size).toBe(0);
+
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
 });

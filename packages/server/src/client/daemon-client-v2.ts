@@ -220,6 +220,29 @@ type Waiter<T> = {
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 };
 
+type WaitHandle<T> = {
+  promise: Promise<T>;
+  cancel: (error: Error) => void;
+};
+
+type RpcWaitResult<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "error"; error: DaemonRpcError };
+
+class DaemonRpcError extends Error {
+  readonly requestId: string;
+  readonly requestType?: string;
+  readonly code?: string;
+
+  constructor(params: { requestId: string; error: string; requestType?: string; code?: string }) {
+    super(params.error);
+    this.name = "DaemonRpcError";
+    this.requestId = params.requestId;
+    this.requestType = params.requestType;
+    this.code = params.code;
+  }
+}
+
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 
@@ -616,6 +639,54 @@ export class DaemonClientV2 {
     }
   }
 
+  private async sendRequest<T>(
+    params: {
+      requestId: string;
+      message: SessionInboundMessage;
+      timeout: number;
+      select: (msg: SessionOutboundMessage) => T | null;
+      options?: { skipQueue?: boolean };
+    }
+  ): Promise<T> {
+    const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
+      (msg) => {
+        if (msg.type === "rpc_error" && msg.payload.requestId === params.requestId) {
+          return {
+            kind: "error",
+            error: new DaemonRpcError({
+              requestId: msg.payload.requestId,
+              error: msg.payload.error,
+              requestType: msg.payload.requestType,
+              code: msg.payload.code,
+            }),
+          };
+        }
+        const value = params.select(msg);
+        if (value === null) {
+          return null;
+        }
+        return { kind: "ok", value };
+      },
+      params.timeout,
+      params.options
+    );
+
+    try {
+      await this.sendSessionMessageOrThrow(params.message);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      cancel(err);
+      void promise.catch(() => undefined);
+      throw err;
+    }
+
+    const result = await promise;
+    if (result.kind === "error") {
+      throw result.error;
+    }
+    return result.value;
+  }
+
   private sendSessionMessageStrict(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
       throw new Error("Transport not connected");
@@ -672,9 +743,12 @@ export class DaemonClientV2 {
       requestId: resolvedRequestId,
       ...(options?.filter ? { filter: options.filter } : {}),
     });
-
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "fetch_agents_response") {
           return null;
         }
@@ -683,11 +757,7 @@ export class DaemonClientV2 {
         }
         return msg.payload.agents;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async fetchAgent(agentId: string, requestId?: string): Promise<AgentSnapshotPayload | null> {
@@ -697,9 +767,12 @@ export class DaemonClientV2 {
       requestId: resolvedRequestId,
       agentId,
     });
-
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "fetch_agent_response") {
           return null;
         }
@@ -708,11 +781,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -771,8 +840,12 @@ export class DaemonClientV2 {
       voiceConversationId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "voice_conversation_loaded") {
           return null;
         }
@@ -781,11 +854,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async listVoiceConversations(requestId?: string): Promise<ListVoiceConversationsPayload> {
@@ -794,8 +863,12 @@ export class DaemonClientV2 {
       type: "list_voice_conversations_request",
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "list_voice_conversations_response") {
           return null;
         }
@@ -804,11 +877,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async deleteVoiceConversation(
@@ -821,8 +890,12 @@ export class DaemonClientV2 {
       voiceConversationId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "delete_voice_conversation_response") {
           return null;
         }
@@ -831,11 +904,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   // ============================================================================
@@ -861,8 +930,12 @@ export class DaemonClientV2 {
         : {}),
     });
 
-    const statusPromise = this.waitFor(
-      (msg) => {
+    const status = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "status") {
           return null;
         }
@@ -876,12 +949,7 @@ export class DaemonClientV2 {
         }
         return null;
       },
-      15000,
-      { skipQueue: true }
-    );
-
-    await this.sendSessionMessageOrThrow(message);
-    const status = await statusPromise;
+    });
     if (status.status === "agent_create_failed") {
       throw new Error(status.error);
     }
@@ -896,8 +964,12 @@ export class DaemonClientV2 {
       agentId,
       requestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "agent_deleted") {
           return null;
         }
@@ -906,11 +978,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    await response;
+    });
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
@@ -920,8 +988,12 @@ export class DaemonClientV2 {
       agentId,
       requestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const result = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "agent_archived") {
           return null;
         }
@@ -930,11 +1002,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const result = await response;
+    });
     return { archivedAt: result.archivedAt };
   }
 
@@ -950,8 +1018,12 @@ export class DaemonClientV2 {
       ...(overrides ? { overrides } : {}),
     });
 
-    const statusPromise = this.waitFor(
-      (msg) => {
+    const status = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "status") {
           return null;
         }
@@ -961,12 +1033,7 @@ export class DaemonClientV2 {
         }
         return null;
       },
-      15000,
-      { skipQueue: true }
-    );
-
-    await this.sendSessionMessageOrThrow(message);
-    const status = await statusPromise;
+    });
 
     return status.agent;
   }
@@ -981,8 +1048,12 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "status") {
           return null;
         }
@@ -992,11 +1063,7 @@ export class DaemonClientV2 {
         }
         return null;
       },
-      15000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async initializeAgent(
@@ -1009,8 +1076,12 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "initialize_agent_request") {
           return null;
         }
@@ -1019,11 +1090,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -1053,8 +1120,12 @@ export class DaemonClientV2 {
       ...(messageId ? { messageId } : {}),
       ...(options?.images ? { images: options.images } : {}),
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "send_agent_message_response") {
           return null;
         }
@@ -1063,11 +1134,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      15000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
@@ -1093,8 +1160,12 @@ export class DaemonClientV2 {
       modeId,
       requestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "set_agent_mode_response") {
           return null;
         }
@@ -1103,11 +1174,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      15000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentMode rejected");
     }
@@ -1121,8 +1188,12 @@ export class DaemonClientV2 {
       modelId,
       requestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "set_agent_model_response") {
           return null;
         }
@@ -1131,11 +1202,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      15000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentModel rejected");
     }
@@ -1152,8 +1219,12 @@ export class DaemonClientV2 {
       thinkingOptionId,
       requestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "set_agent_thinking_response") {
           return null;
         }
@@ -1162,11 +1233,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      15000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentThinkingOption rejected");
     }
@@ -1182,9 +1249,12 @@ export class DaemonClientV2 {
       ...(reason && reason.trim().length > 0 ? { reason } : {}),
       requestId: resolvedRequestId,
     });
-
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "status") {
           return null;
         }
@@ -1199,12 +1269,7 @@ export class DaemonClientV2 {
         }
         return restarted.data;
       },
-      10000,
-      { skipQueue: true }
-    );
-
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   // ============================================================================
@@ -1224,7 +1289,7 @@ export class DaemonClientV2 {
   }
 
   startDictationStream(dictationId: string, format: string): Promise<void> {
-    const ackPromise = this.waitFor(
+    const ack = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_ack") {
           return null;
@@ -1239,9 +1304,10 @@ export class DaemonClientV2 {
       },
       30000,
       { skipQueue: true }
-    ).then(() => undefined);
+    );
+    const ackPromise = ack.promise.then(() => undefined);
 
-    const errorPromise = this.waitFor(
+    const streamError = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_error") {
           return null;
@@ -1253,11 +1319,21 @@ export class DaemonClientV2 {
       },
       30000,
       { skipQueue: true }
-    ).then((payload) => {
+    );
+    const errorPromise = streamError.promise.then((payload) => {
       throw new Error(payload.error);
     });
 
-    this.sendSessionMessageStrict({ type: "dictation_stream_start", dictationId, format });
+    try {
+      this.sendSessionMessageStrict({ type: "dictation_stream_start", dictationId, format });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      ack.cancel(err);
+      streamError.cancel(err);
+      void ackPromise.catch(() => undefined);
+      void errorPromise.catch(() => undefined);
+      throw err;
+    }
     return Promise.race([ackPromise, errorPromise]);
   }
 
@@ -1266,7 +1342,7 @@ export class DaemonClientV2 {
   }
 
   finishDictationStream(dictationId: string, finalSeq: number): Promise<{ dictationId: string; text: string }> {
-    const finalPromise = this.waitFor(
+    const final = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_final") {
           return null;
@@ -1280,7 +1356,7 @@ export class DaemonClientV2 {
       { skipQueue: true }
     );
 
-    const errorPromise = this.waitFor(
+    const streamError = this.waitForWithCancel(
       (msg) => {
         if (msg.type !== "dictation_stream_error") {
           return null;
@@ -1292,11 +1368,23 @@ export class DaemonClientV2 {
       },
       30000,
       { skipQueue: true }
-    ).then((payload) => {
+    );
+
+    const finalPromise = final.promise;
+    const errorPromise = streamError.promise.then((payload) => {
       throw new Error(payload.error);
     });
 
-    this.sendSessionMessageStrict({ type: "dictation_stream_finish", dictationId, finalSeq });
+    try {
+      this.sendSessionMessageStrict({ type: "dictation_stream_finish", dictationId, finalSeq });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      final.cancel(err);
+      streamError.cancel(err);
+      void finalPromise.catch(() => undefined);
+      void errorPromise.catch(() => undefined);
+      throw err;
+    }
     return Promise.race([finalPromise, errorPromise]);
   }
 
@@ -1336,31 +1424,31 @@ export class DaemonClientV2 {
       requestId: resolvedRequestId,
     });
 
-    const responsePromise = (async () => {
-      const response = this.waitFor(
-        (msg) => {
-          if (msg.type !== "checkout_status_response") {
-            return null;
-          }
-          if (msg.payload.requestId !== resolvedRequestId) {
-            return null;
-          }
-          return msg.payload;
-        },
-        60000,
-        { skipQueue: true }
-      );
-      await this.sendSessionMessageOrThrow(message);
-      return response;
-    })();
+    const responsePromise = this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "checkout_status_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
 
     if (!requestId) {
       this.checkoutStatusInFlight.set(cwd, responsePromise);
-      responsePromise.finally(() => {
-        if (this.checkoutStatusInFlight.get(cwd) === responsePromise) {
-          this.checkoutStatusInFlight.delete(cwd);
-        }
-      });
+      void responsePromise
+        .finally(() => {
+          if (this.checkoutStatusInFlight.get(cwd) === responsePromise) {
+            this.checkoutStatusInFlight.delete(cwd);
+          }
+        })
+        .catch(() => undefined);
     }
 
     return responsePromise;
@@ -1378,8 +1466,12 @@ export class DaemonClientV2 {
       compare,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_diff_response") {
           return null;
         }
@@ -1388,11 +1480,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutCommit(
@@ -1408,8 +1496,12 @@ export class DaemonClientV2 {
       addAll: input.addAll,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_commit_response") {
           return null;
         }
@@ -1418,11 +1510,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutMerge(
@@ -1439,8 +1527,12 @@ export class DaemonClientV2 {
       requireCleanTarget: input.requireCleanTarget,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_merge_response") {
           return null;
         }
@@ -1449,11 +1541,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutMergeFromBase(
@@ -1469,8 +1557,12 @@ export class DaemonClientV2 {
       requireCleanTarget: input.requireCleanTarget,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_merge_from_base_response") {
           return null;
         }
@@ -1479,11 +1571,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutPush(cwd: string, requestId?: string): Promise<CheckoutPushPayload> {
@@ -1493,8 +1581,12 @@ export class DaemonClientV2 {
       cwd,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_push_response") {
           return null;
         }
@@ -1503,11 +1595,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutPrCreate(
@@ -1524,8 +1612,12 @@ export class DaemonClientV2 {
       baseRef: input.baseRef,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_pr_create_response") {
           return null;
         }
@@ -1534,11 +1626,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async checkoutPrStatus(
@@ -1551,8 +1639,12 @@ export class DaemonClientV2 {
       cwd,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "checkout_pr_status_response") {
           return null;
         }
@@ -1561,11 +1653,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async getPaseoWorktreeList(
@@ -1579,8 +1667,12 @@ export class DaemonClientV2 {
       repoRoot: input.repoRoot,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "paseo_worktree_list_response") {
           return null;
         }
@@ -1589,11 +1681,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      60000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async archivePaseoWorktree(
@@ -1608,8 +1696,12 @@ export class DaemonClientV2 {
       branchName: input.branchName,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 20000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "paseo_worktree_archive_response") {
           return null;
         }
@@ -1618,11 +1710,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      20000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async getGitDiff(
@@ -1635,8 +1723,12 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "git_diff_response") {
           return null;
         }
@@ -1645,11 +1737,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async getHighlightedDiff(
@@ -1662,8 +1750,12 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "highlighted_diff_response") {
           return null;
         }
@@ -1672,11 +1764,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async validateBranch(
@@ -1690,8 +1778,12 @@ export class DaemonClientV2 {
       branchName: options.branchName,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "validate_branch_response") {
           return null;
         }
@@ -1700,11 +1792,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   // ============================================================================
@@ -1725,8 +1813,12 @@ export class DaemonClientV2 {
       mode,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "file_explorer_response") {
           return null;
         }
@@ -1735,11 +1827,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async requestDownloadToken(
@@ -1754,8 +1842,12 @@ export class DaemonClientV2 {
       path,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "file_download_token_response") {
           return null;
         }
@@ -1764,11 +1856,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async requestProjectIcon(
@@ -1781,8 +1869,12 @@ export class DaemonClientV2 {
       cwd,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "project_icon_response") {
           return null;
         }
@@ -1791,11 +1883,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   // ============================================================================
@@ -1813,8 +1901,12 @@ export class DaemonClientV2 {
       cwd: options?.cwd,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "list_provider_models_response") {
           return null;
         }
@@ -1823,11 +1915,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      30000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async listCommands(
@@ -1840,8 +1928,12 @@ export class DaemonClientV2 {
       agentId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "list_commands_response") {
           return null;
         }
@@ -1850,11 +1942,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      30000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async executeCommand(
@@ -1871,8 +1959,12 @@ export class DaemonClientV2 {
       args,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "execute_command_response") {
           return null;
         }
@@ -1881,11 +1973,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      30000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   // ============================================================================
@@ -1917,8 +2005,12 @@ export class DaemonClientV2 {
       requestId,
       response,
     });
-    const resolved = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId,
+      message,
+      timeout,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "agent_permission_resolved") {
           return null;
         }
@@ -1930,11 +2022,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      timeout,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return resolved;
+    });
   }
 
   // ============================================================================
@@ -1968,8 +2056,12 @@ export class DaemonClientV2 {
       agentId,
       timeoutMs: timeout,
     });
-    const response = this.waitFor(
-      (msg) => {
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: timeout + 5000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "wait_for_finish_response") {
           return null;
         }
@@ -1978,11 +2070,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      timeout + 5000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    const payload = await response;
+    });
     return {
       status: payload.status,
       final: payload.final,
@@ -2004,8 +2092,12 @@ export class DaemonClientV2 {
       cwd,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "list_terminals_response") {
           return null;
         }
@@ -2014,11 +2106,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async createTerminal(
@@ -2033,8 +2121,12 @@ export class DaemonClientV2 {
       name,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "create_terminal_response") {
           return null;
         }
@@ -2043,11 +2135,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async subscribeTerminal(
@@ -2060,8 +2148,12 @@ export class DaemonClientV2 {
       terminalId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "subscribe_terminal_response") {
           return null;
         }
@@ -2070,11 +2162,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   unsubscribeTerminal(terminalId: string): void {
@@ -2105,8 +2193,12 @@ export class DaemonClientV2 {
       terminalId,
       requestId: resolvedRequestId,
     });
-    const response = this.waitFor(
-      (msg) => {
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
         if (msg.type !== "kill_terminal_response") {
           return null;
         }
@@ -2115,11 +2207,7 @@ export class DaemonClientV2 {
         }
         return msg.payload;
       },
-      10000,
-      { skipQueue: true }
-    );
-    await this.sendSessionMessageOrThrow(message);
-    return response;
+    });
   }
 
   async waitForTerminalOutput(
@@ -2349,26 +2437,79 @@ export class DaemonClientV2 {
     timeout = 30000,
     _options?: { skipQueue?: boolean }
   ): Promise<T> {
+    return this.waitForWithCancel(predicate, timeout, _options).promise;
+  }
+
+  private waitForWithCancel<T>(
+    predicate: (msg: SessionOutboundMessage) => T | null,
+    timeout = 30000,
+    _options?: { skipQueue?: boolean }
+  ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
 
-    return new Promise((resolve, reject) => {
+    let waiter: Waiter<T> | null = null;
+    let settled = false;
+    let rejectFn: ((error: Error) => void) | null = null;
+
+    const promise = new Promise<T>((resolve, reject) => {
+      const wrappedResolve = (value: T) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const wrappedReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      rejectFn = wrappedReject;
+
       const timeoutHandle =
         timeout > 0
           ? setTimeout(() => {
-              this.waiters.delete(waiter);
-              reject(timeoutError);
+              if (waiter) {
+                this.waiters.delete(waiter);
+              }
+              wrappedReject(timeoutError);
             }, timeout)
           : null;
 
-      const waiter: Waiter<T> = {
+      waiter = {
         predicate,
-        resolve,
-        reject,
+        resolve: wrappedResolve,
+        reject: wrappedReject,
         timeoutHandle,
       };
       this.waiters.add(waiter);
     });
+
+    const cancel = (error: Error) => {
+      if (settled) {
+        return;
+      }
+
+      if (waiter) {
+        this.waiters.delete(waiter);
+        if (waiter.timeoutHandle) {
+          clearTimeout(waiter.timeoutHandle);
+        }
+      }
+
+      if (rejectFn) {
+        rejectFn(error);
+        return;
+      }
+
+      // Extremely unlikely: cancel called before the Promise executor ran.
+      queueMicrotask(() => {
+        if (!settled && rejectFn) {
+          rejectFn(error);
+        }
+      });
+    };
+
+    return { promise, cancel };
   }
 }
 

@@ -1015,17 +1015,36 @@ export class Session {
           break;
       }
     } catch (error: any) {
+      const err = error instanceof Error ? error : new Error(String(error));
       this.sessionLogger.error(
-        { err: error },
+        { err },
         "Error handling message"
       );
+
+      const requestId = (msg as { requestId?: unknown }).requestId;
+      if (typeof requestId === "string") {
+        try {
+          this.emit({
+            type: "rpc_error",
+            payload: {
+              requestId,
+              requestType: msg.type,
+              error: "Request failed",
+              code: "handler_error",
+            },
+          });
+        } catch (emitError) {
+          this.sessionLogger.error({ err: emitError }, "Failed to emit rpc_error");
+        }
+      }
+
       this.emit({
         type: "activity_log",
         payload: {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Error: ${error.message}`,
+          content: `Error: ${err.message}`,
         },
       });
     }
