@@ -32,8 +32,10 @@ import {
   HorizontalScrollProvider,
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
-import { getIsTauriMac } from "@/constants/layout";
+import { getIsTauri, getIsTauriMac } from "@/constants/layout";
 import { useTrafficLightPadding } from "@/utils/tauri-window";
+import { CommandCenter } from "@/components/command-center";
+import { useGlobalKeyboardNav } from "@/hooks/use-global-keyboard-nav";
 
 function PushNotificationRouter() {
   const router = useRouter();
@@ -135,28 +137,13 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
       : desktopAgentListOpen
     : false;
 
-  // Cmd+B to toggle agent list sidebar, Cmd+E to toggle explorer sidebar (web only)
-  useEffect(() => {
-    if (!chromeEnabled) return;
-    if (Platform.OS !== "web") return;
-    function handleKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key === "b") {
-        event.preventDefault();
-        toggleAgentList();
-        return;
-      }
-      if (
-        selectedAgentId &&
-        (event.metaKey || event.ctrlKey) &&
-        (event.code === "KeyE" || event.key.toLowerCase() === "e")
-      ) {
-        event.preventDefault();
-        toggleFileExplorer();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [chromeEnabled, selectedAgentId, toggleAgentList, toggleFileExplorer]);
+  useGlobalKeyboardNav({
+    enabled: chromeEnabled,
+    isMobile,
+    toggleAgentList,
+    selectedAgentId,
+    toggleFileExplorer,
+  });
   const {
     translateX,
     backdropOpacity,
@@ -259,6 +246,7 @@ function AppContainer({ children, selectedAgentId }: AppContainerProps) {
       </View>
       {isMobile && chromeEnabled && <SlidingSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
+      <CommandCenter />
     </View>
   );
 

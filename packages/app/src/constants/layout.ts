@@ -16,6 +16,13 @@ export const MAX_CONTENT_WIDTH = 820;
 export const TAURI_TRAFFIC_LIGHT_WIDTH = 78;
 export const TAURI_TRAFFIC_LIGHT_HEIGHT = 56;
 
+// Check if running in Tauri desktop app (any OS)
+function isTauri(): boolean {
+  if (Platform.OS !== "web") return false;
+  if (typeof window === "undefined") return false;
+  return "__TAURI__" in window;
+}
+
 // Check if running in Tauri desktop app on macOS
 function isTauriMac(): boolean {
   if (Platform.OS !== "web") return false;
@@ -28,6 +35,7 @@ function isTauriMac(): boolean {
 
 // Cached result - only cache true, keep checking if false (in case __TAURI__ loads later)
 let _isTauriMacCached: boolean | null = null;
+let _isTauriCached: boolean | null = null;
 
 export function getIsTauriMac(): boolean {
   if (_isTauriMacCached === true) {
@@ -36,6 +44,17 @@ export function getIsTauriMac(): boolean {
   const result = isTauriMac();
   if (result) {
     _isTauriMacCached = true;
+  }
+  return result;
+}
+
+export function getIsTauri(): boolean {
+  if (_isTauriCached === true) {
+    return true;
+  }
+  const result = isTauri();
+  if (result) {
+    _isTauriCached = true;
   }
   return result;
 }
