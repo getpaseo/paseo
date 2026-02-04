@@ -1,4 +1,4 @@
-import { exec, execFile } from "child_process";
+import { exec, execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { resolve, dirname, basename } from "path";
 import { realpathSync } from "fs";
@@ -13,6 +13,203 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
 };
+
+const SMALL_OUTPUT_MAX_BUFFER = 20 * 1024 * 1024; // 20MB
+
+async function execGit(command: string, options: { cwd: string; env?: NodeJS.ProcessEnv }): Promise<{ stdout: string; stderr: string }> {
+  return execAsync(command, { ...options, maxBuffer: SMALL_OUTPUT_MAX_BUFFER });
+}
+
+async function execGitFile(
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv }
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync("git", args, { ...options, maxBuffer: SMALL_OUTPUT_MAX_BUFFER });
+}
+
+type LimitedTextResult = {
+  text: string;
+  truncated: boolean;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+};
+
+async function spawnLimitedText(params: {
+  cmd: string;
+  args: string[];
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  maxBytes: number;
+  acceptExitCodes?: number[];
+}): Promise<LimitedTextResult> {
+  const accept = new Set(params.acceptExitCodes ?? [0]);
+
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(params.cmd, params.args, {
+      cwd: params.cwd,
+      env: params.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let truncated = false;
+
+    const stop = () => {
+      if (child.killed) return;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (truncated) return;
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > params.maxBytes) {
+        truncated = true;
+        stop();
+        return;
+      }
+      stdoutChunks.push(chunk);
+    });
+
+    // We don't buffer stderr (it can be large too). Keep it minimal for debugging.
+    let stderrPreview = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderrPreview.length > 2048) return;
+      stderrPreview += chunk.toString("utf8");
+    });
+
+    child.on("error", (error) => {
+      rejectPromise(error);
+    });
+
+    child.on("close", (code, signal) => {
+      if (code !== null && !accept.has(code) && !truncated) {
+        rejectPromise(new Error(`Command failed: ${params.cmd} ${params.args.join(" ")} (code ${code})\n${stderrPreview}`));
+        return;
+      }
+      resolvePromise({
+        text: Buffer.concat(stdoutChunks).toString("utf8"),
+        truncated,
+        exitCode: code,
+        signal,
+      });
+    });
+  });
+}
+
+type CheckoutFileChange = {
+  path: string;
+  oldPath?: string;
+  status: string;
+  isNew: boolean;
+  isDeleted: boolean;
+  isUntracked?: boolean;
+};
+
+async function listCheckoutFileChanges(cwd: string, ref: string): Promise<CheckoutFileChange[]> {
+  const changes: CheckoutFileChange[] = [];
+
+  const { stdout: nameStatusOut } = await execGit(`git diff --name-status ${ref}`, {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  for (const line of nameStatusOut.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    // `--name-status` uses TAB separators, which preserves filenames with spaces.
+    const tabParts = line.split("\t");
+    const rawStatus = (tabParts[0] ?? "").trim();
+    if (!rawStatus) continue;
+
+    if (rawStatus.startsWith("R") || rawStatus.startsWith("C")) {
+      const oldPath = tabParts[1];
+      const newPath = tabParts[2];
+      if (newPath) {
+        changes.push({
+          path: newPath,
+          ...(oldPath ? { oldPath } : {}),
+          status: rawStatus,
+          isNew: false,
+          isDeleted: false,
+        });
+      }
+      continue;
+    }
+
+    const path = tabParts[1];
+    if (!path) continue;
+    const code = rawStatus[0];
+    changes.push({
+      path,
+      status: rawStatus,
+      isNew: code === "A",
+      isDeleted: code === "D",
+    });
+  }
+
+  const { stdout: untrackedOut } = await execGit("git ls-files --others --exclude-standard", {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  for (const file of untrackedOut.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    changes.push({
+      path: file,
+      status: "U",
+      isNew: true,
+      isDeleted: false,
+      isUntracked: true,
+    });
+  }
+
+  // Deduplicate by path (prefer tracked status over untracked marker if both appear).
+  const byPath = new Map<string, CheckoutFileChange>();
+  for (const change of changes) {
+    const existing = byPath.get(change.path);
+    if (!existing) {
+      byPath.set(change.path, change);
+      continue;
+    }
+    if (existing.isUntracked && !change.isUntracked) {
+      byPath.set(change.path, change);
+    }
+  }
+  return Array.from(byPath.values());
+}
+
+async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string | null> {
+  try {
+    const { stdout } = await execGit(`git merge-base ${baseRef} HEAD`, { cwd, env: READ_ONLY_GIT_ENV });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+type FileStat = { additions: number; deletions: number; isBinary: boolean } | null;
+
+async function tryGetNumstat(cwd: string, args: string[]): Promise<FileStat> {
+  try {
+    const { stdout } = await execGitFile(args, { cwd, env: READ_ONLY_GIT_ENV });
+    const line = stdout.trim().split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? "";
+    if (!line) return null;
+    const [aRaw, dRaw] = line.split(/\s+/);
+    if (!aRaw || !dRaw) return null;
+    if (aRaw === "-" || dRaw === "-") {
+      return { additions: 0, deletions: 0, isBinary: true };
+    }
+    const additions = Number.parseInt(aRaw, 10);
+    const deletions = Number.parseInt(dRaw, 10);
+    if (Number.isNaN(additions) || Number.isNaN(deletions)) {
+      return null;
+    }
+    return { additions, deletions, isBinary: false };
+  } catch {
+    return null;
+  }
+}
 
 export class NotGitRepoError extends Error {
   readonly cwd: string;
@@ -435,32 +632,58 @@ async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<num
   }
 }
 
-async function getUntrackedDiff(cwd: string): Promise<string> {
-  let untrackedDiff = "";
-  try {
-    const { stdout: untrackedFiles } = await execAsync(
-      "git ls-files --others --exclude-standard",
-      { cwd, env: READ_ONLY_GIT_ENV }
-    );
-    const newFiles = untrackedFiles.trim().split("\n").filter(Boolean);
+const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
+const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 
-    for (const file of newFiles) {
-      try {
-        const { stdout: fileDiff } = await execAsync(
-          `git diff --no-index /dev/null "${file}" || true`,
-          { cwd, env: READ_ONLY_GIT_ENV }
-        );
-        if (fileDiff) {
-          untrackedDiff += fileDiff;
-        }
-      } catch {
-        // Ignore errors for individual files
-      }
-    }
-  } catch {
-    // Ignore errors getting untracked files
+function buildPlaceholderParsedDiffFile(
+  change: CheckoutFileChange,
+  options: { status: "too_large" | "binary"; stat?: FileStat }
+): ParsedDiffFile {
+  return {
+    path: change.path,
+    isNew: change.isNew,
+    isDeleted: change.isDeleted,
+    additions: options.stat?.additions ?? 0,
+    deletions: options.stat?.deletions ?? 0,
+    hunks: [],
+    status: options.status,
+  };
+}
+
+async function getPerFileDiffText(
+  cwd: string,
+  ref: string,
+  change: CheckoutFileChange
+): Promise<{ text: string; truncated: boolean; stat: FileStat }> {
+  const stat: FileStat =
+    change.isUntracked
+      ? null
+      : await tryGetNumstat(cwd, ["diff", "--numstat", ref, "--", change.path]);
+
+  if (stat?.isBinary) {
+    return { text: "", truncated: false, stat };
   }
-  return untrackedDiff;
+
+  if (change.isUntracked) {
+    const result = await spawnLimitedText({
+      cmd: "git",
+      args: ["diff", "--no-index", "/dev/null", "--", change.path],
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+      maxBytes: PER_FILE_DIFF_MAX_BYTES,
+      acceptExitCodes: [0, 1],
+    });
+    return { text: result.text, truncated: result.truncated, stat };
+  }
+
+  const result = await spawnLimitedText({
+    cmd: "git",
+    args: ["diff", ref, "--", change.path],
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    maxBytes: PER_FILE_DIFF_MAX_BYTES,
+  });
+  return { text: result.text, truncated: result.truncated, stat };
 }
 
 export async function getCheckoutStatus(
@@ -530,43 +753,102 @@ export async function getCheckoutDiff(
 ): Promise<CheckoutDiffResult> {
   await requireGitRepo(cwd);
 
-  let diff = "";
+  let refForDiff: string;
+
   if (compare.mode === "uncommitted") {
-    const { stdout: trackedDiff } = await execAsync("git diff HEAD", {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    const untrackedDiff = await getUntrackedDiff(cwd);
-    diff = trackedDiff + untrackedDiff;
+    refForDiff = "HEAD";
   } else {
     const configured = await getConfiguredBaseRefForCwd(cwd, context);
     const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(cwd));
     if (!baseRef) {
-      diff = "";
-    } else if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
-      throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
-    } else {
-      const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
-      // Find the merge-base (common ancestor) to diff only changes on this branch
-      const { stdout: mergeBaseOut } = await execAsync(
-        `git merge-base ${normalizedBaseRef} HEAD`,
-        { cwd, env: READ_ONLY_GIT_ENV }
-      );
-      const mergeBase = mergeBaseOut.trim();
-      // Diff from merge-base to working tree (includes uncommitted changes)
-      const { stdout: trackedDiff } = await execAsync(`git diff ${mergeBase}`, {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
-      const untrackedDiff = await getUntrackedDiff(cwd);
-      diff = trackedDiff + untrackedDiff;
+      return { diff: "" };
     }
+    if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
+      throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
+    }
+
+    const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
+    const bestBaseRef = await resolveBestBaseRefForMerge(cwd, normalizedBaseRef);
+    refForDiff = (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef;
+  }
+
+  const changes = await listCheckoutFileChanges(cwd, refForDiff);
+  changes.sort((a, b) => a.path.localeCompare(b.path));
+
+  const structured: ParsedDiffFile[] = [];
+  let diffText = "";
+  let diffBytes = 0;
+  const appendDiff = (text: string) => {
+    if (!text) return;
+    if (diffBytes >= TOTAL_DIFF_MAX_BYTES) return;
+    const buf = Buffer.from(text, "utf8");
+    if (diffBytes + buf.length <= TOTAL_DIFF_MAX_BYTES) {
+      diffText += text;
+      diffBytes += buf.length;
+      return;
+    }
+    const remaining = TOTAL_DIFF_MAX_BYTES - diffBytes;
+    if (remaining > 0) {
+      diffText += buf.subarray(0, remaining).toString("utf8");
+      diffBytes = TOTAL_DIFF_MAX_BYTES;
+    }
+  };
+
+  for (const change of changes) {
+    const { text, truncated, stat } = await getPerFileDiffText(cwd, refForDiff, change);
+
+    if (!compare.includeStructured) {
+      if (stat?.isBinary) {
+        appendDiff(`# ${change.path}: binary diff omitted\n`);
+      } else if (truncated) {
+        appendDiff(`# ${change.path}: diff too large omitted\n`);
+      } else {
+        appendDiff(text);
+      }
+      if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
+        break;
+      }
+      continue;
+    }
+
+    if (stat?.isBinary) {
+      structured.push(buildPlaceholderParsedDiffFile(change, { status: "binary", stat }));
+      appendDiff(`# ${change.path}: binary diff omitted\n`);
+      continue;
+    }
+
+    if (truncated) {
+      structured.push(buildPlaceholderParsedDiffFile(change, { status: "too_large", stat }));
+      appendDiff(`# ${change.path}: diff too large omitted\n`);
+      continue;
+    }
+
+    appendDiff(text);
+    const parsed = await parseAndHighlightDiff(text, cwd);
+    const parsedFile =
+      parsed[0] ??
+      ({
+        path: change.path,
+        isNew: change.isNew,
+        isDeleted: change.isDeleted,
+        additions: stat?.additions ?? 0,
+        deletions: stat?.deletions ?? 0,
+        hunks: [],
+      } satisfies ParsedDiffFile);
+
+    structured.push({
+      ...parsedFile,
+      path: change.path,
+      isNew: change.isNew,
+      isDeleted: change.isDeleted,
+      status: "ok",
+    });
   }
 
   if (compare.includeStructured) {
-    return { diff, structured: await parseAndHighlightDiff(diff, cwd) };
+    return { diff: diffText, structured };
   }
-  return { diff };
+  return { diff: diffText };
 }
 
 export async function commitChanges(

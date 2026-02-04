@@ -20,7 +20,7 @@ import type {
 } from "@server/shared/messages";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
-import type { DaemonClientV2, ConnectionState } from "@server/client/daemon-client-v2";
+import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
 import {

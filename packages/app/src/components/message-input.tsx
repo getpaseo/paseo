@@ -26,7 +26,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "./dictation-controls";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
 
@@ -51,7 +51,7 @@ export interface MessageInputProps {
   images?: ImageAttachment[];
   onPickImages?: () => void;
   onRemoveImage?: (index: number) => void;
-  client: DaemonClientV2 | null;
+  client: DaemonClient | null;
   placeholder?: string;
   autoFocus?: boolean;
   disabled?: boolean;
@@ -72,6 +72,11 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
+  /**
+   * Web-only: return the underlying DOM element for focus assertions/retries.
+   * May return null if not mounted or on native.
+   */
+  getNativeElement?: () => HTMLElement | null;
 }
 
 const MIN_INPUT_HEIGHT = 30;
@@ -134,6 +139,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
       blur: () => {
         textInputRef.current?.blur?.();
+      },
+      getNativeElement: () => {
+        if (!IS_WEB) return null;
+        const current = textInputRef.current as
+          | (TextInput & { getNativeRef?: () => unknown })
+          | null;
+        const native =
+          typeof current?.getNativeRef === "function"
+            ? current.getNativeRef()
+            : current;
+        return native instanceof HTMLElement ? native : null;
       },
     }));
     const inputHeightRef = useRef(MIN_INPUT_HEIGHT);

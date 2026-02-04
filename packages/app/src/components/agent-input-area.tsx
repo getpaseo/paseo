@@ -30,6 +30,7 @@ import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
+import { focusWithRetries } from "@/utils/web-focus";
 
 type QueuedMessage = {
   id: string;
@@ -363,9 +364,8 @@ export function AgentInputArea({
     if (!isScreenFocused) return;
     if (!focusChatInputRequest) return;
 
-    const target = focusChatInputRequest.agentKey;
     const currentKey = `${serverId}:${agentId}`;
-    if (target !== null && target !== currentKey) {
+    if (focusChatInputRequest.agentKey !== currentKey) {
       return;
     }
 
@@ -374,12 +374,17 @@ export function AgentInputArea({
     }
     lastHandledFocusRequestIdRef.current = focusChatInputRequest.id;
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        messageInputRef.current?.focus();
-      });
+    return focusWithRetries({
+      focus: () => messageInputRef.current?.focus(),
+      isFocused: () => {
+        const el = messageInputRef.current?.getNativeElement?.() ?? null;
+        const active =
+          typeof document !== "undefined" ? document.activeElement : null;
+        return Boolean(el) && active === el;
+      },
+      onSuccess: () => clearFocusChatInputRequest(),
+      onTimeout: () => clearFocusChatInputRequest(),
     });
-    clearFocusChatInputRequest(focusChatInputRequest.id);
   }, [
     agentId,
     clearFocusChatInputRequest,

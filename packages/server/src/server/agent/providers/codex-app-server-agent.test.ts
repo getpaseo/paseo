@@ -326,7 +326,7 @@ describe("Codex app-server provider (integration)", () => {
           "*** Add File: patch.txt",
           "+patched",
           "*** End Patch",
-        ].join("\\n");
+        ].join("\n");
         const patchEvents = session.stream(
           [
             "Use the apply_patch tool and nothing else.",
@@ -335,7 +335,7 @@ describe("Codex app-server provider (integration)", () => {
             "Apply the following patch exactly:",
             patch,
             "After it completes, reply PATCH_DONE.",
-          ].join("\\n")
+          ].join("\n")
         );
 
         for await (const event of patchEvents) {
@@ -612,7 +612,7 @@ describe("Codex app-server provider (integration)", () => {
         "*** Add File: approval-test.txt",
         "+ok",
         "*** End Patch",
-      ].join("\\n");
+      ].join("\n");
       const events = session.stream(
         [
           "Use the apply_patch tool and nothing else.",
@@ -621,7 +621,7 @@ describe("Codex app-server provider (integration)", () => {
           "Apply the following patch exactly:",
           patch,
           "After approval, reply FILE_DONE.",
-        ].join("\\n")
+        ].join("\n")
       );
 
       let failure: string | null = null;

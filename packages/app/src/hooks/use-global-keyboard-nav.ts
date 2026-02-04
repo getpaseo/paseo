@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsTauri } from "@/constants/layout";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { parseSidebarAgentKey } from "@/utils/sidebar-shortcuts";
+import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 
 export function useGlobalKeyboardNav({
   enabled,
@@ -32,6 +33,17 @@ export function useGlobalKeyboardNav({
       if (typeof document === "undefined") return false;
       if (document.visibilityState !== "visible") return false;
       return true;
+    };
+
+    const isEditableTarget = (event: KeyboardEvent): boolean => {
+      const target = event.target;
+      if (!(target instanceof Element)) return false;
+
+      if ((target as HTMLElement).isContentEditable) return true;
+      const tag = target.tagName.toLowerCase();
+      if (tag === "input" || tag === "textarea") return true;
+
+      return false;
     };
 
     const parseShortcutDigit = (event: KeyboardEvent): number | null => {
@@ -77,14 +89,6 @@ export function useGlobalKeyboardNav({
       const key = event.key ?? "";
       const lowerKey = key.toLowerCase();
 
-      const target = event.target as unknown;
-      const isEditableTarget =
-        typeof HTMLElement !== "undefined" &&
-        target instanceof HTMLElement &&
-        (target.tagName === "TEXTAREA" ||
-          target.tagName === "INPUT" ||
-          target.isContentEditable);
-
       if (key === "Alt") {
         useKeyboardNavStore.getState().setAltDown(true);
       }
@@ -97,9 +101,24 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyB" || lowerKey === "b")
       ) {
-        // When focus is in the chat input, MessageInput handles Cmd+B (and prevents default)
-        // via TextInput onKeyPress. If we also toggle here, it flips twice and appears "broken".
-        if (isEditableTarget) {
+        // The MessageInput already handles Cmd+B inside editable fields. If we also
+        // handle it globally, it can double-toggle and look like it "doesn't work".
+        if (isEditableTarget(event)) {
+          return;
+        }
+        event.preventDefault();
+        toggleAgentList();
+        return;
+      }
+
+      // Cmd+.: toggle sidebar (VS Code quick-fix muscle memory)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === "Period" || key === ".")
+      ) {
+        // Ignore while command center is open.
+        if (useKeyboardNavStore.getState().commandCenterOpen) {
           return;
         }
         event.preventDefault();
@@ -115,7 +134,25 @@ export function useGlobalKeyboardNav({
         (event.code === "KeyE" || lowerKey === "e")
       ) {
         // Same double-toggle issue as Cmd+B when focus is inside a text input.
-        if (isEditableTarget) {
+        if (isEditableTarget(event)) {
+          return;
+        }
+        event.preventDefault();
+        toggleFileExplorer();
+        return;
+      }
+
+      // Ctrl+`: toggle explorer sidebar (VS Code muscle memory)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (
+        selectedAgentId &&
+        toggleFileExplorer &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        (event.code === "Backquote" || key === "`")
+      ) {
+        // Ignore while command center is open.
+        if (useKeyboardNavStore.getState().commandCenterOpen) {
           return;
         }
         event.preventDefault();
@@ -128,18 +165,18 @@ export function useGlobalKeyboardNav({
         event.preventDefault();
         const s = useKeyboardNavStore.getState();
         if (!s.commandCenterOpen) {
-          const target = event.target as unknown;
-          const el =
-            typeof HTMLElement !== "undefined" && target instanceof HTMLElement
-              ? target
-              : (typeof document !== "undefined"
-                  ? (document.activeElement as HTMLElement | null)
-                  : null);
-          s.setFocusRestoreElement(el);
-          s.setCommandCenterOpen(true);
-        } else {
-          s.setCommandCenterOpen(false);
+          const target =
+            event.target instanceof Element ? (event.target as Element) : null;
+          const targetEl =
+            target?.closest?.("textarea, input, [contenteditable='true']") ??
+            (target instanceof HTMLElement ? target : null);
+          const active = document.activeElement;
+          const activeEl = active instanceof HTMLElement ? active : null;
+          setCommandCenterFocusRestoreElement(
+            (targetEl as HTMLElement | null) ?? activeEl ?? null
+          );
         }
+        s.setCommandCenterOpen(!s.commandCenterOpen);
         return;
       }
 

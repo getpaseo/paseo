@@ -45,7 +45,7 @@ import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-typ
 import type { Agent } from "@/contexts/session-context";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { ToolCallSheetProvider } from "./tool-call-sheet";
@@ -796,7 +796,7 @@ function PermissionRequestCard({
   client,
 }: {
   permission: PendingPermission;
-  client: DaemonClientV2 | null;
+  client: DaemonClient | null;
 }) {
   const { theme } = useUnistyles();
   const isMobile =

@@ -1,8 +1,8 @@
 import { generateMessageId } from "@/types/stream";
-import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
+import type { DaemonClient } from "@server/client/daemon-client";
 
 export type DictationStreamSenderParams = {
-  client: DaemonClientV2 | null;
+  client: DaemonClient | null;
   format: string;
   createDictationId?: () => string;
 };
@@ -22,7 +22,7 @@ type DictationFinishResult = { dictationId: string; text: string };
  * so enqueues can't "miss" a flush due to in-flight await/coalescing bugs.
  */
 export class DictationStreamSender {
-  private client: DaemonClientV2 | null;
+  private client: DaemonClient | null;
   private readonly format: string;
   private readonly createDictationId: () => string;
 
@@ -40,7 +40,7 @@ export class DictationStreamSender {
     this.createDictationId = params.createDictationId ?? generateMessageId;
   }
 
-  setClient(client: DaemonClientV2 | null): void {
+  setClient(client: DaemonClient | null): void {
     this.client = client;
   }
 

@@ -1,13 +1,13 @@
 import WebSocket from "ws";
 import {
-  DaemonClientV2 as SharedDaemonClient,
-  type DaemonClientV2Config as SharedDaemonClientConfig,
+  DaemonClient as SharedDaemonClient,
+  type DaemonClientConfig as SharedDaemonClientConfig,
   type CreateAgentRequestOptions,
   type DaemonEvent,
   type DaemonEventHandler,
   type SendMessageOptions,
   type WebSocketLike,
-} from "../../client/daemon-client-v2.js";
+} from "../../client/daemon-client.js";
 
 export type DaemonClientConfig = Omit<
   SharedDaemonClientConfig,
