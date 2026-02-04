@@ -18,6 +18,7 @@ import { shortenPath } from "@/utils/shorten-path";
 import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
+import { AgentStatusDot } from "@/components/agent-status-dot";
 import {
   CHECKOUT_STATUS_STALE_TIME,
   checkoutStatusQueryKey,
@@ -181,12 +182,6 @@ export function AgentList({
       const timeAgo = formatTimeAgo(agent.lastActivityAt);
       const agentKey = `${agent.serverId}:${agent.id}`;
       const isSelected = selectedAgentId === agentKey;
-      const isRunning = agent.status === "running";
-      const statusColor = isRunning
-        ? theme.colors.palette.blue[500]
-        : agent.requiresAttention
-          ? theme.colors.success
-          : null;
 
       const checkoutQuery = useCheckoutStatusCacheOnly({
         serverId: agent.serverId,
@@ -211,11 +206,7 @@ export function AgentList({
           {({ hovered }) => (
             <View style={styles.agentContent}>
               <View style={styles.row}>
-                {statusColor && (
-                  <View
-                    style={[styles.statusDot, { backgroundColor: statusColor }]}
-                  />
-                )}
+                <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
                 <Text
                   style={[
                     styles.agentTitle,
@@ -240,8 +231,6 @@ export function AgentList({
       handleAgentLongPress,
       handleAgentPress,
       selectedAgentId,
-      theme.colors.palette.blue,
-      theme.colors.success,
     ]
   );
 
@@ -428,11 +417,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: "300",
     color: theme.colors.foregroundMuted,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: theme.borderRadius.full,
   },
   sheetOverlay: {
     flex: 1,
