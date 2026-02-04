@@ -320,9 +320,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     return Math.max(minTreeWidth, Math.min(maxTree, raw));
   }, [containerWidth, shouldShowInlinePreview, splitRatio]);
 
-  const resizeStartRef = useRef<{ startWidth: number; startX: number; available: number } | null>(
-    null
-  );
+  const resizeStartRef = useRef<{ startWidth: number; available: number } | null>(null);
 
   const splitResizeGesture = useMemo(() => {
     if (!shouldShowInlinePreview || containerWidth <= 0 || treePaneWidth === null) {
@@ -334,10 +332,9 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
     return Gesture.Pan()
       .enabled(!isMobile)
       .hitSlop({ left: 12, right: 12, top: 0, bottom: 0 })
-      .onBegin((event) => {
+      .onBegin(() => {
         resizeStartRef.current = {
           startWidth: treePaneWidth,
-          startX: event.absoluteX,
           available,
         };
       })
@@ -346,8 +343,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
         if (!start) {
           return;
         }
-        const deltaX = event.absoluteX - start.startX;
-        const nextWidth = start.startWidth + deltaX;
+        const nextWidth = start.startWidth + event.translationX;
         const maxTree = Math.max(minTreeWidth, start.available - minPreviewWidth);
         const clamped = Math.max(minTreeWidth, Math.min(maxTree, nextWidth));
         const nextRatio = start.available > 0 ? clamped / start.available : splitRatio;
@@ -501,7 +497,9 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
             style={[
               styles.treePane,
               shouldShowInlinePreview && styles.treePaneWithPreview,
-              shouldShowInlinePreview && treePaneWidth !== null ? { width: treePaneWidth } : null,
+              shouldShowInlinePreview && treePaneWidth !== null
+                ? { width: treePaneWidth, flex: 0, flexGrow: 0, flexShrink: 0 }
+                : null,
             ]}
           >
             <FlatList
@@ -523,6 +521,7 @@ export function FileExplorerPane({ serverId, agentId }: FileExplorerPaneProps) {
                   style={[
                     styles.splitResizeHandle,
                     Platform.OS === "web" && ({ cursor: "col-resize" } as any),
+                    Platform.OS === "web" && ({ touchAction: "none", userSelect: "none" } as any),
                   ]}
                 />
               </GestureDetector>
@@ -961,9 +960,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitResizeHandle: {
     width: 10,
-    backgroundColor: "transparent",
+    backgroundColor: theme.colors.surface0,
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
   },
   previewPane: {
     flex: 1,
