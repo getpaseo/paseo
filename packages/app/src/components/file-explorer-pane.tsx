@@ -597,7 +597,10 @@ function FilePreviewBody({
   if (preview.kind === "text") {
     if (variant === "sheet") {
       return (
-        <BottomSheetScrollView style={styles.previewContent}>
+        <BottomSheetScrollView
+          style={styles.previewContent}
+          contentContainerStyle={styles.previewTextContent}
+        >
           <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
             <Text style={styles.codeText}>{preview.content}</Text>
           </ScrollView>
@@ -605,7 +608,10 @@ function FilePreviewBody({
       );
     }
     return (
-      <RNScrollView style={styles.previewContent}>
+      <RNScrollView
+        style={styles.previewContent}
+        contentContainerStyle={styles.previewTextContent}
+      >
         <RNScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
           <Text style={styles.codeText}>{preview.content}</Text>
         </RNScrollView>
@@ -929,7 +935,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     paddingRight: theme.spacing[2],
   },
   entryRowActive: {
@@ -1041,6 +1047,9 @@ const styles = StyleSheet.create((theme) => ({
   previewContent: {
     flex: 1,
   },
+  previewTextContent: {
+    padding: theme.spacing[3],
+  },
   codeText: {
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
@@ -1051,6 +1060,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    padding: theme.spacing[3],
   },
   previewImage: {
     width: "100%",
