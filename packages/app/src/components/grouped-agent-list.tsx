@@ -644,10 +644,7 @@ const styles = StyleSheet.create((theme) => ({
   agentTitle: {
     flex: 1,
     fontSize: theme.fontSize.base,
-    fontWeight: {
-      xs: "400",
-      md: "300",
-    },
+    fontWeight: "400",
     color: theme.colors.foreground,
     opacity: 0.8,
   },
