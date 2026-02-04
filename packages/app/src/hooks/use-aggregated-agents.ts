@@ -5,6 +5,7 @@ import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import type { Agent } from "@/stores/session-store";
 import { isPerfLoggingEnabled } from "@/utils/perf";
+import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
@@ -32,11 +33,11 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
     })
   );
 
-  const sessionMethods = useSessionStore(
+  const sessionClients = useSessionStore(
     useShallow((state) => {
-      const result: Record<string, NonNullable<typeof state.sessions[string]["methods"]> | undefined> = {};
+      const result: Record<string, NonNullable<typeof state.sessions[string]["client"]> | null> = {};
       for (const [serverId, session] of Object.entries(state.sessions)) {
-        result[serverId] = session.methods ?? undefined;
+        result[serverId] = session.client ?? null;
       }
       return result;
     })
@@ -44,13 +45,43 @@ export function useAggregatedAgents(): AggregatedAgentsResult {
 
   const refreshAll = useCallback(() => {
     console.log('[useAggregatedAgents] Manual refresh triggered for all sessions');
-    for (const [serverId, methods] of Object.entries(sessionMethods)) {
-      if (methods?.refreshSession) {
-        console.log(`[useAggregatedAgents] Refreshing session ${serverId}`);
-        methods.refreshSession();
+    for (const [serverId, client] of Object.entries(sessionClients)) {
+      if (!client) {
+        continue;
       }
+      void (async () => {
+        try {
+          console.log(`[useAggregatedAgents] Refreshing session ${serverId}`);
+          const agentsList = await client.fetchAgents({
+            filter: { labels: { ui: "true" } },
+          });
+
+          const agents = new Map();
+          const pendingPermissions = new Map();
+          const agentLastActivity = new Map();
+
+          for (const snapshot of agentsList) {
+            const agent = normalizeAgentSnapshot(snapshot, serverId);
+            agents.set(agent.id, agent);
+            agentLastActivity.set(agent.id, agent.lastActivityAt);
+            for (const request of agent.pendingPermissions) {
+              const key = derivePendingPermissionKey(agent.id, request);
+              pendingPermissions.set(key, { key, agentId: agent.id, request });
+            }
+          }
+
+          const store = useSessionStore.getState();
+          store.setAgents(serverId, agents);
+          for (const [agentId, timestamp] of agentLastActivity.entries()) {
+            store.setAgentLastActivity(agentId, timestamp);
+          }
+          store.setPendingPermissions(serverId, pendingPermissions);
+        } catch (error) {
+          console.warn("[useAggregatedAgents] Failed to refresh session", { serverId, error });
+        }
+      })();
     }
-  }, [sessionMethods]);
+  }, [sessionClients]);
 
   const result = useMemo(() => {
     const allAgents: AggregatedAgent[] = [];

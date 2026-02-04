@@ -8,7 +8,7 @@ import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 const CODEX_TEST_MODEL = "gpt-5.1-codex-mini";
-const CODEX_TEST_REASONING_EFFORT = "low";
+const CODEX_TEST_THINKING_OPTION_ID = "low";
 
 function isCodexInstalled(): boolean {
   try {
@@ -30,7 +30,7 @@ describe("Codex app-server provider (e2e)", () => {
       cwd: mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-")),
       modeId: "auto",
       model: CODEX_TEST_MODEL,
-      reasoningEffort: CODEX_TEST_REASONING_EFFORT,
+      thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
     });
 
     const result = await session.run("Say hello in one sentence.");

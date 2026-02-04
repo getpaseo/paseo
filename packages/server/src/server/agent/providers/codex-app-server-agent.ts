@@ -1032,7 +1032,8 @@ class CodexAppServerAgentSession implements AgentSession {
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
     if (match.developer_instructions) settings.developer_instructions = match.developer_instructions;
     if (this.config.model) settings.model = this.config.model;
-    if (this.config.reasoningEffort) settings.reasoning_effort = this.config.reasoningEffort;
+    const thinkingOptionId = this.config.thinkingOptionId;
+    if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
     return { mode: match.mode ?? "code", settings, name: match.name };
   }
 
@@ -1158,8 +1159,9 @@ class CodexAppServerAgentSession implements AgentSession {
       if (this.config.model) {
         params.model = this.config.model;
       }
-      if (this.config.reasoningEffort) {
-        params.effort = this.config.reasoningEffort;
+      const thinkingOptionId = this.config.thinkingOptionId;
+      if (thinkingOptionId) {
+        params.effort = thinkingOptionId;
       }
       if (this.resolvedCollaborationMode) {
         params.collaborationMode = {
@@ -1235,6 +1237,18 @@ class CodexAppServerAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
   }
 
+  async setModel(modelId: string | null): Promise<void> {
+    this.config.model = modelId ?? undefined;
+    this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
+    this.cachedRuntimeInfo = null;
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    this.config.thinkingOptionId = thinkingOptionId ?? undefined;
+    this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
+    this.cachedRuntimeInfo = null;
+  }
+
   getPendingPermissions(): AgentPermissionRequest[] {
     return Array.from(this.pendingPermissions.values());
   }
@@ -1301,6 +1315,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   describePersistence(): { provider: typeof CODEX_PROVIDER; sessionId: string; nativeHandle: string; metadata: Record<string, unknown> } | null {
     if (!this.currentThreadId) return null;
+    const thinkingOptionId = this.config.thinkingOptionId ?? null;
     return {
       provider: CODEX_PROVIDER,
       sessionId: this.currentThreadId,
@@ -1312,7 +1327,7 @@ class CodexAppServerAgentSession implements AgentSession {
         threadId: this.currentThreadId,
         modeId: this.currentMode,
         model: this.config.model ?? null,
-        reasoningEffort: this.config.reasoningEffort ?? null,
+        thinkingOptionId,
       },
     };
   }
@@ -1795,6 +1810,25 @@ export class CodexAppServerAgentClient implements AgentClient {
         label: model.displayName,
         description: model.description,
         isDefault: model.isDefault,
+        thinkingOptions: [
+          {
+            id: "default",
+            label: "Default",
+            description: typeof model.defaultReasoningEffort === "string"
+              ? `Use model default (${model.defaultReasoningEffort})`
+              : "Use model default",
+            isDefault: true,
+          },
+          ...(Array.isArray(model.supportedReasoningEfforts)
+            ? model.supportedReasoningEfforts.map((entry: any) => ({
+              id: entry.reasoningEffort,
+              label: entry.reasoningEffort,
+              description: entry.description,
+              isDefault: entry.reasoningEffort === model.defaultReasoningEffort,
+            }))
+            : []),
+        ],
+        defaultThinkingOptionId: "default",
         metadata: {
           model: model.model,
           defaultReasoningEffort: model.defaultReasoningEffort,

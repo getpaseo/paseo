@@ -160,7 +160,7 @@ export async function generateAndApplyAgentMetadata(
       agentConfig: {
         provider: AUTO_GEN_PROVIDER,
         model: AUTO_GEN_MODEL,
-        reasoningEffort: AUTO_GEN_REASONING_EFFORT,
+        thinkingOptionId: AUTO_GEN_REASONING_EFFORT,
         cwd: options.cwd,
         title: "Agent metadata generator",
         internal: true,

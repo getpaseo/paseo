@@ -60,13 +60,6 @@ export type MessageEntry =
       status: "executing" | "completed" | "failed";
     };
 
-export type ProviderModelState = {
-  models: AgentModelDefinition[] | null;
-  fetchedAt: Date | null;
-  error: string | null;
-  isLoading: boolean;
-};
-
 export interface AgentRuntimeInfo {
   provider: AgentProvider;
   sessionId: string | null;
@@ -95,6 +88,7 @@ export interface Agent {
   title: string | null;
   cwd: string;
   model: string | null;
+  thinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;
@@ -164,40 +158,6 @@ export interface SessionState {
   // Audio player (immutable reference)
   audioPlayer: ReturnType<typeof useAudioPlayer> | null;
 
-  // Imperative methods from SessionProvider
-  methods: {
-    setVoiceDetectionFlags: (isDetecting: boolean, isSpeaking: boolean) => void;
-    requestGitDiff: (agentId: string) => void;
-    requestDirectoryListing: (agentId: string, path: string, options?: { recordHistory?: boolean }) => void;
-    requestFilePreview: (agentId: string, path: string) => void;
-    requestFileDownloadToken: (agentId: string, path: string) => Promise<FileDownloadTokenResponse["payload"]>;
-    navigateExplorerBack: (agentId: string) => string | null;
-    requestProviderModels: (provider: any, options?: { cwd?: string }) => void;
-    restartServer: (reason?: string) => void;
-    initializeAgent: (params: { agentId: string; requestId?: string }) => void;
-    refreshAgent: (params: { agentId: string; requestId?: string }) => void;
-    refreshSession: () => void;
-    cancelAgentRun: (agentId: string) => void;
-    sendAgentMessage: (
-      agentId: string,
-      message: string,
-      images?: Array<{ uri: string; mimeType?: string }>
-    ) => Promise<void>;
-    deleteAgent: (agentId: string) => void;
-    archiveAgent: (agentId: string) => void;
-    createAgent: (options: {
-      config: any;
-      initialPrompt: string;
-      images?: Array<{ uri: string; mimeType?: string }>;
-      git?: any;
-      worktreeName?: string;
-      requestId?: string;
-    }) => Promise<unknown>;
-    setAgentMode: (agentId: string, modeId: string) => void;
-    respondToPermission: (agentId: string, requestId: string, response: any) => void;
-    ensureAgentIsInitialized: (agentId: string) => Promise<void>;
-  } | null;
-
   // Hydration status
   hasHydratedAgents: boolean;
 
@@ -229,9 +189,6 @@ export interface SessionState {
 
   // File explorer
   fileExplorer: Map<string, AgentFileExplorerState>;
-
-  // Provider models
-  providerModels: Map<AgentProvider, ProviderModelState>;
 
   // Queued messages
   queuedMessages: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>;
@@ -287,17 +244,11 @@ interface SessionStoreActions {
   // File explorer
   setFileExplorer: (serverId: string, state: Map<string, AgentFileExplorerState> | ((prev: Map<string, AgentFileExplorerState>) => Map<string, AgentFileExplorerState>)) => void;
 
-  // Provider models
-  setProviderModels: (serverId: string, models: Map<AgentProvider, ProviderModelState> | ((prev: Map<AgentProvider, ProviderModelState>) => Map<AgentProvider, ProviderModelState>)) => void;
-
   // Queued messages
   setQueuedMessages: (serverId: string, value: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>> | ((prev: Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>) => Map<string, Array<{ id: string; text: string; images?: Array<{ uri: string; mimeType: string }> }>>)) => void;
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
-
-  // Imperative methods
-  setSessionMethods: (serverId: string, methods: SessionState["methods"]) => void;
 
   // Agent directory (derived from agents)
   getAgentDirectory: (serverId: string) => AgentDirectoryEntry[] | undefined;
@@ -348,7 +299,6 @@ function createInitialSessionState(serverId: string, client: DaemonClientV2, aud
     client,
     connection: createDefaultConnectionSnapshot(client),
     audioPlayer,
-    methods: null,
     hasHydratedAgents: false,
     isPlayingAudio: false,
     focusedAgentId: null,
@@ -361,7 +311,6 @@ function createInitialSessionState(serverId: string, client: DaemonClientV2, aud
     pendingPermissions: new Map(),
     gitDiffs: new Map(),
     fileExplorer: new Map(),
-    providerModels: new Map(),
     queuedMessages: new Map(),
   };
 }
@@ -732,28 +681,6 @@ export const useSessionStore = create<SessionStore>()(
       });
     },
 
-    // Provider models
-    setProviderModels: (serverId, models) => {
-      set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        const nextModels = typeof models === "function" ? models(session.providerModels) : models;
-        if (session.providerModels === nextModels) {
-          return prev;
-        }
-        logSessionStoreUpdate("setProviderModels", serverId, { providerCount: nextModels.size });
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: { ...session, providerModels: nextModels },
-          },
-        };
-      });
-    },
-
     // Queued messages
     setQueuedMessages: (serverId, value) => {
       set((prev) => {
@@ -789,28 +716,6 @@ export const useSessionStore = create<SessionStore>()(
           sessions: {
             ...prev.sessions,
             [serverId]: { ...session, hasHydratedAgents: hydrated },
-          },
-        };
-      });
-    },
-
-    // Imperative methods
-    setSessionMethods: (serverId, methods) => {
-      set((prev) => {
-        const session = prev.sessions[serverId];
-        if (!session) {
-          return prev;
-        }
-        // Skip if methods reference is the same (already set)
-        if (session.methods === methods) {
-          return prev;
-        }
-        logSessionStoreUpdate("setSessionMethods", serverId, { hasValue: !!methods });
-        return {
-          ...prev,
-          sessions: {
-            ...prev.sessions,
-            [serverId]: { ...session, methods },
           },
         };
       });

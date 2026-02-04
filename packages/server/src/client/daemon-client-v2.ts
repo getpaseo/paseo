@@ -1086,7 +1086,90 @@ export class DaemonClientV2 {
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<void> {
-    this.sendSessionMessage({ type: "set_agent_mode", agentId, modeId });
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_mode_request",
+      agentId,
+      modeId,
+      requestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "set_agent_mode_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      15000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setAgentMode rejected");
+    }
+  }
+
+  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_model_request",
+      agentId,
+      modelId,
+      requestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "set_agent_model_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      15000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setAgentModel rejected");
+    }
+  }
+
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null
+  ): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "set_agent_thinking_request",
+      agentId,
+      thinkingOptionId,
+      requestId,
+    });
+    const response = this.waitFor(
+      (msg) => {
+        if (msg.type !== "set_agent_thinking_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+      15000,
+      { skipQueue: true }
+    );
+    await this.sendSessionMessageOrThrow(message);
+    const payload = await response;
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setAgentThinkingOption rejected");
+    }
   }
 
   async restartServer(

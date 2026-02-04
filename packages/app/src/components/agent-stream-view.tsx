@@ -44,6 +44,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import type { Agent } from "@/contexts/session-context";
 import { useSessionStore } from "@/stores/session-store";
+import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import type { DaemonClientV2 } from "@server/client/daemon-client-v2";
 import { parseToolCallDisplay } from "@/utils/tool-call-parsers";
 import { ToolCallDetailsContent } from "./tool-call-details";
@@ -94,15 +95,7 @@ export function AgentStreamView({
     state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId)
   );
 
-  // Get methods for file operations
-  const methods = useSessionStore(
-    (state) => state.sessions[resolvedServerId]?.methods
-  );
-  const requestDirectoryListing = methods?.requestDirectoryListing;
-  const requestFilePreview = methods?.requestFilePreview;
-
-  const requestDirectoryListingOrInert = requestDirectoryListing ?? (() => {});
-  const requestFilePreviewOrInert = requestFilePreview ?? (() => {});
+  const { requestDirectoryListing, requestFilePreview } = useFileExplorerActions(resolvedServerId);
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -130,9 +123,9 @@ export function AgentStreamView({
         return;
       }
 
-      requestDirectoryListingOrInert(agentId, normalized.directory);
+      requestDirectoryListing(agentId, normalized.directory);
       if (normalized.file) {
-        requestFilePreviewOrInert(agentId, normalized.file);
+        requestFilePreview(agentId, normalized.file);
       }
 
       setExplorerTab("files");
@@ -141,8 +134,8 @@ export function AgentStreamView({
     [
       agent.cwd,
       agentId,
-      requestDirectoryListingOrInert,
-      requestFilePreviewOrInert,
+      requestDirectoryListing,
+      requestFilePreview,
       setExplorerTab,
       openFileExplorer,
     ]

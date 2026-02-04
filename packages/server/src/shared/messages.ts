@@ -21,6 +21,14 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   description: z.string().optional(),
 });
 
+const AgentSelectOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   provider: AgentProviderSchema,
   id: z.string(),
@@ -28,6 +36,8 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
+  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
+  defaultThinkingOptionId: z.string().optional(),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -76,6 +86,7 @@ const AgentSessionConfigSchema = z.object({
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
+  thinkingOptionId: z.string().optional(),
   title: z
     .string()
     .trim()
@@ -87,7 +98,6 @@ const AgentSessionConfigSchema = z.object({
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),
   webSearch: z.boolean().optional(),
-  reasoningEffort: z.string().optional(),
   extra: z
     .object({
       codex: z.record(z.unknown()).optional(),
@@ -253,6 +263,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
   model: z.string().nullable(),
+  thinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
@@ -520,10 +531,55 @@ export const InitializeAgentResponseMessageSchema = z.object({
   }),
 });
 
-export const SetAgentModeMessageSchema = z.object({
-  type: z.literal("set_agent_mode"),
+export const SetAgentModeRequestMessageSchema = z.object({
+  type: z.literal("set_agent_mode_request"),
   agentId: z.string(),
   modeId: z.string(),
+  requestId: z.string(),
+});
+
+export const SetAgentModeResponseMessageSchema = z.object({
+  type: z.literal("set_agent_mode_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const SetAgentModelRequestMessageSchema = z.object({
+  type: z.literal("set_agent_model_request"),
+  agentId: z.string(),
+  modelId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const SetAgentModelResponseMessageSchema = z.object({
+  type: z.literal("set_agent_model_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const SetAgentThinkingRequestMessageSchema = z.object({
+  type: z.literal("set_agent_thinking_request"),
+  agentId: z.string(),
+  thinkingOptionId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const SetAgentThinkingResponseMessageSchema = z.object({
+  type: z.literal("set_agent_thinking_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+  }),
 });
 
 export const AgentPermissionResponseMessageSchema = z.object({
@@ -830,7 +886,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentRequestMessageSchema,
   RestartServerRequestMessageSchema,
   InitializeAgentRequestMessageSchema,
-  SetAgentModeMessageSchema,
+  SetAgentModeRequestMessageSchema,
+  SetAgentModelRequestMessageSchema,
+  SetAgentThinkingRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   GitDiffRequestSchema,
   CheckoutStatusRequestSchema,
@@ -1559,6 +1617,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentsResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
+  SetAgentModeResponseMessageSchema,
+  SetAgentModelResponseMessageSchema,
+  SetAgentThinkingResponseMessageSchema,
   WaitForFinishResponseMessageSchema,
   ListVoiceConversationsResponseMessageSchema,
   DeleteVoiceConversationResponseMessageSchema,
@@ -1659,7 +1720,9 @@ export type ListProviderModelsRequestMessage = z.infer<
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type InitializeAgentRequestMessage = z.infer<typeof InitializeAgentRequestMessageSchema>;
-export type SetAgentModeMessage = z.infer<typeof SetAgentModeMessageSchema>;
+export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
+export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
+export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;

@@ -290,11 +290,19 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       for (const [modelId, model] of Object.entries(provider.models)) {
+        const rawVariants = model.variants ? Object.keys(model.variants) : [];
+        const thinkingOptions = [
+          { id: "default", label: "Default", isDefault: true },
+          ...rawVariants.map((id) => ({ id, label: id })),
+        ];
+
         models.push({
           provider: "opencode",
           id: `${provider.id}/${modelId}`,
           label: model.name,
           description: `${provider.name} - ${model.family ?? ""}`.trim(),
+          thinkingOptions: thinkingOptions.length > 1 ? thinkingOptions : undefined,
+          defaultThinkingOptionId: "default",
           metadata: {
             providerId: provider.id,
             providerName: provider.name,
@@ -372,6 +380,20 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
+  async setModel(modelId: string | null): Promise<void> {
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    this.config.model = normalizedModelId ?? undefined;
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const normalizedThinkingOptionId =
+      typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
+        ? thinkingOptionId
+        : null;
+    this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+  }
+
   async run(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
     const events = this.stream(prompt);
     const timeline: AgentTimelineItem[] = [];
@@ -407,6 +429,9 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = this.buildPromptParts(prompt);
     const model = this.parseModel(this.config.model);
+    const thinkingOptionId = this.config.thinkingOptionId;
+    const effectiveVariant =
+      thinkingOptionId && thinkingOptionId !== "default" ? thinkingOptionId : undefined;
 
     // Send prompt asynchronously
     const promptResponse = await this.client.session.promptAsync({
@@ -414,6 +439,7 @@ class OpenCodeAgentSession implements AgentSession {
       directory: this.config.cwd,
       parts,
       ...(model ? { model } : {}),
+      ...(effectiveVariant ? { variant: effectiveVariant } : {}),
     });
 
     if (promptResponse.error) {
