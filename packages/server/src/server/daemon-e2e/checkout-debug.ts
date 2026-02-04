@@ -10,7 +10,7 @@
  */
 
 import { WebSocket } from "ws";
-import { DaemonClientV2 } from "../../client/daemon-client-v2.js";
+import { DaemonClient } from "../../client/daemon-client.js";
 
 // Patch WebSocket to log all messages
 const OriginalWebSocket = WebSocket;
@@ -36,7 +36,7 @@ async function testMultiAgentSequence() {
   console.log("\n=== Testing multi-agent checkout sequence ===");
   console.log(`Daemon URL: ${DAEMON_URL}`);
 
-  const client = new DaemonClientV2({
+  const client = new DaemonClient({
     url: DAEMON_URL,
     webSocketFactory: (url) => new LoggingWebSocket(url) as any,
     reconnect: { enabled: false },

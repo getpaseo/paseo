@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { DaemonClientV2, type DaemonTransport } from "./daemon-client-v2";
+import { DaemonClient, type DaemonTransport } from "./daemon-client";
 
 function createMockLogger() {
   return {
@@ -49,8 +49,8 @@ function createMockTransport() {
   };
 }
 
-describe("DaemonClientV2", () => {
-  const clients: DaemonClientV2[] = [];
+describe("DaemonClient", () => {
+  const clients: DaemonClient[] = [];
 
   afterEach(async () => {
     for (const client of clients) {
@@ -63,7 +63,7 @@ describe("DaemonClientV2", () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
 
-    const client = new DaemonClientV2({
+    const client = new DaemonClient({
       url: "ws://test",
       logger,
       reconnect: { enabled: false },
@@ -136,5 +136,39 @@ describe("DaemonClientV2", () => {
       requestId: request2.message.requestId,
       isGit: false,
     });
+  });
+
+  test("cancels waiters when send fails (no leaked timeouts)", async () => {
+    vi.useFakeTimers();
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const transportFactory = () => ({
+      ...mock.transport,
+      send: () => {
+        throw new Error("boom");
+      },
+    });
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = client.getCheckoutStatus("/tmp/project");
+    await expect(promise).rejects.toThrow("boom");
+
+    // Ensure we didn't leave a waiter behind that will reject later.
+    expect((client as any).waiters.size).toBe(0);
+
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 });

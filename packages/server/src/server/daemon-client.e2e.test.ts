@@ -18,7 +18,7 @@ import {
 } from "./test-utils/dictation-e2e.js";
 
 function tmpCwd(): string {
-  return mkdtempSync(path.join(tmpdir(), "daemon-client-v2-"));
+  return mkdtempSync(path.join(tmpdir(), "daemon-client-"));
 }
 
 function waitForSignal<T>(
@@ -52,7 +52,7 @@ function waitForSignal<T>(
   });
 }
 
-describe("daemon client v2 E2E", () => {
+describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {

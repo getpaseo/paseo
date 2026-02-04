@@ -1024,6 +1024,16 @@ export const StatusMessageSchema = z.object({
     .passthrough(), // Allow additional fields
 });
 
+export const RpcErrorMessageSchema = z.object({
+  type: z.literal("rpc_error"),
+  payload: z.object({
+    requestId: z.string(),
+    requestType: z.string().optional(),
+    error: z.string(),
+    code: z.string().optional(),
+  }),
+});
+
 const AgentStatusWithRequestSchema = z.object({
   agentId: z.string(),
   requestId: z.string(),
@@ -1607,6 +1617,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DictationStreamFinalMessageSchema,
   DictationStreamErrorMessageSchema,
   StatusMessageSchema,
+  RpcErrorMessageSchema,
   InitializeAgentResponseMessageSchema,
   ArtifactMessageSchema,
   VoiceConversationLoadedMessageSchema,
@@ -1663,6 +1674,7 @@ export type AssistantChunkMessage = z.infer<typeof AssistantChunkMessageSchema>;
 export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>;
 export type TranscriptionResultMessage = z.infer<typeof TranscriptionResultMessageSchema>;
 export type StatusMessage = z.infer<typeof StatusMessageSchema>;
+export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type VoiceConversationLoadedMessage = z.infer<
   typeof VoiceConversationLoadedMessageSchema

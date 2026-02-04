@@ -1,7 +1,7 @@
 import type { Command } from 'commander'
 import { connectToDaemon, getDaemonHost } from '../../utils/client.js'
 import type {
-  DaemonClientV2,
+  DaemonClient,
   AgentStreamMessage,
   AgentStreamSnapshotMessage,
   AgentStreamEventPayload,
@@ -107,7 +107,7 @@ export async function runAttachCommand(
     process.exit(1)
   }
 
-  let client: DaemonClientV2
+  let client: DaemonClient
   try {
     client = await connectToDaemon({ host: options.host as string | undefined })
   } catch (err) {

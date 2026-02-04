@@ -11,7 +11,7 @@
 - `loadConfig`, `resolvePaseoHome`
 - `createRootLogger`, `LogLevel`, `LogFormat`
 - `loadPersistedConfig`, `PersistedConfig`
-- `DaemonClientV2`, `DaemonClientV2Config`, `ConnectionState`, `DaemonEvent`
+- `DaemonClient`, `DaemonClientConfig`, `ConnectionState`, `DaemonEvent`
 
 No agent snapshot/timeline/permission/message types are exported.
 
