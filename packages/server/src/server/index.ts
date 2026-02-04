@@ -12,13 +12,26 @@ import { loadPersistedConfig } from "./persisted-config.js";
 import { PidLockError } from "./pid-lock.js";
 
 async function main() {
-  const paseoHome = resolvePaseoHome();
-  const persistedConfig = loadPersistedConfig(paseoHome);
-  const logger = createRootLogger(persistedConfig);
-  const config = loadConfig(paseoHome);
+  let paseoHome: string;
+  let logger: ReturnType<typeof createRootLogger>;
+  let config: ReturnType<typeof loadConfig>;
+
+  try {
+    paseoHome = resolvePaseoHome();
+    const persistedConfig = loadPersistedConfig(paseoHome);
+    logger = createRootLogger(persistedConfig);
+    config = loadConfig(paseoHome);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  }
 
   if (process.argv.includes("--no-relay")) {
     config.relayEnabled = false;
+  }
+  if (process.argv.includes("--no-mcp")) {
+    config.mcpEnabled = false;
   }
   const daemon = await createPaseoDaemon(config, logger);
 
@@ -63,10 +76,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  // Logger might not be initialized yet, so we need to handle this specially
-  const paseoHome = resolvePaseoHome();
-  const persistedConfig = loadPersistedConfig(paseoHome);
-  const logger = createRootLogger(persistedConfig);
-  logger.error({ err }, "Failed to start server");
+  if (process.env.PASEO_DEBUG === "1") {
+    process.stderr.write(`${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+  } else {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  }
   process.exit(1);
 });
