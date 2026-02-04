@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   type AgentProviderDefinition,
@@ -76,11 +77,6 @@ type UseAgentFormStateResult = {
   isModelLoading: boolean;
   modelError: string | null;
   refreshProviderModels: () => void;
-  queueProviderModelFetch: (
-    serverId: string | null,
-    options?: { cwd?: string; delayMs?: number }
-  ) => void;
-  clearQueuedProviderModelRequest: (serverId: string | null) => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
 };
@@ -278,20 +274,40 @@ export function useAgentFormState(
     }
   }, [isVisible]);
 
-  // Get session state for provider models
+  // Session state for provider model listing
   const sessionState = useSessionStore((state) =>
     formState.serverId ? state.sessions[formState.serverId] : undefined
   );
-  const providerModels = sessionState?.providerModels;
-  const requestProviderModels = sessionState?.methods?.requestProviderModels;
-  const getSessionState = useCallback(
-    (serverId: string) => useSessionStore.getState().sessions[serverId] ?? null,
-    []
-  );
+  const client = sessionState?.client ?? null;
+  const isConnected = sessionState?.connection?.isConnected ?? false;
 
-  // Get available models for current provider
-  const modelState = providerModels?.get(formState.provider);
-  const availableModels = modelState?.models ?? null;
+  const [debouncedCwd, setDebouncedCwd] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const trimmed = formState.workingDir.trim();
+    const next = trimmed.length > 0 ? trimmed : undefined;
+    const timer = setTimeout(() => setDebouncedCwd(next), 180);
+    return () => clearTimeout(timer);
+  }, [formState.workingDir]);
+
+  const providerModelsQuery = useQuery({
+    queryKey: ["providerModels", formState.serverId, formState.provider, debouncedCwd],
+    enabled: Boolean(isVisible && isTargetDaemonReady && formState.serverId && client && isConnected),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      const payload = await client.listProviderModels(formState.provider, {
+        cwd: debouncedCwd,
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.models ?? [];
+    },
+  });
+
+  const availableModels = providerModelsQuery.data ?? null;
 
   // Combine initialValues with initialServerId for resolution
   const combinedInitialValues = useMemo((): FormInitialValues | undefined => {
@@ -360,11 +376,6 @@ export function useAgentFormState(
     updatePreferences,
   ]);
 
-  // Provider model request timers
-  const providerModelRequestTimersRef = useRef<
-    Map<string, ReturnType<typeof setTimeout>>
-  >(new Map());
-
   // User setters - mark fields as modified and persist to preferences
   const setSelectedServerIdFromUser = useCallback(
     (value: string | null) => {
@@ -432,14 +443,8 @@ export function useAgentFormState(
   }, []);
 
   const refreshProviderModels = useCallback(() => {
-    if (!requestProviderModels) {
-      return;
-    }
-    const trimmed = formState.workingDir.trim();
-    requestProviderModels(formState.provider, {
-      cwd: trimmed.length > 0 ? trimmed : undefined,
-    });
-  }, [requestProviderModels, formState.provider, formState.workingDir]);
+    void providerModelsQuery.refetch();
+  }, [providerModelsQuery]);
 
   const persistFormPreferences = useCallback(async () => {
     await updatePreferences({
@@ -461,91 +466,11 @@ export function useAgentFormState(
     updateProviderPreferences,
   ]);
 
-  const clearQueuedProviderModelRequest = useCallback((serverId: string | null) => {
-    if (!serverId) {
-      return;
-    }
-    const timer = providerModelRequestTimersRef.current.get(serverId);
-    if (timer) {
-      clearTimeout(timer);
-      providerModelRequestTimersRef.current.delete(serverId);
-    }
-  }, []);
-
-  const queueProviderModelFetch = useCallback(
-    (
-      serverId: string | null,
-      options?: { cwd?: string; delayMs?: number }
-    ) => {
-      if (!serverId || !getSessionState) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const sessionState = getSessionState(serverId);
-      if (!sessionState?.connection?.isConnected) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const currentState = sessionState.providerModels?.get(formState.provider);
-      if (currentState?.models?.length || currentState?.isLoading) {
-        clearQueuedProviderModelRequest(serverId);
-        return;
-      }
-
-      const delayMs = options?.delayMs ?? 0;
-      const trigger = () => {
-        providerModelRequestTimersRef.current.delete(serverId);
-        sessionState.methods?.requestProviderModels(formState.provider, {
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
-        });
-      };
-      clearQueuedProviderModelRequest(serverId);
-      if (delayMs > 0) {
-        providerModelRequestTimersRef.current.set(serverId, setTimeout(trigger, delayMs));
-      } else {
-        trigger();
-      }
-    },
-    [clearQueuedProviderModelRequest, getSessionState, formState.provider]
-  );
-
-  useEffect(() => {
-    return () => {
-      providerModelRequestTimersRef.current.forEach((timer) => {
-        clearTimeout(timer);
-      });
-      providerModelRequestTimersRef.current.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isVisible || !isTargetDaemonReady || !formState.serverId) {
-      clearQueuedProviderModelRequest(formState.serverId);
-      return;
-    }
-    const trimmed = formState.workingDir.trim();
-    queueProviderModelFetch(formState.serverId, {
-      cwd: trimmed.length > 0 ? trimmed : undefined,
-      delayMs: 180,
-    });
-    return () => {
-      clearQueuedProviderModelRequest(formState.serverId);
-    };
-  }, [
-    clearQueuedProviderModelRequest,
-    isTargetDaemonReady,
-    isVisible,
-    queueProviderModelFetch,
-    formState.serverId,
-    formState.workingDir,
-  ]);
-
   const agentDefinition = providerDefinitionMap.get(formState.provider);
   const modeOptions = agentDefinition?.modes ?? [];
-  const isModelLoading = modelState?.isLoading ?? false;
-  const modelError = modelState?.error ?? null;
+  const isModelLoading = providerModelsQuery.isLoading || providerModelsQuery.isFetching;
+  const modelError =
+    providerModelsQuery.error instanceof Error ? providerModelsQuery.error.message : null;
 
   const workingDirIsEmpty = !formState.workingDir.trim();
 
@@ -571,8 +496,6 @@ export function useAgentFormState(
       isModelLoading,
       modelError,
       refreshProviderModels,
-      queueProviderModelFetch,
-      clearQueuedProviderModelRequest,
       workingDirIsEmpty,
       persistFormPreferences,
     }),
@@ -595,8 +518,6 @@ export function useAgentFormState(
       isModelLoading,
       modelError,
       refreshProviderModels,
-      queueProviderModelFetch,
-      clearQueuedProviderModelRequest,
       workingDirIsEmpty,
       persistFormPreferences,
     ]

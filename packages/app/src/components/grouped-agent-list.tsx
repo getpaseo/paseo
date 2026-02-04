@@ -213,16 +213,12 @@ export function GroupedAgentList({
     new Set()
   );
 
-  // Get the methods for the specific server
-  const methods = useSessionStore((state) =>
-    actionAgent?.serverId
-      ? state.sessions[actionAgent.serverId]?.methods
-      : undefined
+  const actionClient = useSessionStore((state) =>
+    actionAgent?.serverId ? state.sessions[actionAgent.serverId]?.client ?? null : null
   );
-  const archiveAgent = methods?.archiveAgent;
 
   const isActionSheetVisible = actionAgent !== null;
-  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !methods);
+  const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
 
   const handleAgentPress = useCallback(
     (serverId: string, agentId: string) => {
@@ -262,12 +258,12 @@ export function GroupedAgentList({
   }, []);
 
   const handleArchiveFromSheet = useCallback(() => {
-    if (!actionAgent || !archiveAgent) {
+    if (!actionAgent || !actionClient) {
       return;
     }
-    archiveAgent(actionAgent.id);
+    void actionClient.archiveAgent(actionAgent.id);
     setActionAgent(null);
-  }, [actionAgent, archiveAgent]);
+  }, [actionAgent, actionClient]);
 
   const toggleSection = useCallback((sectionKey: string) => {
     setCollapsedSections((prev) => {
@@ -413,9 +409,9 @@ export function GroupedAgentList({
     (e: { stopPropagation: () => void }, agent: AggregatedAgent) => {
       e.stopPropagation();
       const session = useSessionStore.getState().sessions[agent.serverId];
-      const archiveMethod = session?.methods?.archiveAgent;
-      if (archiveMethod) {
-        archiveMethod(agent.id);
+      const client = session?.client ?? null;
+      if (client) {
+        void client.archiveAgent(agent.id);
       }
     },
     []
@@ -595,7 +591,7 @@ export function GroupedAgentList({
                 <Text style={styles.sheetCancelText}>Cancel</Text>
               </Pressable>
               <Pressable
-                disabled={!archiveAgent || isActionDaemonUnavailable}
+                disabled={isActionDaemonUnavailable}
                 style={[styles.sheetButton, styles.sheetArchiveButton]}
                 onPress={handleArchiveFromSheet}
                 testID="agent-action-archive"
@@ -603,8 +599,7 @@ export function GroupedAgentList({
                 <Text
                   style={[
                     styles.sheetArchiveText,
-                    (!archiveAgent || isActionDaemonUnavailable) &&
-                      styles.sheetArchiveTextDisabled,
+                    isActionDaemonUnavailable && styles.sheetArchiveTextDisabled,
                   ]}
                 >
                   Archive

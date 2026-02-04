@@ -60,6 +60,7 @@ import { startPerfMonitor } from "@/utils/perf-monitor";
 import { shortenPath } from "@/utils/shorten-path";
 import { deriveBranchLabel, deriveProjectPath } from "@/utils/agent-display-info";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
+import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -338,10 +339,7 @@ function AgentScreenContent({
   const isConnected = useSessionStore(
     (state) => state.sessions[serverId]?.connection.isConnected ?? false
   );
-
-  // Get methods
-  const methods = useSessionStore((state) => state.sessions[serverId]?.methods);
-  const refreshAgent = methods?.refreshAgent;
+  const { ensureAgentIsInitialized, refreshAgent } = useAgentInitialization(serverId);
   const setFocusedAgentId = useCallback(
     (agentId: string | null) => {
       useSessionStore.getState().setFocusedAgentId(serverId, agentId);
@@ -484,9 +482,6 @@ function AgentScreenContent({
     streamItems,
   ]);
 
-  // Get ensureAgentIsInitialized from methods
-  const ensureAgentIsInitialized = methods?.ensureAgentIsInitialized;
-
   useEffect(() => {
     if (!resolvedAgentId || !ensureAgentIsInitialized) {
       return;
@@ -546,10 +541,12 @@ function AgentScreenContent({
   }, [setExplorerTab, openFileExplorer]);
 
   const handleRefreshAgent = useCallback(() => {
-    if (!resolvedAgentId || !refreshAgent) {
+    if (!resolvedAgentId) {
       return;
     }
-    refreshAgent({ agentId: resolvedAgentId });
+    void refreshAgent(resolvedAgentId).catch((error) => {
+      console.warn("[AgentScreen] refreshAgent failed", { agentId: resolvedAgentId, error });
+    });
   }, [resolvedAgentId, refreshAgent]);
 
   if (!effectiveAgent) {

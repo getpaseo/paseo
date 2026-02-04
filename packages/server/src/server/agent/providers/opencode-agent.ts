@@ -313,8 +313,6 @@ export class OpenCodeAgentClient implements AgentClient {
             supportsReasoning: model.reasoning,
             supportsToolCall: model.tool_call,
             cost: model.cost,
-            variants: model.variants,
-            options: model.options,
           },
         });
       }

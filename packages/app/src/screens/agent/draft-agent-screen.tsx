@@ -41,6 +41,7 @@ import { WelcomeScreen } from "@/components/welcome-screen";
 import type { Agent } from "@/contexts/session-context";
 import type { StreamItem } from "@/types/stream";
 import { generateMessageId } from "@/types/stream";
+import { encodeImages } from "@/utils/encode-images";
 import type {
   AgentProvider,
   AgentCapabilityFlags,
@@ -567,8 +568,8 @@ export function DraftAgentScreen({
     }
   }, [isNonGitDirectory, worktreeMode]);
 
-  const sessionMethods = useSessionStore((state) =>
-    selectedServerId ? state.sessions[selectedServerId]?.methods : undefined
+  const createAgentClient = useSessionStore((state) =>
+    selectedServerId ? state.sessions[selectedServerId]?.client ?? null : null
   );
 
   const promptValue = machine.tag === "draft" ? machine.promptText : "";
@@ -688,8 +689,7 @@ export function DraftAgentScreen({
         dispatch({ type: "DRAFT_SET_ERROR", message: baseBranchError });
         throw new Error(baseBranchError);
       }
-      const createAgent = sessionMethods?.createAgent;
-      if (!createAgent) {
+      if (!createAgentClient) {
         dispatch({ type: "DRAFT_SET_ERROR", message: "Host is not connected" });
         throw new Error("Host is not connected");
       }
@@ -740,10 +740,12 @@ export function DraftAgentScreen({
       onCreateFlowActiveChange?.(true);
 
       try {
-        const result = await createAgent({
+        const imagesData = await encodeImages(images);
+        const result = await createAgentClient.createAgent({
           config,
+          labels: { ui: "true" },
           initialPrompt: trimmedPrompt,
-          images,
+          ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
           git: gitOptions,
         });
 
@@ -785,7 +787,7 @@ export function DraftAgentScreen({
       selectedModel,
       selectedProvider,
       selectedServerId,
-      sessionMethods,
+      createAgentClient,
       setPendingCreateAttempt,
       updatePendingAgentId,
       clearPendingCreateAttempt,

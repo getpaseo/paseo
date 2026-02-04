@@ -10,7 +10,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 interface AgentStatusBarProps {
   agentId: string;
@@ -27,35 +28,39 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     state.sessions[serverId]?.agents?.get(agentId)
   );
 
-  const providerModelState = useSessionStore((state) =>
-    state.sessions[serverId]?.providerModels?.get(agent?.provider as any)
-  );
-
-  // Get actions (actions are stable, won't cause rerenders)
-  const setAgentMode = useSessionStore(
-    (state) => state.sessions[serverId]?.methods?.setAgentMode
-  );
-  const setAgentModel = useSessionStore(
-    (state) => state.sessions[serverId]?.methods?.setAgentModel
-  );
-  const setAgentThinkingOption = useSessionStore(
-    (state) => state.sessions[serverId]?.methods?.setAgentThinkingOption
-  );
-  const requestProviderModels = useSessionStore(
-    (state) => state.sessions[serverId]?.methods?.requestProviderModels
-  );
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
 
   if (!agent) {
     return null;
   }
 
+  const canFetchModels = Boolean(client) && Boolean(agent.provider) && (IS_WEB || prefsOpen);
+  const modelsQuery = useQuery({
+    queryKey: ["providerModels", serverId, agent.provider, agent.cwd],
+    enabled: canFetchModels,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Daemon client unavailable");
+      }
+      const payload = await client.listProviderModels(agent.provider, { cwd: agent.cwd });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.models ?? [];
+    },
+  });
+  const models = modelsQuery.data ?? null;
+
   function handleModeChange(modeId: string) {
-    if (setAgentMode) {
-      setAgentMode(agentId, modeId);
+    if (!client) {
+      return;
     }
+    void client.setAgentMode(agentId, modeId).catch((error) => {
+      console.warn("[AgentStatusBar] setAgentMode failed", error);
+    });
   }
 
-  const models = providerModelState?.models ?? null;
   const selectedModel = useMemo(() => {
     if (!models || !agent.model) return null;
     return models.find((m) => m.id === agent.model) ?? null;
@@ -70,21 +75,6 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     "default";
   const selectedThinking = thinkingOptions?.find((o) => o.id === selectedThinkingId) ?? null;
   const displayThinking = selectedThinking?.label ?? selectedThinkingId ?? "default";
-
-  useEffect(() => {
-    if (!requestProviderModels) return;
-    const provider = agent.provider;
-    if (!provider) return;
-
-    const hasState = Boolean(providerModelState);
-    const isLoading = providerModelState?.isLoading ?? false;
-    const hasModels = Boolean(providerModelState?.models);
-    const shouldFetch = !hasState || (!hasModels && !isLoading);
-    if (!shouldFetch) return;
-    if (IS_WEB || prefsOpen) {
-      requestProviderModels(provider, { cwd: agent.cwd });
-    }
-  }, [IS_WEB, prefsOpen, agent.provider, agent.cwd, providerModelState, requestProviderModels]);
 
   return (
     <View style={styles.container}>
@@ -132,7 +122,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
         </DropdownMenu>
       )}
 
-      {/* Desktop: inline dropdowns for model/thinking/variant */}
+      {/* Desktop: inline dropdowns for model/thinking */}
       {IS_WEB && (
         <>
           <DropdownMenu>
@@ -158,7 +148,14 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                     selected={isActive}
                     selectedVariant="accent"
                     description={model.description}
-                    onSelect={() => setAgentModel?.(agentId, model.id)}
+                    onSelect={() => {
+                      if (!client) {
+                        return;
+                      }
+                      void client.setAgentModel(agentId, model.id).catch((error) => {
+                        console.warn("[AgentStatusBar] setAgentModel failed", error);
+                      });
+                    }}
                   >
                     {model.label}
                   </DropdownMenuItem>
@@ -191,12 +188,16 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                       selected={isActive}
                       selectedVariant="accent"
                       description={opt.description}
-                      onSelect={() =>
-                        setAgentThinkingOption?.(
-                          agentId,
-                          opt.id === "default" ? null : opt.id
-                        )
-                      }
+                      onSelect={() => {
+                        if (!client) {
+                          return;
+                        }
+                        void client
+                          .setAgentThinkingOption(agentId, opt.id === "default" ? null : opt.id)
+                          .catch((error) => {
+                            console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
+                          });
+                      }}
                     >
                       {opt.label}
                     </DropdownMenuItem>
@@ -256,7 +257,14 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                         selected={isActive}
                         selectedVariant="accent"
                         description={model.description}
-                        onSelect={() => setAgentModel?.(agentId, model.id)}
+                        onSelect={() => {
+                          if (!client) {
+                            return;
+                          }
+                          void client.setAgentModel(agentId, model.id).catch((error) => {
+                            console.warn("[AgentStatusBar] setAgentModel failed", error);
+                          });
+                        }}
                       >
                         {model.label}
                       </DropdownMenuItem>
@@ -292,12 +300,16 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
                           selected={isActive}
                           selectedVariant="accent"
                           description={opt.description}
-                          onSelect={() =>
-                            setAgentThinkingOption?.(
-                              agentId,
-                              opt.id === "default" ? null : opt.id
-                            )
-                          }
+                          onSelect={() => {
+                            if (!client) {
+                              return;
+                            }
+                            void client
+                              .setAgentThinkingOption(agentId, opt.id === "default" ? null : opt.id)
+                              .catch((error) => {
+                                console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
+                              });
+                          }}
                         >
                           {opt.label}
                         </DropdownMenuItem>
