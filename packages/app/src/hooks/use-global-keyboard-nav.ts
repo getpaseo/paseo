@@ -111,6 +111,21 @@ export function useGlobalKeyboardNav({
         return;
       }
 
+      // Cmd+.: toggle sidebar (VS Code quick-fix muscle memory)
+      // Note: intentionally works even when focus is inside an input/textarea.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.code === "Period" || key === ".")
+      ) {
+        // Ignore while command center is open.
+        if (useKeyboardNavStore.getState().commandCenterOpen) {
+          return;
+        }
+        event.preventDefault();
+        toggleAgentList();
+        return;
+      }
+
       // Cmd+E: toggle explorer sidebar (only when an agent is selected)
       if (
         selectedAgentId &&
