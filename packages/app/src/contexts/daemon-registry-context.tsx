@@ -59,6 +59,7 @@ interface DaemonRegistryContextValue {
   removeDaemon: (id: string) => Promise<void>;
   upsertDaemonFromOffer: (offer: ConnectionOfferV1) => Promise<HostProfile>;
   upsertDaemonFromOfferUrl: (offerUrlOrFragment: string) => Promise<HostProfile>;
+  adoptDaemonServerId: (currentId: string, serverId: string) => Promise<string>;
 }
 
 const DaemonRegistryContext = createContext<DaemonRegistryContextValue | null>(null);
@@ -129,6 +130,72 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
     await persist(remaining);
   }, [persist, readDaemons]);
 
+  const adoptDaemonServerId = useCallback(
+    async (currentId: string, serverId: string) => {
+      const trimmed = serverId.trim();
+      if (!trimmed) {
+        throw new Error("serverId is required");
+      }
+      if (currentId === trimmed) {
+        return trimmed;
+      }
+
+      const existing = readDaemons();
+      const now = new Date().toISOString();
+      const idx = existing.findIndex((daemon) => daemon.id === currentId);
+      if (idx === -1) {
+        return trimmed;
+      }
+
+      const current = existing[idx];
+      const otherIdx = existing.findIndex((daemon) => daemon.id === trimmed);
+
+      const addLegacyId = (metadata: Record<string, unknown> | null | undefined, legacyId: string) => {
+        const prev = (metadata ?? {}) as Record<string, unknown>;
+        const legacyIdsRaw = prev.legacyIds;
+        const legacyIds = Array.isArray(legacyIdsRaw)
+          ? legacyIdsRaw.filter((value) => typeof value === "string")
+          : [];
+        if (!legacyIds.includes(legacyId)) {
+          legacyIds.push(legacyId);
+        }
+        return { ...prev, legacyIds };
+      };
+
+      // Merge into existing canonical entry if it exists.
+      if (otherIdx !== -1) {
+        const canonical = existing[otherIdx];
+        const merged: HostProfile = {
+          ...canonical,
+          label: canonical.label?.trim() ? canonical.label : current.label,
+          endpoints: Array.from(new Set([...(canonical.endpoints ?? []), ...(current.endpoints ?? [])])),
+          daemonPublicKeyB64: canonical.daemonPublicKeyB64 ?? current.daemonPublicKeyB64,
+          relay: canonical.relay ?? current.relay ?? null,
+          createdAt: canonical.createdAt ?? current.createdAt,
+          updatedAt: now,
+          metadata: addLegacyId(canonical.metadata, currentId),
+        };
+        const next = existing.filter((daemon) => daemon.id !== currentId);
+        next[otherIdx > idx ? otherIdx - 1 : otherIdx] = merged;
+        await persist(next);
+        return trimmed;
+      }
+
+      const updated: HostProfile = {
+        ...current,
+        id: trimmed,
+        updatedAt: now,
+        metadata: addLegacyId(current.metadata, currentId),
+      };
+
+      const next = [...existing];
+      next[idx] = updated;
+      await persist(next);
+      return trimmed;
+    },
+    [persist, readDaemons]
+  );
+
   const upsertDaemonFromOffer = useCallback(
     async (offer: ConnectionOfferV1) => {
       const existing = readDaemons();
@@ -194,6 +261,7 @@ export function DaemonRegistryProvider({ children }: { children: ReactNode }) {
     addDaemon,
     updateDaemon,
     removeDaemon,
+    adoptDaemonServerId,
     upsertDaemonFromOffer,
     upsertDaemonFromOfferUrl,
   };
@@ -388,4 +456,17 @@ export function buildDirectDaemonWsUrl(profile: HostProfile): string {
     throw new Error("Host profile has no endpoints");
   }
   return buildDaemonWebSocketUrl(endpoint);
+}
+
+export function resolveCanonicalDaemonId(daemons: HostProfile[], id: string): string | null {
+  const direct = daemons.find((daemon) => daemon.id === id);
+  if (direct) return direct.id;
+
+  for (const daemon of daemons) {
+    const legacyIds = (daemon.metadata as any)?.legacyIds;
+    if (Array.isArray(legacyIds) && legacyIds.some((value) => value === id)) {
+      return daemon.id;
+    }
+  }
+  return null;
 }

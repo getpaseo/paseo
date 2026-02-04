@@ -32,7 +32,7 @@ import {
   checkoutStatusQueryKey,
 } from "@/hooks/use-checkout-status-query";
 import { useDaemonConnections } from "@/contexts/daemon-connections-context";
-import { useDaemonRegistry } from "@/contexts/daemon-registry-context";
+import { resolveCanonicalDaemonId, useDaemonRegistry } from "@/contexts/daemon-registry-context";
 import { formatConnectionStatus } from "@/utils/daemons";
 import { useSessionStore } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -147,6 +147,33 @@ export function DraftAgentScreen({
   const resolvedModel = getParamValue(params.model);
   const resolvedWorkingDir = getParamValue(params.workingDir);
 
+  const onlineServerIds = useMemo(() => {
+    if (daemons.length === 0) return [];
+    const out: string[] = [];
+    for (const daemon of daemons) {
+      const status = connectionStates.get(daemon.id)?.status ?? "idle";
+      if (status === "online") out.push(daemon.id);
+    }
+    return out;
+  }, [connectionStates, daemons]);
+
+  // If the URL contains a legacy host id, redirect to the canonical daemon-provided id.
+  useEffect(() => {
+    if (!resolvedServerId) return;
+    const canonical = resolveCanonicalDaemonId(daemons, resolvedServerId);
+    if (!canonical || canonical === resolvedServerId) return;
+
+    const nextParams: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params)) {
+      if (key === "serverId") continue;
+      if (typeof value === "string") nextParams[key] = value;
+      if (Array.isArray(value) && typeof value[0] === "string") nextParams[key] = value[0] as string;
+    }
+    nextParams.serverId = canonical;
+
+    router.replace({ pathname: "/", params: nextParams as any });
+  }, [daemons, params, resolvedServerId, router]);
+
   const initialValues = useMemo((): CreateAgentInitialValues => {
     const values: CreateAgentInitialValues = {};
     if (resolvedWorkingDir) {
@@ -187,6 +214,7 @@ export function DraftAgentScreen({
     initialValues,
     isVisible,
     isCreateFlow: true,
+    onlineServerIds,
   });
   const hostEntry = selectedServerId
     ? connectionStates.get(selectedServerId)

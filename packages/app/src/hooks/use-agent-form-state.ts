@@ -54,6 +54,7 @@ type UseAgentFormStateOptions = {
   isVisible?: boolean;
   isCreateFlow?: boolean;
   isTargetDaemonReady?: boolean;
+  onlineServerIds?: string[];
 };
 
 type UseAgentFormStateResult = {
@@ -230,6 +231,7 @@ export function useAgentFormState(
     isVisible = true,
     isCreateFlow = true,
     isTargetDaemonReady = true,
+    onlineServerIds = [],
   } = options;
 
   const {
@@ -354,6 +356,32 @@ export function useAgentFormState(
     preferences,
     availableModels,
     userModified,
+    validServerIds,
+  ]);
+
+  // Auto-select the first online host when:
+  // - no URL override
+  // - no stored preference applied
+  // - user hasn't manually picked a host in this session
+  useEffect(() => {
+    if (!isVisible || !isCreateFlow) return;
+    if (isPreferencesLoading) return;
+    if (!hasResolvedRef.current) return;
+    if (userModified.serverId) return;
+    if (combinedInitialValues?.serverId !== undefined) return;
+    if (formStateRef.current.serverId) return;
+
+    const candidate = onlineServerIds.find((id) => validServerIds.has(id)) ?? null;
+    if (!candidate) return;
+
+    setFormState((prev) => (prev.serverId ? prev : { ...prev, serverId: candidate }));
+  }, [
+    combinedInitialValues?.serverId,
+    isCreateFlow,
+    isPreferencesLoading,
+    isVisible,
+    onlineServerIds.join("|"),
+    userModified.serverId,
     validServerIds,
   ]);
 

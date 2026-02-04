@@ -31,6 +31,7 @@ export class VoiceAssistantWebSocketServer {
   constructor(
     server: HTTPServer,
     logger: pino.Logger,
+    serverId: string,
     agentManager: AgentManager,
     agentStorage: AgentStorage,
     downloadTokenStore: DownloadTokenStore,
@@ -51,6 +52,7 @@ export class VoiceAssistantWebSocketServer {
     this.logger = logger.child({ module: "websocket-server" });
     this.bridge = new WebSocketSessionBridge(
       this.logger,
+      serverId,
       agentManager,
       agentStorage,
       downloadTokenStore,

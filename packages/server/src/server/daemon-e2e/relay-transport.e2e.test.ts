@@ -101,13 +101,16 @@ describe("Relay transport (plaintext) - daemon E2E", () => {
           });
 
           ws.on("message", (data) => {
-            clearTimeout(timeout);
             try {
-              resolve(JSON.parse(data.toString()));
+              const parsed = JSON.parse(data.toString());
+              if (parsed && typeof parsed === "object" && "type" in parsed && (parsed as any).type === "pong") {
+                clearTimeout(timeout);
+                resolve(parsed);
+                ws.close();
+              }
             } catch (err) {
+              clearTimeout(timeout);
               reject(err);
-            } finally {
-              ws.close();
             }
           });
 

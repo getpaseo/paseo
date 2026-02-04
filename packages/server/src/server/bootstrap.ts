@@ -55,6 +55,7 @@ import {
 } from "./connection-offer.js";
 import { printPairingQrIfEnabled } from "./pairing-qr.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import { getOrCreateServerId } from "./server-id.js";
 import type {
   AgentClient,
   AgentProvider,
@@ -104,7 +105,8 @@ export async function createPaseoDaemon(
   rootLogger: Logger
   ): Promise<PaseoDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
-  const connectionSessionId = randomUUID();
+  const serverId = getOrCreateServerId(config.paseoHome, { logger });
+  const connectionSessionId = serverId;
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -416,6 +418,7 @@ export async function createPaseoDaemon(
   const wsServer = new VoiceAssistantWebSocketServer(
     httpServer,
     logger,
+    serverId,
     agentManager,
     agentStorage,
     downloadTokenStore,

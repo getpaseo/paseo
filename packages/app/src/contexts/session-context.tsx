@@ -1,7 +1,7 @@
 import { useRef, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDaemonClient } from "@/hooks/use-daemon-client";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useClientActivity } from "@/hooks/use-client-activity";
@@ -23,6 +23,7 @@ import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-type
 import type { DaemonClient, ConnectionState } from "@server/client/daemon-client";
 import { File } from "expo-file-system";
 import { useDaemonConnections } from "./daemon-connections-context";
+import { useDaemonRegistry } from "./daemon-registry-context";
 import {
   useSessionStore,
   type SessionState,
@@ -259,18 +260,23 @@ interface SessionProviderProps {
   serverId: string;
 }
 
+const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
+const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
+
 // SessionProvider: Daemon client message handler that updates Zustand store
 export function SessionProvider({
   children,
   serverUrl,
   serverId,
 }: SessionProviderProps) {
+  const queryClient = useQueryClient();
   const client = useDaemonClient(serverUrl);
   const [connectionSnapshot, setConnectionSnapshot] =
     useState<DaemonConnectionSnapshot>(() =>
       mapConnectionState(client.getConnectionState(), client.lastError)
     );
   const { updateConnectionStatus } = useDaemonConnections();
+  const { adoptDaemonServerId } = useDaemonRegistry();
 
   // Zustand store actions
   const initializeSession = useSessionStore((state) => state.initializeSession);
@@ -349,6 +355,7 @@ export function SessionProvider({
   );
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
+  const hasAdoptedServerIdRef = useRef(false);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -442,6 +449,47 @@ export function SessionProvider({
     });
     return unsubscribe;
   }, [client]);
+
+  // Daemon identity handshake: adopt stable serverId from the daemon.
+  useEffect(() => {
+    return client.on("status", (message) => {
+      if (message.type !== "status") return;
+      const payload = message.payload as { status?: unknown; serverId?: unknown };
+      if (payload?.status !== "server_info") return;
+
+      const remoteServerId = typeof payload.serverId === "string" ? payload.serverId.trim() : "";
+      if (!remoteServerId) return;
+
+      // Avoid loops if multiple server_info messages arrive.
+      if (hasAdoptedServerIdRef.current) return;
+      hasAdoptedServerIdRef.current = true;
+
+      if (remoteServerId === serverId) {
+        return;
+      }
+
+      void (async () => {
+        const canonicalId = await adoptDaemonServerId(serverId, remoteServerId);
+
+        // Migrate persisted "create agent" preferences if they reference the old id.
+        try {
+          const stored = await AsyncStorage.getItem(FORM_PREFERENCES_STORAGE_KEY);
+          if (stored) {
+            const parsed = JSON.parse(stored) as { serverId?: unknown } & Record<string, unknown>;
+            if (typeof parsed.serverId === "string" && parsed.serverId === serverId) {
+              const next = { ...parsed, serverId: canonicalId };
+              await AsyncStorage.setItem(FORM_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
+              queryClient.setQueryData(FORM_PREFERENCES_QUERY_KEY, next);
+            }
+          }
+        } catch (error) {
+          console.warn("[Session] Failed to migrate form preferences serverId", { error });
+        }
+      })().catch((error) => {
+        console.warn("[Session] Failed to adopt daemon serverId", { error });
+      });
+    });
+  }, [adoptDaemonServerId, client, queryClient, serverId]);
 
   useEffect(() => {
     updateSessionConnection(serverId, connectionSnapshot);
