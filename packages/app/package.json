@@ -17,7 +17,8 @@
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "expo export --platform web",
-    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app"
+    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app",
+    "postinstall": "patch-package --patch-dir ../../patches"
   },
   "dependencies": {
     "@boudra/expo-two-way-audio": "^0.1.3",
@@ -41,8 +42,10 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@sphereon/isomorphic-webcrypto": "^2.5.0-rn-crypto.2",
     "@tanstack/react-query": "^5.90.11",
     "@tauri-apps/api": "^2.9.1",
+    "base64-js": "^1.5.1",
     "buffer": "^6.0.3",
     "expo": "^54.0.18",
     "expo-audio": "~1.0.13",
@@ -85,6 +88,7 @@
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-securerandom": "^1.0.1",
     "react-native-svg": "^15.14.0",
     "react-native-unistyles": "^3.0.15",
     "react-native-web": "~0.21.0",

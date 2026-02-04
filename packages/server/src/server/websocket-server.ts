@@ -101,7 +101,9 @@ export class VoiceAssistantWebSocketServer {
     this.bridge.broadcast(message);
   }
 
-  public async attachExternalSocket(ws: Parameters<WebSocketSessionBridge["attach"]>[0]): Promise<void> {
+  public async attachExternalSocket(
+    ws: Parameters<WebSocketSessionBridge["attach"]>[0]
+  ): Promise<void> {
     const fakeRequest = {
       url: "/ws",
       headers: {},

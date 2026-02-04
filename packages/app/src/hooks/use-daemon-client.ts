@@ -9,7 +9,14 @@ function runDaemonRequest(label: string, promise: Promise<unknown>): void {
   });
 }
 
-export function useDaemonClient(url: string): DaemonClient {
+type DaemonClientOptions = {
+  daemonPublicKeyB64?: string;
+};
+
+export function useDaemonClient(
+  url: string,
+  options: DaemonClientOptions = {}
+): DaemonClient {
   const client = useMemo(
     () => {
       const tauriTransportFactory = createTauriWebSocketTransportFactory();
@@ -19,9 +26,15 @@ export function useDaemonClient(url: string): DaemonClient {
         ...(tauriTransportFactory
           ? { transportFactory: tauriTransportFactory }
           : {}),
+        e2ee: options.daemonPublicKeyB64
+          ? {
+              enabled: true,
+              daemonPublicKeyB64: options.daemonPublicKeyB64,
+            }
+          : undefined,
       });
     },
-    [url]
+    [options.daemonPublicKeyB64, url]
   );
 
   useEffect(() => {

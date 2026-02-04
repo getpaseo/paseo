@@ -1,28 +1,18 @@
 import os from "node:os";
-import { webcrypto } from "node:crypto";
-import { z } from "zod";
 
-export const ConnectionOfferV1Schema = z.object({
-  v: z.literal(1),
-  sessionId: z.string().min(1),
-  endpoints: z.array(z.string().min(1)).min(1),
-  daemonPublicKeyB64: z.string().min(1),
-});
-
-export type ConnectionOfferV1 = z.infer<typeof ConnectionOfferV1Schema>;
+import {
+  ConnectionOfferV1Schema,
+  type ConnectionOfferV1,
+} from "../shared/connection-offer.js";
 
 type BuildOfferEndpointsArgs = {
   listenHost: string;
   port: number;
-  relayEnabled: boolean;
-  relayEndpoint: string;
 };
 
 export function buildOfferEndpoints({
   listenHost,
   port,
-  relayEnabled,
-  relayEndpoint,
 }: BuildOfferEndpointsArgs): string[] {
   const endpoints: string[] = [];
 
@@ -42,24 +32,21 @@ export function buildOfferEndpoints({
   endpoints.push(`localhost:${port}`);
   endpoints.push(`127.0.0.1:${port}`);
 
-  if (relayEnabled) {
-    endpoints.push(relayEndpoint);
-  }
-
   return dedupePreserveOrder(endpoints);
 }
 
 export async function createConnectionOfferV1(args: {
   sessionId: string;
   endpoints: string[];
+  daemonPublicKeyB64: string;
+  relay?: { endpoint: string } | null;
 }): Promise<ConnectionOfferV1> {
-  const daemonPublicKeyB64 = await generateDaemonPublicKeyB64();
-
   return ConnectionOfferV1Schema.parse({
     v: 1,
     sessionId: args.sessionId,
     endpoints: args.endpoints,
-    daemonPublicKeyB64,
+    daemonPublicKeyB64: args.daemonPublicKeyB64,
+    relay: args.relay ?? null,
   });
 }
 
@@ -88,17 +75,6 @@ function getPrimaryLanIp(): string | null {
     }
   }
   return null;
-}
-
-async function generateDaemonPublicKeyB64(): Promise<string> {
-  const keyPair = await webcrypto.subtle.generateKey(
-    { name: "ECDH", namedCurve: "P-256" },
-    true,
-    ["deriveBits"]
-  );
-
-  const raw = await webcrypto.subtle.exportKey("raw", keyPair.publicKey);
-  return Buffer.from(new Uint8Array(raw)).toString("base64");
 }
 
 function dedupePreserveOrder(values: string[]): string[] {
