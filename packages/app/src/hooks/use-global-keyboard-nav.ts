@@ -77,6 +77,14 @@ export function useGlobalKeyboardNav({
       const key = event.key ?? "";
       const lowerKey = key.toLowerCase();
 
+      const target = event.target as unknown;
+      const isEditableTarget =
+        typeof HTMLElement !== "undefined" &&
+        target instanceof HTMLElement &&
+        (target.tagName === "TEXTAREA" ||
+          target.tagName === "INPUT" ||
+          target.isContentEditable);
+
       if (key === "Alt") {
         useKeyboardNavStore.getState().setAltDown(true);
       }
@@ -89,6 +97,11 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyB" || lowerKey === "b")
       ) {
+        // When focus is in the chat input, MessageInput handles Cmd+B (and prevents default)
+        // via TextInput onKeyPress. If we also toggle here, it flips twice and appears "broken".
+        if (isEditableTarget) {
+          return;
+        }
         event.preventDefault();
         toggleAgentList();
         return;
@@ -101,6 +114,10 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyE" || lowerKey === "e")
       ) {
+        // Same double-toggle issue as Cmd+B when focus is inside a text input.
+        if (isEditableTarget) {
+          return;
+        }
         event.preventDefault();
         toggleFileExplorer();
         return;
