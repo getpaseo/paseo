@@ -15,6 +15,7 @@ import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregate
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { useSessionStore } from "@/stores/session-store";
+import { AgentStatusDot } from "@/components/agent-status-dot";
 
 function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
@@ -188,12 +189,15 @@ export function CommandCenter() {
                     onPress={() => handleSelect(agent)}
                   >
                     <View style={styles.rowContent}>
+                      <View style={styles.rowTitle}>
+                        <AgentStatusDot status={agent.status} requiresAttention={agent.requiresAttention} />
                       <Text
                         style={[styles.title, { color: theme.colors.foreground }]}
                         numberOfLines={1}
                       >
                         {agent.title || "New agent"}
                       </Text>
+                      </View>
                       <Text
                         style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
                         numberOfLines={1}
@@ -258,9 +262,14 @@ const styles = StyleSheet.create((theme) => ({
   rowContent: {
     gap: 2,
   },
+  rowTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
   title: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   subtitle: {
     fontSize: theme.fontSize.sm,

@@ -9,10 +9,14 @@ export function useGlobalKeyboardNav({
   enabled,
   isMobile,
   toggleAgentList,
+  selectedAgentId,
+  toggleFileExplorer,
 }: {
   enabled: boolean;
   isMobile: boolean;
   toggleAgentList: () => void;
+  selectedAgentId?: string;
+  toggleFileExplorer?: () => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -88,6 +92,18 @@ export function useGlobalKeyboardNav({
         return;
       }
 
+      // Cmd+E: toggle explorer sidebar (only when an agent is selected)
+      if (
+        selectedAgentId &&
+        toggleFileExplorer &&
+        (event.metaKey || event.ctrlKey) &&
+        lowerKey === "e"
+      ) {
+        event.preventDefault();
+        toggleFileExplorer();
+        return;
+      }
+
       // Cmd+K: command center
       if ((event.metaKey || event.ctrlKey) && lowerKey === "k") {
         event.preventDefault();
@@ -145,6 +161,14 @@ export function useGlobalKeyboardNav({
       window.removeEventListener("blur", handleBlurOrHide);
       document.removeEventListener("visibilitychange", handleBlurOrHide);
     };
-  }, [enabled, isMobile, pathname, resetModifiers, router, toggleAgentList]);
+  }, [
+    enabled,
+    isMobile,
+    pathname,
+    resetModifiers,
+    router,
+    selectedAgentId,
+    toggleAgentList,
+    toggleFileExplorer,
+  ]);
 }
-
