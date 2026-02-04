@@ -241,6 +241,7 @@ const createExplorerState = () => ({
   currentPath: ".",
   history: ["."],
   lastVisitedPath: ".",
+  selectedEntryPath: null,
 });
 
 const pushHistory = (history: string[], path: string): string[] => {

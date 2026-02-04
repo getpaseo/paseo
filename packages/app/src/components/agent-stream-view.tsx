@@ -95,7 +95,8 @@ export function AgentStreamView({
     state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId)
   );
 
-  const { requestDirectoryListing, requestFilePreview } = useFileExplorerActions(resolvedServerId);
+  const { requestDirectoryListing, requestFilePreview, selectExplorerEntry } =
+    useFileExplorerActions(resolvedServerId);
   // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
   // tracked in react-native-reanimated#8422.
   const shouldDisableEntryExitAnimations = Platform.OS === "android";
@@ -123,8 +124,12 @@ export function AgentStreamView({
         return;
       }
 
-      requestDirectoryListing(agentId, normalized.directory);
+      requestDirectoryListing(agentId, normalized.directory, {
+        recordHistory: false,
+        setCurrentPath: false,
+      });
       if (normalized.file) {
+        selectExplorerEntry(agentId, normalized.file);
         requestFilePreview(agentId, normalized.file);
       }
 
@@ -136,6 +141,7 @@ export function AgentStreamView({
       agentId,
       requestDirectoryListing,
       requestFilePreview,
+      selectExplorerEntry,
       setExplorerTab,
       openFileExplorer,
     ]
