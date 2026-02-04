@@ -192,7 +192,7 @@ describe("createWorktree", () => {
 
     // Verify setup ran and env vars were available
     const setupLog = readFileSync(join(result.worktreePath, "setup.log"), "utf8");
-    expect(setupLog).toContain(`root=${result.worktreePath}`);
+    expect(setupLog).toContain(`root=${repoDir}`);
     expect(setupLog).toContain(`worktree=${result.worktreePath}`);
     expect(setupLog).toContain("branch=setup-test");
   });
