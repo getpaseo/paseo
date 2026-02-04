@@ -374,9 +374,11 @@ export function AgentInputArea({
     }
     lastHandledFocusRequestIdRef.current = focusChatInputRequest.id;
 
-    setTimeout(() => {
-      messageInputRef.current?.focus();
-    }, 0);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+      });
+    });
     clearFocusChatInputRequest(focusChatInputRequest.id);
   }, [
     agentId,

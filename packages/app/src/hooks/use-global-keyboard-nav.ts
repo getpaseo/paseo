@@ -127,7 +127,19 @@ export function useGlobalKeyboardNav({
       if ((event.metaKey || event.ctrlKey) && lowerKey === "k") {
         event.preventDefault();
         const s = useKeyboardNavStore.getState();
-        s.setCommandCenterOpen(!s.commandCenterOpen);
+        if (!s.commandCenterOpen) {
+          const target = event.target as unknown;
+          const el =
+            typeof HTMLElement !== "undefined" && target instanceof HTMLElement
+              ? target
+              : (typeof document !== "undefined"
+                  ? (document.activeElement as HTMLElement | null)
+                  : null);
+          s.setFocusRestoreElement(el);
+          s.setCommandCenterOpen(true);
+        } else {
+          s.setCommandCenterOpen(false);
+        }
         return;
       }
 

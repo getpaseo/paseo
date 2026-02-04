@@ -49,8 +49,8 @@ export function CommandCenter() {
   const open = useKeyboardNavStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardNavStore((s) => s.setCommandCenterOpen);
   const requestFocusChatInput = useKeyboardNavStore((s) => s.requestFocusChatInput);
+  const takeFocusRestoreElement = useKeyboardNavStore((s) => s.takeFocusRestoreElement);
   const inputRef = useRef<TextInput>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const didNavigateRef = useRef(false);
   const prevOpenRef = useRef(open);
   const [query, setQuery] = useState("");
@@ -71,16 +71,18 @@ export function CommandCenter() {
       setActiveIndex(0);
 
       if (prevOpen && !didNavigateRef.current) {
-        const el = previouslyFocusedRef.current;
+        const el = takeFocusRestoreElement();
         if (el && el.isConnected) {
           // Modal unmount can steal focus; restore on next tick.
-          setTimeout(() => {
-            try {
-              el.focus();
-            } catch {
-              // ignore
-            }
-          }, 0);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              try {
+                el.focus();
+              } catch {
+                // ignore
+              }
+            });
+          });
         }
       }
 
@@ -88,8 +90,6 @@ export function CommandCenter() {
     }
 
     didNavigateRef.current = false;
-    previouslyFocusedRef.current =
-      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
 
     const id = setTimeout(() => {
       inputRef.current?.focus();
@@ -118,10 +118,12 @@ export function CommandCenter() {
       const navigate = shouldReplace ? router.replace : router.push;
 
       requestFocusChatInput(`${agent.serverId}:${agent.id}`);
+      // Don't restore focus back to the prior element after we navigate.
+      takeFocusRestoreElement();
       setOpen(false);
       navigate(`/agent/${agent.serverId}/${agent.id}` as any);
     },
-    [pathname, requestFocusChatInput, setOpen]
+    [pathname, requestFocusChatInput, setOpen, takeFocusRestoreElement]
   );
 
   useEffect(() => {

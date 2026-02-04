@@ -6,12 +6,16 @@ interface KeyboardNavState {
   cmdOrCtrlDown: boolean;
   /** Sidebar-visible agent keys (up to 9), in top-to-bottom visual order. */
   sidebarShortcutAgentKeys: string[];
+  /** Captured focus target when opening the command center (web only). */
+  focusRestoreElement: HTMLElement | null;
   focusChatInputRequest: { id: number; agentKey: string | null } | null;
 
   setCommandCenterOpen: (open: boolean) => void;
   setAltDown: (down: boolean) => void;
   setCmdOrCtrlDown: (down: boolean) => void;
   setSidebarShortcutAgentKeys: (keys: string[]) => void;
+  setFocusRestoreElement: (el: HTMLElement | null) => void;
+  takeFocusRestoreElement: () => HTMLElement | null;
   requestFocusChatInput: (agentKey: string | null) => void;
   clearFocusChatInputRequest: (id: number) => void;
   resetModifiers: () => void;
@@ -22,12 +26,22 @@ export const useKeyboardNavStore = create<KeyboardNavState>((set) => ({
   altDown: false,
   cmdOrCtrlDown: false,
   sidebarShortcutAgentKeys: [],
+  focusRestoreElement: null,
   focusChatInputRequest: null,
 
   setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
   setAltDown: (down) => set({ altDown: down }),
   setCmdOrCtrlDown: (down) => set({ cmdOrCtrlDown: down }),
   setSidebarShortcutAgentKeys: (keys) => set({ sidebarShortcutAgentKeys: keys }),
+  setFocusRestoreElement: (el) => set({ focusRestoreElement: el }),
+  takeFocusRestoreElement: () => {
+    let value: HTMLElement | null = null;
+    set((state) => {
+      value = state.focusRestoreElement;
+      return { focusRestoreElement: null };
+    });
+    return value;
+  },
   requestFocusChatInput: (agentKey) =>
     set((state) => ({
       focusChatInputRequest: {
