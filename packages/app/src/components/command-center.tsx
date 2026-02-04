@@ -48,7 +48,11 @@ export function CommandCenter() {
   const { agents } = useAggregatedAgents();
   const open = useKeyboardNavStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardNavStore((s) => s.setCommandCenterOpen);
+  const requestFocusChatInput = useKeyboardNavStore((s) => s.requestFocusChatInput);
   const inputRef = useRef<TextInput>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const didNavigateRef = useRef(false);
+  const prevOpenRef = useRef(open);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -59,11 +63,33 @@ export function CommandCenter() {
   }, [agents, query]);
 
   useEffect(() => {
+    const prevOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+
     if (!open) {
       setQuery("");
       setActiveIndex(0);
+
+      if (prevOpen && !didNavigateRef.current) {
+        const el = previouslyFocusedRef.current;
+        if (el && el.isConnected) {
+          // Modal unmount can steal focus; restore on next tick.
+          setTimeout(() => {
+            try {
+              el.focus();
+            } catch {
+              // ignore
+            }
+          }, 0);
+        }
+      }
+
       return;
     }
+
+    didNavigateRef.current = false;
+    previouslyFocusedRef.current =
+      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
 
     const id = setTimeout(() => {
       inputRef.current?.focus();
@@ -84,16 +110,18 @@ export function CommandCenter() {
 
   const handleSelect = useCallback(
     (agent: AggregatedAgent) => {
+      didNavigateRef.current = true;
       const session = useSessionStore.getState().sessions[agent.serverId];
       session?.client?.clearAgentAttention(agent.id);
 
       const shouldReplace = pathname.startsWith("/agent/");
       const navigate = shouldReplace ? router.replace : router.push;
 
+      requestFocusChatInput(`${agent.serverId}:${agent.id}`);
       setOpen(false);
       navigate(`/agent/${agent.serverId}/${agent.id}` as any);
     },
-    [pathname, setOpen]
+    [pathname, requestFocusChatInput, setOpen]
   );
 
   useEffect(() => {

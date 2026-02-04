@@ -3,6 +3,7 @@ import {
   Pressable,
   Text,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -28,6 +29,7 @@ import { Theme } from "@/styles/theme";
 import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
+import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 
 type QueuedMessage = {
   id: string;
@@ -68,6 +70,8 @@ export function AgentInputArea({
   const insets = useSafeAreaInsets();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const isScreenFocused = useIsFocused();
+  const focusChatInputRequest = useKeyboardNavStore((s) => s.focusChatInputRequest);
+  const clearFocusChatInputRequest = useKeyboardNavStore((s) => s.clearFocusChatInputRequest);
 
   const client = useSessionStore(
     (state) => state.sessions[serverId]?.client ?? null
@@ -98,6 +102,7 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+  const lastHandledFocusRequestIdRef = useRef<number | null>(null);
 
   // Command autocomplete logic
   const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
@@ -351,6 +356,35 @@ export function AgentInputArea({
 
     saveDraftInput(agentId, { text: userInput, images: selectedImages });
   }, [agentId, userInput, selectedImages, getDraftInput, saveDraftInput]);
+
+  // When switching agents from the command center, auto-focus the input on web.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!isScreenFocused) return;
+    if (!focusChatInputRequest) return;
+
+    const target = focusChatInputRequest.agentKey;
+    const currentKey = `${serverId}:${agentId}`;
+    if (target !== null && target !== currentKey) {
+      return;
+    }
+
+    if (lastHandledFocusRequestIdRef.current === focusChatInputRequest.id) {
+      return;
+    }
+    lastHandledFocusRequestIdRef.current = focusChatInputRequest.id;
+
+    setTimeout(() => {
+      messageInputRef.current?.focus();
+    }, 0);
+    clearFocusChatInputRequest(focusChatInputRequest.id);
+  }, [
+    agentId,
+    clearFocusChatInputRequest,
+    focusChatInputRequest,
+    isScreenFocused,
+    serverId,
+  ]);
 
   const keyboardAnimatedStyle = useAnimatedStyle(() => {
     "worklet";
