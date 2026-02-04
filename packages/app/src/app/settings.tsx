@@ -120,6 +120,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontFamily: Fonts.mono,
   },
+  hostConnections: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontFamily: Fonts.mono,
+  },
   hostError: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.xs,
@@ -662,7 +667,7 @@ export default function SettingsScreen() {
               style={styles.addButton}
               onPress={() => setIsAddHostMethodVisible(true)}
             >
-              <Text style={styles.addButtonText}>+ Add host</Text>
+              <Text style={styles.addButtonText}>+ Add connection</Text>
             </Pressable>
           </View>
 
@@ -1060,7 +1065,15 @@ function DaemonCard({
         ? "rgba(245, 158, 11, 0.1)"
         : statusTone === "error"
           ? "rgba(248, 113, 113, 0.1)"
-          : "rgba(161, 161, 170, 0.1)";
+      : "rgba(161, 161, 170, 0.1)";
+
+  const connectionsSummary = (() => {
+    const parts = daemon.connections.map((conn) => {
+      if (conn.type === "relay") return `relay:${conn.relayEndpoint}`;
+      return `direct:${conn.endpoint}`;
+    });
+    return parts.join(" • ");
+  })();
 
   return (
     <View style={styles.hostCard} testID={`daemon-card-${daemon.serverId}`}>
@@ -1097,6 +1110,7 @@ function DaemonCard({
             return "";
           })()}
         </Text>
+        {connectionsSummary ? <Text style={styles.hostConnections}>{connectionsSummary}</Text> : null}
         {connectionError ? <Text style={styles.hostError}>{connectionError}</Text> : null}
       </View>
       <View style={styles.hostActionsRow}>

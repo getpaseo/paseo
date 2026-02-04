@@ -63,12 +63,12 @@ export function AddHostMethodModal({
   }, [onClose, onPasteLink]);
 
   return (
-    <AdaptiveModalSheet title="Add host" visible={visible} onClose={onClose} testID="add-host-method-modal">
+    <AdaptiveModalSheet title="Add connection" visible={visible} onClose={onClose} testID="add-host-method-modal">
       <Pressable style={styles.option} onPress={handleDirect} accessibilityLabel="Direct connection">
         <Link2 size={18} color={theme.colors.foreground} />
         <View style={styles.optionBody}>
           <Text style={styles.optionText}>Direct connection</Text>
-          <Text style={styles.optionSubtext}>Enter a host and port.</Text>
+          <Text style={styles.optionSubtext}>Local network or Tailscale (unencrypted).</Text>
         </View>
       </Pressable>
 
@@ -77,7 +77,7 @@ export function AddHostMethodModal({
           <QrCode size={18} color={theme.colors.foreground} />
           <View style={styles.optionBody}>
             <Text style={styles.optionText}>Scan QR code</Text>
-            <Text style={styles.optionSubtext}>Use your camera to pair.</Text>
+            <Text style={styles.optionSubtext}>Relay pairing (E2EE).</Text>
           </View>
         </Pressable>
       ) : null}
@@ -86,7 +86,7 @@ export function AddHostMethodModal({
         <ClipboardPaste size={18} color={theme.colors.foreground} />
         <View style={styles.optionBody}>
           <Text style={styles.optionText}>Paste pairing link</Text>
-          <Text style={styles.optionSubtext}>Works without a camera.</Text>
+          <Text style={styles.optionSubtext}>Relay pairing (E2EE).</Text>
         </View>
       </Pressable>
     </AdaptiveModalSheet>
