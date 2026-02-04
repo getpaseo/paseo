@@ -29,6 +29,7 @@ import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
+import { focusWithRetries } from "@/utils/web-focus";
 
 type QueuedMessage = {
   id: string;
@@ -406,41 +407,20 @@ export function AgentInputArea({
     if (!req) return;
     if (req.agentKey !== `${serverId}:${agentId}`) return;
 
-    let cancelled = false;
-    const deadlineMs = Date.now() + 1500;
-
-    const tryFocus = () => {
-      if (cancelled) return;
-      const ref = messageInputRef.current;
-      ref?.focus();
-
-      const el = ref?.getNativeElement?.() ?? null;
-      const active = typeof document !== "undefined" ? document.activeElement : null;
-      const didFocus = !!el && active === el;
-
-      if (didFocus) {
-        clearFocusChatInputRequest();
-        return;
-      }
-
-      if (Date.now() >= deadlineMs) {
+    return focusWithRetries({
+      focus: () => messageInputRef.current?.focus(),
+      isFocused: () => {
+        const el = messageInputRef.current?.getNativeElement?.() ?? null;
+        const active =
+          typeof document !== "undefined" ? document.activeElement : null;
+        return Boolean(el) && active === el;
+      },
+      onSuccess: () => clearFocusChatInputRequest(),
+      onTimeout: () => {
         // Don't keep stealing focus forever; allow other interactions.
         clearFocusChatInputRequest();
-        return;
-      }
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(tryFocus);
-      });
-    };
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(tryFocus);
+      },
     });
-
-    return () => {
-      cancelled = true;
-    };
   }, [agentId, clearFocusChatInputRequest, focusChatInputRequest, serverId]);
 
   // Handle command selection from autocomplete

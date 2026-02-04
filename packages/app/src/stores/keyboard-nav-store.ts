@@ -12,14 +12,6 @@ interface KeyboardNavState {
   /** Sidebar-visible agent keys (up to 9), in top-to-bottom visual order. */
   sidebarShortcutAgentKeys: string[];
 
-  /**
-   * Web-only focus restore element used by the command center. Stored when opening
-   * Cmd/Ctrl+K so we can restore focus when closing without navigating.
-   */
-  focusRestoreElement: HTMLElement | null;
-  setFocusRestoreElement: (el: HTMLElement | null) => void;
-  takeFocusRestoreElement: () => HTMLElement | null;
-
   /** Web-only request to focus the MessageInput for the selected agent. */
   focusChatInputRequest: FocusChatInputRequest | null;
   requestFocusChatInput: (agentKey: string) => void;
@@ -37,14 +29,6 @@ export const useKeyboardNavStore = create<KeyboardNavState>((set, get) => ({
   altDown: false,
   cmdOrCtrlDown: false,
   sidebarShortcutAgentKeys: [],
-
-  focusRestoreElement: null,
-  setFocusRestoreElement: (el) => set({ focusRestoreElement: el }),
-  takeFocusRestoreElement: () => {
-    const el = get().focusRestoreElement;
-    set({ focusRestoreElement: null });
-    return el;
-  },
 
   focusChatInputRequest: null,
   requestFocusChatInput: (agentKey) => {

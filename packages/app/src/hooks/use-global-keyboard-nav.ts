@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "expo-router";
 import { getIsTauri } from "@/constants/layout";
 import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 import { parseSidebarAgentKey } from "@/utils/sidebar-shortcuts";
+import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 
 export function useGlobalKeyboardNav({
   enabled,
@@ -137,7 +138,7 @@ export function useGlobalKeyboardNav({
             (target instanceof HTMLElement ? target : null);
           const active = document.activeElement;
           const activeEl = active instanceof HTMLElement ? active : null;
-          s.setFocusRestoreElement(
+          setCommandCenterFocusRestoreElement(
             (targetEl as HTMLElement | null) ?? activeEl ?? null
           );
         }
