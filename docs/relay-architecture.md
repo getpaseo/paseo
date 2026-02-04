@@ -11,7 +11,7 @@ The relay is treated as **fully untrusted**: it may observe traffic metadata (ti
   - WS transport: `packages/server/src/server/websocket-server.ts`
 - **Client (app)** connects directly to a daemon WebSocket URL (stored as a “daemon profile”).
   - Registry: `packages/app/src/contexts/daemon-registry-context.tsx`
-  - Connection: `packages/app/src/hooks/use-daemon-client.ts` → `DaemonClientV2` in `packages/server/src/client/daemon-client-v2.ts`
+  - Connection: `packages/app/src/hooks/use-daemon-client.ts` → `DaemonClient` in `packages/server/src/client/daemon-client.ts`
 - **Relay** already exists as a Cloudflare Durable Object that bridges two WebSockets:
   - Endpoint: `wss://relay.paseo.sh/ws?session=<id>&role=server|client`
   - Implementation: `packages/relay/src/cloudflare-adapter.ts`

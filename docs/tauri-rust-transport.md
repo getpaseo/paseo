@@ -6,7 +6,7 @@ The desktop app is a Tauri wrapper that loads the web frontend. In production th
 
 ## Goal
 
-Replace “WebView owns the WebSocket” with “Rust owns the socket; JS uses IPC”, without changing the daemon protocol (still the existing `/ws` JSON messages used by `DaemonClientV2`).
+Replace “WebView owns the WebSocket” with “Rust owns the socket; JS uses IPC”, without changing the daemon protocol (still the existing `/ws` JSON messages used by `DaemonClient`).
 
 ## Option A (recommended): Use the official Tauri v2 WebSocket plugin
 
@@ -17,9 +17,9 @@ Tauri provides an official plugin that opens a WebSocket using a Rust client, bu
 
 This removes the WebView’s `Origin` header entirely (native Rust client), so the daemon accepts the connection via its existing rule: `!origin || allowedOrigins.has(origin)`.
 
-### JS integration shape (daemon client v2)
+### JS integration shape (daemon client)
 
-`DaemonClientV2` already supports arbitrary transports via `transportFactory?: DaemonTransportFactory`.
+`DaemonClient` already supports arbitrary transports via `transportFactory?: DaemonTransportFactory`.
 
 Add a small adapter that implements `DaemonTransportFactory` using `@tauri-apps/plugin-websocket`:
 
@@ -76,7 +76,7 @@ This option is more code than the official plugin, but it gives you a stronger s
 ## Verification (acceptance)
 
 - Desktop build connects to a local daemon without adding `tauri://localhost` to daemon origin allow list.
-- Existing `DaemonClientV2` session flow works unchanged (connect, send, receive, reconnect).
+- Existing `DaemonClient` session flow works unchanged (connect, send, receive, reconnect).
 - Transport failures surface through the existing connection state/error UI.
 
 ## Open questions

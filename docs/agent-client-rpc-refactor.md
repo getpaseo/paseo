@@ -5,7 +5,7 @@ Status: proposal for review (no implementation yet)
 ## Goals
 
 - Make all “fetch agent(s)” flows real RPCs (no fire-and-forget + sleep).
-- Remove the expectation that the `DaemonClientV2` owns agent state; callers (CLI, app) own state.
+- Remove the expectation that the `DaemonClient` owns agent state; callers (CLI, app) own state.
 - Move agent ID/prefix resolution to the server (clients should not fetch all agents just to resolve a prefix).
 - Make `sendAgentMessage` an RPC so `await sendAgentMessage()` has a concrete, reliable guarantee.
 - Make waiting deterministic via a server RPC:
@@ -29,7 +29,7 @@ This is wasteful and races (500ms is not a guarantee).
 
 ### 2) Client-side agent cache + message queue create confusing semantics
 
-`DaemonClientV2` maintains:
+`DaemonClient` maintains:
 
 - `agentIndex` (populated from `agent_list` and `agent_update`)
 - `messageQueue` (replay buffer, also used for “infer transitions”)
@@ -157,7 +157,7 @@ Notes:
 - No “after boundary” support in this refactor.
 - Client-side waiting is allowed (callers can build it), but the CLI should rely on the server wait RPC.
 
-## Client Library Changes (`DaemonClientV2`)
+## Client Library Changes (`DaemonClient`)
 
 ### 1) Remove “agent cache as a feature”
 
@@ -215,7 +215,7 @@ Instead:
 - No CLI command fetches the full agent list just to resolve a prefix.
 - Label filtering remains supported for list fetches and subscriptions.
 - Subscriptions can be scoped to a single agent (server-side filter).
-- `DaemonClientV2` no longer exposes messageQueue APIs for correctness.
+- `DaemonClient` no longer exposes messageQueue APIs for correctness.
 
 ## Verification / Testing Criteria
 
