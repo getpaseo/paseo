@@ -5,6 +5,7 @@ import {
   Animated,
   StyleProp,
   ViewStyle,
+  Platform,
 } from "react-native";
 import {
   useState,
@@ -418,7 +419,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   const handleLinkPress = useCallback((url: string) => {
-    void Linking.openURL(url);
+    if (Platform.OS === "web") {
+      window.open(url, "_blank", "noopener,noreferrer");
+    } else {
+      void Linking.openURL(url);
+    }
     return true;
   }, []);
 
