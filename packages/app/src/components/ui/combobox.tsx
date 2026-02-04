@@ -508,13 +508,12 @@ export function Combobox({
             styles.desktopContainer,
             {
               position: "absolute",
-              minWidth: 200,
-              width: referenceWidth ?? undefined,
+              minWidth: referenceWidth ?? 200,
+              maxWidth: 400,
             },
             floatingStyles,
             referenceWidth === null ? { opacity: 0 } : null,
             typeof availableSize?.height === "number" ? { maxHeight: Math.min(availableSize.height, 400) } : null,
-            typeof availableSize?.width === "number" ? { maxWidth: availableSize.width } : null,
           ]}
           ref={refs.setFloating}
           collapsable={false}
