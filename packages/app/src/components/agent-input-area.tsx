@@ -28,6 +28,7 @@ import { Theme } from "@/styles/theme";
 import { CommandAutocomplete } from "./command-autocomplete";
 import { useAgentCommandsQuery } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
+import { useKeyboardNavStore } from "@/stores/keyboard-nav-store";
 
 type QueuedMessage = {
   id: string;
@@ -98,6 +99,8 @@ export function AgentInputArea({
   const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [commandSelectedIndex, setCommandSelectedIndex] = useState(0);
+  const focusChatInputRequest = useKeyboardNavStore((s) => s.focusChatInputRequest);
+  const clearFocusChatInputRequest = useKeyboardNavStore((s) => s.clearFocusChatInputRequest);
 
   // Command autocomplete logic
   const showCommandAutocomplete = userInput.startsWith("/") && !userInput.includes(" ");
@@ -397,6 +400,19 @@ export function AgentInputArea({
   const handleQueue = useCallback((payload: MessagePayload) => {
     queueMessage(payload.text, payload.images);
   }, []);
+
+  useEffect(() => {
+    const req = focusChatInputRequest;
+    if (!req) return;
+    if (req.agentKey !== `${serverId}:${agentId}`) return;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+        clearFocusChatInputRequest();
+      });
+    });
+  }, [agentId, clearFocusChatInputRequest, focusChatInputRequest, serverId]);
 
   // Handle command selection from autocomplete
   const handleCommandSelect = useCallback(

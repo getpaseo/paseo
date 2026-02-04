@@ -34,6 +34,17 @@ export function useGlobalKeyboardNav({
       return true;
     };
 
+    const isEditableTarget = (event: KeyboardEvent): boolean => {
+      const target = event.target;
+      if (!(target instanceof Element)) return false;
+
+      if ((target as HTMLElement).isContentEditable) return true;
+      const tag = target.tagName.toLowerCase();
+      if (tag === "input" || tag === "textarea") return true;
+
+      return false;
+    };
+
     const parseShortcutDigit = (event: KeyboardEvent): number | null => {
       const code = event.code ?? "";
       if (code.startsWith("Digit")) {
@@ -89,6 +100,11 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyB" || lowerKey === "b")
       ) {
+        // The MessageInput already handles Cmd+B inside editable fields. If we also
+        // handle it globally, it can double-toggle and look like it "doesn't work".
+        if (isEditableTarget(event)) {
+          return;
+        }
         event.preventDefault();
         toggleAgentList();
         return;
@@ -101,6 +117,9 @@ export function useGlobalKeyboardNav({
         (event.metaKey || event.ctrlKey) &&
         (event.code === "KeyE" || lowerKey === "e")
       ) {
+        if (isEditableTarget(event)) {
+          return;
+        }
         event.preventDefault();
         toggleFileExplorer();
         return;
@@ -110,6 +129,10 @@ export function useGlobalKeyboardNav({
       if ((event.metaKey || event.ctrlKey) && lowerKey === "k") {
         event.preventDefault();
         const s = useKeyboardNavStore.getState();
+        if (!s.commandCenterOpen) {
+          const active = document.activeElement;
+          s.setFocusRestoreElement(active instanceof HTMLElement ? active : null);
+        }
         s.setCommandCenterOpen(!s.commandCenterOpen);
         return;
       }
